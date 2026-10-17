@@ -11,6 +11,7 @@ import { WOO_WEBHOOK_TOPICS, registerWooWebhooks } from "./woocommerce/woo-webho
 import { ListingsService } from "./commerce/listings.service";
 import { LoyaltyService } from "../commerce/loyalty.service";
 import { GiftCardsService } from "../commerce/gift-cards.service";
+import { StoreCreditService } from "../membership/store-credit.service";
 import { normalizeWooProduct, normalizeWooVariation, normalizeWooOrder, NormalizedOrder, NormalizedProduct } from "./woocommerce/normalize";
 import { normalizeWooCustomer, upsertSyncedCustomer } from "./customer-sync";
 import { ShopifyGraphQLClient } from "./shopify/shopify-graphql.client";
@@ -52,7 +53,7 @@ export class IntegrationsService {
   // until Milestone 65 caught it live.
   private readonly logger = new Logger(IntegrationsService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: EventsService, @Optional() private readonly inventory?: InventoryService, @Optional() private readonly listings?: ListingsService, @Optional() private readonly loyalty?: LoyaltyService, @Optional() private readonly giftCards?: GiftCardsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: EventsService, @Optional() private readonly inventory?: InventoryService, @Optional() private readonly listings?: ListingsService, @Optional() private readonly loyalty?: LoyaltyService, @Optional() private readonly giftCards?: GiftCardsService, @Optional() private readonly storeCredit?: StoreCreditService) {}
 
   // ---------- EC1/EC2: per-store listing wiring (failure-isolated) ----------
   /**
@@ -807,6 +808,12 @@ export class IntegrationsService {
         // double-issue or double-restore.
         try { await this.giftCards?.onOrderTransition(organizationId, orderId); }
         catch (e) { this.logger.warn(`gift card reconcile failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
+        // NF7: the identical direct hook for membership tiers +
+        // store credit — tier recompute and the cancellation
+        // spend reversal re-derive from current DB state and are
+        // claim-guarded, so this can never double-reverse.
+        try { await this.storeCredit?.onOrderTransition(organizationId, orderId); }
+        catch (e) { this.logger.warn(`NF7 reconcile failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
       }
     }
     if (result === "created") {

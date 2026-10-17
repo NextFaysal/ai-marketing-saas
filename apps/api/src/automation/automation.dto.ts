@@ -21,7 +21,14 @@ export class CreateRuleDto {
   @IsOptional() @IsNumber() windowDays?: number;
   @IsOptional() @IsString() campaignPlanId?: string;
   @IsOptional() actionConfig?: { percent?: number; minDailyMinor?: number; maxDailyMinor?: number; cooldownHours?: number };
+  // CA10: execute | suggest — absent = suggest (the service
+  // default for NEW rules; pre-CA10 rules keep "execute").
+  @IsOptional() @IsString() mode?: string;
 }
 export class UpdateRuleDto {
   @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsString() mode?: string;
+}
+export class RejectSuggestionDto {
+  @IsOptional() @IsString() reason?: string;
 }

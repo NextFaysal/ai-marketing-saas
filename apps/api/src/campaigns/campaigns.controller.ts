@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignFrontierService } from "./frontier.service";
-import { CreatePlanDto, UpdatePlanDto, AddAdSetDto, AddAdDto, UpdateAdSetDto, UpdateAdDto, RejectDto, GenerateCopyDto, InstantiateBlueprintDto, SuggestPlanDto, CommentDto, ScheduleLaunchDto, CrossPlatformDto, CreateLeadFormDto, UpdateLeadFormDto, CreateLeadFormOnMetaDto, RetargetingPresetDto, CreateVariantDto, StudioCreateAudienceDto, StudioLookalikeDto, StudioExclusionPresetDto, ApplyRecommendationDto, GuardrailLinkDto, ClonePlanToAccountDto, UpdateCrossPlatformDraftDto, SnapshotVersionDto, RestoreVersionDto, ApprovalChainDto, CreateSavedViewDto, CreateExperimentDto, CreateFunnelPlanDto, CreateSeriesDto, SeriesActionDto, BudgetSimulatorDto, CompetitorResponseDto } from "./campaigns.dto";
+import { CreatePlanDto, UpdatePlanDto, AddAdSetDto, AddAdDto, UpdateAdSetDto, UpdateAdDto, RejectDto, GenerateCopyDto, GenerateImageDto, GenerateVideoDto, LocalizeAdDto, InstantiateBlueprintDto, CloneBlueprintDto, UpdateBlueprintDto, AssembleCarouselDto, CreatePlanLandingDto, ApplyLandingDto, SuggestPlanDto, CommentDto, ScheduleLaunchDto, CrossPlatformDto, FanoutDto, XDraftStatusDto, XDraftBudgetDto, UtmTemplateDto, CreateLeadFormDto, UpdateLeadFormDto, CreateLeadFormOnMetaDto, RetargetingPresetDto, CreateVariantDto, StudioCreateAudienceDto, StudioLookalikeDto, StudioExclusionPresetDto, ApplyRecommendationDto, BudgetAllocatorProposalDto, BudgetAllocatorApplyDto, PlanScheduleDto, NamingTemplateDto, ApplyNamingDto, BulkPlansDto, GuardrailLinkDto, ClonePlanToAccountDto, UpdateCrossPlatformDraftDto, CrossPlatformDraftLifecycleDto, SnapshotVersionDto, RestoreVersionDto, ApprovalChainDto, CreateSavedViewDto, CreateExperimentDto, CreateFunnelPlanDto, CreateSeriesDto, SeriesActionDto, BudgetSimulatorDto, CompetitorResponseDto, CreateBuilderSignalDto, ImportBuilderSignalDto, DraftFromSignalDto } from "./campaigns.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -47,6 +47,39 @@ export class CampaignsController {
     return this.campaigns.setApprovalChainSetting(orgId, user.userId, dto);
   }
 
+  // Campaign Builder Advanced CA14: server-side bulk
+  // operations (pause/activate/budget/duplicate) with
+  // per-item results — replaces the client-side loop.
+  @Post("bulk") @UseGuards(RolesGuard) @Roles(...WRITE)
+  bulk(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkPlansDto) {
+    return this.campaigns.bulkPlanAction(orgId, user.userId, dto);
+  }
+
+  // Campaign Builder Advanced CA13: the org naming
+  // template (stored on BusinessProfile in Organization
+  // Settings). GET open to members; PATCH OWNER/ADMIN.
+  @Get("settings/naming-template")
+  namingTemplate(@Param("organizationId") orgId: string) { return this.campaigns.getNamingTemplate(orgId); }
+
+  @Patch("settings/naming-template") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  setNamingTemplate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: NamingTemplateDto) {
+    return this.campaigns.setNamingTemplate(orgId, user.userId, dto ?? {});
+  }
+
+  // Campaign Builder Advanced CA11: multi-plan budget
+  // allocator (two segments — never captured by :planId).
+  // Proposal computes from stored rows and applies NOTHING;
+  // apply is the human-confirmed second step.
+  @Post("budget-allocator/proposal") @UseGuards(RolesGuard) @Roles(...WRITE)
+  budgetAllocatorProposal(@Param("organizationId") orgId: string, @Body() dto: BudgetAllocatorProposalDto) {
+    return this.campaigns.budgetAllocatorProposal(orgId, dto);
+  }
+
+  @Post("budget-allocator/apply") @UseGuards(RolesGuard) @Roles(...WRITE)
+  budgetAllocatorApply(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BudgetAllocatorApplyDto) {
+    return this.campaigns.applyBudgetAllocator(orgId, user.userId, dto);
+  }
+
   // Campaign Builder Next CN11: the current user's saved
   // hub views (two segments — never captured by :planId).
   @Get("saved-views/list")
@@ -75,6 +108,41 @@ export class CampaignsController {
   // never captured by the :planId route).
   @Get("lead-forms/list")
   listLeadForms(@Param("organizationId") orgId: string) { return this.campaigns.listLeadForms(orgId); }
+
+  // CA20 (CB5): per-form lead quality from real CRM +
+  // metric rows (static segment — declared before
+  // "lead-forms/:formId" so it is not read as a form id).
+  @Get("lead-forms/quality")
+  leadFormQuality(@Param("organizationId") orgId: string) { return this.campaigns.leadFormQuality(orgId); }
+
+  // CA22 (CB5): the builder inbox — signals (manual or
+  // imported from REAL stored competitor rows) and the
+  // one-click counter-draft (suggestPlan DRAFT only,
+  // never published). Static segments before ":planId".
+  // The automated competitor feed is NOT built (Smart AI
+  // C1–C2 sequence) — the inbox note says so verbatim.
+  @Get("builder-inbox")
+  builderInbox(@Param("organizationId") orgId: string) { return this.campaigns.listBuilderInbox(orgId); }
+
+  @Post("builder-inbox") @UseGuards(RolesGuard) @Roles(...WRITE)
+  createBuilderSignal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateBuilderSignalDto) {
+    return this.campaigns.createBuilderSignal(orgId, user.userId, dto as any);
+  }
+
+  @Post("builder-inbox/import") @UseGuards(RolesGuard) @Roles(...WRITE)
+  importBuilderSignal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ImportBuilderSignalDto) {
+    return this.campaigns.importCompetitorSignal(orgId, user.userId, dto as any);
+  }
+
+  @Post("builder-inbox/:signalId/dismiss") @UseGuards(RolesGuard) @Roles(...WRITE)
+  dismissBuilderSignal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("signalId") signalId: string) {
+    return this.campaigns.dismissBuilderSignal(orgId, user.userId, signalId);
+  }
+
+  @Post("builder-inbox/:signalId/draft") @UseGuards(RolesGuard) @Roles(...WRITE)
+  draftFromSignal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("signalId") signalId: string, @Body() dto: DraftFromSignalDto) {
+    return this.campaigns.draftFromSignal(orgId, user.userId, signalId, dto as any);
+  }
 
   @Post("lead-forms") @UseGuards(RolesGuard) @Roles(...WRITE)
   createLeadForm(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateLeadFormDto) {
@@ -113,6 +181,17 @@ export class CampaignsController {
   // exists. Read-only; same guards as the studio route.
   @Get("audience-sources")
   audienceSources(@Param("organizationId") orgId: string) { return this.campaigns.audienceSourceCatalog(orgId); }
+
+  // CA25: per-asset real past performance for the asset
+  // picker (one segment — declared before ":planId").
+  // Read-only; ad-level metrics only (CA7 honesty rule).
+  @Get("asset-performance")
+  assetPerformance(@Param("organizationId") orgId: string) { return this.campaigns.assetPerformance(orgId); }
+
+  // CA27: org-level winner-trait facts (read-only; one
+  // segment — declared before ":planId").
+  @Get("winner-traits")
+  winnerTraits(@Param("organizationId") orgId: string) { return this.campaigns.winnerTraits(orgId); }
 
   @Get(":planId")
   get(@Param("organizationId") orgId: string, @Param("planId") id: string) { return this.campaigns.getPlan(orgId, id); }
@@ -156,11 +235,53 @@ export class CampaignsController {
     return this.campaigns.duplicateAd(orgId, id, adId, user.userId);
   }
 
+  // Campaign Builder Advanced CA4: per-ad copy localization
+  // (bn ↔ en) — numbers locked to the source, real LLM only.
+  @Post(":planId/ads/:adId/localize") @UseGuards(RolesGuard) @Roles(...WRITE)
+  localizeAd(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string, @Body() dto: LocalizeAdDto) {
+    return this.campaigns.localizeAdCopy(orgId, user.userId, id, adId, dto);
+  }
+
   // Campaign Builder Next CN5: variant of an ad carrying a
   // chosen creative-library / social-library asset.
   @Post(":planId/ads/:adId/variant") @UseGuards(RolesGuard) @Roles(...WRITE)
   createVariant(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string, @Body() dto: CreateVariantDto) {
     return this.campaigns.createAdVariant(orgId, id, adId, user.userId, dto);
+  }
+
+  // CA27: per-ad version history — list, diff vs current,
+  // restore (restore appends a pre-restore version first).
+  @Get(":planId/ads/:adId/versions")
+  adVersions(@Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string) {
+    return this.campaigns.adVersions(orgId, id, adId);
+  }
+  @Get(":planId/ads/:adId/versions/:versionId/diff")
+  adVersionDiff(@Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string, @Param("versionId") versionId: string) {
+    return this.campaigns.adVersionDiff(orgId, id, adId, versionId);
+  }
+  @Post(":planId/ads/:adId/versions/:versionId/restore") @UseGuards(RolesGuard) @Roles(...WRITE)
+  restoreAdVersion(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string, @Param("versionId") versionId: string) {
+    return this.campaigns.restoreAdVersion(orgId, id, adId, user.userId, versionId);
+  }
+  // CA28: create an EC13 landing page from the plan's
+  // product (LandingsService owns slug/status rules);
+  // applying its URL to an ad is a separate confirmed
+  // step, published landings only.
+  @Post(":planId/landing") @UseGuards(RolesGuard) @Roles(...WRITE)
+  createPlanLanding(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: CreatePlanLandingDto) {
+    return this.campaigns.createPlanLanding(orgId, user.userId, id, dto ?? {});
+  }
+  @Post(":planId/ads/:adId/apply-landing") @UseGuards(RolesGuard) @Roles(...WRITE)
+  applyLanding(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string, @Body() dto: ApplyLandingDto) {
+    return this.campaigns.applyLandingToAd(orgId, user.userId, id, adId, dto.landingId);
+  }
+
+  // CA27: assemble carousel cards from a product set's
+  // real products (manual cards preserved unless the
+  // caller explicitly replaces).
+  @Post(":planId/ads/:adId/assemble-carousel") @UseGuards(RolesGuard) @Roles(...WRITE)
+  assembleCarousel(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string, @Body() dto: AssembleCarouselDto) {
+    return this.campaigns.assembleCatalogCarousel(orgId, user.userId, id, adId, dto ?? {});
   }
 
   // Campaign Builder Next CN6: Audience Studio (inside an
@@ -237,8 +358,8 @@ export class CampaignsController {
   }
 
   @Post(":planId/creative-health")
-  creativeHealth(@Param("organizationId") orgId: string, @Param("planId") id: string) {
-    return this.campaigns.creativeHealth(orgId, id);
+  creativeHealth(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.creativeHealth(orgId, id, user.userId);
   }
 
   // Campaign Builder CB4: comments, timeline, snapshot.
@@ -310,6 +431,23 @@ export class CampaignsController {
     return this.campaigns.planPacing(orgId, id);
   }
 
+  // CA18 (CB5): the plan's pacing alerts (raised by the
+  // per-org pacing_alert_sweep job) + the stated
+  // thresholds behind them.
+  @Get(":planId/pacing-alerts")
+  pacingAlerts(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.listPlanPacingAlerts(orgId, id);
+  }
+
+  // CA21 (CB5): COD return-adjusted ROAS beside the raw
+  // figure — real orders only, via the two real linkages
+  // (attribution credits / AB7 utm stamps); the scope and
+  // definitions ride the payload verbatim.
+  @Get(":planId/adjusted-roas")
+  adjustedRoas(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.planAdjustedRoas(orgId, id);
+  }
+
   // Campaign Builder Next CN8: portfolio + account health
   // (two segments — never captured by the :planId route).
   @Get("portfolio/totals")
@@ -332,6 +470,38 @@ export class CampaignsController {
   @Get(":planId/creative-insights")
   creativeInsights(@Param("organizationId") orgId: string, @Param("planId") id: string) {
     return this.campaigns.planCreativeInsights(orgId, id);
+  }
+
+  // Campaign Builder Advanced CA9: per-plan region
+  // performance + the one-click top-region draft ad set.
+  @Get(":planId/region-performance")
+  regionPerformance(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.planRegionPerformance(orgId, id);
+  }
+
+  @Post(":planId/region-ad-set") @UseGuards(RolesGuard) @Roles(...WRITE)
+  regionAdSet(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: { sourceAdSetId: string; topN?: number }) {
+    return this.campaigns.createRegionAdSetDraft(orgId, user.userId, id, dto);
+  }
+
+  // Campaign Builder Advanced CA19 (CB5): geo holdout
+  // DEFINITION + observational measurement. Spike verdict:
+  // a Meta Ad Study cannot split by geography, so nothing
+  // here creates a study or changes delivery — see
+  // CampaignsService HOLDOUT_METHOD.
+  @Get(":planId/geo-holdout")
+  geoHoldout(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.getGeoHoldout(orgId, id);
+  }
+
+  @Post(":planId/geo-holdout") @UseGuards(RolesGuard) @Roles(...WRITE)
+  createGeoHoldout(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: { testRegions?: unknown; holdoutRegions?: unknown; startsAt?: string; endsAt?: string; note?: string }) {
+    return this.campaigns.createGeoHoldout(orgId, user.userId, id, dto);
+  }
+
+  @Post(":planId/geo-holdout/:holdoutId/end") @UseGuards(RolesGuard) @Roles(...WRITE)
+  endGeoHoldout(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("holdoutId") holdoutId: string) {
+    return this.campaigns.endGeoHoldout(orgId, user.userId, id, holdoutId);
   }
 
   @Get(":planId/recommendations")
@@ -396,6 +566,26 @@ export class CampaignsController {
     return this.campaigns.syncCrossPlatformDraftStatus(orgId, id, draftId);
   }
 
+  // OU4: provider pause/resume for a created draft (WRITE
+  // roles, mirroring the publish route above).
+  @Post(":planId/xdrafts/:draftId/lifecycle") @UseGuards(RolesGuard) @Roles(...WRITE)
+  xDraftLifecycle(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("draftId") draftId: string, @Body() dto: CrossPlatformDraftLifecycleDto) {
+    return this.campaigns.setCrossPlatformDraftLifecycle(orgId, user.userId, id, draftId, dto.action);
+  }
+
+  // Campaign Builder Advanced CA16 (CB4): post-publish
+  // control of a created draft — platform-confirmed
+  // status + budget changes (Meta-parity treatment).
+  @Post(":planId/xdrafts/:draftId/set-status") @UseGuards(RolesGuard) @Roles(...WRITE)
+  setXDraftStatus(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("draftId") draftId: string, @Body() dto: XDraftStatusDto) {
+    return this.campaigns.setCrossPlatformDraftStatus(orgId, user.userId, id, draftId, dto.target as "ACTIVE" | "PAUSED");
+  }
+
+  @Post(":planId/xdrafts/:draftId/budget") @UseGuards(RolesGuard) @Roles(...WRITE)
+  setXDraftBudget(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("draftId") draftId: string, @Body() dto: XDraftBudgetDto) {
+    return this.campaigns.updateCrossPlatformDraftBudget(orgId, user.userId, id, draftId, dto.dailyBudget);
+  }
+
   @Post(":planId/promote-winner") @UseGuards(RolesGuard) @Roles(...WRITE)
   promoteWinner(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string) {
     return this.campaigns.promoteWinner(orgId, id, user.userId);
@@ -406,10 +596,62 @@ export class CampaignsController {
     return this.campaigns.scheduleLaunch(orgId, id, user.userId, dto.publishAt ?? null);
   }
 
+  // Campaign Builder Advanced CA13: naming-template
+  // rename — preview renders the diff, apply renames only
+  // what still matches the fresh render.
+  @Post(":planId/naming/preview")
+  namingPreview(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.previewNamingApply(orgId, id);
+  }
+
+  @Post(":planId/naming/apply") @UseGuards(RolesGuard) @Roles(...WRITE)
+  namingApply(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: ApplyNamingDto) {
+    return this.campaigns.applyNaming(orgId, user.userId, id, dto);
+  }
+
+  // Campaign Builder Advanced CA12: plan-level scheduled
+  // pause/resume window (executed by the per-org
+  // plan_schedule_sweep automation job, default off).
+  @Get(":planId/schedule")
+  planSchedule(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.getPlanSchedule(orgId, id);
+  }
+
+  @Post(":planId/schedule") @UseGuards(RolesGuard) @Roles(...WRITE)
+  setPlanSchedule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: PlanScheduleDto) {
+    return this.campaigns.setPlanSchedule(orgId, user.userId, id, dto ?? {});
+  }
+
   // Campaign Builder CB6: cross-platform draft.
   @Post(":planId/cross-platform") @UseGuards(RolesGuard) @Roles(...WRITE)
   crossPlatform(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: CrossPlatformDto) {
     return this.campaigns.crossPlatformDraft(orgId, id, user.userId, dto);
+  }
+
+  // Campaign Builder Advanced CA17 (CB4): the plan-level
+  // UTM template (null clears back to the defaults).
+  @Get(":planId/utm-template")
+  utmTemplate(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.getPlanUtmTemplate(orgId, id);
+  }
+
+  @Post(":planId/utm-template") @UseGuards(RolesGuard) @Roles(...WRITE)
+  setUtmTemplate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: UtmTemplateDto) {
+    return this.campaigns.setPlanUtmTemplate(orgId, user.userId, id, dto ?? {});
+  }
+
+  // Campaign Builder Advanced CA15 (CB4): one-click
+  // fan-out — preview computes both platforms' mappings
+  // + gaps and creates NOTHING; create runs only on the
+  // user's confirmation and re-maps server-side.
+  @Post(":planId/fanout/preview") @UseGuards(RolesGuard) @Roles(...WRITE)
+  fanoutPreview(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: FanoutDto) {
+    return this.campaigns.fanoutPreview(orgId, id, user.userId, dto);
+  }
+
+  @Post(":planId/fanout") @UseGuards(RolesGuard) @Roles(...WRITE)
+  fanoutCreate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: FanoutDto) {
+    return this.campaigns.fanoutCreate(orgId, id, user.userId, dto);
   }
 
   // Campaign Builder Next CN3: dynamic-retargeting preset
@@ -428,7 +670,15 @@ export class CampaignsController {
 
   @Post(":planId/preflight")
   preflight(@Param("organizationId") orgId: string, @Param("planId") planId: string) {
-    return this.campaigns.preflight(orgId, planId);
+    // CA24: the builder's preflight call includes the
+    // LIVE platform checks (account_status, Page, Pixel).
+    return this.campaigns.preflight(orgId, planId, { includePlatform: true });
+  }
+
+  // CA24: the live platform checks on their own (read-only).
+  @Post(":planId/platform-preflight")
+  platformPreflight(@Param("organizationId") orgId: string, @Param("planId") planId: string) {
+    return this.campaigns.platformPreflight(orgId, planId);
   }
   @Get("ab-tests/list")
   abTests(@Param("organizationId") orgId: string) {
@@ -474,14 +724,45 @@ export class CampaignsController {
   @Get("templates/list")
   templates(@Param("organizationId") orgId: string) { return this.campaigns.listTemplates(orgId); }
   @Get("blueprints/list")
-  blueprints() { return this.campaigns.listBlueprints(); }
+  blueprints(@Param("organizationId") orgId: string) { return this.campaigns.listBlueprints(orgId); }
   @Post("blueprints/instantiate") @UseGuards(RolesGuard) @Roles(...WRITE)
   instantiate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: InstantiateBlueprintDto) {
     return this.campaigns.instantiateBlueprint(orgId, user.userId, dto);
   }
+  // CA26: clone a platform blueprint into an editable
+  // org-owned copy; edit/delete apply to org copies only.
+  @Post("blueprints/clone") @UseGuards(RolesGuard) @Roles(...WRITE)
+  cloneBlueprint(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CloneBlueprintDto) {
+    return this.campaigns.cloneBlueprint(orgId, user.userId, dto.key);
+  }
+  @Patch("blueprints/:blueprintId") @UseGuards(RolesGuard) @Roles(...WRITE)
+  updateBlueprint(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("blueprintId") id: string, @Body() dto: UpdateBlueprintDto) {
+    return this.campaigns.updateOrgBlueprint(orgId, user.userId, id, dto);
+  }
+  @Delete("blueprints/:blueprintId") @UseGuards(RolesGuard) @Roles(...WRITE)
+  deleteBlueprint(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("blueprintId") id: string) {
+    return this.campaigns.deleteOrgBlueprint(orgId, user.userId, id);
+  }
   @Post(":planId/generate-copy") @UseGuards(RolesGuard) @Roles(...WRITE)
   generateCopy(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: GenerateCopyDto) {
     return this.campaigns.generateCopy(orgId, user.userId, id, dto);
+  }
+
+  // Campaign Builder Advanced CA1: AI image generation —
+  // creates a Creative Library asset via the org's real image
+  // provider; honest refusal when none is configured.
+  @Post(":planId/generate-image") @UseGuards(RolesGuard) @Roles(...WRITE)
+  generateImage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: GenerateImageDto) {
+    return this.campaigns.generateImage(orgId, user.userId, id, dto);
+  }
+
+  // Campaign Builder Advanced CA2: AI slideshow video from the
+  // product's own photos — script built under the fact
+  // discipline; honest refusal when ffmpeg/storage/photos are
+  // unavailable.
+  @Post(":planId/generate-video") @UseGuards(RolesGuard) @Roles(...WRITE)
+  generateVideo(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: GenerateVideoDto) {
+    return this.campaigns.generateVideo(orgId, user.userId, id, dto);
   }
 
   // ---------- Frontier NB7: CN15 experiments + CN16 funnel/series ----------

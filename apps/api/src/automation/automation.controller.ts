@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { AutomationService } from "./automation.service";
 import { InventoryAdGuardService } from "./inventory-ad-guard.service";
 import { PredictiveReplenishmentService } from "./predictive-replenishment.service";
-import { CreateJobDto, UpdateJobDto, CreateRuleDto, UpdateRuleDto } from "./automation.dto";
+import { CreateJobDto, UpdateJobDto, CreateRuleDto, UpdateRuleDto, RejectSuggestionDto } from "./automation.dto";
 import { ConfigureProductCycleDto, SendReplenishmentReminderDto, MarkReorderedDto } from "./predictive-replenishment.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -56,6 +56,22 @@ export class AutomationController {
   @Post("rules/evaluate") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   evaluate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
     return this.automation.evaluateRules(orgId, user.userId);
+  }
+
+  // CA10: the suggest-mode approval queue. Approving
+  // executes the stored action exactly once through the
+  // same paths execute mode uses; rejecting never executes.
+  @Get("suggestions")
+  listSuggestions(@Param("organizationId") orgId: string, @Query("status") status?: string) {
+    return this.automation.listSuggestions(orgId, status);
+  }
+  @Post("suggestions/:suggestionId/approve") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  approveSuggestion(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("suggestionId") suggestionId: string) {
+    return this.automation.approveSuggestion(orgId, user.userId, suggestionId);
+  }
+  @Post("suggestions/:suggestionId/reject") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  rejectSuggestion(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("suggestionId") suggestionId: string, @Body() dto: RejectSuggestionDto) {
+    return this.automation.rejectSuggestion(orgId, user.userId, suggestionId, dto?.reason);
   }
   @Get("runs")
   runs(@Param("organizationId") orgId: string) { return this.automation.listRuns(orgId); }

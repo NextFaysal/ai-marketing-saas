@@ -732,6 +732,25 @@ ${pageCss}
       </div>
       {syncError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{syncError}</p> : null}
 
+      {/* AB4: connection + outbox strip */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-2.5 text-sm">
+        {online ? (
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">🟢 অনলাইন</span>
+        ) : (
+          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">🔴 অফলাইন</span>
+        )}
+        <span className="text-slate-600">সিঙ্ক বাকি: <strong>{outbox.length}টি</strong> অফলাইন বিক্রি</span>
+        <button
+          type="button"
+          className="btn-primary ml-auto px-3 py-1.5 text-xs"
+          disabled={!online || syncing || outbox.length === 0}
+          onClick={syncOutbox}
+        >
+          {syncing ? "সিঙ্ক হচ্ছে…" : "🔄 সিঙ্ক করুন"}
+        </button>
+      </div>
+      {syncError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{syncError}</p> : null}
+
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* ---------- left: search + results ---------- */}
         <section className="space-y-4">

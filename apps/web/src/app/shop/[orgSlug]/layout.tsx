@@ -21,7 +21,7 @@ import { ShopInstallBar } from "./ShopInstallBar";
 // ED6: ShopPopup + ShopSocialProof load via this client wrapper's
 // next/dynamic (ssr:false) — both render nothing until their
 // client-side triggers fire, so their chunks leave the first load.
-import { ShopPopupDeferred, ShopSocialProofDeferred } from "./ShopDeferredOverlays";
+import { ShopPopupDeferred, ShopPromotionsDeferred, ShopSocialProofDeferred } from "./ShopDeferredOverlays";
 
 export async function generateMetadata({
   params,
@@ -145,6 +145,9 @@ export default async function ShopLayout({
       <AttributionCapture />
       {/* ED6: popup deferred (renders nothing until its trigger). */}
       <ShopPopupDeferred orgSlug={orgSlug} locale={locale} />
+      {/* NF6: gamified promotions overlay (same placement/trigger
+          machinery as the popup; overlay-queue slot "promo"). */}
+      <ShopPromotionsDeferred orgSlug={orgSlug} />
       {/* AB7 (AX16): push prompt (shop-scoped worker) + AX17 social proof. */}
       <ShopPushPrompt orgSlug={orgSlug} />
       {/* AB8 (AX22): per-shop install bar (rides the stashed

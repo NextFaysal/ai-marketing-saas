@@ -38,7 +38,7 @@ function PlatformChip({ platform }: { platform?: string | null }) {
 const TOGGLE_CLS = "h-4 w-4 shrink-0 accent-[var(--brand-from)]";
 
 export function SettingsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, requireClientApproval, saveRequireClientApproval, telegramTokenInput, setTelegramTokenInput, telegramChannelInput, setTelegramChannelInput, showTelegramConnect, setShowTelegramConnect, connectTelegram, } = c;
+  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, requireClientApproval, saveRequireClientApproval, telegramTokenInput, setTelegramTokenInput, telegramChannelInput, setTelegramChannelInput, showTelegramConnect, setShowTelegramConnect, connectTelegram, gbpPick, setGbpPick, selectGoogleBusinessLocation, } = c;
   return (
 <>
       {/* Accounts strip — SD7: section card */}
@@ -66,6 +66,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
               title={platformModes && !platformModes.threads?.configured ? "Threads app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
               onClick={() => connectOAuth("threads")}>
               {busy === "connect-threads" ? "Threads-এ যাচ্ছে..." : "🧵 Threads যুক্ত করুন"}
+            </button>
+            <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== "" || platformModes?.googleBusinessProfile?.configured === false}
+              title={platformModes && !platformModes.googleBusinessProfile?.configured ? "Google app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
+              onClick={() => connectOAuth("google_business_profile")}>
+              {busy === "connect-google_business_profile" ? "Google-এ যাচ্ছে..." : "📍 Google Business Profile যুক্ত করুন"}
             </button>
           </div>
         </div>
@@ -101,6 +106,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
             {!platformModes.threads?.configured ? "Threads: Operator এখনো Threads app configure করেননি — প্ল্যাটফর্ম app দিয়ে Connect করা যাচ্ছে না (নিজের Threads app দিয়ে করা যায়: কানেক্ট সেন্টার → নিজের অ্যাপ)।" : null}
           </p>
         ) : null}
+        {platformModes?.googleBusinessProfile && !platformModes.googleBusinessProfile.apiAccessApproved ? (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+            📍 Google Business Profile: <strong>Google Business Profile API access is not yet approved for this platform&apos;s Google project</strong> — প্ল্যাটফর্মের Google প্রজেক্টের জন্য GBP API-এর অনুমোদন এখনো পাওয়া যায়নি। Location যুক্ত করা গেলেও, Operator অনুমোদন ঘোষণা না করা পর্যন্ত কোনো GBP পোস্ট প্রকাশ করা যাবে না — প্রকাশের চেষ্টা এই কারণ দেখিয়েই ব্যর্থ হবে, কিছুই Google-এ যাবে না।
+          </p>
+        ) : null}
         {youtubePick ? (
           <div className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
             <div className="text-sm font-semibold text-indigo-900">▶️ কোন YouTube Channelটি যুক্ত করবেন?</div>
@@ -126,6 +136,24 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
               </div>
             ))}
             <button className="text-xs font-semibold text-slate-500 underline" disabled={busy !== ""} onClick={() => setYoutubePick(null)}>বাতিল করুন</button>
+          </div>
+        ) : null}
+        {gbpPick ? (
+          <div className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+            <div className="text-sm font-semibold text-indigo-900">📍 কোন Google Business Profile Locationটি যুক্ত করবেন?</div>
+            <p className="text-xs text-indigo-700">আপনার Google অ্যাকাউন্টে একাধিক Location আছে — যেটিতে পোস্ট যাবে সেটি বেছে নিন। (এই পছন্দের লিংকটি ১০ মিনিটের মধ্যে মেয়াদোত্তীর্ণ হবে।)</p>
+            {gbpPick.locations.length === 0 ? (
+              <p className="text-xs text-indigo-700">Location তালিকা লোড হচ্ছে…</p>
+            ) : gbpPick.locations.map((l) => (
+              <div key={l.id} className="flex items-center gap-3 rounded-lg bg-white p-2.5">
+                <AccountAvatar name={l.title} platform="google_business_profile" size="lg" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{l.title}{l.accountLabel ? <span className="text-xs text-slate-400"> — {l.accountLabel}</span> : null}</span>
+                <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => selectGoogleBusinessLocation(l.id)}>
+                  {busy === `gbp-pick-${l.id}` ? "যুক্ত হচ্ছে..." : "এই Location যুক্ত করুন"}
+                </button>
+              </div>
+            ))}
+            <button className="text-xs font-semibold text-slate-500 underline" disabled={busy !== ""} onClick={() => setGbpPick(null)}>বাতিল করুন</button>
           </div>
         ) : null}
         {accounts.length === 0 ? (
@@ -169,6 +197,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                   {a.platform === "threads" ? (
                     <div className="mt-1 text-xs text-slate-500">
                       পোস্ট Threads-এ সরাসরি প্রকাশিত হয় (Container flow)। সৎ সীমা: প্রোডাকশনে প্রকাশের জন্য Operator-এর Threads app-এ Meta-র App Review (Advanced Access) লাগতে পারে — না থাকলে Meta শুধু app-role থাকা অ্যাকাউন্টে অনুমতি দেয়, আর প্রত্যাখ্যান এলে Meta-র আসল বার্তাটাই দেখা যাবে।
+                    </div>
+                  ) : null}
+                  {a.platform === "google_business_profile" ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      পোস্ট এই Location-এর Google Business Profile-এ Local Post হিসেবে যায় (লেখা + সর্বোচ্চ একটি ছবি + লিংক)। সৎ সীমা: প্রকাশের জন্য প্ল্যাটফর্মের Google প্রজেক্টে Google-এর GBP API access অনুমোদন লাগে{platformModes?.googleBusinessProfile && !platformModes.googleBusinessProfile.apiAccessApproved ? " — সেটি এখনো অনুমোদিত নয়, তাই প্রকাশ এখন এই কারণ দেখিয়ে ব্যর্থ হবে" : ""}। Review পড়া/উত্তর দেওয়া এই সংস্করণে নেই।
                     </div>
                   ) : null}
                   {a.lastError ? (

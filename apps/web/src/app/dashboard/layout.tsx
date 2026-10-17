@@ -7,7 +7,7 @@ import { SkipLink } from "@repo/ui";
 import { ToastProvider, ConfirmProvider, PromptProvider } from "@repo/ui/client";
 import {
   CalendarDays, Clock, Eye, FlaskConical, LogOut, Mail, Megaphone, Menu,
-  OctagonX, Search, UserRound, Wrench, X,
+  OctagonX, Search, ShieldCheck, UserRound, Wrench, X,
 } from "lucide-react";
 import { InstallButton } from "@/components/pwa";
 import { RouteProgress } from "@/components/route-progress";
@@ -22,6 +22,8 @@ import { GlobalAssistant } from "@/components/global-assistant";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
+import { orgArchived, orgSuspended, type SwitcherOrg } from "@/lib/org-switcher";
+import OrgSwitcher from "./OrgSwitcher";
 
 interface NavGroup {
   id: string;
@@ -35,7 +37,7 @@ const GROUPS: NavGroup[] = [
     id: "core",
     title: "সারসংক্ষেপ ও AI",
     icon: "groupCore",
-    hrefs: ["/dashboard", "/dashboard/ai", "/dashboard/reports", "/dashboard/portfolio"],
+    hrefs: ["/dashboard", "/dashboard/ai", "/dashboard/reports", "/dashboard/portfolio", "/dashboard/agency"],
   },
   {
     id: "commerce",
@@ -55,7 +57,7 @@ const GROUPS: NavGroup[] = [
     id: "marketing",
     title: "বিজ্ঞাপন ও ক্যাম্পেইন",
     icon: "groupMarketing",
-    hrefs: ["/dashboard/campaigns", "/dashboard/campaign-builder", "/dashboard/ad-accounts", "/dashboard/social-posts", "/dashboard/creatives", "/dashboard/creative-studio", "/dashboard/audiences", "/dashboard/analytics", "/dashboard/competitors"],
+    hrefs: ["/dashboard/campaigns", "/dashboard/campaign-builder", "/dashboard/ad-accounts", "/dashboard/social-posts", "/dashboard/creatives", "/dashboard/creative-studio", "/dashboard/video-studio", "/dashboard/audiences", "/dashboard/analytics", "/dashboard/competitors"],
   },
   {
     id: "crm",
@@ -483,6 +485,241 @@ function SubscriptionBanner() {
   return null;
 }
 
+/**
+ * ORG3/ORG4 (Organization Next OB1): when the CURRENT org is
+ * platform-suspended or owner-archived, TenantGuard refuses its
+ * org APIs — rendering the normal pages would only produce error
+ * noise. This gate reads listMine (GET /organizations — NOT
+ * org-scoped, so it answers in both states) and swaps the page
+ * for a plain-language explanation instead. No internal platform
+ * reason is ever exposed here (owner decision D5 default: a
+ * tenant-safe summary only). Fail-open: any fetch trouble
+ * renders the children untouched.
+ */
+function OrgStateGate({ children }: { children: React.ReactNode }) {
+  const [gate, setGate] = useState<"loading" | "open" | "suspended" | "archived" | "mfa" | "session">("loading");
+  const [org, setOrg] = useState<SwitcherOrg | null>(null);
+  const [supportContact, setSupportContact] = useState("");
+  const [busy, setBusy] = useState("");
+  const [gateError, setGateError] = useState("");
+  const [exportsList, setExportsList] = useState<{ id: string; status: string; createdAt: string }[]>([]);
+
+  const pathname = usePathname() ?? "";
+  const isOwner = org?.myRole === "OWNER";
+
+  useEffect(() => {
+    let alive = true;
+    const id = getOrganizationId();
+    if (!id) { setGate("open"); return; }
+    apiFetch<SwitcherOrg[]>("/organizations")
+      .then((rows) => {
+        if (!alive) return;
+        const mine = (Array.isArray(rows) ? rows : []).find((o) => o.id === id) ?? null;
+        setOrg(mine);
+        if (mine && orgSuspended(mine)) { setGate("suspended"); return; }
+        if (mine && orgArchived(mine)) { setGate("archived"); return; }
+        // ORG11 (OB4): an open org can still block THIS member —
+        // its security policy (MFA requirement / session-age cap)
+        // is enforced per request by TenantGuard. Probe the
+        // policy read (deliberately allowlisted, so it answers
+        // while blocked) and show the matching plain-language
+        // screen instead of a page full of 403s. Fail-open: any
+        // probe trouble renders the children untouched.
+        apiFetch<{ myMfaBlocked?: boolean; mySessionBlocked?: boolean }>(`/organizations/${id}/security-policy`)
+          .then((pol) => {
+            if (!alive) return;
+            if (pol?.myMfaBlocked) setGate("mfa");
+            else if (pol?.mySessionBlocked) setGate("session");
+            else setGate("open");
+          })
+          .catch(() => { if (alive) setGate("open"); });
+      })
+      .catch(() => { if (alive) setGate("open"); });
+    fetch(`${API_URL}/public/system-status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive && j?.supportContact) setSupportContact(String(j.supportContact)); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
+
+  const loadExports = React.useCallback(async () => {
+    const id = getOrganizationId(); if (!id) return;
+    try {
+      const j: any = await apiFetch<any>(`/organizations/${id}/data-exports`);
+      const rows = (Array.isArray(j) ? j : j?.exports ?? j?.items ?? []) as { id: string; status: string; createdAt: string }[];
+      setExportsList(rows);
+    } catch { /* export list is a convenience here — the Settings data card is the full surface */ }
+  }, []);
+
+  useEffect(() => { if (gate === "archived" && isOwner) void loadExports(); }, [gate, isOwner, loadExports]);
+
+  async function restore() {
+    const id = getOrganizationId(); if (!id) return;
+    setBusy("restore"); setGateError("");
+    try {
+      await apiFetch(`/organizations/${id}/restore`, { method: "POST" });
+      window.location.reload();
+    } catch (e) { setGateError(e instanceof Error ? e.message : "Restore করা যায়নি"); setBusy(""); }
+  }
+
+  async function createExport() {
+    const id = getOrganizationId(); if (!id) return;
+    setBusy("export"); setGateError("");
+    try {
+      await apiFetch(`/organizations/${id}/data-exports`, { method: "POST" });
+      await loadExports();
+    } catch (e) { setGateError(e instanceof Error ? e.message : "এক্সপোর্ট শুরু করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function downloadExport(row: { id: string }) {
+    const id = getOrganizationId(); if (!id) return;
+    setBusy(`dl-${row.id}`); setGateError("");
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_URL}/organizations/${id}/data-exports/${row.id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("ডাউনলোড করা যায়নি — এক্সপোর্টটির মেয়াদ শেষ হয়ে থাকতে পারে।");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `org-export-${row.id}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) { setGateError(e instanceof Error ? e.message : "ডাউনলোড করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  // The cross-org portfolio summary is not org-scoped work —
+  // it stays reachable so a user with one stopped org can still
+  // see (and switch away from) their other organizations.
+  if (pathname.startsWith("/dashboard/portfolio")) return <>{children}</>;
+  if (gate === "loading") {
+    return <p className="py-10 text-center text-sm text-slate-400">লোড হচ্ছে…</p>;
+  }
+  if (gate === "open" || !org) return <>{children}</>;
+
+  if (gate === "suspended") {
+    const deleted = org.status === "DELETED";
+    return (
+      <div className="mx-auto max-w-xl py-10">
+        <div className="card space-y-4 p-6 text-center sm:p-8">
+          <div className="flex justify-center"><OctagonX className="h-11 w-11 text-rose-500" /></div>
+          <h1 className="text-lg font-bold text-slate-900">
+            {deleted ? "এই Organization টি বন্ধ করে দেওয়া হয়েছে" : "এই Organization টি সাময়িকভাবে স্থগিত আছে"}
+          </h1>
+          <p className="text-sm leading-relaxed text-slate-600">
+            প্ল্যাটফর্ম টিম <b>{org.name}</b>-এর কাজ আপাতত বন্ধ রেখেছে, তাই এই ওয়ার্কস্পেসে এখন ঢোকা যাচ্ছে না।
+            আপনার সব তথ্য (পণ্য, অর্ডার, গ্রাহক, হিসাব) <b>নিরাপদে সংরক্ষিত আছে — কিছুই মোছা হয়নি</b>।
+            {deleted ? " পুনরায় চালুর বিষয়ে সিদ্ধান্ত প্ল্যাটফর্ম টিমের।" : " স্থগিত অবস্থা উঠলেই সব আবার আগের মতো চলবে।"}
+          </p>
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            ভুল হয়েছে মনে হলে বা বিস্তারিত জানতে সাপোর্টে যোগাযোগ করুন
+            {supportContact ? <> — <b>{supportContact}</b></> : null}।
+          </p>
+          <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন।</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (gate === "mfa") {
+    return (
+      <div className="mx-auto max-w-xl py-10">
+        <div className="card space-y-4 p-6 text-center sm:p-8">
+          <div className="flex justify-center"><ShieldCheck className="h-11 w-11 text-sky-500" /></div>
+          <h1 className="text-lg font-bold text-slate-900">এই Organization-এ MFA (2FA) বাধ্যতামূলক</h1>
+          <p className="text-sm leading-relaxed text-slate-600">
+            <b>{org.name}</b>-এর নিরাপত্তা নীতি বলছে: যার অ্যাকাউন্টে দ্বি-স্তর যাচাই (2FA) চালু নেই,
+            সে এই Organization-এ কাজ করতে পারবে না। আপনার অ্যাকাউন্টে এখনো 2FA চালু হয়নি —
+            চালু করলেই এই Organization আবার খুলে যাবে, কোনো তথ্য হারাবে না।
+          </p>
+          <a className="btn-primary inline-block min-h-[44px] px-5 leading-[44px]" href="/dashboard/settings#hub-my-security">
+            🔐 এখনই 2FA চালু করুন
+          </a>
+          <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন — এই নিয়ম শুধু এই Organization-এর জন্যই।</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (gate === "session") {
+    return (
+      <div className="mx-auto max-w-xl py-10">
+        <div className="card space-y-4 p-6 text-center sm:p-8">
+          <div className="flex justify-center"><Clock className="h-11 w-11 text-sky-500" /></div>
+          <h1 className="text-lg font-bold text-slate-900">আপনার লগইন-সেশনটি এই Organization-এর জন্য মেয়াদোত্তীর্ণ</h1>
+          <p className="text-sm leading-relaxed text-slate-600">
+            <b>{org.name}</b>-এর নিরাপত্তা নীতিতে লগইন-সেশনের সর্বোচ্চ বয়স বেঁধে দেওয়া আছে, আর আপনার
+            বর্তমান সেশন তার চেয়ে পুরনো। একবার লগআউট করে আবার লগইন করলেই এই Organization আবার খুলে যাবে।
+          </p>
+          <button
+            type="button"
+            className="btn-primary min-h-[44px] px-5"
+            onClick={() => { localStorage.clear(); window.location.href = "/login"; }}
+          >
+            🔁 লগআউট করে আবার লগইন করুন
+          </button>
+          <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন — এই নিয়ম শুধু এই Organization-এর জন্যই।</p>
+        </div>
+      </div>
+    );
+  }
+
+  // gate === "archived"
+  return (
+    <div className="mx-auto max-w-xl py-10">
+      <div className="card space-y-4 p-6 text-center sm:p-8">
+        <div className="flex justify-center"><Clock className="h-11 w-11 text-amber-500" /></div>
+        <h1 className="text-lg font-bold text-slate-900">এই Organization টি আর্কাইভ করা আছে</h1>
+        <p className="text-sm leading-relaxed text-slate-600">
+          <b>{org.name}</b>-এর মালিক কাজ সাময়িকভাবে বন্ধ রেখেছেন (আর্কাইভ)। সব তথ্য অক্ষত আছে —
+          {isOwner
+            ? " Restore করলেই আপনি ও আপনার টিম আবার কাজ শুরু করতে পারবেন।"
+            : " মালিক Restore করলে আবার ঢুকতে পারবেন।"}
+        </p>
+        {org.archivedAt ? (
+          <p className="text-xs text-slate-400">আর্কাইভ করা হয়েছে: {new Date(org.archivedAt).toLocaleString("bn-BD")}</p>
+        ) : null}
+        {gateError ? <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{gateError}</div> : null}
+        {isOwner ? (
+          <div className="space-y-4 text-left">
+            <button className="btn-primary min-h-[44px] w-full" disabled={busy !== ""} onClick={restore}>
+              {busy === "restore" ? "অপেক্ষা করুন…" : "♻️ Restore করুন — আবার চালু করুন"}
+            </button>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <h2 className="mb-1 text-sm font-semibold text-slate-800">ডেটা এক্সপোর্ট</h2>
+              <p className="mb-3 text-xs leading-relaxed text-slate-500">আর্কাইভ থাকা অবস্থাতেও প্রতিষ্ঠানের পুরো ডেটা এক্সপোর্ট করে ডাউনলোড করতে পারবেন।</p>
+              <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={createExport}>
+                {busy === "export" ? "অনুরোধ হচ্ছে…" : "এখনই এক্সপোর্ট করুন"}
+              </button>
+              {exportsList.length ? (
+                <ul className="mt-3 space-y-1.5">
+                  {exportsList.map((row) => (
+                    <li key={row.id} className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-100">
+                      <span className="text-slate-600">
+                        {new Date(row.createdAt).toLocaleString("bn-BD")}
+                        <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${row.status === "ready" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{row.status}</span>
+                      </span>
+                      {row.status === "ready" ? (
+                        <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => downloadExport(row)}>
+                          {busy === `dl-${row.id}` ? "হচ্ছে…" : "ডাউনলোড"}
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন।</p>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? "/dashboard";
@@ -791,6 +1028,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             {/* Topbar Right Utilities */}
             <div className="ml-auto flex items-center gap-2 sm:gap-2.5">
+              {/* OU1: Organization switcher — active memberships,
+                  honest full-reload switching, create + portfolio. */}
+              <OrgSwitcher />
               <InstallButton />
               {/* ED17 (EB7): dark-mode toggle (সিস্টেম/লাইট/ডার্ক). */}
               <ThemeToggle />
@@ -872,7 +1112,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             6px rise the tailwind animate-rise produced; one
             animation, not two). */}
         <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1440px] flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-8 animate-rise-in">
-          {children}
+          <OrgStateGate>{children}</OrgStateGate>
         </main>
 
         {/* Mobile bottom nav spacer */}

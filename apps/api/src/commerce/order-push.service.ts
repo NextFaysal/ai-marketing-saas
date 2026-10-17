@@ -227,12 +227,30 @@ export class OrderPushService {
         .slice(0, 10)
         .map((r: any) => ({ id: r.id, operation: r.operation, status: r.status, lastError: r.lastError ?? null, createdAt: r.createdAt }));
     } catch { recent = []; }
+    // NF7: the refund-to-credit gate for THIS order, computed
+    // with the same rule StoreCreditService enforces (the API
+    // stays the authority — it re-checks and refuses): the
+    // order's store flag, or — for native orders with no linked
+    // store — any store of the org having it on. The orders UI
+    // renders the credit option only when this is true.
+    let refundToCreditEnabled = false;
+    try {
+      if (store) {
+        refundToCreditEnabled = store.refundToCreditEnabled === true;
+      } else {
+        const stores: any[] =
+          (await (this.prisma as any).store.findMany({ where: { organizationId } }).catch(() => [])) ?? [];
+        refundToCreditEnabled = stores.some((s: any) => s.refundToCreditEnabled === true);
+      }
+    } catch { refundToCreditEnabled = false; }
     return {
       orderId,
+      refundToCreditEnabled,
       store: store ? {
         id: store.id, name: store.name, platform: store.platform,
         syncMode: store.syncMode ?? "mirror",
         refundPushEnabled: store.refundPushEnabled === true,
+        refundToCreditEnabled: store.refundToCreditEnabled === true,
         courierTrackingMetaKey: store.courierTrackingMetaKey ?? null,
       } : null,
       storeSyncStatus: order.storeSyncStatus ?? null,

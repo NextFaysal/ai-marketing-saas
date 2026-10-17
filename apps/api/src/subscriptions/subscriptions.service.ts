@@ -8,7 +8,16 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
-import type { CreateSubscriptionDto } from "./subscriptions.dto";
+import { AUTO_CHARGE_CONSENT_METHODS, type AutoChargeConsentDto, type CreateSubscriptionDto } from "./subscriptions.dto";
+
+/**
+ * OU12 — the honest auto-charge state label. A subscription with
+ * recorded consent is "auto-charge READY" only: charging is NOT
+ * active, because no shop tokenized charge path exists in-repo
+ * (Step-0 evidence in docs/one-umbrella-ou12-section.md). This
+ * label is the ONLY claim any surface may make from consent.
+ */
+export const AUTO_CHARGE_READY_LABEL = "auto-charge ready — চার্জিং এখনো চালু নয়";
 
 /**
  * EC24c — Customer subscriptions (staff-created ONLY in v1).
@@ -25,6 +34,16 @@ import type { CreateSubscriptionDto } from "./subscriptions.dto";
  * Price/discount are SNAPSHOTS taken at creation: later product
  * price changes never alter an existing subscription's renewal
  * amounts.
+ *
+ * OU12 adds CONSENT CAPTURE ONLY: staff may record the
+ * customer's consent to future tokenized auto-charge (server
+ * timestamp + method + note), at creation or later. Consent
+ * changes NOTHING about charging — the sweep below never reads
+ * the consent fields, never attempts a gateway charge, and
+ * renewal orders stay COD/unpaid exactly as before. See
+ * docs/one-umbrella-ou12-section.md for the Step-0 evidence
+ * (the one integrated tokenized charge path in-repo is bound
+ * to platform billing, not to tenant/shop payments).
  */
 @Injectable()
 export class SubscriptionsService {
@@ -42,13 +61,50 @@ export class SubscriptionsService {
 
   private serialize(s: any) {
     if (!s) return s;
+    const consentGiven = Boolean(s.autoChargeConsentAt);
     return {
       ...s,
       unitPriceMinor: s.unitPriceMinor != null ? String(s.unitPriceMinor) : null,
       nextRunAt: s.nextRunAt ? new Date(s.nextRunAt).toISOString() : null,
       createdAt: s.createdAt ? new Date(s.createdAt).toISOString() : null,
       updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
+      autoChargeConsentAt: s.autoChargeConsentAt ? new Date(s.autoChargeConsentAt).toISOString() : null,
+      // OU12 derived view: `chargingActive` is ALWAYS false in
+      // this codebase — consent is a record, never a claim that
+      // a charge will happen.
+      autoCharge: {
+        consentGiven,
+        consentAt: s.autoChargeConsentAt ? new Date(s.autoChargeConsentAt).toISOString() : null,
+        method: s.autoChargeConsentMethod ?? null,
+        chargingActive: false as const,
+        statusLabel: consentGiven ? AUTO_CHARGE_READY_LABEL : ("no_consent" as const),
+      },
     };
+  }
+
+  /**
+   * OU12 consent resolution, shared by create + the consent
+   * endpoint. Rules:
+   *  - given !== true → all three fields NULL; a method/note
+   *    supplied WITHOUT given=true is contradictory input and
+   *    is refused (never silently stored, never silently kept).
+   *  - given === true → a valid method is REQUIRED (a consent
+   *    with no recorded method is not a recordable consent);
+   *    the timestamp is the SERVER's now, never client input.
+   */
+  private resolveConsent(dto: { autoChargeConsentGiven?: boolean; autoChargeConsentMethod?: string; autoChargeConsentNote?: string }) {
+    const method = dto.autoChargeConsentMethod?.trim() || undefined;
+    const note = dto.autoChargeConsentNote?.trim() || undefined;
+    if (dto.autoChargeConsentGiven !== true) {
+      if (method || note) {
+        throw new BadRequestException("সম্মতি দেওয়া হয়েছে না বললে সম্মতির পদ্ধতি/নোট রাখা যাবে না");
+      }
+      return { autoChargeConsentAt: null, autoChargeConsentMethod: null, autoChargeConsentNote: null };
+    }
+    if (!method || !(AUTO_CHARGE_CONSENT_METHODS as readonly string[]).includes(method)) {
+      throw new BadRequestException("সম্মতি রেকর্ড করতে সম্মতির পদ্ধতি আবশ্যক (phone_call | in_person | written | message)");
+    }
+    return { autoChargeConsentAt: new Date(), autoChargeConsentMethod: method, autoChargeConsentNote: note ?? null };
   }
 
   private async loadOr404(organizationId: string, id: string) {
@@ -110,6 +166,9 @@ export class SubscriptionsService {
       nextRunAt = new Date(Date.now() + intervalDays * 24 * 3600 * 1000);
     }
 
+    // OU12: consent is resolved BEFORE the row exists — invalid
+    // consent input refuses the creation, never half-records.
+    const consent = this.resolveConsent(dto);
     const row = await this.t("customerSubscription").create({
       data: {
         organizationId,
@@ -123,14 +182,49 @@ export class SubscriptionsService {
         nextRunAt,
         createdFromOrderId: dto.createdFromOrderId ?? null,
         failureCount: 0,
+        ...consent,
       },
     });
     await this.audit?.log({
       organizationId, userId: actorId, action: "subscriptions.create",
       entityType: "CustomerSubscription", entityId: row.id,
-      metadata: { customerId: customer.id, productId: product.id, qty, unitPriceMinor: unitPriceMinor.toString() },
+      metadata: {
+        customerId: customer.id, productId: product.id, qty, unitPriceMinor: unitPriceMinor.toString(),
+        autoChargeConsentGiven: Boolean(consent.autoChargeConsentAt),
+        ...(consent.autoChargeConsentMethod ? { autoChargeConsentMethod: consent.autoChargeConsentMethod } : {}),
+      },
     });
     return { subscription: this.serialize(row) };
+  }
+
+  /**
+   * OU12: record or withdraw auto-charge consent on an existing
+   * subscription. Withdrawal (given=false) clears all three
+   * fields. Either way the ONLY effect is the consent record +
+   * audit — charging stays inactive and the sweep is untouched.
+   * Cancelled subscriptions refuse: consent on a dead
+   * subscription would be a misleading record.
+   */
+  async setAutoChargeConsent(organizationId: string, actorId: string, id: string, dto: AutoChargeConsentDto) {
+    const row = await this.loadOr404(organizationId, id);
+    if (row.status === "cancelled") {
+      throw new BadRequestException("বাতিল সাবস্ক্রিপশনে সম্মতি রেকর্ড করা যাবে না");
+    }
+    const consent = this.resolveConsent(dto);
+    const updated = await this.t("customerSubscription").update({
+      where: { id: row.id }, data: { ...consent },
+    });
+    await this.audit?.log({
+      organizationId, userId: actorId,
+      action: consent.autoChargeConsentAt ? "subscriptions.autocharge_consent_recorded" : "subscriptions.autocharge_consent_withdrawn",
+      entityType: "CustomerSubscription", entityId: row.id,
+      metadata: {
+        autoChargeConsentGiven: Boolean(consent.autoChargeConsentAt),
+        ...(consent.autoChargeConsentMethod ? { autoChargeConsentMethod: consent.autoChargeConsentMethod } : {}),
+        chargingActive: false,
+      },
+    });
+    return { subscription: this.serialize(updated) };
   }
 
   async list(organizationId: string, filter: { status?: string; customerId?: string } = {}) {

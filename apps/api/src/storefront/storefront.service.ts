@@ -20,6 +20,7 @@ import { DISCOUNT_REASON_MESSAGES } from "../commerce/discounts";
 import { PromotionsService, type CheckoutEvaluation, type LoyaltyRedeemInput } from "../commerce/promotions.service";
 import { LoyaltyService } from "../commerce/loyalty.service";
 import { GiftCardsService } from "../commerce/gift-cards.service";
+import { StoreCreditService } from "../membership/store-credit.service";
 import { LicenseKeysService } from "../commerce/license-keys.service";
 import {
   downloadTokenSecret,
@@ -35,6 +36,10 @@ import { isSoldOrder, rankBoughtTogether, rankBoughtTogetherForSeeds } from "./e
 import { buildTsQuerySql, expandSynonymQueries, normalizeSearchTerm } from "./search-fts";
 import { refreshOrgSearchVectors } from "../products/search-vector";
 import { DeliveryPricingService, cartWeightOf } from "./delivery-pricing.service";
+import { resolveShopLocale } from "../translations/translations";
+import {
+  approvedStorefrontStrings, attachDisplayPrices, displayCurrencyRates, overlayProductTranslations,
+} from "../translations/public-translations";
 import { AffiliatesService } from "../affiliates/affiliates.service";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
 import { CheckoutGuardService } from "../fraud/checkout-guard.service";
@@ -53,6 +58,7 @@ import { StorefrontDnsResolver, StorefrontRoutingFetcher } from "./storefront-dn
 import { assertPreorderLimit, preorderInfo, selectWholesaleTier } from "../commerce/ec24";
 import { StorageService } from "../storage/storage.service";
 import { normalizeProductVideo } from "../products/product-video";
+import { customerRiderLocation } from "../delivery/rider-location-visibility";
 import { displayProductDescription, displayProductName } from "../products/product-display";
 import { InventoryService } from "../inventory/inventory.service";
 import { EmailProvider } from "../messaging/email.provider";
@@ -68,6 +74,16 @@ import {
   isPlatformHostedDomain,
   normalizeCustomDomainInput,
 } from "../common/custom-domain";
+import {
+  effectiveCloudflareSaasConfig,
+  ensurePlatformConfig,
+} from "../common/platform-config";
+import {
+  CloudflareForSaasClient,
+  httpsStatusDetail,
+  mapHttpsStatus,
+  type DomainHttpsStatus,
+} from "../common/cloudflare-for-saas.client";
 import type {
   CartContactDto,
   CheckoutDto,
@@ -91,7 +107,9 @@ import type {
   UpdateStorefrontSettingsDto,
   UpdateZoneDto,
   UpsertStorePopupDto,
+  PopupLeadDto,
 } from "./storefront.dto";
+import { sanitizeSectionOrder, isValidSectionOrder } from "./shop-sections";
 
 /**
  * GB7: the promotions-side identity helpers, accessed through
@@ -250,6 +268,10 @@ export class StorefrontService {
     // same discipline; absent (or local storage mode) keeps the
     // EC24b merchant-hosted reveal exactly as before.
     @Optional() private readonly storage?: StorageService,
+    // NF7 (FB3): store-credit snapshot + placement-time spend.
+    // LAST param + Optional, same discipline; absent keeps
+    // quote/checkout exactly as before NF7.
+    @Optional() private readonly storeCredit?: StoreCreditService,
   ) {}
 
   /** GC10: failure-isolated payment options for payloads. */
@@ -881,8 +903,12 @@ export class StorefrontService {
     }
   }
 
-  async shopHome(orgSlug: string, query: { q?: string; category?: string; brand?: string; page?: number; pageSize?: number; sort?: string; ids?: string }) {
+  async shopHome(orgSlug: string, query: { q?: string; category?: string; brand?: string; page?: number; pageSize?: number; sort?: string; ids?: string; locale?: string }) {
     const { org, setting } = await this.requireEnabledShop(orgSlug);
+    // NF5 (FB3): the served locale — an explicit shopper choice
+    // (?locale= on the SAME :orgSlug route) wins when supported;
+    // otherwise the org's StorefrontSetting.locale (EC19 pattern).
+    const shopLocale = resolveShopLocale(query.locale, (setting as any)?.locale ?? null);
     const bp = await this.businessProfile(org.id);
     const categoryRows = await this.categoryRows(org.id);
     const scanned = await this.activeProducts(org.id);
@@ -994,10 +1020,25 @@ export class StorefrontService {
           reservedByKey,
           flash: flashMap.get(String(p.id)) ?? null,
           // AB6 (AX13): shop-locale display names/descriptions.
-          locale: (setting as any)?.locale ?? null,
+          locale: shopLocale,
         }));
       }
       return out;
+    };
+
+    // NF5 (FB3): approved-translation overlay + display-currency
+    // decoration for the public lists. Both are failure-isolated
+    // (a translations problem never breaks the shop) and READ-ONLY:
+    // only APPROVED translations are served (drafts never leak —
+    // public-translations.ts filters on approved in the query),
+    // missing rows keep the base text, and displayPrices are
+    // labelled approximate strings that checkout never reads.
+    const nf5Rates = await displayCurrencyRates(this.prisma as any, org.id).catch(() => []);
+    const nf5Strings = await approvedStorefrontStrings(this.prisma as any, org.id, shopLocale).catch(() => new Map<string, string>());
+    const serializePublic = async (rows: any[]) => {
+      const list = await serializeList(rows);
+      await overlayProductTranslations(this.prisma as any, org.id, list, shopLocale).catch(() => list);
+      return attachDisplayPrices(list, nf5Rates, shopLocale);
     };
 
     // GC10: computed once — mirrored at the payload top level
@@ -1020,17 +1061,35 @@ export class StorefrontService {
       checkoutTrust,
       settings: {
         shopName: setting.shopName || org.brandName || org.name,
-        announcementText: setting.announcementText ?? null,
+        // NF5: an APPROVED storefront-string translation for the
+        // served locale wins; otherwise the merchant's base text.
+        announcementText: nf5Strings.get("announcementText") ?? setting.announcementText ?? null,
         showFeatured: setting.showFeatured !== false,
         showCategories: setting.showCategories !== false,
         showSearch: setting.showSearch !== false,
+        // OU8: section customizer for the shop home render list.
+        showHero: setting.showHero !== false,
+        showBrands: setting.showBrands !== false,
+        showBundles: setting.showBundles !== false,
+        showFlashSale: setting.showFlashSale !== false,
+        showRecentlyViewed: setting.showRecentlyViewed !== false,
+        sectionOrder: Array.isArray(setting.sectionOrder) ? sanitizeSectionOrder(setting.sectionOrder) : null,
         metaDescription: setting.metaDescription ?? null,
-        locale: setting.locale ?? "bn",
+        locale: shopLocale,
         featuredMode: setting.featuredMode ?? "merchant_picks",
         trackingPageEnabled: setting.trackingPageEnabled !== false,
-        returnPolicyText: setting.returnPolicyText ?? null,
-        deliveryPromiseText: setting.deliveryPromiseText ?? null,
+        returnPolicyText: nf5Strings.get("returnPolicyText") ?? setting.returnPolicyText ?? null,
+        deliveryPromiseText: nf5Strings.get("deliveryPromiseText") ?? setting.deliveryPromiseText ?? null,
         supportPhone: setting.supportPhone ?? null,
+        // NF5: the human-entered display-currency rates behind
+        // each product's displayPrices (provenance for shoppers /
+        // staff debugging; empty = no converted price is shown).
+        displayCurrencies: nf5Rates.map((r: any) => ({
+          currency: String(r.currency).toUpperCase(),
+          ratePerUnit: String(r.ratePerUnit),
+          sourceNote: r.sourceNote ?? null,
+          updatedAt: r.updatedAt ? new Date(r.updatedAt).toISOString() : null,
+        })),
         // GB1 (GC1/GC4): theme + favicon + direct contact channels.
         themeId: setting.themeId ?? "classic",
         faviconUrl: setting.faviconUrl ?? null,
@@ -1087,8 +1146,8 @@ export class StorefrontService {
       bundles: this.bundles
         ? await this.bundles.publicBundles(org.id).catch(() => [])
         : [],
-      featuredProducts: await serializeList(featured),
-      products: await serializeList(pageRows),
+      featuredProducts: await serializePublic(featured),
+      products: await serializePublic(pageRows),
       pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
     };
   }
@@ -1128,8 +1187,11 @@ export class StorefrontService {
     };
   }
 
-  async productDetail(orgSlug: string, productSlug: string) {
+  async productDetail(orgSlug: string, productSlug: string, locale?: string) {
     const { org, setting } = await this.requireEnabledShop(orgSlug);
+    // NF5 (FB3): served locale — shopper ?locale= wins when
+    // supported, else the org's StorefrontSetting.locale.
+    const shopLocale = resolveShopLocale(locale, (setting as any)?.locale ?? null);
     const product = await this.t("product").findFirst({
       where: { organizationId: org.id, slug: productSlug, status: "ACTIVE" },
     });
@@ -1148,7 +1210,7 @@ export class StorefrontService {
       reservedByKey,
       flash: flashMap.get(String(product.id)) ?? null,
       // AB6 (AX13): shop-locale display names/descriptions.
-      locale: (setting as any)?.locale ?? null,
+      locale: shopLocale,
     });
 
     let category: { id: string | null; name: string | null; slug: string | null } = {
@@ -1179,27 +1241,41 @@ export class StorefrontService {
         reservedByKey,
         flash: flashMap.get(String(p.id)) ?? null,
         // AB6 (AX13): shop-locale display names/descriptions.
-        locale: (setting as any)?.locale ?? null,
+        locale: shopLocale,
       }));
     }
 
     // EC27: bought-together from real sold orders (failure-isolated).
-    const boughtTogether = await this.boughtTogether(org.id, product, siblings, (setting as any)?.locale ?? null).catch(() => []);
+    const boughtTogetherRaw = await this.boughtTogether(org.id, product, siblings, shopLocale).catch(() => []);
+
+    // NF5 (FB3): approved-translation overlay + display prices
+    // on the PDP product, related and bought-together lists —
+    // same public rules as shopHome (approved only, base-text
+    // fallback, display-only conversion). Failure-isolated.
+    const nf5Rates = await displayCurrencyRates(this.prisma as any, org.id).catch(() => []);
+    const nf5Strings = await approvedStorefrontStrings(this.prisma as any, org.id, shopLocale).catch(() => new Map<string, string>());
+    const overlayList = async (list: any[]) => {
+      await overlayProductTranslations(this.prisma as any, org.id, list, shopLocale).catch(() => list);
+      return attachDisplayPrices(list, nf5Rates, shopLocale);
+    };
+    const [productPublic] = await overlayList([serialized]);
+    const relatedPublic = await overlayList(related);
+    const boughtTogether = await overlayList(boughtTogetherRaw);
 
     return {
       product: {
-        ...serialized,
+        ...productPublic,
         category: { ...category, legacy: product.category ?? null },
         seo: { title: product.seoTitle ?? null, description: product.seoDescription ?? null },
       },
-      related,
+      related: relatedPublic,
       boughtTogether,
       // EC19: shop language + trust copy for the product page.
       settings: {
-        locale: setting.locale ?? "bn",
+        locale: shopLocale,
         trackingPageEnabled: setting.trackingPageEnabled !== false,
-        returnPolicyText: setting.returnPolicyText ?? null,
-        deliveryPromiseText: setting.deliveryPromiseText ?? null,
+        returnPolicyText: nf5Strings.get("returnPolicyText") ?? setting.returnPolicyText ?? null,
+        deliveryPromiseText: nf5Strings.get("deliveryPromiseText") ?? setting.deliveryPromiseText ?? null,
         supportPhone: setting.supportPhone ?? null,
       },
       organization: {
@@ -1506,6 +1582,53 @@ export class StorefrontService {
     } catch (err) {
       this.logger.warn(`publicFlashSales failed for org ${org.id}: ${errMsg(err)}`);
       return { serverNow, sales: [] };
+    }
+  }
+
+  /**
+   * NF14 (FB5): public offers payload — the shop's ACTIVE
+   * StoreDiscount offers that a storefront may surface (in
+   * window, usage limit not exhausted). Public-safe fields only
+   * (no scope internals, no usedCount). `appOnly` rides along so
+   * the storefront can apply the NF14 display rule: app-only
+   * offers are shown only inside the installed app (standalone
+   * display mode). This payload is DISPLAY data — checkout
+   * redemption never consults it, and an appOnly code redeems
+   * normally wherever it is entered. Failure-isolated like
+   * publicFlashSales: an unexpected error answers an empty list
+   * rather than breaking the shop.
+   */
+  async publicOffers(orgSlug: string) {
+    const { org } = await this.requireEnabledShop(orgSlug);
+    try {
+      const table = this.t("storeDiscount");
+      if (!table?.findMany) return { offers: [] as any[] };
+      const now = new Date();
+      const rows = (await table.findMany({
+        where: { organizationId: org.id, active: true },
+        orderBy: { createdAt: "desc" },
+      })) ?? [];
+      const offers = rows
+        .filter((r: any) => {
+          if (r.startsAt && new Date(r.startsAt) > now) return false;
+          if (r.endsAt && new Date(r.endsAt) <= now) return false;
+          if (r.usageLimit != null && (r.usedCount ?? 0) >= r.usageLimit) return false;
+          return true;
+        })
+        .map((r: any) => ({
+          id: r.id,
+          code: r.code,
+          kind: r.kind,
+          value: r.value,
+          minOrderMinor: r.minOrderMinor == null ? null : String(r.minOrderMinor),
+          endsAt: r.endsAt ? new Date(r.endsAt).toISOString() : null,
+          // NF14: legacy rows predate the column — absent = false.
+          appOnly: r.appOnly ?? false,
+        }));
+      return { offers };
+    } catch (err) {
+      this.logger.warn(`publicOffers failed for org ${org.id}: ${errMsg(err)}`);
+      return { offers: [] as any[] };
     }
   }
 
@@ -2061,6 +2184,12 @@ export class StorefrontService {
       loyaltyPoints?: number | null;
       // AB2 (AX3): a gift-card code the shopper asked to redeem.
       giftCardCode?: string | null;
+      // NF7 (FB3): the shopper asked to pay with store credit
+      // (optionally capped at storeCreditMinor, a minor-unit
+      // string). Credit belongs to the RESOLVED customer only —
+      // there is no code and no way to spend anyone else's.
+      useStoreCredit?: boolean | null;
+      storeCreditMinor?: string | null;
     },
     opts?: { giftWrap?: boolean; deliveryMethod?: string; pickupPointId?: string; locale?: string | null },
   ) {
@@ -2332,6 +2461,24 @@ export class StorefrontService {
       });
       giftCardInput = { giftCardId: snap.giftCardId, balanceMinor: snap.balanceMinor, codeLast4: snap.codeLast4 };
     }
+    // NF7 (FB3): the store-credit snapshot for the SAME resolved
+    // customer (null when the shopper did not ask, the identity
+    // is unverifiable, or the derived balance is zero) — the
+    // evaluator prices from this snapshot only, and the spend
+    // posts against the order's own customer at placement, so
+    // one customer can never spend another's credit.
+    let storeCreditInput: { customerId: string; balanceMinor: bigint; requestedMinor?: bigint | null } | null = null;
+    if (this.storeCredit && ec16?.useStoreCredit && gb7CustomerId) {
+      const snap = await this.storeCredit
+        .checkoutSnapshot(orgId, gb7CustomerId)
+        .catch(() => null);
+      if (snap) {
+        let requestedMinor: bigint | null = null;
+        const rawReq = String((ec16 as any)?.storeCreditMinor ?? "").trim();
+        if (/^\d+$/.test(rawReq)) requestedMinor = BigInt(rawReq);
+        storeCreditInput = { customerId: snap.customerId, balanceMinor: snap.balanceMinor, requestedMinor };
+      }
+    }
     if (this.promotions) {
       ec16Evaluation = await this.promotions.evaluateCheckout(orgId, {
         lines: lines.map((l): PromotionLine => ({
@@ -2352,6 +2499,8 @@ export class StorefrontService {
         loyalty: loyaltyInput,
         // AB2 contract field on EvaluateCheckoutInput.
         giftCard: giftCardInput,
+        // NF7 contract field on EvaluateCheckoutInput.
+        storeCredit: storeCreditInput,
       } as Parameters<PromotionsService["evaluateCheckout"]>[1]);
       discountMinor = ec16Evaluation.totalDiscountMinor;
       freeShipping = ec16Evaluation.couponFreeShipping;
@@ -2566,6 +2715,17 @@ export class StorefrontService {
             giftCardId: giftCardInput.giftCardId,
           }
         : null,
+      // NF7 (FB3): the store-credit line of THIS quote/checkout
+      // (null = credit not offered for this cart). customerId
+      // rides the quote for checkout's post-placement posting
+      // ONLY — serializeQuote strips it (internal).
+      storeCredit: storeCreditInput
+        ? {
+            customerId: storeCreditInput.customerId,
+            balanceMinor: storeCreditInput.balanceMinor,
+            discountMinor: ec16Evaluation?.storeCreditDiscountMinor ?? 0n,
+          }
+        : null,
     };
   }
 
@@ -2690,6 +2850,15 @@ export class StorefrontService {
             discountMinor: (q.giftCard.discountMinor ?? 0n).toString(),
           }
         : null,
+      // NF7 (FB3): store-credit redemption priced into this
+      // quote (balance + applied amount only — never another
+      // customer's data; the internal customerId is stripped).
+      storeCredit: q.storeCredit
+        ? {
+            balanceMinor: (q.storeCredit.balanceMinor ?? 0n).toString(),
+            discountMinor: (q.storeCredit.discountMinor ?? 0n).toString(),
+          }
+        : null,
       currency: "BDT",
     };
   }
@@ -2714,6 +2883,8 @@ export class StorefrontService {
       customerId: quoteCustomerId,
       loyaltyPoints: dto.loyaltyPoints ?? null,
       giftCardCode: dto.giftCardCode ?? null,
+      useStoreCredit: dto.useStoreCredit ?? null,
+      storeCreditMinor: dto.storeCreditMinor ?? null,
     }, { giftWrap: dto.giftWrap, deliveryMethod: dto.deliveryMethod, pickupPointId: dto.pickupPointId, locale: setting?.locale ?? null });
     const deliverySlots = await this.slotsForDistrict(org.id, dto.district.trim()).catch(() => []);
     return this.serializeQuote(q, dto.district.trim(), deliverySlots);
@@ -2816,6 +2987,8 @@ export class StorefrontService {
       customerId: sessionCustomer?.id ?? buyerCustomer?.id ?? null,
       loyaltyPoints: dto.loyaltyPoints ?? null,
       giftCardCode: dto.giftCardCode ?? null,
+      useStoreCredit: dto.useStoreCredit ?? null,
+      storeCreditMinor: dto.storeCreditMinor ?? null,
     }, { giftWrap: dto.giftWrap, deliveryMethod: dto.deliveryMethod, pickupPointId: dto.pickupPointId, locale: setting?.locale ?? null });
 
     // AB4 (AX5b): custom checkout-field answers — validated
@@ -3096,6 +3269,18 @@ export class StorefrontService {
           orderId: order.id,
           giftCardId: q.giftCard.giftCardId,
           amountMinor: q.ec16!.giftCardDiscountMinor!,
+        });
+      }
+      // NF7 (FB3): spend the applied store credit now that the
+      // order exists (postPlacementSpend is failure-isolated
+      // inside StoreCreditService and exactly-once per order;
+      // it re-verifies the order's customer, so the priced
+      // customer and the debited customer can never diverge).
+      if (order && this.storeCredit && (q.ec16?.storeCreditDiscountMinor ?? 0n) > 0n) {
+        await this.storeCredit.postPlacementSpend(org.id, {
+          orderId: order.id,
+          customerId: order.customerId ?? null,
+          amountMinor: q.ec16!.storeCreditDiscountMinor!,
         });
       }
       // AB2 (AX3b): record the issuance intents for this order's
@@ -3997,10 +4182,23 @@ export class StorefrontService {
       }
     } catch { returnRequests = []; }
 
+    // NF9 (FB4): the own-rider's latest fix — ONLY under the
+    // shared visibility rule (order/shipment out_for_delivery
+    // or the rider's assignment picked_up, rider sharing, an
+    // active assignment for this order); null otherwise and
+    // the page renders nothing. Failure-isolated like every
+    // summary above: a missing NF9 table reads as no location.
+    const riderLocation = await customerRiderLocation(
+      this.prisma as any, org.id, order.id,
+      { orderStatus: order.status, shipmentStatus: shipmentOut?.status ?? null },
+    ).catch(() => null);
+
     return {
       orderNumber: order.externalNumber ?? order.externalId,
       placedAt: iso(order.placedAt),
       status: order.status,
+      // NF9: rider live location (null unless the rule above passes).
+      riderLocation,
       currency: order.currency ?? "BDT",
       // EC28: item ids so the tracking page can build a return /
       // exchange request against the order's own lines.
@@ -4183,6 +4381,13 @@ export class StorefrontService {
         showFeatured: true,
         showCategories: true,
         showSearch: true,
+        // OU8: section customizer defaults (all on, canonical order).
+        showHero: true,
+        showBrands: true,
+        showBundles: true,
+        showFlashSale: true,
+        showRecentlyViewed: true,
+        sectionOrder: null,
         metaDescription: null,
         featuredProductIds: [],
         featuredMode: "merchant_picks",
@@ -4230,6 +4435,13 @@ export class StorefrontService {
       showFeatured: setting.showFeatured !== false,
       showCategories: setting.showCategories !== false,
       showSearch: setting.showSearch !== false,
+      // OU8: section customizer (absent on pre-migration rows = on).
+      showHero: setting.showHero !== false,
+      showBrands: setting.showBrands !== false,
+      showBundles: setting.showBundles !== false,
+      showFlashSale: setting.showFlashSale !== false,
+      showRecentlyViewed: setting.showRecentlyViewed !== false,
+      sectionOrder: Array.isArray(setting.sectionOrder) ? sanitizeSectionOrder(setting.sectionOrder) : null,
       metaDescription: setting.metaDescription ?? null,
       featuredProductIds: Array.isArray(setting.featuredProductIds)
         ? setting.featuredProductIds.map((x: any) => String(x))
@@ -4516,6 +4728,15 @@ export class StorefrontService {
           ? new Date(setting.domainVerifiedAt).toISOString()
           : null,
         verifyHost: org.customDomain ? `_qosprey-verify.${org.customDomain}` : null,
+        // OU2: persisted CfS HTTPS state (null status = never
+        // attempted for the current domain — the UI says exactly
+        // that, never a default "active").
+        httpsStatus: setting?.httpsStatus ?? null,
+        httpsStatusDetail: setting?.httpsStatusDetail ?? null,
+        httpsUpdatedAt: setting?.httpsUpdatedAt
+          ? new Date(setting.httpsUpdatedAt).toISOString()
+          : null,
+        customHostnameId: setting?.customHostnameId ?? null,
       },
       districts: [...BD_DISTRICTS],
     };
@@ -4543,6 +4764,13 @@ export class StorefrontService {
       "showFeatured",
       "showCategories",
       "showSearch",
+      // OU8: section toggles ride the same loop; sectionOrder is
+      // validated + sanitized just below (not a raw copy).
+      "showHero",
+      "showBrands",
+      "showBundles",
+      "showFlashSale",
+      "showRecentlyViewed",
       "metaDescription",
       "featuredProductIds",
       "featuredMode",
@@ -4569,6 +4797,14 @@ export class StorefrontService {
       "termsUrl",
     ] as const) {
       if (dto[key] !== undefined) data[key] = dto[key];
+    }
+    // OU8: section order — every entry must be a known section
+    // key (Bengali refusal otherwise); stored deduped/sanitized.
+    if (dto.sectionOrder !== undefined) {
+      if (!isValidSectionOrder(dto.sectionOrder)) {
+        throw new BadRequestException("সেকশনের ক্রমে অজানা সেকশন আছে — hero, categories, brands, bundles, flash, featured, recently-এর মধ্য থেকে দিন");
+      }
+      data.sectionOrder = sanitizeSectionOrder(dto.sectionOrder);
     }
     // GB7 (GC18): tracking ids ride OUTSIDE the generic loop —
     // each present key is shape-validated (Bengali refusal on a
@@ -5405,6 +5641,12 @@ export class StorefrontService {
         showOn: "home",
         impressions: 0,
         clicks: 0,
+        mode: "promo",
+        captureName: true,
+        capturePhone: true,
+        captureEmail: false,
+        successMessage: null,
+        captures: 0,
       };
     }
     return {
@@ -5424,6 +5666,12 @@ export class StorefrontService {
       showOn: row.showOn ?? "home",
       impressions: row.impressions ?? 0,
       clicks: row.clicks ?? 0,
+      mode: row.mode ?? "promo",
+      captureName: row.captureName !== false,
+      capturePhone: row.capturePhone !== false,
+      captureEmail: row.captureEmail === true,
+      successMessage: row.successMessage ?? null,
+      captures: row.captures ?? 0,
     };
   }
 
@@ -5470,6 +5718,12 @@ export class StorefrontService {
     if (dto.scrollPercent !== undefined) data.scrollPercent = dto.scrollPercent;
     if (dto.frequencyDays !== undefined) data.frequencyDays = dto.frequencyDays;
     if (dto.showOn !== undefined) data.showOn = dto.showOn;
+    // OU8: lead-capture mode fields.
+    if (dto.mode !== undefined) data.mode = dto.mode;
+    if (dto.captureName !== undefined) data.captureName = dto.captureName;
+    if (dto.capturePhone !== undefined) data.capturePhone = dto.capturePhone;
+    if (dto.captureEmail !== undefined) data.captureEmail = dto.captureEmail;
+    if (dto.successMessage !== undefined) data.successMessage = dto.successMessage === null ? null : String(dto.successMessage).trim() || null;
     const parseWhen = (v: string | null | undefined, label: string): Date | null => {
       if (v === null || v === undefined || String(v).trim() === "") return null;
       const d = new Date(String(v));
@@ -5484,6 +5738,16 @@ export class StorefrontService {
       data.endsAt !== undefined ? data.endsAt : existing?.endsAt ? new Date(existing.endsAt) : null;
     if (effStarts && effEnds && effEnds.getTime() <= effStarts.getTime()) {
       throw new BadRequestException("পপআপের শেষের সময় শুরুর সময়ের পরে হতে হবে");
+    }
+    // OU8: a lead-mode popup that captures nothing is a fake form.
+    const effMode = data.mode !== undefined ? data.mode : existing?.mode ?? "promo";
+    if (effMode === "lead") {
+      const effName = data.captureName !== undefined ? data.captureName : existing?.captureName !== false;
+      const effPhone = data.capturePhone !== undefined ? data.capturePhone : existing?.capturePhone !== false;
+      const effEmail = data.captureEmail !== undefined ? data.captureEmail : existing?.captureEmail === true;
+      if (!effName && !effPhone && !effEmail) {
+        throw new BadRequestException("লিড পপআপে অন্তত একটি তথ্য (নাম, ফোন বা ইমেইল) নেওয়ার অপশন চালু রাখতে হবে");
+      }
     }
     const saved = existing
       ? await this.t("storePopup").update({ where: { id: existing.id }, data })
@@ -5518,6 +5782,13 @@ export class StorefrontService {
         scrollPercent: row.scrollPercent ?? 50,
         frequencyDays: row.frequencyDays ?? 7,
         showOn: row.showOn ?? "home",
+        // OU8: lead-capture shape (present in both modes; the
+        // client renders the form only when mode === "lead").
+        mode: row.mode ?? "promo",
+        captureName: row.captureName !== false,
+        capturePhone: row.capturePhone !== false,
+        captureEmail: row.captureEmail === true,
+        successMessage: row.successMessage ?? null,
       },
     };
   }
@@ -5537,6 +5808,52 @@ export class StorefrontService {
       }
     } catch { /* swallowed by design */ }
     return { ok: true };
+  }
+
+  /**
+   * OU8: lead-capture popup submission. Creates a REAL Lead row
+   * through the same table the CRM uses (source "website", stage
+   * "new" — the LeadsService.create vocabulary) plus its "created"
+   * LeadActivity, and increments the popup's captures counter —
+   * the counter therefore counts real Lead creations only, never
+   * impressions. Required fields follow the popup's capture flags;
+   * a name is synthesised from phone/email when name capture is
+   * off (Lead.name is non-nullable).
+   */
+  async submitPopupLead(orgSlug: string, dto: PopupLeadDto) {
+    const { org } = await this.requireEnabledShop(orgSlug);
+    const row = await this.popupRow(org.id);
+    if (!row || !row.enabled || (row.mode ?? "promo") !== "lead") {
+      throw new BadRequestException("এই দোকানে লিড পপআপ চালু নেই");
+    }
+    const now = Date.now();
+    if (row.startsAt && new Date(row.startsAt).getTime() > now) throw new BadRequestException("এই দোকানে লিড পপআপ চালু নেই");
+    if (row.endsAt && new Date(row.endsAt).getTime() < now) throw new BadRequestException("এই দোকানে লিড পপআপ চালু নেই");
+    const name = String(dto.name ?? "").trim();
+    const phone = String(dto.phone ?? "").trim();
+    const email = String(dto.email ?? "").trim();
+    if (row.captureName !== false && !name) throw new BadRequestException("আপনার নামটি দিন");
+    if (row.capturePhone !== false && phone.length < 6) throw new BadRequestException("সঠিক ফোন নম্বর দিন");
+    if (row.captureEmail === true && !email) throw new BadRequestException("আপনার ইমেইলটি দিন");
+    if (!name && !phone && !email) throw new BadRequestException("অন্তত একটি তথ্য দিন");
+    const lead = await this.t("lead").create({
+      data: {
+        organizationId: org.id,
+        name: name || phone || email,
+        phone: phone || null,
+        email: email || null,
+        source: "website",
+        stage: "new",
+        notes: "দোকানের লিড পপআপ থেকে এসেছে",
+      },
+    });
+    await this.t("leadActivity")
+      .create({ data: { leadId: lead.id, userId: null, type: "created", content: "দোকানের লিড পপআপ থেকে তৈরি" } })
+      .catch(() => null);
+    await this.t("storePopup")
+      .update({ where: { id: row.id }, data: { captures: { increment: 1 } } })
+      .catch(() => null);
+    return { ok: true, leadId: lead.id, successMessage: row.successMessage ?? null };
   }
 
   // ================= GB1: contact form (GC2) =================
@@ -5831,7 +6148,9 @@ export class StorefrontService {
       if (setting) {
         await this.t("storefrontSetting").update({
           where: { id: setting.id },
-          data: { domainVerifyToken: null, domainVerifiedAt: null },
+          // OU2: a domain change also clears the OLD domain's CfS
+          // hostname + HTTPS state — it must never carry over.
+          data: { domainVerifyToken: null, domainVerifiedAt: null, customHostnameId: null, httpsStatus: null, httpsStatusDetail: null, httpsUpdatedAt: null },
         });
       }
     }
@@ -5859,7 +6178,10 @@ export class StorefrontService {
     const existing = await this.getSetting(orgId);
     // Issuing a NEW token resets verification: the old proof no
     // longer vouches for the domain until the new token is seen.
-    const data = { domainVerifyToken: token, domainVerifiedAt: null };
+    // OU2: the HTTPS state resets with it — the certificate state
+    // was earned under the old proof and is re-earned on the next
+    // successful verification.
+    const data = { domainVerifyToken: token, domainVerifiedAt: null, customHostnameId: null, httpsStatus: null, httpsStatusDetail: null, httpsUpdatedAt: null };
     const saved = existing
       ? await this.t("storefrontSetting").update({ where: { id: existing.id }, data })
       : await this.t("storefrontSetting").create({ data: { organizationId: orgId, ...data } });
@@ -5878,6 +6200,93 @@ export class StorefrontService {
       recordValue: token,
       token,
     };
+  }
+
+  // ================= OU2: Cloudflare for SaaS HTTPS =================
+
+  /** OU2: the operator's CfS config, snapshot-fresh (google-sso
+   * precedent: ensurePlatformConfig + the effective resolver).
+   * Null = NOT configured (absent / disabled / half-filled) —
+   * callers must then persist not_configured and NEVER call the
+   * adapter or claim HTTPS is active. */
+  private async cfsConfig() {
+    await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
+    return effectiveCloudflareSaasConfig();
+  }
+
+  /**
+   * OU2: provision / refresh the verified domain's HTTPS state via
+   * the ONE CfS adapter and persist the REAL outcome on the
+   * setting row. This method NEVER throws for adapter failures —
+   * a provider failure is persisted as status "failed" with the
+   * provider's words in the detail, so a domain verification that
+   * already succeeded is never rolled back by a certificate
+   * problem. (A persistence failure itself still propagates —
+   * the verifyDomain caller isolates that; see there.)
+   */
+  async provisionDomainHttps(setting: any, domain: string) {
+    const now = new Date();
+    const cfg = await this.cfsConfig();
+    if (!cfg) {
+      const detail =
+        "প্ল্যাটফর্মে Cloudflare for SaaS configure/চালু করা নেই — এই ডোমেইনের জন্য HTTPS সার্টিফিকেট provisioning হয়নি। ডোমেইন যাচাই সফল, কিন্তু সার্টিফিকেটের জন্য প্ল্যাটফর্ম অপারেটরের CfS সেটআপ বাকি আছে।";
+      await this.t("storefrontSetting").update({
+        where: { id: setting.id },
+        data: { customHostnameId: null, httpsStatus: "not_configured", httpsStatusDetail: detail, httpsUpdatedAt: now },
+      });
+      return { httpsStatus: "not_configured" as DomainHttpsStatus, httpsStatusDetail: detail, customHostnameId: null as string | null, httpsUpdatedAt: now.toISOString() };
+    }
+    try {
+      const client = new CloudflareForSaasClient();
+      let record = setting.customHostnameId
+        ? await client.getCustomHostname(cfg, setting.customHostnameId).catch(() => null)
+        : null;
+      if (!record || record.hostname !== domain) {
+        record = await client.createCustomHostname(cfg, domain);
+      }
+      const mapped = mapHttpsStatus(record);
+      const detail = httpsStatusDetail(record, mapped);
+      await this.t("storefrontSetting").update({
+        where: { id: setting.id },
+        data: { customHostnameId: record.id, httpsStatus: mapped, httpsStatusDetail: detail, httpsUpdatedAt: now },
+      });
+      return { httpsStatus: mapped as DomainHttpsStatus, httpsStatusDetail: detail, customHostnameId: record.id as string | null, httpsUpdatedAt: now.toISOString() };
+    } catch (e) {
+      const detail = `Cloudflare custom hostname তৈরি/পড়া ব্যর্থ হয়েছে: ${errMsg(e)}`.slice(0, 900);
+      await this.t("storefrontSetting").update({
+        where: { id: setting.id },
+        data: { httpsStatus: "failed", httpsStatusDetail: detail, httpsUpdatedAt: now },
+      });
+      return { httpsStatus: "failed" as DomainHttpsStatus, httpsStatusDetail: detail, customHostnameId: (setting.customHostnameId ?? null) as string | null, httpsUpdatedAt: now.toISOString() };
+    }
+  }
+
+  /** OU2: manual HTTPS status refresh (staff button). Same
+   * provisioning path as the verification hook — no webhooks, no
+   * polling; the state changes only when a human asks or a domain
+   * is (re-)verified. Requires a VERIFIED domain, like
+   * checkDomainRouting. */
+  async refreshDomainHttps(orgId: string, actorId: string) {
+    const org = await this.t("organization").findFirst({ where: { id: orgId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const domain = org.customDomain ? this.normalizeDomain(org.customDomain) : "";
+    if (!domain) {
+      throw new BadRequestException("এই সংস্থার কোনো Custom Domain সেট করা নেই");
+    }
+    const setting = await this.getSetting(orgId);
+    if (!setting?.domainVerifiedAt) {
+      throw new BadRequestException("আগে ডোমেইনটি যাচাই করুন, তারপর HTTPS অবস্থা refresh করুন");
+    }
+    const out = await this.provisionDomainHttps(setting, domain);
+    await this.audit?.log({
+      organizationId: orgId,
+      userId: actorId,
+      action: "storefront.domain_https_refreshed",
+      entityType: "StorefrontSetting",
+      entityId: setting.id,
+      metadata: { domain, httpsStatus: out.httpsStatus, customHostnameId: out.customHostnameId },
+    });
+    return { domain, ...out };
   }
 
   async verifyDomain(orgId: string, actorId: string) {
@@ -5925,10 +6334,24 @@ export class StorefrontService {
       entityId: saved.id,
       metadata: { domain, host },
     });
+    // OU2 hook — the TXT verification above has SUCCEEDED and is
+    // already persisted; HTTPS provisioning runs strictly after
+    // it and is failure-isolated: an adapter failure records
+    // httpsStatus "failed" (inside provisionDomainHttps), and
+    // even a hook/persistence error is only logged — verification
+    // NEVER rolls back because of a certificate problem.
+    let https: Awaited<ReturnType<StorefrontService["provisionDomainHttps"]>> | null = null;
+    try {
+      https = await this.provisionDomainHttps(saved, domain);
+    } catch (e) {
+      this.logger.warn(`OU2 CfS provisioning hook failed for org ${orgId} domain ${domain}: ${errMsg(e)}`);
+    }
     return {
       verified: true,
       domain,
       verifiedAt: new Date(saved.domainVerifiedAt).toISOString(),
+      httpsStatus: https?.httpsStatus ?? null,
+      httpsStatusDetail: https?.httpsStatusDetail ?? null,
     };
   }
 

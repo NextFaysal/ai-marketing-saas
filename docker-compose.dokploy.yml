@@ -6,7 +6,11 @@
 # no host ports are published on purpose.
 services:
   postgres:
-    image: postgres:16-alpine
+    # SA-B2: pgvector build of the SAME PostgreSQL 16 — same data
+    # volume, same major version; the image only adds the `vector`
+    # extension the KnowledgeEmbedding migration enables. Takes
+    # effect on the next (manual) Dokploy redeploy.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: marketing
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the Dokploy Environment tab}

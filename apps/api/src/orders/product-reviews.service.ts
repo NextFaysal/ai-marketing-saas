@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { StorageService } from "../storage/storage.service";
+import { SocialService } from "../social/social.service";
+import { webBaseUrl } from "../courier/tracking-token";
+import { reviewMediaOf } from "./reviews.service";
 
 /**
  * EC15 — unified product reviews (own CX12b OrderReviews +
@@ -28,9 +32,38 @@ export class ProductReviewsService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly audit?: AuditService,
+    // NF8: the EXISTING Social Posts engine for the staff
+    // share-as-draft action, and the storage service for minting
+    // signed media URLs at read time. Optional + last so
+    // positional spec constructions keep working.
+    @Optional() private readonly social?: SocialService,
+    @Optional() private readonly storage?: StorageService,
   ) {}
 
   private p(): any { return this.prisma as any; }
+
+  /**
+   * NF8: a review's media as display items. URLs are SHORT-LIVED
+   * signed GETs minted NOW from the private-bucket keys — never
+   * stored, never the raw key. In local storage mode there is no
+   * signed URL to hand out, so url is null (the MediaLibrary
+   * discipline) rather than a fabricated link.
+   *
+   * CALLER DISCIPLINE (the EC15 rule, unchanged): this is only
+   * invoked for rows the caller is already allowed to show —
+   * the public path maps ONLY received + isVisible rows, so an
+   * unapproved/hidden review's media URL is never minted on a
+   * public surface; the staff list is a staff surface.
+   */
+  private mediaItemsOf(row: any): { kind: string; contentType: string; url: string | null }[] {
+    return reviewMediaOf(row).map((m) => ({
+      kind: m.kind,
+      contentType: m.contentType,
+      url: this.storage && this.storage.mode === "s3"
+        ? this.storage.signedGetUrl("private", m.key, 900)
+        : null,
+    }));
+  }
 
   private imageUrlsOf(row: any): string[] {
     const v = row?.imageUrls;
@@ -81,6 +114,7 @@ export class ProductReviewsService {
   }
 
   private ownItem(row: any, order: any, customer: any, opts?: { staff?: boolean }) {
+    const mediaItems = this.mediaItemsOf(row);
     return {
       source: "store",
       id: row.id,
@@ -91,7 +125,13 @@ export class ProductReviewsService {
         : (customer?.firstName ?? null),
       rating: row.rating,
       text: row.comment ?? null,
-      imageUrls: [] as string[], // OrderReview has no image field — never invented.
+      // NF8: the review's OWN uploaded media (was: no field —
+      // never invented; now the field exists). imageUrls carries
+      // the image items' URLs for the existing PDP/staff
+      // renderers; `media` carries every item incl. video.
+      imageUrls: mediaItems.filter((m) => m.kind === "image" && m.url).map((m) => m.url as string),
+      media: mediaItems,
+      socialDraftPostId: row.socialDraftPostId ?? null,
       // Verified rule documented on the class: rows are only
       // created after a delivery event.
       verified: row.deliveredAt != null || order?.status === "completed",
@@ -111,6 +151,8 @@ export class ProductReviewsService {
       rating: row.rating,
       text: row.text ?? null,
       imageUrls: this.imageUrlsOf(row),
+      media: [] as { kind: string; contentType: string; url: string | null }[], // external media rides imageUrls (platform URLs), unchanged
+      socialDraftPostId: null,
       verified: false, // a pulled review's purchase cannot be verified by us
       replyText: null,
       repliedAt: null,
@@ -298,5 +340,106 @@ export class ProductReviewsService {
       metadata: { source, ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}) },
     }).catch(() => undefined);
     return { ok: true, source, id: row.id, isVisible: updated.status !== "hidden", replyText: null, repliedAt: null };
+  }
+
+  // ---------------- NF8: share an approved review as a social draft ----------------
+
+  /** review → order → first item → product (null at any gap) —
+   * the SU5 resolution shape, org-scoped at every hop. */
+  private async productForOrder(organizationId: string, orderId: string): Promise<any> {
+    const item = await (this.p().orderItem?.findFirst({ where: { orderId } }).catch(() => null) ?? null);
+    if (!item?.productId) return null;
+    return await (this.p().product?.findFirst({
+      where: { id: item.productId, organizationId },
+    }).catch(() => null) ?? null);
+  }
+
+  /**
+   * One staff action on an APPROVED (received + visible, per
+   * EC15) own review → ONE draft social post through the
+   * EXISTING Social Posts engine (SocialService.createPost —
+   * the draft is born status "draft" there; staff review and
+   * publish it themselves in the Social composer). The caption
+   * is grounded in the review row only: the star rating, the
+   * customer's own words, the product name. The product link
+   * follows the MS5 rule: `${webBaseUrl}/checkout/${slug}` only
+   * when the product has a slug — never a fabricated URL.
+   *
+   * Exactly-once per review: OrderReview.socialDraftPostId is
+   * the claim. A repeat action finds the claim, loads that post
+   * org-scoped, and returns it as `reused` — SocialService is
+   * never called twice for one review. (Review media is NOT
+   * attached: SocialPost mediaRefs reference MediaAsset rows of
+   * the social library, and review media are StoredFiles — the
+   * draft is text + link, as scoped; staff can attach media in
+   * the composer.)
+   */
+  async createSocialDraft(organizationId: string, reviewId: string, actorId: string, dto?: { socialAccountId?: string }) {
+    const row = await (this.p().orderReview?.findFirst({ where: { id: reviewId, organizationId } }).catch(() => null) ?? null);
+    if (!row) throw new NotFoundException("রিভিউটি পাওয়া যায়নি");
+    if (row.rating == null || !row.receivedAt) {
+      throw new BadRequestException("এই রিভিউটি এখনো জমা হয়নি — জমা হওয়া রিভিউ থেকেই সোশ্যাল ড্রাফট তৈরি করা যায়।");
+    }
+    if (row.isVisible === false) {
+      throw new BadRequestException("লুকানো রিভিউ থেকে সোশ্যাল ড্রাফট তৈরি করা যাবে না — আগে রিভিউটি দেখান।");
+    }
+    if (!this.social) {
+      throw new BadRequestException("সোশ্যাল পোস্ট ইঞ্জিন উপলব্ধ নয়।");
+    }
+    // Exactly-once: an existing claim is the answer.
+    if (row.socialDraftPostId) {
+      const existing = await (this.p().socialPost?.findFirst({
+        where: { id: row.socialDraftPostId, organizationId },
+      }).catch(() => null) ?? null);
+      if (existing) {
+        return { created: false, reused: true, postId: existing.id, status: existing.status };
+      }
+      // The claimed post is gone (deleted by staff): fall
+      // through and create a fresh draft, overwriting the claim.
+    }
+    // Target account: the staff-picked one (org-scoped +
+    // connected, validated), else the org's first connected
+    // account — the SU5 resolution order.
+    let account: any = null;
+    if (dto?.socialAccountId) {
+      account = await (this.p().socialAccount?.findFirst({
+        where: { id: dto.socialAccountId, organizationId, status: "connected" },
+      }).catch(() => null) ?? null);
+      if (!account) {
+        throw new BadRequestException("নির্বাচিত Social অ্যাকাউন্টটি এই Organization-এর সংযুক্ত (connected) অ্যাকাউন্ট নয়।");
+      }
+    } else {
+      account = await (this.p().socialAccount?.findFirst({
+        where: { organizationId, status: "connected" },
+        orderBy: { createdAt: "asc" },
+      }).catch(() => null) ?? null);
+      if (!account) {
+        throw new BadRequestException("কোনো সংযুক্ত (connected) সোশ্যাল অ্যাকাউন্ট নেই — আগে Connect Center থেকে একটি অ্যাকাউন্ট সংযুক্ত করুন।");
+      }
+    }
+    const product = await this.productForOrder(organizationId, row.orderId);
+    const stars = "★".repeat(row.rating) + "☆".repeat(5 - row.rating);
+    const comment = typeof row.comment === "string" ? row.comment.trim() : "";
+    const caption = [
+      `${stars} আমাদের কাস্টমারের রিভিউ`,
+      comment ? `“${comment.slice(0, 500)}”` : null,
+      product?.name ? `পণ্য: ${product.name}` : null,
+    ].filter(Boolean).join("\n");
+    const linkUrl = product?.slug ? `${webBaseUrl()}/checkout/${product.slug}` : undefined;
+    const post: any = await this.social.createPost(organizationId, actorId, {
+      socialAccountId: account.id,
+      caption,
+      ...(linkUrl ? { linkUrl } : {}),
+    });
+    if (!post?.id) {
+      throw new BadRequestException("সোশ্যাল ড্রাফট তৈরি করা যায়নি।");
+    }
+    await this.p().orderReview.update({ where: { id: row.id }, data: { socialDraftPostId: post.id } });
+    await this.audit?.log({
+      organizationId, userId: actorId ?? "system", action: "review.social_draft_created",
+      entityType: "OrderReview", entityId: row.id,
+      metadata: { postId: post.id, socialAccountId: account.id },
+    }).catch(() => undefined);
+    return { created: true, reused: false, postId: post.id, status: post.status ?? "draft" };
   }
 }

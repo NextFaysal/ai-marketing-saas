@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import {
+  assertPayoutAutomationAllowed, payoutLegalGateState, readPayoutLegalGate,
+  PAYOUT_GATE_NO_CONFIRMATION_MSG,
+} from "./payout-legal-gate";
 import { AuditService } from "../audit/audit.service";
 import { effectiveBkashConfig, effectivePayoutFourEyesThresholdMinor, effectiveSslcommerzConfig, effectiveWalletFeeBps } from "../common/platform-config";
 import { StepUpService, stepUpMarker } from "./step-up.service";
@@ -814,6 +819,252 @@ export class WalletService {
     return this.payoutView(result);
   }
 
+  // ---------- OU11: the legal gate for payout AUTOMATION ----------
+
+  /**
+   * OU11 — the legal gate. The platform wallet holds tenant
+   * money and the Connect Center program carries an OPEN legal
+   * item (legal review of holding tenant funds). Until a SUPER
+   * admin records that the review happened AND separately turns
+   * the automation switch on, NO disbursement execution path
+   * (instruction issue / execution confirm, wallet or affiliate)
+   * may run — enforced by assertPayoutAutomationAllowed in
+   * payout-legal-gate.ts, called from the service layer on every
+   * entry point. The MANUAL chain above (adminDecidePayout +
+   * adminMarkPaid) is deliberately NOT gated: it is the existing
+   * human process and stays exactly as it is.
+   */
+
+  async getPayoutLegalGate() {
+    return payoutLegalGateState(await readPayoutLegalGate(this.prisma as any));
+  }
+
+  /** SUPER-only at the controller. Records that the wallet
+   * legal review HAS been completed by a human reviewer — the
+   * code records the confirmation (who/when/reference); it does
+   * not perform or replace the review. Recording NEVER enables
+   * automation by itself: the switch is a separate act below. */
+  async recordPayoutLegalConfirmation(admin: { id: string }, dto: { reference?: string; note?: string }) {
+    const reference = String(dto?.reference ?? "").trim();
+    if (!reference) {
+      throw new BadRequestException("Legal-review confirmation রেকর্ড করতে হলে reference আবশ্যক — reviewer / law-firm-এর নাম অথবা memo reference ছাড়া confirmation রেকর্ড করা যাবে না।");
+    }
+    const row = await this.tx(async (client) => {
+      const existing = await readPayoutLegalGate(client);
+      const data = {
+        legalConfirmedById: admin.id, legalConfirmedAt: new Date(),
+        legalReference: reference, legalNote: String(dto?.note ?? "").trim() || null,
+      };
+      return existing
+        ? client.payoutLegalGate.update({ where: { id: existing.id }, data })
+        : client.payoutLegalGate.create({ data: { scope: "platform", ...data } });
+    });
+    await this.audit.log({
+      userId: admin.id, action: "admin.payout_legal_gate_confirmed",
+      entityType: "PayoutLegalGate", entityId: row.id,
+      metadata: { reference },
+    });
+    return payoutLegalGateState(row);
+  }
+
+  /** SUPER-only at the controller. Removing the confirmation
+   * closes the gate completely: the automation switch is forced
+   * off in the same write, so a later re-confirmation can never
+   * silently resurrect a previously-enabled automation. */
+  async revokePayoutLegalConfirmation(admin: { id: string }) {
+    const existing = await readPayoutLegalGate(this.prisma as any);
+    if (!existing?.legalConfirmedAt) {
+      throw new BadRequestException("কোনো legal-review confirmation রেকর্ড করা নেই — revoke করার কিছু নেই।");
+    }
+    const row = await (this.prisma as any).payoutLegalGate.update({
+      where: { id: existing.id },
+      data: {
+        legalConfirmedById: null, legalConfirmedAt: null, legalReference: null, legalNote: null,
+        automationEnabled: false, automationEnabledById: null, automationEnabledAt: null,
+      },
+    });
+    await this.audit.log({
+      userId: admin.id, action: "admin.payout_legal_gate_revoked",
+      entityType: "PayoutLegalGate", entityId: row.id, metadata: {},
+    });
+    return payoutLegalGateState(row);
+  }
+
+  /** SUPER-only at the controller. The automation switch:
+   * enabling REQUIRES a recorded legal confirmation (enabling
+   * without one is refused with the gate's own message);
+   * disabling is always allowed and takes effect on the very
+   * next execution attempt (the gate is read from the DB on
+   * every call, never from a cached snapshot). */
+  async setPayoutAutomationEnabled(admin: { id: string }, enabled: boolean) {
+    const existing = await readPayoutLegalGate(this.prisma as any);
+    const state = payoutLegalGateState(existing);
+    if (enabled && !state.recorded) throw new BadRequestException(PAYOUT_GATE_NO_CONFIRMATION_MSG);
+    const data = enabled
+      ? { automationEnabled: true, automationEnabledById: admin.id, automationEnabledAt: new Date() }
+      : { automationEnabled: false, automationEnabledById: null, automationEnabledAt: null };
+    const row = existing
+      ? await (this.prisma as any).payoutLegalGate.update({ where: { id: existing.id }, data })
+      : await (this.prisma as any).payoutLegalGate.create({ data: { scope: "platform", ...data } });
+    await this.audit.log({
+      userId: admin.id, action: enabled ? "admin.payout_automation_enabled" : "admin.payout_automation_disabled",
+      entityType: "PayoutLegalGate", entityId: row.id, metadata: { enabled: Boolean(enabled) },
+    });
+    return payoutLegalGateState(row);
+  }
+
+  // ---------- OU11: disbursement executions (bank-instruction rail) ----------
+
+  private executionView(row: any) {
+    return {
+      id: row.id, organizationId: row.organizationId, subjectType: row.subjectType,
+      payoutRequestId: row.payoutRequestId ?? null,
+      partnerId: row.partnerId ?? null, affiliatePayoutId: row.affiliatePayoutId ?? null,
+      amountMinor: String(row.amountMinor), method: row.method,
+      destination: row.destination ?? null, currency: row.currency ?? "BDT",
+      rail: row.rail, status: row.status, instructionRef: row.instructionRef,
+      bankReference: row.bankReference ?? null, failureReason: row.failureReason ?? null,
+      issuedById: row.issuedById, confirmedById: row.confirmedById ?? null, failedById: row.failedById ?? null,
+      issuedAt: row.issuedAt, confirmedAt: row.confirmedAt ?? null, failedAt: row.failedAt ?? null,
+      createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
+
+  /**
+   * Issue the bank instruction for an APPROVED wallet payout.
+   *
+   * v1 rail honesty: bKash disbursement is NOT evidenced
+   * anywhere in this codebase (the bKash clients — tenant and
+   * platform — wire tokenized CHECKOUT only: grant / create /
+   * execute / query / refund / search; no disbursement or B2C
+   * endpoint exists), so there is NO automated provider payout.
+   * This rail generates the instruction the operator executes at
+   * the bank by hand; confirmPayoutExecution below completes
+   * the payout through adminMarkPaid — the existing bookkeeping.
+   *
+   * Rules: legal gate open (asserted FIRST); the request must be
+   * in status "approved" — the four-eyes discipline already ran
+   * at approval, and completion re-checks it in adminMarkPaid;
+   * one execution row per request — re-issuing while one is
+   * open returns it unchanged, re-issuing after a failure resets
+   * the same row, and a confirmed execution can never re-issue.
+   */
+  async issuePayoutInstruction(admin: { id: string }, requestId: string) {
+    const p: any = this.prisma as any;
+    await assertPayoutAutomationAllowed(p);
+    const request = await p.payoutRequest.findFirst({ where: { id: requestId } }).catch(() => null);
+    if (!request) throw new NotFoundException("Payout request not found");
+    if (request.status === "paid") {
+      throw new BadRequestException("এই payout ইতিমধ্যে paid — নতুন instruction তৈরি করা যাবে না।");
+    }
+    if (request.status !== "approved") {
+      throw new BadRequestException(`শুধু approved payout-এর জন্যই bank instruction তৈরি করা যায় (বর্তমান: ${request.status}) — আগে admin approve লাগবে।`);
+    }
+    const existing = await p.payoutExecution.findFirst({ where: { payoutRequestId: request.id } }).catch(() => null);
+    if (existing?.status === "confirmed") {
+      throw new BadRequestException("এই payout-এর execution ইতিমধ্যে confirmed — আবার execute করা যাবে না।");
+    }
+    if (existing?.status === "instruction_issued") {
+      return this.executionView(existing); // duplicate issue attempt = the same instruction, no second row
+    }
+    const data = {
+      organizationId: request.organizationId, subjectType: "wallet_payout",
+      amountMinor: BigInt(request.amountMinor), method: String(request.method),
+      destination: request.destination, currency: "BDT", rail: "bank_instruction",
+      status: "instruction_issued", instructionRef: `BANK-${randomUUID()}`,
+      bankReference: null, failureReason: null,
+      issuedById: admin.id, confirmedById: null, failedById: null,
+      issuedAt: new Date(), confirmedAt: null, failedAt: null,
+    };
+    const row = existing
+      ? await p.payoutExecution.update({ where: { id: existing.id }, data })
+      : await p.payoutExecution.create({ data: { payoutRequestId: request.id, ...data } });
+    await this.audit.log({
+      organizationId: request.organizationId, userId: admin.id,
+      action: existing ? "admin.payout_execution_reissued" : "admin.payout_execution_issued",
+      entityType: "PayoutExecution", entityId: row.id,
+      metadata: { payoutRequestId: request.id, amountMinor: String(request.amountMinor), instructionRef: row.instructionRef, rail: "bank_instruction" },
+    });
+    return this.executionView(row);
+  }
+
+  async getPayoutExecutionForRequest(requestId: string) {
+    const row = await (this.prisma as any).payoutExecution.findFirst({ where: { payoutRequestId: requestId } }).catch(() => null);
+    return { execution: row ? this.executionView(row) : null };
+  }
+
+  /**
+   * Confirm an issued execution: the operator HAS executed the
+   * instruction at the bank and supplies the BANK's reference.
+   * Completion runs through adminMarkPaid — the one and only
+   * ledger-debit path (four-eyes, overdraw guard and exactly-
+   * once status check all live there and are NOT duplicated
+   * here) — so the wallet is debited exactly once, with the
+   * bank reference recorded as the payoutRef. If mark-paid
+   * refuses (four-eyes, balance, status), the execution stays
+   * instruction_issued: truthful and retryable, nothing debited.
+   */
+  async confirmPayoutExecution(admin: { id: string }, requestId: string, bankReference?: string) {
+    const p: any = this.prisma as any;
+    await assertPayoutAutomationAllowed(p);
+    const ref = String(bankReference ?? "").trim();
+    if (!ref) throw new BadRequestException("Execution confirm করতে হলে ব্যাংকের reference (bankReference) আবশ্যক — ব্যাংক থেকে পাওয়া reference ছাড়া payout paid ধরা যাবে না।");
+    const execution = await p.payoutExecution.findFirst({ where: { payoutRequestId: requestId } }).catch(() => null);
+    if (!execution) throw new NotFoundException("এই payout-এর কোনো bank instruction নেই — আগে instruction তৈরি করুন।");
+    if (execution.status === "confirmed") {
+      // Duplicate confirmation: converge on the stored truth,
+      // never a second debit (adminMarkPaid would refuse too).
+      const request = await p.payoutRequest.findFirst({ where: { id: requestId } }).catch(() => null);
+      return { execution: this.executionView(execution), payout: request ? this.payoutView(request) : null, alreadyConfirmed: true };
+    }
+    if (execution.status !== "instruction_issued") {
+      throw new BadRequestException(`এই execution-টি confirm করা যাবে না (বর্তমান: ${execution.status}) — failed হলে নতুন instruction তৈরি করুন।`);
+    }
+    const payout = await this.adminMarkPaid(admin, requestId, ref);
+    const updated = await p.payoutExecution.update({
+      where: { id: execution.id },
+      data: { status: "confirmed", bankReference: ref, confirmedById: admin.id, confirmedAt: new Date(), failureReason: null, failedById: null, failedAt: null },
+    });
+    await this.audit.log({
+      organizationId: updated.organizationId, userId: admin.id,
+      action: "admin.payout_execution_confirmed",
+      entityType: "PayoutExecution", entityId: updated.id,
+      metadata: { payoutRequestId: requestId, bankReference: ref, amountMinor: String(updated.amountMinor) },
+    });
+    return { execution: this.executionView(updated), payout };
+  }
+
+  /**
+   * Record that the bank execution FAILED / was rejected (e.g.
+   * the bank refused the instruction). The payout request is
+   * untouched — it stays "approved", its hold stays in place,
+   * NO ledger row is written — and a fresh instruction can be
+   * issued for it. The error is recorded on the execution.
+   */
+  async failPayoutExecution(admin: { id: string }, requestId: string, reason?: string) {
+    const p: any = this.prisma as any;
+    await assertPayoutAutomationAllowed(p);
+    const failureReason = String(reason ?? "").trim();
+    if (!failureReason) throw new BadRequestException("Execution failed হিসেবে রেকর্ড করতে হলে কারণ (reason) আবশ্যক।");
+    const execution = await p.payoutExecution.findFirst({ where: { payoutRequestId: requestId } }).catch(() => null);
+    if (!execution) throw new NotFoundException("এই payout-এর কোনো bank instruction নেই।");
+    if (execution.status === "confirmed") {
+      throw new BadRequestException("Confirmed execution-কে failed করা যাবে না — টাকা ইতিমধ্যে বেরিয়ে গেছে হিসেবে রেকর্ড আছে।");
+    }
+    if (execution.status === "failed") return this.executionView(execution);
+    const updated = await p.payoutExecution.update({
+      where: { id: execution.id },
+      data: { status: "failed", failureReason, failedById: admin.id, failedAt: new Date() },
+    });
+    await this.audit.log({
+      organizationId: updated.organizationId, userId: admin.id,
+      action: "admin.payout_execution_failed",
+      entityType: "PayoutExecution", entityId: updated.id,
+      metadata: { payoutRequestId: requestId, failureReason },
+    });
+    return this.executionView(updated);
+  }
+
   /**
    * The manual correction path — the ONLY way a ledger row is
    * created outside a verified payment or a payout. A note is
@@ -901,6 +1152,42 @@ export function buildStatementCsv(statement: {
     ].join(","));
   }
   lines.push("", `Closing Balance (minor),${statement.closingMinor}`);
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * OU11: the bank-instruction export for ONE payout execution —
+ * the document the operator takes to the bank. It carries the
+ * destination snapshot exactly as stored on the payout request
+ * (these details are the point of the instruction — the export
+ * is an admin-only surface, like the unmasked destination read),
+ * our instructionRef (to quote in the bank transfer so the
+ * bank's reference can be matched back at confirmation), and a
+ * face statement that the system has NOT sent any money: the
+ * transfer happens at the bank, by hand.
+ */
+export function buildPayoutInstructionCsv(execution: {
+  instructionRef: string; amountMinor: string; currency?: string | null; method: string;
+  destination?: any; organizationId: string; payoutRequestId?: string | null;
+  partnerId?: string | null; issuedAt?: unknown;
+}): string {
+  const dest = execution.destination && typeof execution.destination === "object" ? execution.destination : {};
+  const lines: string[] = [
+    "Bank Payout Instruction (OU11) — execute at the bank, then confirm in the Admin Console with the bank reference",
+    `Instruction Reference,${csvCell(execution.instructionRef)}`,
+    `Organization,${csvCell(execution.organizationId)}`,
+    ...(execution.payoutRequestId ? [`Payout Request,${csvCell(execution.payoutRequestId)}`] : []),
+    ...(execution.partnerId ? [`Affiliate Partner,${csvCell(execution.partnerId)}`] : []),
+    `Amount (minor),${csvCell(execution.amountMinor)}`,
+    `Currency,${csvCell(execution.currency ?? "BDT")}`,
+    `Method,${csvCell(execution.method)}`,
+    `Issued At,${csvCell(execution.issuedAt ? new Date(execution.issuedAt as any).toISOString() : "")}`,
+    "",
+    "Destination",
+  ];
+  for (const [k, v] of Object.entries(dest)) {
+    lines.push(`${csvCell(k)},${csvCell(v)}`);
+  }
   return lines.join("\n") + "\n";
 }
 

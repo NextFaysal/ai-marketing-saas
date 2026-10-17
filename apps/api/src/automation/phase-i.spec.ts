@@ -69,7 +69,7 @@ describe("Phase I - automation rules v2", () => {
     const { svc, prisma, campaigns } = setup();
     const rule = await svc.createRule("org-1", "u1", {
       name: "Fatigue scale-down", metric: "frequency", comparator: "gt", threshold: "3", windowDays: 3,
-      action: "scale_budget", actionConfig: { percent: -20, cooldownHours: 24 },
+      action: "scale_budget", actionConfig: { percent: -20, cooldownHours: 24 }, mode: "execute",
     });
     const first = await svc.evaluateRules("org-1", null);
     expect(first.results.some((r) => r.triggered)).toBe(true);

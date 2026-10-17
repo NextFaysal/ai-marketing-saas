@@ -533,6 +533,20 @@ export class CommerceService {
     return updated;
   }
 
+  /** NF7 (FB3): the refund-to-credit gate toggle — the same
+   *  per-store refund settings area as updateRefundPush above.
+   *  OWNER-only at the route; audit-logged with from/to. Default
+   *  OFF: while off, refunds never offer store credit and the
+   *  refund-to-credit API refuses. */
+  async updateRefundToCredit(organizationId: string, actorId: string, storeId: string, enabled: boolean) {
+    const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
+    if (!store) throw new NotFoundException("Store not found in this organization");
+    const from = store.refundToCreditEnabled === true;
+    const updated = await (this.prisma as any).store.update({ where: { id: store.id }, data: { refundToCreditEnabled: enabled } });
+    await this.auditLog(organizationId, actorId, "store.refund_to_credit_toggle", "Store", store.id, { from, to: enabled });
+    return updated;
+  }
+
   /** EC5: shipment-plugin tracking meta key for Woo fulfilments. */
   async updateTrackingMetaKey(organizationId: string, actorId: string, storeId: string, key: string | null) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });

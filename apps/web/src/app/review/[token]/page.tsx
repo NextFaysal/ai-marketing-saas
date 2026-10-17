@@ -19,6 +19,43 @@ interface ReviewPageData {
   business: string;
   branding?: { name: string; logoUrl: string | null; primaryColor: string | null };
   rewardCoupon?: RewardCoupon;
+  // NF8: count of media already attached to this review, and
+  // the org's Google offer (non-null only for a submitted 4–5
+  // star review when the org configured its Google link).
+  mediaCount?: number;
+  googleReviewOffer?: { url: string } | null;
+}
+
+interface UploadedMedia {
+  kind: "image" | "video";
+  previewUrl: string;
+  name: string;
+}
+
+/**
+ * NF8 — the Google offer card. A plain external link the
+ * customer may CHOOSE to open (target _blank); nothing on this
+ * page ever navigates automatically, and no reward is tied to
+ * it. Rendered only when the API returned a non-null offer
+ * (submitted rating 4–5 AND the org configured its own link).
+ */
+function GoogleOfferCard({ url, storeName }: { url: string; storeName: string }) {
+  return (
+    <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 text-center shadow-sm">
+      <p className="text-sm font-bold text-slate-800">আপনার অভিজ্ঞতা Google-এও শেয়ার করতে চান?</p>
+      <p className="mt-1 text-xs text-slate-600">
+        চাইলে {storeName}-এর Google পেজেও একটি রিভিউ দিতে পারেন — এটি সম্পূর্ণ আপনার ইচ্ছা, না দিলেও কোনো অসুবিধা নেই।
+      </p>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-3 inline-block rounded-xl bg-sky-600 px-4 py-2 text-xs font-bold text-white shadow transition hover:bg-sky-700"
+      >
+        ⭐ {storeName}-এর Google পেজে রিভিউ দিন
+      </a>
+    </div>
+  );
 }
 
 const QUICK_TAGS = [
@@ -34,6 +71,14 @@ const QUICK_TAGS = [
  * CX12b + Step 8 — Enhanced Public Review & UGC Collection Studio.
  * Allows customer to rate 1-5 stars, tap quick experience chips,
  * attach unboxing photos, and instantly earn a discount reward coupon.
+ *
+ * NF8: the photo picker is now a REAL upload — presign -> direct
+ * PUT -> complete through the API's existing storage machinery
+ * (the file is attached to the review server-side; the old
+ * preview-only behaviour sent nothing). Photo AND video are
+ * accepted, with the server's guards enforced. After a 4–5 star
+ * submit, an org-configured Google review link is OFFERED as a
+ * plain link (never an auto-redirect, never tied to a reward).
  */
 export default function PublicReviewPage() {
   const params = useParams();
@@ -44,7 +89,10 @@ export default function PublicReviewPage() {
   const [hover, setHover] = useState(0);
   const [comment, setComment] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [uploads, setUploads] = useState<UploadedMedia[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [googleOffer, setGoogleOffer] = useState<{ url: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [copiedCoupon, setCopiedCoupon] = useState(false);
@@ -61,6 +109,7 @@ export default function PublicReviewPage() {
         const json = await res.json();
         setData(json);
         if (json.rewardCoupon) setReward(json.rewardCoupon);
+        if (json.googleReviewOffer) setGoogleOffer(json.googleReviewOffer);
       } catch (e) {
         setError(e instanceof Error ? e.message : "রিভিউ লিংকটি কার্যকর নেই বা মেয়াদ উত্তীর্ণ হয়েছে");
       }
@@ -85,14 +134,41 @@ export default function PublicReviewPage() {
     }
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // NF8: real upload through the existing machinery —
+  // presign (server guards: type + size) -> PUT the bytes
+  // straight to storage -> complete (server verifies size +
+  // magic bytes, then attaches to this review). A failure at
+  // any step shows the server's own message and attaches
+  // nothing.
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    e.target.value = "";
+    if (!file) return;
+    const kind: "image" | "video" = file.type.startsWith("video/") ? "video" : "image";
+    setUploading(true);
+    setUploadError("");
+    try {
+      const preRes = await fetch(`${API_URL}/public/review/${token}/media/presign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, contentType: file.type, sizeBytes: file.size }),
+      });
+      const pre = await preRes.json().catch(() => null);
+      if (!preRes.ok) throw new Error(pre?.message ?? "আপলোড শুরু করা যায়নি");
+      const putRes = await fetch(pre.uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      if (!putRes.ok) throw new Error("ফাইল আপলোড করা যায়নি — আবার চেষ্টা করুন");
+      const doneRes = await fetch(`${API_URL}/public/review/${token}/media/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: pre.key, kind, contentType: file.type, sizeBytes: file.size }),
+      });
+      const doneJson = await doneRes.json().catch(() => null);
+      if (!doneRes.ok) throw new Error(doneJson?.message ?? "আপলোড সম্পূর্ণ করা যায়নি");
+      setUploads((u) => [...u, { kind, previewUrl: URL.createObjectURL(file), name: file.name }]);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "আপলোড ব্যর্থ হয়েছে");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -112,6 +188,18 @@ export default function PublicReviewPage() {
       const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message ?? "পাঠানো যায়নি");
       if (j.rewardCoupon) setReward(j.rewardCoupon);
+      // NF8: the Google offer is computed from the STORED review
+      // (rating 4–5 + the org's configured link) — re-read the
+      // page data so the thank-you screen can offer it. A failed
+      // re-read simply means no offer is shown.
+      try {
+        const again = await fetch(`${API_URL}/public/review/${token}`);
+        if (again.ok) {
+          const fresh = await again.json();
+          setData(fresh);
+          setGoogleOffer(fresh.googleReviewOffer ?? null);
+        }
+      } catch { /* no offer shown */ }
       setDone(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "পাঠানো যায়নি");
@@ -184,6 +272,8 @@ export default function PublicReviewPage() {
               “{data.comment}”
             </div>
           )}
+
+          {googleOffer ? <GoogleOfferCard url={googleOffer.url} storeName={storeName} /> : null}
 
           {/* Reward Voucher Card */}
           {reward && (
@@ -292,48 +382,64 @@ export default function PublicReviewPage() {
             />
           </div>
 
-          {/* UGC Photo Upload Picker */}
+          {/* NF8: UGC photo/video upload — REAL upload through the
+              existing storage machinery (see handleFileChange).
+              Server guards: ছবি PNG/JPEG/WebP সর্বোচ্চ ১০ MB,
+              ভিডিও MP4/MOV/WebM সর্বোচ্চ ৫০ MB, সর্বোচ্চ ৪টি ফাইল।
+              Media stays private until the shop approves the
+              review (staff moderation) — it is never public
+              before that. */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              📸 আনবক্সিং বা পণ্যের ছবি আপলোড (UGC Social Proof)
+              📸 আনবক্সিং বা পণ্যের ছবি/ভিডিও আপলোড (ঐচ্ছিক)
             </label>
-            <div className="flex items-center gap-3">
-              <label className="cursor-pointer inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition">
-                <span>📁 ছবি বেছে নিন</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className={`inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition ${uploading ? "opacity-50" : "cursor-pointer hover:bg-slate-100"}`}>
+                <span>{uploading ? "আপলোড হচ্ছে…" : "📁 ছবি/ভিডিও বেছে নিন"}</span>
                 <input
                   type="file"
-                  accept="image/*"
-                  onChange={handlePhotoChange}
+                  accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
+                  onChange={handleFileChange}
+                  disabled={uploading}
                   className="hidden"
                 />
               </label>
-              {photoPreview && (
-                <div className="relative">
-                  <img
-                    src={photoPreview}
-                    alt="Review Photo"
-                    className="h-12 w-12 rounded-lg object-cover border border-indigo-200 shadow-sm"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setPhotoPreview(null)}
-                    className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"
-                  >
-                    ×
-                  </button>
+              {uploads.map((u, i) => (
+                <div key={`${u.name}-${i}`} className="relative">
+                  {u.kind === "image" ? (
+                    <img
+                      src={u.previewUrl}
+                      alt="আপলোড করা ছবি"
+                      className="h-12 w-12 rounded-lg object-cover border border-indigo-200 shadow-sm"
+                    />
+                  ) : (
+                    <video
+                      src={u.previewUrl}
+                      className="h-12 w-12 rounded-lg object-cover border border-indigo-200 shadow-sm"
+                      muted
+                      playsInline
+                    />
+                  )}
+                  <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white">✓</span>
                 </div>
-              )}
+              ))}
             </div>
+            {uploads.length > 0 ? (
+              <p className="mt-1.5 text-[11px] font-medium text-emerald-700">✓ {uploads.length}টি ফাইল আপলোড হয়েছে — রিভিউয়ের সঙ্গে যুক্ত হয়েছে। দোকান অনুমোদন করার পরই এগুলো পাবলিক পেজে দেখা যাবে।</p>
+            ) : null}
+            {uploadError ? (
+              <p className="mt-1.5 text-[11px] font-medium text-red-600">{uploadError}</p>
+            ) : null}
           </div>
 
           {/* Submit Button */}
           <button
             type="button"
             className="btn-primary w-full py-3 text-sm font-bold shadow-md"
-            disabled={busy || rating === 0}
+            disabled={busy || rating === 0 || uploading}
             onClick={submit}
           >
-            {busy ? "জমা হচ্ছে..." : "⭐ রিভিউ জমা দিন ও পুরস্কার জিতুন"}
+            {busy ? "জমা হচ্ছে..." : uploading ? "আপলোড শেষ হওয়ার অপেক্ষা করুন…" : "⭐ রিভিউ জমা দিন ও পুরস্কার জিতুন"}
           </button>
         </section>
       ) : null}
@@ -371,6 +477,8 @@ export default function PublicReviewPage() {
               <p className="mt-2 text-[11px] text-slate-400">পরবর্তী যেকোনো অর্ডারে চেকআউটে এই কোডটি ব্যবহার করুন</p>
             </div>
           )}
+
+          {googleOffer ? <GoogleOfferCard url={googleOffer.url} storeName={storeName} /> : null}
         </section>
       ) : null}
     </main>

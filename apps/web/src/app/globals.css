@@ -1157,3 +1157,43 @@ body:has(.dashboard-root.dark) {
   .r2-print-doc article { break-inside: avoid; }
   .r2-print-doc a { color: #000 !important; text-decoration: none !important; }
 }
+
+/* ---------- Messaging workspace v2 (MXD design update, additive) ----------
+   Hero, KPI chips and the sticky tab bar for the dashboard Messaging page.
+   Colours derive only from the tenant brand vars (--brand-from/--brand-to),
+   so white-label branding flows through like every other v2 surface. */
+.msg-hero {
+  @apply relative overflow-hidden rounded-2xl p-5 text-white shadow-card sm:p-6;
+  background-image: linear-gradient(120deg, var(--brand-from), var(--brand-to));
+}
+.msg-hero::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(520px 220px at 88% -20%, rgba(255,255,255,0.28), transparent 60%);
+}
+.msg-hero-cta {
+  @apply relative z-10 shrink-0 rounded-xl bg-white/95 px-4 py-2 text-sm font-bold shadow-sm transition duration-150 hover:bg-white active:scale-[0.97];
+  color: var(--brand-from);
+}
+.msg-kpi {
+  @apply relative z-10 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[12px] font-semibold text-white ring-1 ring-inset ring-white/25 backdrop-blur-sm;
+}
+.msg-kpi strong { @apply rounded-full bg-white/25 px-1.5 py-px text-[12px] font-bold; }
+.msg-tabbar {
+  @apply sticky z-30 -mx-1 px-1 py-2;
+  top: 0.5rem;
+}
+.msg-tabs {
+  @apply flex w-full gap-1 overflow-x-auto rounded-2xl bg-white/85 p-1.5 shadow-card ring-1 ring-slate-200/70 backdrop-blur;
+  scrollbar-width: none;
+}
+.msg-tabs::-webkit-scrollbar { display: none; }
+.msg-tabs .view-switch-btn { @apply flex-1 justify-center px-3.5 py-2 text-[13px]; }
+@media (max-width: 640px) {
+  .msg-tabs .view-switch-btn { flex: 0 0 auto; }
+}
+.msg-section { scroll-margin-top: 5.5rem; }
+/* Section title + hover lift inside the Messaging workspace cards. */
+.msg-section > .font-semibold:first-child,
+.msg-section > h2.font-semibold { @apply text-[17px] tracking-tight text-slate-900; }
+.msg-section { transition: box-shadow 0.2s ease; }
+.msg-section:hover { box-shadow: var(--shadow-card-v2); }

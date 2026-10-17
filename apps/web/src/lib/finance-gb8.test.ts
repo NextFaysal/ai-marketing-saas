@@ -38,12 +38,16 @@ describe("GB8 report types", () => {
     expect(isReportType("nope")).toBe(false);
   });
 
-  it("scheduled report types are the 5 + profit", () => {
+  it("scheduled report types are the 5 + profit + messaging_summary (MX16)", () => {
     expect(SCHEDULED_REPORT_TYPES.map((r) => r.type)).toEqual([
-      "discounts", "refunds", "payment_sales", "category_sales", "shipping_cost", "profit",
+      "discounts", "refunds", "payment_sales", "category_sales", "shipping_cost", "profit", "messaging_summary",
     ]);
     for (const r of SCHEDULED_REPORT_TYPES) expect(r.label.length).toBeGreaterThan(0);
     expect(reportTypeLabel("profit")).toBe("লাভের রিপোর্ট");
+    expect(reportTypeLabel("messaging_summary")).toBe("মেসেজিং সারসংক্ষেপ");
+    // MX16: the messaging summary is schedulable but is NOT a
+    // commerce report type.
+    expect(isReportType("messaging_summary")).toBe(false);
   });
 });
 

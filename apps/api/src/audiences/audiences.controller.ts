@@ -33,6 +33,18 @@ export class AudiencesController {
   @Get()
   list(@Param("organizationId") orgId: string) { return this.audiences.list(orgId); }
 
+  // CA7: per-audience performance rollups (read + manual
+  // refresh; the audience_refresh job refreshes them too).
+  // Declared BEFORE the ":recordId/..." routes on purpose —
+  // "performance" must never be swallowed as a record id.
+  @Get("performance")
+  performance(@Param("organizationId") orgId: string) { return this.audiences.listPerformance(orgId); }
+
+  @Post("performance/refresh") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  refreshPerformance(@Param("organizationId") orgId: string) {
+    return this.audiences.refreshPerformanceRollups(orgId);
+  }
+
   @Post("custom") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   custom(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateCustomDto) {
     return this.audiences.createCustom(orgId, user.userId, dto);

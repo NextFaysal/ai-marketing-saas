@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 
 /**
  * SN6 — Telegram Bot API client (docs/social-sn7-threads-spike.md
@@ -54,7 +54,11 @@ export const TELEGRAM_TEXT_MAX = 4096;
 export class TelegramClient {
   private readonly fetchFn: TelegramFetch;
 
-  constructor(fetchFn?: TelegramFetch) {
+  // @Optional(): the fetch injection is a test seam, not a
+  // Nest provider — without the decorator the module graph
+  // cannot boot (pre-existing base bug found by FB1's boot
+  // smoke on the nf line; the same one-line fix applied here).
+  constructor(@Optional() fetchFn?: TelegramFetch) {
     this.fetchFn = fetchFn ?? ((url, init) => fetch(url, init as any) as any);
   }
 

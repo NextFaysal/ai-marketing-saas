@@ -12,12 +12,13 @@ import { StoreHealthService } from "./commerce/health.service";
 import { InventoryModule } from "../inventory/inventory.module";
 import { CommerceModule } from "../commerce/commerce.module";
 import { ErasureService } from "../customers/erasure.service";
+import { MembershipModule } from "../membership/membership.module";
 @Module({
   // AB1: CommerceModule joins for LoyaltyService (the external
   // status-change reconcile hook). Acyclic: CommerceModule
   // imports only Audit/Messaging/Tracking, and InventoryModule
   // already bridges this graph the same way.
-  imports: [InventoryModule, CommerceModule],
+  imports: [InventoryModule, CommerceModule, MembershipModule],
   controllers: [IntegrationsController, WooWebhooksController, WooAuthController, ShopifyWebhookController, ShopifyGdprController],
   // CP6: ErasureService is provided HERE (not via CustomersModule)
   // because Customers -> Orders -> Integrations would close a

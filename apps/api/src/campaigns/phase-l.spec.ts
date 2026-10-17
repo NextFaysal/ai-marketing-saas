@@ -146,9 +146,9 @@ describe("Phase L - agency portfolio", () => {
     const prisma = basePrisma();
     prisma.user.rows.push({ id: "u-1", email: "owner@demo.local" });
     prisma.membership.rows.push(
-      { id: "m1", userId: "u-1", organizationId: "org-1", role: "OWNER" },
-      { id: "m2", userId: "u-1", organizationId: "org-2", role: "ADMIN" },
-      { id: "m3", userId: "someone-else", organizationId: "org-3", role: "OWNER" },
+      { id: "m1", userId: "u-1", organizationId: "org-1", role: "OWNER", status: "ACTIVE" },
+      { id: "m2", userId: "u-1", organizationId: "org-2", role: "ADMIN", status: "ACTIVE" },
+      { id: "m3", userId: "someone-else", organizationId: "org-3", role: "OWNER", status: "ACTIVE" },
     );
     prisma.organization.rows.push(
       { id: "org-1", name: "Client A" }, { id: "org-2", name: "Client B" }, { id: "org-3", name: "Not Mine" },
@@ -167,9 +167,57 @@ describe("Phase L - agency portfolio", () => {
     const svc = new PortfolioService(prisma as any);
     const out = await svc.portfolioForUser("u-1");
     expect(out.organizations.map((o: any) => o.name)).toEqual(["Client A", "Client B"]);
-    expect(out.totals.monthSpendMinor).toBe("15000");
-    expect(out.totals.monthRevenueMinor).toBe("35000");
-    expect(out.totals.roas).toBe(2.33);
+    // OU1: both orgs default to BDT, so there is exactly one
+    // currency group carrying the rolled-up money.
+    expect(out.totalsByCurrency).toEqual([
+      { currency: "BDT", monthSpendMinor: "15000", monthRevenueMinor: "35000", roas: 2.33 },
+    ]);
+    expect(out.totals.monthOrders).toBe(2);
+    expect(out.totals.platformConversions).toBe(6);
     await expect(svc.sendWeeklyDigest("u-1")).rejects.toThrow(/not configured/);
+  });
+
+  it("OU1: excludes non-ACTIVE memberships and never mixes currencies in totals", async () => {
+    const prisma = basePrisma();
+    prisma.user.rows.push({ id: "u-9", email: "agency@demo.local" });
+    prisma.membership.rows.push(
+      { id: "m1", userId: "u-9", organizationId: "org-usd", role: "OWNER", status: "ACTIVE" },
+      { id: "m2", userId: "u-9", organizationId: "org-bdt", role: "ADMIN", status: "ACTIVE" },
+      { id: "m3", userId: "u-9", organizationId: "org-susp", role: "ADMIN", status: "SUSPENDED" },
+      { id: "m4", userId: "u-9", organizationId: "org-inv", role: "VIEWER", status: "INVITED" },
+    );
+    prisma.organization.rows.push(
+      { id: "org-usd", name: "US Client", currency: "USD" },
+      { id: "org-bdt", name: "BD Client", currency: "BDT" },
+      { id: "org-susp", name: "Suspended Client", currency: "BDT" },
+      { id: "org-inv", name: "Invited Client", currency: "BDT" },
+    );
+    const now = new Date();
+    prisma.dailyAdMetric.rows.push(
+      { organizationId: "org-usd", campaignExternalId: "c1", adExternalId: "", date: now, spendMinor: 10000n, conversions: 2n },
+      { organizationId: "org-bdt", campaignExternalId: "c2", adExternalId: "", date: now, spendMinor: 7000n, conversions: 3n },
+      { organizationId: "org-susp", campaignExternalId: "c3", adExternalId: "", date: now, spendMinor: 999000n, conversions: 9n },
+      { organizationId: "org-inv", campaignExternalId: "c4", adExternalId: "", date: now, spendMinor: 888000n, conversions: 9n },
+    );
+    prisma.order.rows.push(
+      { id: "o1", organizationId: "org-usd", status: "confirmed", totalMinor: 25000n, createdAt: now },
+      { id: "o2", organizationId: "org-bdt", status: "confirmed", totalMinor: 14000n, createdAt: now },
+      { id: "o3", organizationId: "org-susp", status: "confirmed", totalMinor: 999000n, createdAt: now },
+    );
+    const svc = new PortfolioService(prisma as any);
+    const out = await svc.portfolioForUser("u-9");
+    // Suspended + invited memberships are excluded entirely.
+    expect(out.organizations.map((o: any) => o.name).sort()).toEqual(["BD Client", "US Client"]);
+    // Each org row carries its own currency for honest formatting.
+    expect(out.organizations.find((o: any) => o.name === "US Client")?.currency).toBe("USD");
+    // Totals are per-currency groups — the USD 100.00 and the BDT
+    // 70.00 are NEVER added into one mixed figure.
+    expect(out.totalsByCurrency).toEqual([
+      { currency: "USD", monthSpendMinor: "10000", monthRevenueMinor: "25000", roas: 2.5 },
+      { currency: "BDT", monthSpendMinor: "7000", monthRevenueMinor: "14000", roas: 2 },
+    ]);
+    // Currency-neutral counts still total across orgs.
+    expect(out.totals.monthOrders).toBe(2);
+    expect(out.totals.platformConversions).toBe(5);
   });
 });

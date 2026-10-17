@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { API_URL, apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
@@ -16,7 +17,7 @@ interface Billing {
     apiToday: { used: number; limit: number | null };
   };
   creditMinor: string;
-  gateways: { sslcommerz: boolean; bkash: boolean };
+  gateways: { sslcommerz: boolean; bkash: boolean; stripe?: boolean };
   autoRenew: { status: string; payerReference: string; lastChargeAt: string | null; lastError: string | null } | null;
   nextInvoice: { plan: string; cycle: string; amountMinor: string; creditAppliedMinor: string; dueMinor: string; dueDate: string; scheduledChange: boolean } | null;
   limits: { aiDaily: number; broadcastCap: number; seats: number | null; plan: string };
@@ -377,7 +378,11 @@ export default function BillingPage() {
 
       {/* Usage meters — every number from the billing payload */}
       <section className="card p-5">
-        <h2 className="section-title">ব্যবহার ও সীমা</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="section-title">ব্যবহার ও সীমা</h2>
+          {/* ORG6: the standalone usage page — same numbers, watchable without the payment surfaces */}
+          <Link href="/dashboard/settings/usage" className="text-sm font-semibold text-indigo-700 hover:underline">আলাদা ব্যবহারের পেজে দেখুন →</Link>
+        </div>
         <div className="mt-4 grid gap-x-8 gap-y-5 md:grid-cols-3">
           <UsageMeter label="টিম সদস্য (সিট)" used={data.usage.seatsUsed} limit={data.limits.seats} />
           <UsageMeter label="আজকের AI ব্যবহার" used={data.usage.aiCallsToday} limit={data.limits.aiDaily} detail="প্রতিদিনের সীমা — রাত ১২টায় আবার শুরু হয়।" />
@@ -463,11 +468,12 @@ export default function BillingPage() {
             <label className="block text-sm text-slate-600">কুপন কোড (যদি থাকে)
               <input id="pay-coupon" className="input mt-1 min-h-[44px]" placeholder="যেমন: LAUNCH20" />
             </label>
-            {data.gateways.bkash ? (
+            {data.gateways.bkash || data.gateways.stripe ? (
               <label className="block text-sm text-slate-600">Gateway
                 <select id="pay-gateway" className="input mt-1 min-h-[44px]">
-                  <option value="sslcommerz">SSLCommerz (কার্ড/ব্যাংক)</option>
-                  <option value="bkash">bKash</option>
+                  {data.gateways.sslcommerz ? <option value="sslcommerz">SSLCommerz (কার্ড/ব্যাংক)</option> : null}
+                  {data.gateways.bkash ? <option value="bkash">bKash</option> : null}
+                  {data.gateways.stripe ? <option value="stripe">Stripe (আন্তর্জাতিক কার্ড)</option> : null}
                 </select>
               </label>
             ) : null}
@@ -480,7 +486,7 @@ export default function BillingPage() {
           <button className="btn-secondary min-h-[44px] w-full lg:w-auto" onClick={previewCoupon}>কুপন যাচাই</button>
         </div>
 
-        {!data.gateways.sslcommerz && !data.gateways.bkash ? (
+        {!data.gateways.sslcommerz && !data.gateways.bkash && !data.gateways.stripe ? (
           <p className="alert alert-amber mt-3"><span>ℹ️</span><span>অনলাইন পেমেন্ট এখনো চালু হয়নি — "অনুরোধ পাঠান" ব্যবহার করুন, প্ল্যাটফর্ম টিম ম্যানুয়ালি নিশ্চিত করবে।</span></p>
         ) : null}
         <input id="plan-note" className="input mt-3 min-h-[44px]" placeholder="অনুরোধের নোট (ঐচ্ছিক) — যেমন: bKash এ পেমেন্ট করেছি, TrxID …" />
@@ -535,7 +541,7 @@ export default function BillingPage() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {Number(p.priceMinor) > 0 && (data.gateways.sslcommerz || data.gateways.bkash) ? (
+                      {Number(p.priceMinor) > 0 && (data.gateways.sslcommerz || data.gateways.bkash || data.gateways.stripe) ? (
                         <button className="btn-primary min-h-[44px] w-full" disabled={busy === `buy-${p.tier}`} onClick={() => buyOnline(p.tier)}>
                           {busy === `buy-${p.tier}` ? "Gateway এ যাচ্ছে…" : "💳 অনলাইনে কিনুন"}
                         </button>

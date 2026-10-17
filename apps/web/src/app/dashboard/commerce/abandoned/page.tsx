@@ -1092,7 +1092,7 @@ export default function AbandonedPage() {
             <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
           ) : filteredItems.length === 0 ? (
             <p className="text-sm text-slate-500 py-6 text-center">
-              কোনো abandoned কার্ট পাওয়া যায়নি।
+              কোনো abandoned কার্ট/checkout পাওয়া যায়নি। WooCommerce স্টোরের জন্য tracker বসানো আছে কিনা Integrations পেজের Health যাচাইয়ে দেখুন।
             </p>
           ) : (
             <div className="overflow-x-auto">

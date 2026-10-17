@@ -60,6 +60,13 @@ export class CreateSocialPostDto {
   @IsOptional() @IsString() @MaxLength(200) youtubePlaylistId?: string | null;
   @IsOptional() @IsString() coverAssetId?: string | null;
   @IsOptional() @IsBoolean() isStory?: boolean;
+  // SA-B19 (G1): provenance stamp for machine-created drafts
+  // (the SU5 autoDraftKind/autoDraftRef columns). Optional and
+  // server-set only in practice — the composer never sends
+  // these; the AI content generator does, so a generated draft
+  // stays attributable to its source.
+  @IsOptional() @IsString() @MaxLength(60) autoDraftKind?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) autoDraftRef?: string | null;
 }
 
 export class UpdateSocialPostDto {
@@ -173,6 +180,14 @@ export class SelectYouTubeChannelDto {
 export class SelectLinkedInOrganizationDto {
   @IsString() @MaxLength(200) state!: string;
   @IsString() @MaxLength(200) organizationId!: string;
+}
+
+// OU9: finish a Google Business Profile connect by choosing one
+// location from the pick state (same authority rule as SP9).
+// locationId is the location's v4 parent ("accounts/*/locations/*").
+export class SelectGoogleBusinessLocationDto {
+  @IsString() @MaxLength(200) state!: string;
+  @IsString() @MaxLength(200) locationId!: string;
 }
 
 // SN6: Telegram channel connect — the tenant's OWN bot token

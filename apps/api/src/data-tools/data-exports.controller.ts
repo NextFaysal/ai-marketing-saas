@@ -1,12 +1,30 @@
 import { Body, Controller, Get, Param, Post, Put, Query, StreamableFile, UseGuards } from "@nestjs/common";
-import { IsBoolean } from "class-validator";
+import { IsBoolean, IsOptional, IsString, MaxLength } from "class-validator";
 import { DataExportsService } from "./data-exports.service";
+import { DataImportsService } from "./data-imports.service";
+import { BUNDLE_JSON_MAX_LENGTH } from "./org-data-import";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 import { CurrentUser, Roles, type AuthUser } from "../common/decorators";
 
 class BackupPreferenceDto {
   @IsBoolean() enabled!: boolean;
+}
+
+/** OU12: backup verification requires typing the org slug —
+ * the same confirm discipline a restore would have required. */
+class VerifyBackupDto {
+  @IsString() @MaxLength(200) confirmSlug!: string;
+}
+
+/**
+ * ORG16: the bundle file travels as a JSON string in the body —
+ * the same door as the CSV/XLSX imports (the API's JSON body
+ * limit is 3 MB; the cap mirrors the XLSX DTO's precedent).
+ */
+class DataImportDto {
+  @IsOptional() @IsString() @MaxLength(200) fileName?: string;
+  @IsString() @MaxLength(BUNDLE_JSON_MAX_LENGTH) bundleJson!: string;
 }
 
 const STAFF_ROLES = ["OWNER", "ADMIN"] as const;
@@ -28,7 +46,10 @@ const STAFF_ROLES = ["OWNER", "ADMIN"] as const;
 @Controller("organizations/:organizationId")
 @UseGuards(TenantGuard, RolesGuard)
 export class DataExportsController {
-  constructor(private readonly dataExports: DataExportsService) {}
+  constructor(
+    private readonly dataExports: DataExportsService,
+    private readonly dataImports: DataImportsService,
+  ) {}
 
   @Get("audit-logs")
   @Roles(...STAFF_ROLES)
@@ -70,6 +91,23 @@ export class DataExportsController {
     });
   }
 
+  /**
+   * OU12: backup VERIFICATION (restore-readiness check) —
+   * OWNER-only, slug-confirmed, read-only. This is deliberately
+   * NOT a restore endpoint: the export bundle does not
+   * round-trip (see the service + docs/one-umbrella-ou12-section.md).
+   */
+  @Post("data-exports/:exportId/verify-backup")
+  @Roles("OWNER")
+  verifyBackup(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") id: string,
+    @Param("exportId") exportId: string,
+    @Body() dto: VerifyBackupDto,
+  ) {
+    return this.dataExports.verifyBackup(id, user.userId, exportId, dto.confirmSlug);
+  }
+
   @Put("data-exports/backup-preference")
   @Roles(...STAFF_ROLES)
   setBackupPreference(
@@ -78,5 +116,33 @@ export class DataExportsController {
     @Body() dto: BackupPreferenceDto,
   ) {
     return this.dataExports.setBackupPreference(id, user.userId, dto.enabled);
+  }
+
+  // ---------- ORG16: bundle import/restore (OWNER only) ----------
+  // Restore rewrites an org's whole dataset, so unlike exports
+  // (OWNER/ADMIN) these three routes are the org OWNER's alone.
+  // The validate route writes NOTHING — it only reports what an
+  // import of this bundle into this org would do.
+
+  @Post("data-imports/validate")
+  @Roles("OWNER")
+  validateImport(@Param("organizationId") id: string, @Body() dto: DataImportDto) {
+    return this.dataImports.validateImport(id, dto.bundleJson);
+  }
+
+  @Post("data-imports")
+  @Roles("OWNER")
+  createImport(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") id: string,
+    @Body() dto: DataImportDto,
+  ) {
+    return this.dataImports.createImport(id, user.userId, dto.fileName, dto.bundleJson);
+  }
+
+  @Get("data-imports/:importId")
+  @Roles("OWNER")
+  getImport(@Param("organizationId") id: string, @Param("importId") importId: string) {
+    return this.dataImports.getImport(id, importId);
   }
 }

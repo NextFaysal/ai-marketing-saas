@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { FraudShieldService } from "../orders/fraud-shield.service";
 import { formatMinor } from "@repo/contracts";
+import { createAgentNotification } from "../common/agent-notify";
 import {
   buildBanglaVoicePrompt,
   CallOutcome,
@@ -89,6 +90,34 @@ export class VoiceService {
         }),
         ...(dto.retryIntervalMinutes !== undefined && {
           retryIntervalMinutes: Math.max(1, Number(dto.retryIntervalMinutes)),
+        }),
+        ...(dto.conversationAgentEnabled !== undefined && {
+          conversationAgentEnabled: Boolean(dto.conversationAgentEnabled),
+        }),
+        ...(dto.conversationMode !== undefined && {
+          conversationMode: (() => {
+            if (!["simulation", "twilio_relay"].includes(String(dto.conversationMode))) {
+              throw new BadRequestException(
+                "conversationMode শুধু simulation অথবা twilio_relay হতে পারে",
+              );
+            }
+            return String(dto.conversationMode);
+          })(),
+        }),
+        ...(dto.relayWebsocketUrl !== undefined && {
+          relayWebsocketUrl: dto.relayWebsocketUrl ? dto.relayWebsocketUrl.trim() : null,
+        }),
+        ...(dto.conversationLanguage !== undefined && {
+          conversationLanguage: dto.conversationLanguage ? dto.conversationLanguage.trim() : "bn-BD",
+        }),
+        ...(dto.sttProvider !== undefined && {
+          sttProvider: dto.sttProvider ? dto.sttProvider.trim().toLowerCase() : "google",
+        }),
+        ...(dto.ttsProvider !== undefined && {
+          ttsProvider: dto.ttsProvider ? dto.ttsProvider.trim().toLowerCase() : "amazon",
+        }),
+        ...(dto.ttsVoice !== undefined && {
+          ttsVoice: dto.ttsVoice ? dto.ttsVoice.trim() : "Polly.Nabanita",
         }),
       },
     });
@@ -335,6 +364,66 @@ export class VoiceService {
       where: { id: callId },
       data: updateData,
     });
+
+    // NF3 (FB2): no-answer follow-up — a labelled STAFF task only.
+    // There is NO automatic WhatsApp send: staff follow up on
+    // WhatsApp manually from the inbox (followUpChannel is the
+    // label "whatsapp_manual").
+    if (["busy", "no_answer", "failed"].includes(normalizedStatus)) {
+      try {
+        return await this.markFollowUpForDeadCall(updated);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to mark follow-up for dead call ${callId}: ${err instanceof Error ? err.message : err}`,
+        );
+        return updated;
+      }
+    }
+
+    return updated;
+  }
+
+  /**
+   * NF3 (FB2): when a conversation call ends without an outcome,
+   * record a pending manual-WhatsApp follow-up on the call and
+   * notify the org's OWNER/ADMIN members. No message is sent.
+   */
+  async markFollowUpForDeadCall(call: any) {
+    if (!call) return call;
+    if (call.conversationOutcome) return call;
+    if (call.followUpStatus !== "none") return call;
+
+    const updated = await (this.prisma as any).orderVoiceCall.update({
+      where: { id: call.id },
+      data: {
+        followUpStatus: "pending",
+        followUpChannel: "whatsapp_manual",
+      },
+    });
+
+    const p = this.prisma as any;
+    if (typeof p.membership?.findMany === "function" && call.organizationId) {
+      const members = await p.membership.findMany({
+        where: {
+          organizationId: call.organizationId,
+          role: { in: ["OWNER", "ADMIN"] },
+          status: "ACTIVE",
+        },
+      });
+      for (const m of members ?? []) {
+        try {
+          await createAgentNotification(this.prisma, {
+            organizationId: call.organizationId,
+            userId: m.userId,
+            type: "urgent",
+            title: "ভয়েস কল ফলো-আপ প্রয়োজন (WhatsApp — ম্যানুয়াল)",
+            body: `অর্ডার ${call.orderId}-এর গ্রাহককে ভয়েস কলে পাওয়া যায়নি। অনুগ্রহ করে ইনবক্স থেকে WhatsApp-এ ম্যানুয়ালি ফলো-আপ করুন — কোনো স্বয়ংক্রিয় বার্তা পাঠানো হয়নি।`,
+          });
+        } catch {
+          // Notification failure never undoes the follow-up record.
+        }
+      }
+    }
 
     return updated;
   }

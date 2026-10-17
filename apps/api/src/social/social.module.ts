@@ -19,13 +19,20 @@ import { SocialCoachService } from "./social-coach.service";
 import { SocialSyndicationService } from "./social-syndication.service";
 import { TelegramClient } from "./telegram.client";
 import { ThreadsClient } from "./threads.client";
+import { GoogleBusinessClient } from "./google-business.client";
 import { AiModule } from "../ai/ai.module";
+import { OrgBrainModule } from "../ai/org-brain.module";
 import { StorageModule } from "../storage/storage.module";
+import { ContentGenerationService } from "./content-generation.service";
+import { ContentGenerationController } from "./content-generation.controller";
 
 @Module({
-  imports: [AiModule, StorageModule],
-  controllers: [SocialController, PublicMediaController, SocialOAuthCallbackController, PublicSocialLinkController],
-  providers: [SocialService, SocialAiService, SocialImageService, SocialPublishService, SocialInsightsService, SocialOAuthService, SocialRasterService, SocialImportService, SocialQueueService, SocialMediaLibraryService, SocialCommerceDraftService, SocialLinkService, SocialHealthService, SocialShareService, SocialStockService, SocialCoachService, SocialSyndicationService, TelegramClient, ThreadsClient],
+  // SA-B19 (G1): OrgBrainModule joins for CreativeLearningService
+  // (the SA-B16 exemplar read the generator consumes). It is a
+  // leaf module (global Prisma only), so no cycle is possible.
+  imports: [AiModule, OrgBrainModule, StorageModule],
+  controllers: [SocialController, PublicMediaController, SocialOAuthCallbackController, PublicSocialLinkController, ContentGenerationController],
+  providers: [SocialService, SocialAiService, SocialImageService, SocialPublishService, SocialInsightsService, SocialOAuthService, SocialRasterService, SocialImportService, SocialQueueService, SocialMediaLibraryService, SocialCommerceDraftService, SocialLinkService, SocialHealthService, SocialShareService, SocialStockService, SocialCoachService, SocialSyndicationService, TelegramClient, ThreadsClient, GoogleBusinessClient, ContentGenerationService],
   // SocialHealthService exported for AdminModule (AB3 / AN13
   // operator retry + account recheck delegate to it).
   // SocialSyndicationService exported for AutomationModule

@@ -190,13 +190,22 @@ function makeService(prisma: any) {
 // ---------- (a) validateTrackingValue matrix ----------
 
 describe("GB7 validateTrackingValue", () => {
-  it("exposes exactly the 5 tracking fields", () => {
+  it("exposes exactly the 8 tracking fields", () => {
+    // UNION regeneration (2026-10-17): three fields were added on
+    // GitHub main itself by the owner's storefront marketing-pixels
+    // work (migration 20261017090000_storefront_marketing_pixels) —
+    // metaPixelId, tikTokPixelId, clarityId. This pin was stale on
+    // main (spec and tracking.ts both byte-identical there); the
+    // expectation is regenerated to the shipped field list.
     expect([...TRACKING_FIELDS]).toEqual([
       "ga4MeasurementId",
       "gtmContainerId",
       "googleAdsId",
       "googleAdsConversionLabel",
       "searchConsoleVerification",
+      "metaPixelId",
+      "tikTokPixelId",
+      "clarityId",
     ]);
   });
 
@@ -333,7 +342,7 @@ describe("GB7 publicFlashSales", () => {
 // ---------- (d) shopHome settings.tracking + product flashSale ----------
 
 describe("GB7 shopHome — settings.tracking + flash decoration", () => {
-  it("carries the 5 tracking fields as nulls when unset, and values when set", async () => {
+  it("carries the 8 tracking fields as nulls when unset, and values when set", async () => {
     const prisma = seedWorld(makePrisma());
     const { svc } = makeService(prisma);
     const unset = await svc.shopHome("shop-one", {});
@@ -343,6 +352,9 @@ describe("GB7 shopHome — settings.tracking + flash decoration", () => {
       googleAdsId: null,
       googleAdsConversionLabel: null,
       searchConsoleVerification: null,
+      metaPixelId: null,
+      tikTokPixelId: null,
+      clarityId: null,
     });
     Object.assign(prisma.storefrontSetting.rows[0], {
       ga4MeasurementId: "G-ABC12345",
@@ -358,6 +370,9 @@ describe("GB7 shopHome — settings.tracking + flash decoration", () => {
       googleAdsId: "AW-123456789",
       googleAdsConversionLabel: "label_123-abc",
       searchConsoleVerification: "v".repeat(40),
+      metaPixelId: null,
+      tikTokPixelId: null,
+      clarityId: null,
     });
   });
 

@@ -20,6 +20,7 @@ import { ReviewInsightsController, PublicReviewInsightController } from "./revie
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { OrderInsightsService } from "./order-insights.service";
 import { FraudModule } from "../fraud/fraud.module";
+import { FraudNetworkModule } from "../fraud-network/fraud-network.module";
 import { FraudShieldService } from "./fraud-shield.service";
 import { OrderSurgeryService } from "./order-surgery.service";
 import { OrderProfitService } from "./order-profit.service";
@@ -32,6 +33,8 @@ import { OrderTeamPerformanceService } from "./order-team-performance.service";
 import { OrderTeamPerformanceController } from "./order-team-performance.controller";
 import { StorefrontModule } from "../storefront/storefront.module";
 import { ConnectionsModule } from "../connections/connections.module";
+import { StorageModule } from "../storage/storage.module";
+import { SocialModule } from "../social/social.module";
 import { PaymentResendService } from "./payment-resend.service";
 
 // Milestone 65: manual orders enter via the integrations upsert.
@@ -65,6 +68,11 @@ import { PaymentResendService } from "./payment-resend.service";
 // payment-link resend's initiation + option validation). It
 // imports nothing, so there is no cycle; ShopAccountService for
 // the resend SMS already arrives via StorefrontModule.
-@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule, FraudModule, StorefrontModule, ConnectionsModule], controllers: [PrintCenterController, OrderAnalyticsController, OrderTeamPerformanceController, OrdersController, OrderProfitController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController, ProductReviewsController, PublicProductReviewsController, ReviewInsightsController, PublicReviewInsightController], providers: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, ReviewInsightsService, LlmFactory, FraudShieldService, OrderSurgeryService, OrderProfitService, OrderAnalyticsService, PrintCenterService, OrderTeamPerformanceService, PaymentResendService], exports: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, ReviewInsightsService, FraudShieldService, OrderSurgeryService, OrderAnalyticsService, PrintCenterService, OrderProfitService] })
+// NF8: StorageModule supplies StorageService +
+// StorageRegistryService for review-media uploads (ReviewsService)
+// and signed media URLs (ProductReviewsService); SocialModule
+// supplies SocialService for the share-as-draft action. Neither
+// reaches OrdersModule (Social -> Ai/Storage only), so no cycle.
+@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule, FraudModule, FraudNetworkModule, StorefrontModule, ConnectionsModule, StorageModule, SocialModule], controllers: [PrintCenterController, OrderAnalyticsController, OrderTeamPerformanceController, OrdersController, OrderProfitController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController, ProductReviewsController, PublicProductReviewsController, ReviewInsightsController, PublicReviewInsightController], providers: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, ReviewInsightsService, LlmFactory, FraudShieldService, OrderSurgeryService, OrderProfitService, OrderAnalyticsService, PrintCenterService, OrderTeamPerformanceService, PaymentResendService], exports: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, ReviewInsightsService, FraudShieldService, OrderSurgeryService, OrderAnalyticsService, PrintCenterService, OrderProfitService] })
 export class OrdersModule {}
 

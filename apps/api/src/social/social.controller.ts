@@ -18,7 +18,7 @@ import { SocialStockService } from "./social-stock.service";
 import { SocialCoachService } from "./social-coach.service";
 import {
   BulkMediaDto, BulkSocialPostsDto, ConnectTelegramDto, CoverMediaDto, CreateCaptionTestDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
-  AssignSocialPostDto, BrandOverlayMediaDto, CreateShareLinkDto, CreateSocialPostNoteDto, ImportStockMediaDto, RejectSocialPostDto, SaveStockKeyDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
+  AssignSocialPostDto, BrandOverlayMediaDto, CreateShareLinkDto, CreateSocialPostNoteDto, ImportStockMediaDto, RejectSocialPostDto, SaveStockKeyDto, ScheduleSocialPostDto, SelectGoogleBusinessLocationDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
 import { CurrentUser, AuthUser, Public, Roles, PermissionArea } from "../common/decorators";
@@ -149,6 +149,29 @@ export class SocialController {
   @Get("accounts/threads/connect-url") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   threadsConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("appSource") appSource?: string) {
     return this.oauth.threadsConnectUrl(orgId, user.userId, appSource);
+  }
+
+  // OU9: Google Business Profile OAuth connect — the YouTube
+  // flow's shape on the same Google app (plus ?appSource=own
+  // for the tenant's OWN Google app, CC28). With MORE THAN ONE
+  // location the callback parks the authorization in a pick
+  // state; these two endpoints show the locations and finish
+  // the connect. Publishing additionally requires Google's
+  // API-access approval for the platform project — that gate
+  // lives in platform-modes + the publish path, not here.
+  @Get("accounts/google-business-profile/connect-url") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  googleBusinessConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("appSource") appSource?: string) {
+    return this.oauth.googleBusinessConnectUrl(orgId, user.userId, appSource);
+  }
+
+  @Get("accounts/google-business-profile/pick-info")
+  googleBusinessPickInfo(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("state") state: string) {
+    return this.oauth.getGoogleBusinessPickInfo(orgId, user.userId, state ?? "");
+  }
+
+  @Post("accounts/google-business-profile/select-location") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  googleBusinessSelectLocation(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SelectGoogleBusinessLocationDto) {
+    return this.oauth.selectGoogleBusinessLocation(orgId, user.userId, dto);
   }
 
   // SP8/SP9: what the UI may honestly claim about the OAuth
@@ -920,6 +943,23 @@ export class SocialOAuthCallbackController {
     @Res() res: Response,
   ) {
     const url = await this.oauth.handleThreadsCallback({ code, state, error });
+    return res.redirect(302, url);
+  }
+
+  // OU9: GBP callbacks land back on the SOCIAL POSTS page with
+  // social_connected=google_business_profile, a gbp_pick state
+  // (multi-location), or a social_error explanation — Google's
+  // own refusal text included when the API-access gate blocks
+  // the location list.
+  @Public()
+  @Get("google-business-profile/callback")
+  async googleBusinessCallback(
+    @Query("code") code: string | undefined,
+    @Query("state") state: string | undefined,
+    @Query("error") error: string | undefined,
+    @Res() res: Response,
+  ) {
+    const url = await this.oauth.handleGoogleBusinessCallback({ code, state, error });
     return res.redirect(302, url);
   }
 }

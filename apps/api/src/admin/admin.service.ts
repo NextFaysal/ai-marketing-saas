@@ -5,16 +5,19 @@ import { get as httpsGet } from "node:https";
 import { dirname, join } from "node:path";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
-import { platformSetting, PLAN_TIERS, planPrices, planYearlyPrices, planLimits, PLAN_LIMIT_FIELDS } from "../common/platform-settings";
+import { platformSetting, maxOrgsPerUser, PLAN_TIERS, planPrices, planYearlyPrices, planLimits, PLAN_LIMIT_FIELDS } from "../common/platform-settings";
 import { KNOWN_FLAG_KEYS, planFlagDefaults } from "../common/feature-flags";
 import { referralConfig, maybeRewardReferral } from "../common/referral";
 import {
   seal, unseal, refreshPlatformConfig, getPlatformConfigSync,
   effectiveLlmConfig, effectiveImageConfig,
   effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveThreadsAppConfig,
+  effectiveCloudflareSaasConfig, effectiveStripeConfig,
   sslcommerzBase, bkashBase, socialOAuthRedirectUri,
   type BkashConfig, type SslcommerzConfig,
 } from "../common/platform-config";
+import { CloudflareForSaasClient } from "../common/cloudflare-for-saas.client";
+import { StripeClient, stripeKeyMode } from "../common/stripe.client";
 import { rateLimitStats } from "../common/throttler.guard";
 import { storageUsageForOrg } from "../common/storage-usage";
 import { buildLlmProvider } from "../ai/llm/llm.factory";
@@ -244,8 +247,11 @@ export class AdminService {
   }
 
   // ---------------- Organizations ----------------
-  async listOrgs(q?: string, page = 1, take = 25) {
+  async listOrgs(q?: string, page = 1, take = 25, tag?: string) {
     const where: any = q ? { OR: [{ name: { contains: q, mode: "insensitive" } }, { slug: { contains: q, mode: "insensitive" } }] } : {};
+    // ORG13: tag filter — Postgres array containment (has), an
+    // exact tag as an admin typed it (tags keep their case).
+    if (tag && tag.trim()) where.tags = { has: tag.trim() };
     const rows = await (this.prisma as any).organization.findMany({ where, orderBy: { createdAt: "desc" }, skip: (page - 1) * take, take });
     const out: any[] = [];
     for (const org of rows as any[]) {
@@ -411,7 +417,7 @@ export class AdminService {
   }
 
   // ---------------- Platform settings, announcements, flags ----------------
-  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices", "planYearlyPrices", "planLimits", "planFlagDefaults", "maintenanceWindow", "auditRetentionDays"] as const;
+  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices", "planYearlyPrices", "planLimits", "planFlagDefaults", "maintenanceWindow", "auditRetentionDays", "maxOrgsPerUser"] as const;
 
   async getSettings() {
     const rawPlanLimits = await platformSetting(this.prisma as any, "planLimits");
@@ -427,10 +433,14 @@ export class AdminService {
       // console matrix renders explicit entries from exactly this.
       planFlagDefaults: await planFlagDefaults(this.prisma as any),
       maintenanceWindow: null, auditRetentionDays: 365,
+      // ORG12: sanitized by its reader (absent/invalid = null =
+      // no cap). The number itself is the operator's policy call.
+      maxOrgsPerUser: await maxOrgsPerUser(this.prisma as any),
     };
     for (const key of AdminService.SETTING_KEYS) {
       if (key === "planLimits") continue; // already merged above; raw is in planLimitsStored
       if (key === "planFlagDefaults") continue; // sanitized sparse map already set above
+      if (key === "maxOrgsPerUser") continue; // sanitized reader value already set above
       const v = await platformSetting(this.prisma as any, key);
       if (v !== null && v !== undefined) out[key] = v;
     }
@@ -513,6 +523,15 @@ export class AdminService {
       if (key === "auditRetentionDays") {
         if (typeof value !== "number" || value < 30 || value > 3650) {
           throw new BadRequestException("auditRetentionDays must be a number between 30 and 3650");
+        }
+      }
+      if (key === "maxOrgsPerUser") {
+        // ORG12: null clears the cap (unlimited). A number must
+        // be an integer >= 1 — 0 is rejected rather than read as
+        // "nobody may create orgs", so the unlimited state has
+        // exactly one spelling.
+        if (value !== null && (typeof value !== "number" || !Number.isInteger(value) || value < 1)) {
+          throw new BadRequestException("maxOrgsPerUser must be null (no limit) or an integer >= 1");
         }
       }
       await (this.prisma as any).systemSetting.upsert({
@@ -696,6 +715,35 @@ export class AdminService {
     await this.logAdmin(actor, "org_limits", "Organization", organizationId, { before, after: { ...before, ...data } }, ip);
     const updated = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     return { ...updated, creditMinor: BigInt(updated?.creditMinor ?? 0).toString() };
+  }
+
+  /** ORG13 (Organization Next OB4): replace an org's admin tags.
+   * Semantics are whole-list replace (the console sends the full
+   * list it wants). Normalize: trim each tag, drop empties, drop
+   * exact duplicates — case is preserved exactly as typed (tags
+   * are the admin's own labels, not slugs). Limits: at most 20
+   * tags, each at most 40 characters. Audited via logAdmin like
+   * every other org-level admin write. */
+  async updateOrgTags(actor: any, organizationId: string, rawTags: unknown, ip?: string) {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    if (!Array.isArray(rawTags)) throw new BadRequestException("tags must be an array of strings");
+    const seen = new Set<string>();
+    const tags: string[] = [];
+    for (const raw of rawTags as unknown[]) {
+      if (typeof raw !== "string") throw new BadRequestException("Every tag must be a string");
+      const t = raw.trim();
+      if (!t) continue;
+      if (t.length > 40) throw new BadRequestException("Each tag may be at most 40 characters");
+      if (seen.has(t)) continue;
+      seen.add(t);
+      tags.push(t);
+    }
+    if (tags.length > 20) throw new BadRequestException("An organization may carry at most 20 tags");
+    const before = Array.isArray(org.tags) ? org.tags : [];
+    await (this.prisma as any).organization.update({ where: { id: organizationId }, data: { tags } });
+    await this.logAdmin(actor, "org_tags_updated", "Organization", organizationId, { before, after: tags }, ip);
+    return { id: organizationId, tags };
   }
 
   // ---------------- Platform health & usage ----------------
@@ -1906,15 +1954,78 @@ export class AdminService {
 
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
+  // ---------- CA26: platform blueprint definitions (data) ----------
+  // The platform team owns the platform rows of
+  // CampaignBlueprint (organizationId null). Orgs read
+  // them in the builder and may clone — never edit —
+  // them. Every mutation is audit-logged like every
+  // other admin action.
+  async listPlatformBlueprints() {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findMany) return { blueprints: [], note: "CampaignBlueprint table পাওয়া যায়নি — Migration বাকি থাকতে পারে।" };
+    const rows = await table.findMany({ where: { organizationId: null }, orderBy: { createdAt: "asc" } });
+    return { blueprints: rows };
+  }
+
+  async createPlatformBlueprint(actor: any, dto: any, ip?: string) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.create) throw new BadRequestException("CampaignBlueprint table পাওয়া যায়নি — Migration বাকি।");
+    const key = String(dto?.key ?? "").trim();
+    if (!key) throw new BadRequestException("Blueprint key আবশ্যক।");
+    const dupe = await table.findFirst({ where: { key, organizationId: null } });
+    if (dupe) throw new BadRequestException(`Platform blueprint key "${key}" ইতিমধ্যে আছে।`);
+    const row = await table.create({
+      data: {
+        key, name: String(dto.name ?? key).slice(0, 200), objective: String(dto.objective ?? "OUTCOME_SALES"),
+        advantagePlus: !!dto.advantagePlus, description: String(dto.description ?? ""),
+        adSet: dto.adSet ?? {}, ad: dto.ad ?? {},
+        organizationId: null, version: 1, category: dto.category ?? null, tags: Array.isArray(dto.tags) ? dto.tags : [],
+      },
+    });
+    await this.logAdmin(actor, "blueprint_created", "CampaignBlueprint", row.id, { key }, ip);
+    return row;
+  }
+
+  async updatePlatformBlueprint(actor: any, id: string, dto: any, ip?: string) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findFirst) throw new BadRequestException("CampaignBlueprint table পাওয়া যায়নি — Migration বাকি।");
+    const row = await table.findFirst({ where: { id } });
+    if (!row || row.organizationId !== null) throw new NotFoundException("Platform blueprint not found");
+    const data: any = { version: (row.version ?? 1) + 1 };
+    for (const f of ["name", "description", "objective", "category"] as const) if (dto[f] !== undefined) data[f] = dto[f];
+    if (dto.advantagePlus !== undefined) data.advantagePlus = !!dto.advantagePlus;
+    if (dto.adSet !== undefined) data.adSet = dto.adSet;
+    if (dto.ad !== undefined) data.ad = dto.ad;
+    if (dto.tags !== undefined) data.tags = dto.tags;
+    // The key is the row's identity for org clones and
+    // instantiate-by-key; renaming it is a delete+create,
+    // never a silent edit.
+    if (dto.key !== undefined && dto.key !== row.key) throw new BadRequestException("Blueprint key বদলানো যায় না — নতুন key চাইলে নতুন Blueprint তৈরি করুন।");
+    const updated = await table.update({ where: { id }, data });
+    await this.logAdmin(actor, "blueprint_updated", "CampaignBlueprint", id, { key: row.key, version: data.version }, ip);
+    return updated;
+  }
+
+  async deletePlatformBlueprint(actor: any, id: string, ip?: string) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findFirst) throw new BadRequestException("CampaignBlueprint table পাওয়া যায়নি — Migration বাকি।");
+    const row = await table.findFirst({ where: { id } });
+    if (!row || row.organizationId !== null) throw new NotFoundException("Platform blueprint not found");
+    await table.delete({ where: { id } });
+    await this.logAdmin(actor, "blueprint_deleted", "CampaignBlueprint", id, { key: row.key }, ip);
+    return { deleted: true, id };
+  }
+
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li, goauth, th] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li, goauth, th, cfs, stripeRow] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
       this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
       this.rawConfigRow("imageConfig"),
       this.rawConfigRow("tiktokAppConfig"), this.rawConfigRow("googleAppConfig"),
       this.rawConfigRow("walletConfig"), this.rawConfigRow("linkedinAppConfig"), this.rawConfigRow("googleOAuthConfig"),
-      this.rawConfigRow("threadsAppConfig"),
+      this.rawConfigRow("threadsAppConfig"), this.rawConfigRow("cloudflareSaasConfig"),
+      this.rawConfigRow("stripeConfig"),
     ]);
     return {
       llm: {
@@ -1978,6 +2089,10 @@ export class AdminService {
         clientId: gg?.clientId ?? (process.env.GOOGLE_CLIENT_ID || null),
         redirectUri: gg?.redirectUri ?? (process.env.GOOGLE_REDIRECT_URI || null),
         secretConfigured: Boolean(gg?.clientSecretEncrypted || process.env.GOOGLE_CLIENT_SECRET),
+        // OU9: the operator's declaration that Google approved
+        // this project's Business Profile API access. Anything
+        // but a literal stored true reads as NOT approved.
+        gbpApiAccessApproved: gg ? gg.gbpApiAccessApproved === true : process.env.GOOGLE_GBP_API_ACCESS_APPROVED === "true",
       },
       linkedinApp: {
         source: li?.clientId ? "admin" : (process.env.LINKEDIN_CLIENT_ID ? "env" : "none"),
@@ -2001,6 +2116,28 @@ export class AdminService {
         redirectUri: th?.redirectUri ?? (process.env.THREADS_REDIRECT_URI || null),
         secretConfigured: Boolean(th?.clientSecretEncrypted || process.env.THREADS_APP_SECRET),
       },
+      cloudflareSaas: {
+        // OU2: admin-only by design (no env fallback — see
+        // effectiveCloudflareSaasConfig). The token VALUE is
+        // never returned; only secretConfigured, like siblings.
+        source: cfs?.zoneId ? "admin" : "none",
+        enabled: cfs ? cfs.enabled === true : false,
+        zoneId: cfs?.zoneId ?? null,
+        fallbackOrigin: cfs?.fallbackOrigin ?? null,
+        secretConfigured: Boolean(cfs?.apiTokenEncrypted),
+      },
+      stripe: {
+        // OU5: the platform's Stripe account for subscription
+        // billing. BOTH secret values stay sealed and are never
+        // returned — only configured booleans + the key's mode
+        // (derived from the unsealed key's documented prefix)
+        // + the non-secret publishable key.
+        source: stripeRow?.secretKeyEncrypted ? "admin" : (process.env.STRIPE_SECRET_KEY ? "env" : "none"),
+        publishableKey: stripeRow?.publishableKey ?? (process.env.STRIPE_PUBLISHABLE_KEY || null),
+        mode: stripeKeyMode(unseal(stripeRow?.secretKeyEncrypted) ?? process.env.STRIPE_SECRET_KEY ?? ""),
+        secretConfigured: Boolean(stripeRow?.secretKeyEncrypted || process.env.STRIPE_SECRET_KEY),
+        webhookSecretConfigured: Boolean(stripeRow?.webhookSecretEncrypted || process.env.STRIPE_WEBHOOK_SECRET),
+      },
       wallet: {
         // CC10: the platform fee on platform-gateway payments.
         // Unset ⇒ 0 — a fee is never invented.
@@ -2023,7 +2160,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig", threads: "threadsAppConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig", threads: "threadsAppConfig", cloudflare: "cloudflareSaasConfig", stripe: "stripeConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -2059,6 +2196,9 @@ export class AdminService {
     } else if (area === "google") {
       setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
       setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
+      // OU9: the GBP API-access approval declaration (literal
+      // true only — see effectiveGbpApiAccessApproved).
+      if (patch.gbpApiAccessApproved !== undefined) setField("gbpApiAccessApproved", patch.gbpApiAccessApproved === true);
       setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
     } else if (area === "linkedin") {
       setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
@@ -2078,6 +2218,23 @@ export class AdminService {
       setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
       setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
       setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
+    } else if (area === "stripe") {
+      // OU5: the platform Stripe account. Both secrets seal
+      // exactly like every sibling secret; clearSecret clears
+      // BOTH (a key without its webhook secret is a half-config
+      // that can never resolve — see effectiveStripeConfig).
+      setField("publishableKey", patch.publishableKey === undefined ? undefined : String(patch.publishableKey));
+      setSecret("secretKey", "secretKeyEncrypted", patch.secretKey, patch.clearSecret);
+      setSecret("webhookSecret", "webhookSecretEncrypted", patch.webhookSecret, patch.clearSecret);
+    } else if (area === "cloudflare") {
+      // OU2: Cloudflare for SaaS. `enabled` is the operator's
+      // explicit switch (credentials alone never provision
+      // certificates); the API token seals exactly like every
+      // sibling secret; zoneId/fallbackOrigin are plain fields.
+      if (patch.enabled !== undefined) setField("enabled", patch.enabled === true);
+      setField("zoneId", patch.zoneId === undefined ? undefined : String(patch.zoneId));
+      setField("fallbackOrigin", patch.fallbackOrigin === undefined ? undefined : String(patch.fallbackOrigin));
+      setSecret("apiToken", "apiTokenEncrypted", patch.apiToken, patch.clearSecret);
     } else if (area === "meta") {
       setField("appId", patch.appId === undefined ? undefined : String(patch.appId));
       if (patch.graphVersion !== undefined) {
@@ -2220,6 +2377,62 @@ export class AdminService {
         bkashVerified = { latencyMs: probe.latencyMs };
       }
     }
+    // OU2 verify-before-save, same discipline as Meta/bKash: the
+    // CfS zone read is a TRUE credential proof (the token must be
+    // accepted AND scoped to this zone) and side-effect-free, so
+    // when the merged config is complete (zone id + token) it
+    // must pass BEFORE anything is persisted. Runs regardless of
+    // the `enabled` switch — a stored-but-broken credential is
+    // exactly what verify-before-save exists to catch; enabling
+    // is a separate operator act. Skipped on clearSecret/clear.
+    let cloudflareVerified: { latencyMs: number; zoneName: string | null } | null = null;
+    if (area === "cloudflare" && patch.clearSecret !== true) {
+      const mergedZoneId = typeof next.zoneId === "string" ? next.zoneId : "";
+      const mergedToken = (typeof patch.apiToken === "string" && patch.apiToken)
+        ? patch.apiToken
+        : unseal(current.apiTokenEncrypted);
+      if (mergedZoneId && mergedToken) {
+        const probe = await this.probeCloudflareZone({ apiToken: mergedToken, zoneId: mergedZoneId });
+        if (!probe.ok) {
+          await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
+          throw new BadRequestException(`Cloudflare for SaaS verification FAILED — the setting was NOT saved: ${probe.detail}`);
+        }
+        cloudflareVerified = { latencyMs: probe.latencyMs, zoneName: probe.zoneName ?? null };
+      }
+    }
+    // OU5 verify-before-save, same discipline as Meta/bKash/
+    // Cloudflare: the Stripe balance read is a TRUE credential
+    // proof (Stripe answers it only for a valid secret key) and
+    // side-effect-free, so when the merged config holds a secret
+    // key it must pass BEFORE anything is persisted — and
+    // Stripe's own livemode answer must agree with the key's
+    // mode. A stored-but-broken key is exactly what
+    // verify-before-save exists to catch. Skipped when there is
+    // no key at all (an incomplete save stores unverified, like
+    // a Meta save without a secret) and on clearSecret.
+    let stripeVerified: { latencyMs: number; livemode: boolean } | null = null;
+    if (area === "stripe" && patch.clearSecret !== true) {
+      const mergedKey = (typeof patch.secretKey === "string" && patch.secretKey)
+        ? patch.secretKey
+        : unseal(current.secretKeyEncrypted);
+      if (mergedKey) {
+        const mode = stripeKeyMode(mergedKey);
+        if (!mode) {
+          await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: "secret key prefix is not sk_/rk_" }, ip);
+          throw new BadRequestException("Stripe verification FAILED — the setting was NOT saved: the secret key must start with sk_test_ / sk_live_ (or rk_)");
+        }
+        const probe = await this.probeStripeBalance(mergedKey);
+        if (!probe.ok) {
+          await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
+          throw new BadRequestException(`Stripe verification FAILED — the setting was NOT saved: ${probe.detail}`);
+        }
+        if (probe.livemode !== (mode === "live")) {
+          await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: "livemode mismatch" }, ip);
+          throw new BadRequestException("Stripe verification FAILED — the setting was NOT saved: Stripe's livemode answer disagrees with the key's mode");
+        }
+        stripeVerified = { latencyMs: probe.latencyMs, livemode: probe.livemode };
+      }
+    }
 
     await (this.prisma as any).systemSetting.upsert({
       where: { key }, create: { key, value: next, updatedById: actor.id }, update: { value: next, updatedById: actor.id },
@@ -2230,6 +2443,8 @@ export class AdminService {
     if (imageVerified) return { ...configView, imageVerification: { ok: true, model: imageVerified.model, latencyMs: imageVerified.latencyMs } };
     if (metaVerified) return { ...configView, metaVerification: { ok: true, latencyMs: metaVerified.latencyMs } };
     if (bkashVerified) return { ...configView, bkashVerification: { ok: true, latencyMs: bkashVerified.latencyMs } };
+    if (cloudflareVerified) return { ...configView, cloudflareVerification: { ok: true, latencyMs: cloudflareVerified.latencyMs, zoneName: cloudflareVerified.zoneName } };
+    if (stripeVerified) return { ...configView, stripeVerification: { ok: true, latencyMs: stripeVerified.latencyMs, livemode: stripeVerified.livemode } };
     return configView;
   }
 
@@ -2650,6 +2865,63 @@ export class AdminService {
     const cfg = effectiveThreadsAppConfig();
     if (!cfg) return { ok: false, latencyMs: 0, detail: "Threads App configure করা নেই — Threads App ID ও App Secret দুটোই লাগবে। আগে সেভ করুন।" };
     const probe = await this.probeThreadsApp(cfg);
+    return { ...probe, source: cfg.source };
+  }
+
+  /** OU2: Cloudflare for SaaS zone-read probe — via the ONE CfS
+   * adapter (common/cloudflare-for-saas.client.ts). A successful
+   * zone read proves the token is accepted and scoped to this
+   * zone; it does NOT prove CfS is enabled on the zone, that a
+   * fallback origin is designated, or that any certificate will
+   * issue — those are proven only by the live spare-domain test
+   * (TD D3), and the detail says so. */
+  private async probeCloudflareZone(cfg: { apiToken: string; zoneId: string }) {
+    const started = Date.now();
+    try {
+      const zone = await new CloudflareForSaasClient().getZone(cfg);
+      return {
+        ok: true, latencyMs: Date.now() - started, zoneName: zone.name,
+        detail: `Cloudflare zone পড়া গেছে${zone.name ? ` (${zone.name})` : ""} — API Token গৃহীত হয়েছে ও এই zone-এ scoped। প্রমাণের সীমা: এটি CfS চালু থাকা, fallback origin মনোনীত থাকা বা সার্টিফিকেট ইস্যু হবে কিনা তা প্রমাণ করে না — সেগুলো লাইভ spare-domain টেস্টেই প্রমাণ হবে।`,
+      };
+    } catch (e) {
+      return { ...this.probeFail(started, AdminService.errText(e)), zoneName: null as string | null };
+    }
+  }
+
+  async testCloudflareSaas() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveCloudflareSaasConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "Cloudflare for SaaS configure/চালু করা নেই — Enabled + Zone ID + API Token তিনটিই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeCloudflareZone(cfg);
+    return { ...probe, source: cfg.source };
+  }
+
+  /** OU5: Stripe balance-read probe — via the ONE Stripe client
+   * (common/stripe.client.ts). A successful read proves the
+   * secret key is accepted by Stripe and reports the account's
+   * own livemode; it does NOT prove the webhook endpoint is
+   * registered in the Stripe Dashboard or that a real card will
+   * be charged — those are proven only by the owner's test-mode
+   * checkout proof (acceptance checklist), and the detail says
+   * so. */
+  private async probeStripeBalance(secretKey: string) {
+    const started = Date.now();
+    try {
+      const balance = await new StripeClient().retrieveBalance(secretKey);
+      return {
+        ok: true, latencyMs: Date.now() - started, livemode: balance.livemode,
+        detail: `Stripe Balance পড়া গেছে — Secret Key গৃহীত হয়েছে (mode: ${balance.livemode ? "LIVE" : "TEST"})। প্রমাণের সীমা: এটি webhook endpoint Stripe Dashboard-এ registered কিনা বা আসল কার্ডে চার্জ হবে কিনা তা প্রমাণ করে না — সেগুলো test-mode checkout proof-এই প্রমাণ হবে।`,
+      };
+    } catch (e) {
+      return { ...this.probeFail(started, AdminService.errText(e)), livemode: false as boolean };
+    }
+  }
+
+  async testStripe() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveStripeConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "Stripe configure করা নেই — Secret Key ও Webhook Signing Secret দুটোই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeStripeBalance(cfg.secretKey);
     return { ...probe, source: cfg.source };
   }
 

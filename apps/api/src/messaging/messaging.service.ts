@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { isMemberConnectionDenied } from "../common/permission-catalog";
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
 import { estimateTokens } from "../ai/llm/llm.types";
@@ -12,27 +12,66 @@ import { MetaMessagingClient } from "../inbox/meta-messaging.client";
 import { decryptJson } from "../integrations/crypto";
 import { SmsProvider, normalizeBdPhone, normalizePhoneGeneric } from "./sms.provider";
 import { renderTemplate } from "./render";
-import { issueUnsubscribeToken, verifyUnsubscribeToken } from "./unsubscribe-token";
+import { issueUnsubscribeToken, verifyUnsubscribeToken, issuePreferenceToken, verifyPreferenceToken, issueOptInToken, verifyOptInToken } from "./unsubscribe-token";
+import { classifyCsvRows, parseContactsCsv, CsvImportMapping } from "./csv-import";
+import * as QRCode from "qrcode";
 import {
   AudienceDefinitionError, AudienceDefinition, AudienceFacts,
   validateAudienceDefinition, matchesAudienceDefinition, parseAddressList,
 } from "./audience-rules";
-import { computeOrderAggregates, computeRfm, computeLastOrders } from "./rfm";
+import { computeOrderAggregates, computeRfm, computeLastOrders, RFM_SEGMENTS } from "./rfm";
 import { TEMPLATE_VARIABLES } from "./variables";
 import { rewriteBroadcastLinks, verifyLinkToken, apiPublicUrl } from "./link-tracking";
 import { issueOpenToken, verifyOpenToken } from "./open-token";
 import { deliveryRecipientKey, groupFailureReasons, abSuggestion } from "./delivery-report";
 import { parseRecurrence, nextOccurrence, Recurrence, RecurrenceValidationError } from "./recurrence";
 import { JOURNEY_PRESETS } from "./journey-presets";
+import { JOURNEY_PRESETS_V2, UNAVAILABLE_JOURNEY_PRESETS } from "./journey-presets-v2";
 import { composeCheck } from "./compose-check";
-import { productSnippetText, productSnippetHtml } from "./composer-blocks";
+import { composeCheckV2 } from "./compose-check-v2";
+import { aggregateChannelHealth, isHardRecipientFailure, decideBudget, BOUNCE_COMPLAINT_NOTE, BudgetDecision } from "./governance";
+import {
+  ASSOCIATION_LABEL_BN, AUTO_WINNER_MIN_SAMPLE, AUTO_WINNER_RULE_TEXT_BN, AUTO_WINNER_TEST_NAME,
+  aggregateFunnels, buildAnalyticsCsv, decideAutoWinner, recipientSendTimeFromEvents, subjectQualityScore,
+  type BroadcastFunnelShape,
+} from "./analytics";
+import { parseFinanceRange } from "../finance/finance-common";
+import { productSnippetText, productSnippetHtml, couponSnippetText, couponSnippetHtml } from "./composer-blocks";
 import { smsSegments } from "./sms-segments";
+import { qualityGuardDecision, resolveWhatsAppRateMinor } from "./whatsapp-rich";
 import {
   TenantSmtpConfig, TenantSmsConfig,
-  tenantSmtpFromRow, tenantSmsFromRow, senderConfigSafeView,
+  tenantSmtpFromRow, tenantSmsFromRow, tenantSmsFromGatewayRow, smsGatewayKey, senderConfigSafeView,
 } from "./sender-config";
+import {
+  CascadeChannel, CascadeConfig, SmsCircuitBreaker,
+  parseCascadeConfig, readCascadeConfig, resolveAttemptOrder, engagementStats, cascadeBreakdown,
+} from "./cascade";
+import { isQuietHoursActive, isValidHhMm, isValidTimeZone } from "./quiet-hours";
+import { EmailBlock, BrandKit, validateEmailBlocks, renderEmailBlocks, discountLabel } from "./email-blocks";
+import {
+  PersonalizationConfig, SegmentBlockConfig, UniqueCouponConfig,
+  PersonalizationConfigError, parsePersonalizationConfig, readPersonalizationConfig,
+  buildUniqueCouponCode, pickRecommendations, renderRecommendationBlock, applyDynamicBlocks,
+  UNIQUE_COUPON_VARIABLE,
+} from "./personalization";
+import { FESTIVAL_TEMPLATE_PACKS } from "./festival-templates";
+import {
+  EngagementContact, EngagementThresholds, DEFAULT_ENGAGEMENT_THRESHOLDS,
+  ENGAGEMENT_FORMULA_TEXT, PREDICTIVE_SEGMENT_RULES,
+  computeEngagementScore, predictiveSegmentsFor, isHeldOut,
+} from "./engagement";
+import { NOTIFICATION_EVENTS, mergeConfig } from "../order-notifications/order-notifications";
 import { effectiveSmtpConfig, seal } from "../common/platform-config";
 import { resolveTxt } from "node:dns/promises";
+import {
+  BROADCAST_PERSONALIZATION_SAMPLE_MAX,
+  BroadcastPersonalizationService,
+  PersonalTier,
+  assertTier2HookPlaceholder,
+  normalizePersonalizationConfig,
+  renderPersonalizedBody,
+} from "./broadcast-personalization.service";
 
 /** MS3: rows read per cursor step on every audience base scan —
  * no audience path issues one unbounded findMany anymore. */
@@ -46,6 +85,32 @@ export const CSV_AUDIENCE_CAP = 5000;
  * cap and the accounting — stated in the B5 acceptance). */
 export const MESSAGING_AI_FEATURE = "messaging_copy";
 
+/** MS2 + MX6: the RESERVED inbound WhatsApp keywords. STOP set
+ * → opted_out, START set → opted_in, recorded by
+ * handleInboundKeyword (source inbound_keyword). MX6 keyword
+ * campaigns can NEVER claim any of these (the rule validator
+ * refuses them with the same normalization): opt-out/opt-in
+ * bookkeeping is exclusive and supreme, and campaign matching
+ * never runs for a STOP/START message. */
+export const KEYWORD_RESERVED_STOP = ["STOP", "STOP ALL", "UNSUBSCRIBE", "বন্ধ করুন", "স্টপ"];
+export const KEYWORD_RESERVED_START = ["START", "চালু করুন"];
+
+/** MX6: the ONE keyword normalization, shared by the MS2 hook,
+ * the rule validator, the duplicate-claim check and inbound
+ * campaign matching: trim, then uppercase compare (a no-op for
+ * Bengali script, case-insensitive for Latin — exactly the MS2
+ * rule). */
+export function normalizeKeywordText(text: unknown): string {
+  return String(text ?? "").trim().toUpperCase();
+}
+
+/** MX6: is this normalized text one of the reserved STOP/START
+ * keywords? Compares with the same normalization on both sides. */
+export function isReservedKeyword(normalizedUpper: string): boolean {
+  return [...KEYWORD_RESERVED_STOP, ...KEYWORD_RESERVED_START]
+    .some((k) => normalizeKeywordText(k) === normalizedUpper);
+}
+
 /** MS1: recipients processed per chunk; the row is re-read between
  * chunks so a pause/cancel lands within one chunk of being set. */
 export const BROADCAST_CHUNK_SIZE = 50;
@@ -55,13 +120,117 @@ export const BROADCAST_SWEEP_MAX_ENTRIES = 200;
  * interrupted (crashed request/process) and recovered by the sweep. */
 export const BROADCAST_STALE_MS = 10 * 60 * 1000;
 
+/** MX3: platform defaults for the per-org marketing sweep caps
+ * (MessagingSetting.marketingMaxBroadcastsPerSweep /
+ * marketingMaxEntriesPerSweep). The broadcasts cap is a TOTAL
+ * budget for one org's sweep run, shared by the due phase and
+ * the stale-recovery phase (due first); each phase still
+ * fetches at most MARKETING_SWEEP_PHASE_MAX, the historical
+ * fetch size. A null setting therefore reproduces the pre-MX3
+ * sweep exactly: up to 10 due + up to 10 stale broadcasts, each
+ * processed for at most BROADCAST_SWEEP_MAX_ENTRIES entries. */
+export const MARKETING_SWEEP_DEFAULT_MAX_BROADCASTS = 20;
+export const MARKETING_SWEEP_PHASE_MAX = 10;
+export const MARKETING_SWEEP_MAX_BROADCASTS_LIMIT = 50;
+export const MARKETING_SWEEP_MAX_ENTRIES_LIMIT = 5000;
+/** MX3: fallback when an org's timezone cannot be read or is
+ * not a valid IANA zone. Matches the Organization.timezone
+ * schema default — the org row itself always carries a zone. */
+export const QUIET_HOURS_FALLBACK_TIMEZONE = "Asia/Dhaka";
+
+/** MX1: recipients written per createMany chunk at prepare time
+ * (the streaming resolver feeds the writer in slices of this
+ * size — never one giant write, never a giant Json snapshot). */
+export const BROADCAST_RECIPIENT_WRITE_CHUNK = 500;
+
+/** MX1: the dedupe key of one recipient within one broadcast —
+ * `${type}:${id}` (the MS1 A/B split key precedent; for csv the
+ * id IS the normalized address). The BroadcastRecipient unique
+ * constraint on (broadcastId, dedupeKey) makes a duplicate row
+ * impossible even when audience sources overlap. */
+export function recipientDedupeKey(recipient: { type: string; id: string | null; pushSubscriptionId?: string | null; telegramChatId?: string | null }): string {
+  // MX12: a push recipient is identified by its SUBSCRIPTION,
+  // not by the contact — one customer with two subscribed
+  // devices is two recipients (two rows, two deliveries).
+  if (recipient.pushSubscriptionId) return `push:${recipient.pushSubscriptionId}`;
+  // MX13: a telegram recipient is identified by its CHAT — the
+  // chat is the addressable unit (a customer who talked to the
+  // bot from two chats is two reachable chats).
+  if (recipient.telegramChatId) return `telegram:${recipient.telegramChatId}`;
+  return `${recipient.type}:${recipient.id ?? ""}`;
+}
+
+/** MX13 — one inline URL button of a telegram broadcast. The
+ * Bot API renders these as reply_markup.inline_keyboard URL
+ * buttons under the message text. */
+export interface TelegramButton { label: string; url: string }
+
+/** MX13 — the telegram inline-button rule, shared by broadcast
+ * create + edit and pinned by the MX13 spec: at most 4 buttons;
+ * each label 1–64 chars; each URL an https URL (Telegram refuses
+ * anything else for URL buttons) of at most 2048 chars. Empty /
+ * absent reads as null (text-only message). Throws an Error
+ * whose message is the client-facing 400 text. */
+export function validateTelegramButtons(raw: unknown): TelegramButton[] | null {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) throw new Error("telegramButtons must be an array of {label, url} pairs");
+  if (raw.length === 0) return null;
+  if (raw.length > 4) throw new Error("telegramButtons may carry at most 4 buttons");
+  const out: TelegramButton[] = [];
+  for (const b of raw as any[]) {
+    const label = String(b?.label ?? "").trim();
+    const url = String(b?.url ?? "").trim();
+    if (!label || label.length > 64) throw new Error("Each telegram button needs a label of 1–64 characters");
+    let ok = url.length > 0 && url.length <= 2048;
+    if (ok) { try { ok = new URL(url).protocol === "https:"; } catch { ok = false; } }
+    if (!ok) throw new Error(`Telegram button "${label}" needs an https URL`);
+    out.push({ label, url });
+  }
+  return out;
+}
+
+/** MX12 — the push click-through URL rule, shared by broadcast
+ * create + edit and pinned by the MX12 spec: the shop service
+ * worker opens this URL on notification click, and the base
+ * WebPush system (AX16 validateSend) accepts ONLY shop-relative
+ * paths — an absolute/external URL is refused so a push can
+ * never send visitors off the shop's own pages. Empty/absent
+ * reads as null (the worker then opens the shop root). Throws
+ * an Error whose message is the client-facing 400 text. */
+export function validatePushUrl(raw: unknown): string | null {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return null;
+  const url = String(raw).trim();
+  if (!url.startsWith("/") || url.startsWith("//") || url.length > 500) {
+    throw new Error("pushUrl must be a shop-relative path (e.g. /sale) — external URLs are not allowed for web push");
+  }
+  return url;
+}
+
+/** MX14 — the on-site click-through URL rule, shared by broadcast
+ * create + edit and pinned by the MX14 spec: the customer opens
+ * the notification inside their shop account, and the click is
+ * resolved against the SHOP's own pages — the exact shop-relative
+ * discipline of MX12's validatePushUrl (an absolute/external URL
+ * is refused so an onsite notification can never send a customer
+ * off the shop). Empty/absent reads as null (opening the
+ * notification then only marks it read). Throws an Error whose
+ * message is the client-facing 400 text. */
+export function validateOnsiteUrl(raw: unknown): string | null {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return null;
+  const url = String(raw).trim();
+  if (!url.startsWith("/") || url.startsWith("//") || url.length > 500) {
+    throw new Error("onsiteUrl must be a shop-relative path (e.g. /sale) — external URLs are not allowed for on-site notifications");
+  }
+  return url;
+}
+
 /** MS1: one materialized recipient in Broadcast.recipientSnapshot.
  * MS3: a "csv" entry's id is the normalized address itself (the
  * A/B split key is type:address for csv, per the builder design);
  * its MessageDelivery rows record recipientId null (see
  * recordDelivery) because there is no org entity behind it. */
 export interface SnapshotEntry {
-  type: "customer" | "lead" | "csv" | "test";
+  type: "customer" | "lead" | "csv" | "test" | "push" | "telegram";
   id: string;
   name: string;
   email: string | null;
@@ -77,6 +246,32 @@ export interface SnapshotEntry {
    * before MS5 have no vars — processBroadcast reads them
    * defensively as {}. */
   vars?: Record<string, unknown>;
+  /** MX8: per-recipient personalization state (same shape as
+   * BroadcastRecipient.personalization — see the schema). On the
+   * snapshot path it rides inside the entry, which the engine
+   * persists with the snapshot after every chunk, giving the
+   * same resume-idempotency guarantee as the recipient table. */
+  personalization?: Record<string, unknown>;
+  /** MX12: for channel "push" entries, the WebPushSubscription
+   * this entry sends to + its endpoint (the channel address —
+   * the preference-store identity for push). Carried in the
+   * snapshot Json exactly like vars, so the legacy snapshot
+   * engine sends push the same way the recipient-table engine
+   * does. Absent on every non-push entry. */
+  pushSubscriptionId?: string;
+  pushEndpoint?: string;
+  /** MX13: for channel "telegram" entries, the chat id this
+   * entry sends to (the channel address — the preference-store
+   * identity for telegram). Carried in the snapshot Json
+   * exactly like the push identity, so the legacy snapshot
+   * engine sends telegram the same way the recipient-table
+   * engine does. Absent on every non-telegram entry. */
+  telegramChatId?: string;
+  /** SA-B20 (G2): which personalisation tier produced this
+   * entry's vars — stamped ONLY when the broadcast's
+   * personalisation was enabled at prepare. Absent on every
+   * pre-G2 / non-personalised entry. */
+  personalTier?: PersonalTier;
 }
 
 /**
@@ -89,13 +284,40 @@ export interface SnapshotEntry {
 export function normalizePrefAddress(channel: string, raw: string): string {
   const value = String(raw ?? "").trim();
   if (channel === "email") return value.toLowerCase();
+  // MX12: the push channel's address IS the subscription
+  // endpoint — it is stored/compared trimmed, exactly as the
+  // WebPushSubscription row carries it (no phone-style
+  // normalization applies to a URL).
+  if (channel === "push") return value;
+  // MX13: the telegram channel's address IS the chat id — it is
+  // stored/compared trimmed, exactly as the ChannelConversation
+  // row carries it in externalContactId (no phone-style
+  // normalization applies to a chat id).
+  if (channel === "telegram") return value;
+  // MX14: the onsite channel's address IS the customer id — the
+  // notification center is keyed by the org-scoped Customer row,
+  // so the preference-store identity for onsite is that id,
+  // stored/compared trimmed, exactly as the Customer row
+  // carries it (no phone-style normalization applies to an id).
+  if (channel === "onsite") return value;
   return normalizeBdPhone(value) ?? value.replace(/\D/g, "");
 }
 
 /** The address a recipient is reached at on `channel`, normalized
  * the preference-store way ("" when the recipient has none). */
 export function recipientPrefAddress(channel: string, recipient: Recipient): string {
-  const raw = channel === "email" ? recipient.email : recipient.phone;
+  // MX12: push reaches a recipient at their subscription
+  // endpoint, never at an email/phone — a push opt-out stored
+  // under the endpoint therefore matches exactly here.
+  // MX13: telegram reaches a recipient at their chat id, never
+  // at an email/phone — a telegram opt-out stored under the
+  // chat id therefore matches exactly here.
+  // MX14: onsite reaches a recipient at their CUSTOMER identity
+  // (the notification-center account), never at an email/phone —
+  // an onsite opt-out stored under the customer id therefore
+  // matches exactly here. A recipient without a customer id
+  // (lead/csv/test) has no onsite address at all.
+  const raw = channel === "email" ? recipient.email : channel === "push" ? recipient.pushEndpoint : channel === "telegram" ? recipient.telegramChatId : channel === "onsite" ? recipient.id : recipient.phone;
   return raw ? normalizePrefAddress(channel, raw) : "";
 }
 
@@ -105,7 +327,24 @@ export function webBaseUrl(): string {
   return (process.env.WEB_URL ?? "http://localhost:3000").replace(/\/$/, "");
 }
 
-export interface Recipient { type: "customer" | "lead" | "csv" | "test"; id: string | null; name: string; email?: string | null; phone?: string | null }
+export interface Recipient {
+  type: "customer" | "lead" | "csv" | "test" | "push" | "telegram"; id: string | null; name: string;
+  email?: string | null; phone?: string | null;
+  /** MX12: channel "push" only — the WebPushSubscription this
+   * recipient is reached through, and its endpoint (the push
+   * channel address). A customer recipient may carry these
+   * (identified subscription); an anonymous subscription is a
+   * recipient of type "push" whose id IS the subscription id. */
+  pushSubscriptionId?: string | null;
+  pushEndpoint?: string | null;
+  /** MX13: channel "telegram" only — the Telegram chat id this
+   * recipient is reached at (the telegram channel address). A
+   * customer/lead recipient may carry it (a conversation linked
+   * to that contact); a conversation linked to neither is a
+   * recipient of type "telegram" whose id IS the conversation
+   * id. */
+  telegramChatId?: string | null;
+}
 
 /**
  * CX10 — preview address masking. A preview sample must never
@@ -128,6 +367,23 @@ export function maskPhoneAddress(phone: string): string {
  * (email channel → email; sms/whatsapp → phone). */
 export function maskRecipientAddress(channel: string, recipient: Recipient): string {
   if (channel === "email") return recipient.email ? maskEmailAddress(recipient.email) : "";
+  if (channel === "push") {
+    // MX12: a preview sample never carries a full endpoint (it
+    // is a per-browser credential-like URL) — origin + mask.
+    const endpoint = recipient.pushEndpoint ?? "";
+    if (!endpoint) return "";
+    try { return `${new URL(endpoint).origin}/***`; } catch { return "***"; }
+  }
+  if (channel === "telegram") {
+    // MX13: a chat id is masked like a phone number — a preview
+    // sample never carries the full id.
+    return recipient.telegramChatId ? maskPhoneAddress(recipient.telegramChatId) : "";
+  }
+  if (channel === "onsite") {
+    // MX14: the onsite address is a customer id — a preview
+    // sample never carries a full internal id.
+    return recipient.id ? `${String(recipient.id).slice(0, 2)}***` : "";
+  }
   return recipient.phone ? maskPhoneAddress(recipient.phone) : "";
 }
 
@@ -143,6 +399,9 @@ export interface BroadcastResolution {
   excludedFrequencyCount: number;
   /** MS2: dropped because WhatsApp opt-in is required and absent. */
   excludedNoOptInCount: number;
+  /** MX10: dropped because the address is a PENDING double
+   * opt-in signup (not yet confirmed) on this channel. */
+  excludedPendingCount: number;
   /** MS3: csv-audience entries that failed channel validation
    * (counted, never silently dropped). 0 for other audience types. */
   invalidCount: number;
@@ -173,10 +432,162 @@ export const SMS_GATEWAY_LABELS: Record<string, string> = {
  * init (registerWorkflowCreator below). The port's create path
  * is the REAL WorkflowsService.create, validator included.
  */
-export interface WorkflowCreatorPort {
-  create(organizationId: string, actorId: string, dto: { name: string; trigger: string; conditions?: unknown; steps: any[] }): Promise<any>;
-  update(organizationId: string, workflowId: string, dto: { enabled?: boolean }, actorId?: string): Promise<any>;
+/**
+ * MX6 — the inbox-reply port for keyword-campaign auto-replies.
+ * MessagingService.sendToRecipient covers email|sms ONLY; there
+ * is no per-recipient WhatsApp send in messaging. The real
+ * WhatsApp conversation send lives in InboxService, and Inbox
+ * already depends on Messaging (never the reverse — no cycle),
+ * so InboxService REGISTERS this port on module init, exactly
+ * like the MS8 workflow-creator pattern below. The port's send
+ * goes through the inbox's real conversation send path
+ * (ChannelMessage row + deliverText), so a reply counts as sent
+ * ONLY when that path returns a platform message id.
+ */
+export interface InboxReplyPort {
+  sendConversationText(organizationId: string, conversationId: string, text: string): Promise<{ providerMessageId: string }>;
 }
+
+/**
+ * MX12 — the web-push send port. The real push send (the org's
+ * sealed VAPID keypair + the `web-push` library + marking a
+ * dead subscription "gone") lives in the webpush module
+ * (AX16); Messaging must not import it or write its tables, so
+ * WebPushService REGISTERS this port on module init (the MS8 /
+ * MX6 pattern). The port receives ONLY the subscription id +
+ * the rendered payload — it loads the subscription row itself,
+ * sends, and returns the push service's real outcome:
+ *  - "sent": the push service accepted (2xx from
+ *    sendNotification);
+ *  - "gone": 404/410 — the port has ALREADY marked the
+ *    subscription row gone, so future resolves skip it;
+ *  - "failed": anything else, with the real error text.
+ * Messaging records "sent" as a sent delivery and both other
+ * outcomes as failed deliveries carrying the real reason.
+ * An absent port (WebpushModule never booted) makes every push
+ * send fail honestly with that reason — never a fake success.
+ */
+export interface PushSendPort {
+  sendPush(organizationId: string, input: {
+    subscriptionId: string; title: string; body: string; url?: string | null;
+  }): Promise<{ outcome: "sent" | "gone" | "failed"; statusCode?: number | null; error?: string }>;
+}
+
+/**
+ * MX13 — the telegram send port. The real Telegram send (the
+ * org's sealed bot token + the Bot API) lives in the inbox
+ * module (TelegramService owns the Integration rows and the
+ * TelegramClient); Messaging must not import it, so
+ * TelegramService REGISTERS this port on module init (the MS8 /
+ * MX6 / MX12 pattern). The port receives ONLY the chat id + the
+ * rendered text + the optional inline URL buttons, sends
+ * through the org's connected bot, and returns Telegram's real
+ * outcome:
+ *  - "sent": Telegram accepted and returned a message_id —
+ *    the ONLY shape messaging records as a sent delivery;
+ *  - "failed": anything else (bot blocked 403, chat not found
+ *    400, no connected bot, …) with Telegram's real description.
+ * An absent port (InboxModule never booted) makes every
+ * telegram send fail honestly with that reason — never a fake
+ * success.
+ */
+export interface TelegramSendPort {
+  sendTelegram(organizationId: string, input: {
+    chatId: string; text: string; buttons?: TelegramButton[] | null;
+  }): Promise<{ outcome: "sent" | "failed"; messageId?: string; error?: string }>;
+}
+
+export interface WorkflowCreatorPort {
+  create(organizationId: string, actorId: string, dto: { name: string; trigger: string; conditions?: unknown; steps: any[]; journey?: unknown }): Promise<any>;
+  // MX4: the update dto is widened to the full definition
+  // (WorkflowsService.update has always accepted these — the
+  // port simply never declared them) plus the MX4 journey meta.
+  update(organizationId: string, workflowId: string, dto: { enabled?: boolean; name?: string; trigger?: string; conditions?: unknown; steps?: any[]; journey?: unknown }, actorId?: string): Promise<any>;
+  // MX4: read side for the journey builder (list + runs). The
+  // journey endpoints call these defensively — a registered
+  // creator without them reads as "engine not available".
+  list?(organizationId: string): Promise<any[]>;
+  listRuns?(organizationId: string, filters?: { workflowId?: string; status?: string; take?: number }): Promise<any[]>;
+}
+
+/**
+ * MX4 — journey-usable triggers: the WORKFLOW_TRIGGERS whose
+ * event context can resolve a recipient through the engine's
+ * resolveRecipient (leadId → lead, customerId → customer, or
+ * contactEmail/contactPhone fallback), verified against
+ * workflows.service.ts (resolveRecipient + enrichContext +
+ * the MS8 journey-presets audit):
+ *  - order_created / order_delivered / order_cod_confirmed:
+ *    the event carries an orderId; enrichContext fills
+ *    customerId and resolveRecipient resolves the customer.
+ *  - lead_created / lead_stage_changed: the context carries a
+ *    leadId (enrichContext also fills contact fields).
+ *  - cart_abandoned: contactEmail/contactPhone fallback.
+ *  - inbox_message_received: the conversation context;
+ *    enrichContext fills leadId/customerId from the
+ *    conversation row.
+ * Deliberately excluded: schedule (its context is
+ * { date, scheduledFor, dayOfWeek } — NO recipient at all, the
+ * exact reason MS8 dropped winback_sweep), inbox_unanswered
+ * and the conversation/order-status/shipment triggers (ops
+ * automations whose contexts are not customer-journey
+ * recipients in the audited sense; they stay available in the
+ * Workflows page itself).
+ */
+export const JOURNEY_TRIGGERS: { trigger: string; labelBn: string }[] = [
+  { trigger: "order_created", labelBn: "নতুন অর্ডার তৈরি হলে" },
+  { trigger: "order_delivered", labelBn: "অর্ডার ডেলিভারি হলে" },
+  { trigger: "order_cod_confirmed", labelBn: "COD অর্ডার কনফার্ম হলে" },
+  { trigger: "lead_created", labelBn: "নতুন লিড তৈরি হলে" },
+  { trigger: "lead_stage_changed", labelBn: "লিডের স্টেজ বদলালে" },
+  { trigger: "cart_abandoned", labelBn: "কার্ট পরিত্যক্ত হলে (Abandoned Cart)" },
+  { trigger: "inbox_message_received", labelBn: "ইনবক্সে নতুন বার্তা এলে" },
+];
+
+/** MX4 — the step types the journey builder may use. A subset
+ * of the engine's STEP_TYPES: customer-facing sends, flow
+ * control and tagging. Everything else the engine can do
+ * (webhooks, AI, team notifications, …) stays in the Workflows
+ * page — a journey is a customer path, not an ops automation. */
+export const JOURNEY_STEP_TYPES: { type: string; labelBn: string }[] = [
+  { type: "wait", labelBn: "অপেক্ষা" },
+  { type: "send_email", labelBn: "ইমেইল পাঠান" },
+  { type: "send_sms", labelBn: "SMS পাঠান" },
+  { type: "condition", labelBn: "শর্ত (মিললে এগিয়ে যান)" },
+  { type: "branch", labelBn: "শাখা (Branch — দুই পথ)" },
+  { type: "add_tag", labelBn: "ট্যাগ যোগ করুন" },
+];
+
+/** MX4 — step types allowed INSIDE a branch arm in a journey.
+ * Mirrors the messaging-side rule (the engine validator
+ * additionally refuses wait + nested branch in arms; condition
+ * is excluded here because an arm is a send/tag sequence, not
+ * a second decision level). */
+export const JOURNEY_ARM_STEP_TYPES = ["send_email", "send_sms", "add_tag"];
+
+/**
+ * MX4 — condition fields the journey builder offers. The
+ * context fields (total / status / source / stage) are the
+ * ones enrichContext really supplies for the journey
+ * triggers (order total/status/source; lead stage/source).
+ * purchasedSinceEntry + customerTags are the MX4 resume-time
+ * journey facts (workflows.service.ts resumeRuns) — they are
+ * populated when a waiting run RESUMES, so a condition on
+ * them belongs after a wait step.
+ * journeyOpened / journeyClicked are deliberately ABSENT:
+ * the workflow-send tracking extension that would feed them
+ * was NOT built (the MS5 spec pins "workflow sends are NEVER
+ * rewritten" — see docs/messaging-mx4-acceptance.md), so
+ * offering them would advertise a signal that can never fire.
+ */
+export const JOURNEY_CONDITION_FIELDS: { field: string; labelBn: string; ops: string[]; kind: "number" | "string" | "boolean" }[] = [
+  { field: "total", labelBn: "অর্ডারের মোট টাকা (Total)", ops: ["eq", "neq", "gt", "gte", "lt", "lte"], kind: "number" },
+  { field: "status", labelBn: "অর্ডারের অবস্থা (Status)", ops: ["eq", "neq"], kind: "string" },
+  { field: "source", labelBn: "উৎস (Source)", ops: ["eq", "neq", "contains"], kind: "string" },
+  { field: "stage", labelBn: "লিডের স্টেজ (Stage)", ops: ["eq", "neq"], kind: "string" },
+  { field: "purchasedSinceEntry", labelBn: "যাত্রা শুরুর পর কেনাকাটা করেছেন", ops: ["eq"], kind: "boolean" },
+  { field: "customerTags", labelBn: "কাস্টমার/লিডের ট্যাগ", ops: ["contains"], kind: "string" },
+];
 
 @Injectable()
 export class MessagingService {
@@ -191,14 +602,31 @@ export class MessagingService {
    * MS9 specs inject a fake factory as the 5th arg. */
   private readonly llm: LlmFactory;
 
+  /** SA-B20 (G2): the personalisation collaborator — injected
+   * by MessagingModule; specs constructing the service with the
+   * historical args get a lazily-built instance over the same
+   * prisma + llm (the LlmFactory fallback pattern above). It is
+   * only ever CALLED when a broadcast's personalisation is
+   * enabled, so non-G2 paths never touch it. */
+  private personalizationSvc: BroadcastPersonalizationService | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly email: EmailProvider,
     private readonly sms: SmsProvider,
     @Optional() llm?: LlmFactory,
+    @Optional() personalization?: BroadcastPersonalizationService,
   ) {
     this.llm = llm ?? new LlmFactory();
+    this.personalizationSvc = personalization ?? null;
+  }
+
+  private personalization(): BroadcastPersonalizationService {
+    if (!this.personalizationSvc) {
+      this.personalizationSvc = new BroadcastPersonalizationService(this.prisma as any, this.llm);
+    }
+    return this.personalizationSvc;
   }
 
   /** MS8: the registered workflow engine (see the port above).
@@ -208,6 +636,35 @@ export class MessagingService {
 
   registerWorkflowCreator(creator: WorkflowCreatorPort) {
     this.workflowCreator = creator;
+  }
+
+  /** MX6: the registered inbox-reply port (see InboxReplyPort).
+   * Null when InboxModule never booted — a keyword auto-reply
+   * then records itself as skipped with that reason, never as
+   * sent. */
+  private inboxReplyPort: InboxReplyPort | null = null;
+
+  registerInboxReplyPort(port: InboxReplyPort) {
+    this.inboxReplyPort = port;
+  }
+
+  /** MX12: the registered web-push send port (see PushSendPort).
+   * Null when WebpushModule never booted — push sends then fail
+   * per-recipient with the honest "port not available" reason. */
+  private pushSendPort: PushSendPort | null = null;
+
+  registerPushSendPort(port: PushSendPort) {
+    this.pushSendPort = port;
+  }
+
+  /** MX13: the registered telegram send port (see
+   * TelegramSendPort). Null when InboxModule never booted —
+   * telegram sends then fail per-recipient with the honest
+   * "port not available" reason. */
+  private telegramSendPort: TelegramSendPort | null = null;
+
+  registerTelegramSendPort(port: TelegramSendPort) {
+    this.telegramSendPort = port;
   }
 
   /** MS4 seam (social-import precedent): specs substitute this so
@@ -249,16 +706,185 @@ export class MessagingService {
   }
 
   // ---------- Templates ----------
-  async createTemplate(organizationId: string, actorId: string, dto: { name: string; channel: string; subject?: string; body: string; htmlBody?: string | null }) {
+  async createTemplate(organizationId: string, actorId: string, dto: { name: string; channel: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown }) {
     if (!["email", "sms"].includes(dto.channel)) throw new BadRequestException("channel must be email or sms");
     if (dto.channel === "email" && !dto.subject) throw new BadRequestException("Email templates need a subject");
     // MS5: HTML is an email-only part — on sms it is REJECTED with
     // an honest 400, never silently stored or ignored.
     if (dto.htmlBody && dto.channel !== "email") throw new BadRequestException("htmlBody is only allowed for email templates (SMS has no HTML part)");
+    // MX7: a block-built email template — the blocks are the
+    // source; body/htmlBody are RENDERED from them (brand kit +
+    // real catalog rows at this moment) into the same fields the
+    // send path already uses. An explicit body/htmlBody alongside
+    // blocks is refused (two sources would drift).
+    let body = dto.body;
+    let htmlBody: string | null = dto.htmlBody ?? null;
+    let blocks: EmailBlock[] | null = null;
+    let emptySlots: { index: number; type: string; reason: string }[] = [];
+    if (dto.blocks !== undefined && dto.blocks !== null) {
+      if (dto.channel !== "email") throw new BadRequestException("blocks are only allowed for email templates (the block builder builds email)");
+      if (dto.body || dto.htmlBody) throw new BadRequestException("With blocks, body/htmlBody are rendered from the blocks — do not send them too");
+      const rendered = await this.renderBlocksForOrg(organizationId, dto.blocks);
+      blocks = rendered.blocks; body = rendered.body; htmlBody = rendered.htmlBody; emptySlots = rendered.emptySlots;
+    }
+    if (!blocks && !body) throw new BadRequestException("Template body is required (write one or build with blocks)");
     const template = await (this.prisma as any).messageTemplate.create({
-      data: { organizationId, name: dto.name, channel: dto.channel, subject: dto.subject ?? null, body: dto.body, htmlBody: dto.htmlBody ?? null, createdById: actorId },
+      data: { organizationId, name: dto.name, channel: dto.channel, subject: dto.subject ?? null, body, htmlBody, blocks: blocks ?? undefined, version: 1, createdById: actorId },
     });
-    return template;
+    await this.snapshotTemplateVersion(organizationId, actorId, template);
+    return blocks ? { ...template, emptySlots } : template;
+  }
+
+  // ---------- MX7: brand kit + block rendering ----------
+  /** The org's brand kit, read from the ONE central place —
+   * the Organization row's Org Settings branding (M59 brandName /
+   * logoUrl / primaryColor + MX7 brandFont / brandSecondaryColor).
+   * No brand data is stored anywhere in messaging. logoUrl is
+   * returned as stored (a relative /public/branding path or an
+   * absolute CDN URL — both are what the org's other surfaces
+   * already use). */
+  async getBrandKit(organizationId: string): Promise<BrandKit & { brandName: string | null }> {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+    return {
+      brandName: org?.brandName ?? org?.name ?? null,
+      logoUrl: org?.logoUrl ?? null,
+      primaryColor: org?.primaryColor ?? null,
+      secondaryColor: org?.brandSecondaryColor ?? null,
+      font: org?.brandFont ?? null,
+    };
+  }
+
+  /** Validate + render blocks for this org: product slots resolve
+   * from REAL Product rows (same slug-URL rule as the composer
+   * picker), coupon slots from REAL StoreDiscount rows (active
+   * only). Missing rows are not an error — the slot renders empty
+   * and the reason is reported in emptySlots. */
+  async renderBlocksForOrg(organizationId: string, rawBlocks: unknown) {
+    let blocks: EmailBlock[];
+    try { blocks = validateEmailBlocks(rawBlocks); } catch (e: any) { throw new BadRequestException(e?.message ?? "Invalid blocks"); }
+    const productIds = [...new Set(blocks.filter((b) => b.type === "product" && b.productId).map((b) => b.productId!))];
+    const discountIds = [...new Set(blocks.filter((b) => b.type === "coupon" && b.discountId).map((b) => b.discountId!))];
+    const products = new Map<string, any>();
+    if (productIds.length) {
+      const rows: any[] = await (this.prisma as any).product.findMany({ where: { organizationId, id: { in: productIds }, status: "ACTIVE" } });
+      for (const p of rows) products.set(p.id, { name: p.name, priceMinor: p.priceMinor, currency: p.currency ?? "BDT", url: p.slug ? `${webBaseUrl()}/checkout/${p.slug}` : null, imageUrl: p.imageUrl ?? null });
+    }
+    const discounts = new Map<string, any>();
+    if (discountIds.length && (this.prisma as any).storeDiscount) {
+      const rows: any[] = await (this.prisma as any).storeDiscount.findMany({ where: { organizationId, id: { in: discountIds }, active: true } });
+      for (const d of rows) discounts.set(d.id, { code: d.code, kind: d.kind, value: d.value });
+    }
+    const brand = await this.getBrandKit(organizationId);
+    const rendered = renderEmailBlocks(blocks, { brand, products, discounts });
+    return { blocks, ...rendered };
+  }
+
+  /** MX7: real StoreDiscount rows for the builder's coupon-slot
+   * picker (the org coupon store — StoreDiscount, unique per org
+   * by code). Active rows only; value semantics are the row's own
+   * (percent 1-90 | fixed minor units | free_shipping). */
+  async listComposerDiscounts(organizationId: string) {
+    if (!(this.prisma as any).storeDiscount) return [];
+    const rows: any[] = await (this.prisma as any).storeDiscount.findMany({
+      where: { organizationId, active: true }, orderBy: { createdAt: "desc" }, take: 100,
+    });
+    return rows.map((d: any) => ({ id: d.id, code: d.code, kind: d.kind, value: d.value, minOrderMinor: d.minOrderMinor != null ? String(d.minOrderMinor) : null, endsAt: d.endsAt ?? null }));
+  }
+
+  /** MX7: snapshot the template's current content as a version
+   * row. Guarded by table presence so pre-MX7 fake-prisma specs
+   * (and any deployment mid-migration) keep the exact old
+   * behaviour — versioning is additive bookkeeping, never a
+   * reason to fail a template write. */
+  private async snapshotTemplateVersion(organizationId: string, actorId: string, template: any) {
+    const table = (this.prisma as any).messageTemplateVersion;
+    if (!table?.create) return;
+    await table.create({
+      data: {
+        organizationId, templateId: template.id, version: template.version ?? 1,
+        name: template.name, channel: template.channel, subject: template.subject ?? null,
+        body: template.body, htmlBody: template.htmlBody ?? null, blocks: template.blocks ?? null,
+        createdById: actorId,
+      },
+    }).catch(() => undefined);
+  }
+
+  async listTemplateVersions(organizationId: string, templateId: string) {
+    await this.getTemplate(organizationId, templateId);
+    const table = (this.prisma as any).messageTemplateVersion;
+    if (!table?.findMany) return [];
+    return table.findMany({ where: { organizationId, templateId }, orderBy: { version: "desc" } });
+  }
+
+  /** MX7: restore a prior version — creates a NEW version whose
+   * content copies the target snapshot (history is append-only;
+   * the restored-from version stays viewable). */
+  async restoreTemplateVersion(organizationId: string, actorId: string, templateId: string, version: number) {
+    const template = await this.getTemplate(organizationId, templateId);
+    const table = (this.prisma as any).messageTemplateVersion;
+    if (!table?.findFirst) throw new BadRequestException("Template versioning is not available in this deployment");
+    const target = await table.findFirst({ where: { organizationId, templateId, version } });
+    if (!target) throw new NotFoundException("Template version not found");
+    const nextVersion = (template.version ?? 1) + 1;
+    const updated = await (this.prisma as any).messageTemplate.update({
+      where: { id: templateId },
+      data: { name: target.name, subject: target.subject ?? null, body: target.body, htmlBody: target.htmlBody ?? null, blocks: target.blocks ?? null, version: nextVersion },
+    });
+    await this.snapshotTemplateVersion(organizationId, actorId, updated);
+    return updated;
+  }
+
+  // ---------- MX7: content library (saved blocks) ----------
+  async createContentBlock(organizationId: string, actorId: string, dto: { name: string; block: unknown }) {
+    let blocks: EmailBlock[];
+    try { blocks = validateEmailBlocks([dto.block]); } catch (e: any) { throw new BadRequestException(e?.message ?? "Invalid block"); }
+    const block = blocks[0];
+    return (this.prisma as any).messagingContentBlock.create({
+      data: { organizationId, name: dto.name, kind: block.type, data: block, createdById: actorId },
+    });
+  }
+
+  async listContentBlocks(organizationId: string, kind?: string) {
+    return (this.prisma as any).messagingContentBlock.findMany({
+      where: { organizationId, ...(kind ? { kind } : {}) }, orderBy: { createdAt: "desc" },
+    });
+  }
+
+  async updateContentBlock(organizationId: string, blockId: string, dto: { name?: string; block?: unknown }) {
+    const existing = await (this.prisma as any).messagingContentBlock.findFirst({ where: { id: blockId, organizationId } });
+    if (!existing) throw new NotFoundException("Content block not found");
+    const data: Record<string, unknown> = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.block !== undefined) {
+      let blocks: EmailBlock[];
+      try { blocks = validateEmailBlocks([dto.block]); } catch (e: any) { throw new BadRequestException(e?.message ?? "Invalid block"); }
+      data.data = blocks[0]; data.kind = blocks[0].type;
+    }
+    return (this.prisma as any).messagingContentBlock.update({ where: { id: blockId }, data });
+  }
+
+  async deleteContentBlock(organizationId: string, blockId: string) {
+    const existing = await (this.prisma as any).messagingContentBlock.findFirst({ where: { id: blockId, organizationId } });
+    if (!existing) throw new NotFoundException("Content block not found");
+    await (this.prisma as any).messagingContentBlock.delete({ where: { id: blockId } });
+    return { deleted: true };
+  }
+
+  // ---------- MX7: festival template pack ----------
+  listFestivalPacks() {
+    return FESTIVAL_TEMPLATE_PACKS.map((p) => ({ key: p.key, name: p.name, nameBn: p.nameBn, subject: p.subject, blocks: p.blocks }));
+  }
+
+  /** Install one festival design as a REAL MessageTemplate via
+   * createTemplate (blocks stay unfilled slots — the org picks
+   * real products/discounts in the builder afterwards). */
+  async installFestivalPack(organizationId: string, actorId: string, key: string) {
+    const pack = FESTIVAL_TEMPLATE_PACKS.find((p) => p.key === key);
+    if (!pack) throw new NotFoundException("Festival template pack not found");
+    const template = await this.createTemplate(organizationId, actorId, {
+      name: pack.name, channel: "email", subject: pack.subject, body: "", blocks: pack.blocks,
+    });
+    return { pack: pack.key, template };
   }
 
   /** MS5: the personalization variables per audience entity —
@@ -270,7 +896,7 @@ export class MessagingService {
   /** MS5: advisory compose warnings (pure compose-check module;
    * never blocks a send). */
   checkCompose(dto: { channel: string; subject?: string; body: string }) {
-    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
     return { warnings: composeCheck(dto) };
   }
 
@@ -314,14 +940,45 @@ export class MessagingService {
     return template;
   }
 
-  async updateTemplate(organizationId: string, templateId: string, dto: { name?: string; subject?: string; body?: string; htmlBody?: string | null }) {
+  async updateTemplate(organizationId: string, templateId: string, dto: { name?: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown }) {
     const existing = await this.getTemplate(organizationId, templateId);
     // MS5: the EXISTING template's channel decides — htmlBody on
     // a non-email template is an honest 400.
     if (dto.htmlBody !== undefined && existing.channel !== "email") {
       throw new BadRequestException("htmlBody is only allowed for email templates (SMS has no HTML part)");
     }
-    return (this.prisma as any).messageTemplate.update({ where: { id: templateId }, data: { ...dto } });
+    const { blocks: rawBlocks, ...rest } = dto as any;
+    const data: Record<string, unknown> = { ...rest };
+    let emptySlots: { index: number; type: string; reason: string }[] | undefined;
+    // MX7: blocks on update re-render body/htmlBody from the new
+    // blocks (explicit body/htmlBody alongside is refused, as at
+    // create). Explicit blocks: null detaches the builder source
+    // (the template becomes hand-authored; body/htmlBody stay).
+    if (rawBlocks !== undefined) {
+      if (existing.channel !== "email") throw new BadRequestException("blocks are only allowed for email templates (the block builder builds email)");
+      if (rawBlocks === null) {
+        data.blocks = null;
+      } else {
+        if (dto.body !== undefined || dto.htmlBody !== undefined) throw new BadRequestException("With blocks, body/htmlBody are rendered from the blocks — do not send them too");
+        const rendered = await this.renderBlocksForOrg(organizationId, rawBlocks);
+        data.blocks = rendered.blocks; data.body = rendered.body; data.htmlBody = rendered.htmlBody;
+        emptySlots = rendered.emptySlots;
+      }
+    }
+    // MX7 versioning: a CONTENT change (name/subject/body/htmlBody/
+    // blocks) bumps the version and snapshots it; a no-op PATCH
+    // (nothing actually differs) keeps the version.
+    const contentChanged = ["name", "subject", "body", "htmlBody", "blocks"].some((k) => data[k] !== undefined && JSON.stringify(data[k] ?? null) !== JSON.stringify((existing as any)[k] ?? null));
+    if (contentChanged) data.version = (existing.version ?? 1) + 1;
+    const updated = await (this.prisma as any).messageTemplate.update({ where: { id: templateId }, data });
+    if (contentChanged) {
+      // The actor for a version snapshot: updateTemplate's route
+      // has never carried an actor (pre-MX7 signature) — the
+      // snapshot records the template's original creator rather
+      // than inventing one.
+      await this.snapshotTemplateVersion(organizationId, existing.createdById, updated);
+    }
+    return emptySlots ? { ...updated, emptySlots } : updated;
   }
 
   async deleteTemplate(organizationId: string, templateId: string) {
@@ -339,6 +996,19 @@ export class MessagingService {
    */
   private async scanChunked(model: any, where: any): Promise<any[]> {
     const rows: any[] = [];
+    await this.scanInChunks(model, where, async (chunk) => { rows.push(...chunk); });
+    return rows;
+  }
+
+  /**
+   * MX1 — the streaming form of scanChunked: each cursor page is
+   * handed to `onChunk` as it is read and never accumulated by
+   * the scan itself, so a caller that consumes chunk-by-chunk
+   * (the MX1 prepare path) never holds the whole audience in one
+   * in-memory array. Same cursor discipline (id-ascending, take
+   * AUDIENCE_SCAN_CHUNK) as the collecting form.
+   */
+  private async scanInChunks(model: any, where: any, onChunk: (rows: any[]) => Promise<void>): Promise<void> {
     let cursor: string | undefined;
     for (;;) {
       const chunk = await model.findMany({
@@ -346,12 +1016,11 @@ export class MessagingService {
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       });
       const list = Array.isArray(chunk) ? chunk : [];
-      rows.push(...list);
+      if (list.length) await onChunk(list);
       if (list.length < AUDIENCE_SCAN_CHUNK) break;
       cursor = list[list.length - 1]?.id;
       if (!cursor) break;
     }
-    return rows;
   }
 
   private static customerName(c: any): string {
@@ -380,41 +1049,102 @@ export class MessagingService {
   }
 
   private async resolveAudienceInternal(organizationId: string, channel: string, audienceType: string, audienceStage?: string, audienceSegment?: string, extras?: AudienceExtras): Promise<{ recipients: Recipient[]; invalidCount: number }> {
+    const recipients: Recipient[] = [];
+    const { invalidCount } = await this.resolveAudienceInChunks(
+      organizationId, channel, audienceType, audienceStage, audienceSegment, extras,
+      BROADCAST_RECIPIENT_WRITE_CHUNK,
+      async (chunk) => { recipients.push(...chunk); },
+    );
+    return { recipients, invalidCount };
+  }
+
+  /**
+   * MX1 — the streaming form of resolveAudienceInternal: resolved
+   * recipients are handed to `onChunk` in slices of at most
+   * `chunkSize` as the underlying scans page through the data —
+   * the resolver itself never accumulates the whole audience.
+   * The collecting form above is built on this one, so there is
+   * still exactly ONE base resolver. Audience types whose source
+   * is inherently a materialized set (segment via computeRfm,
+   * csv via the stored address list — the latter hard-capped at
+   * CSV_AUDIENCE_CAP) are sliced from that set in the same chunk
+   * sizes; the DB-backed types (customers / leads_stage /
+   * custom / saved) page through scanInChunks.
+   */
+  private async resolveAudienceInChunks(
+    organizationId: string, channel: string, audienceType: string, audienceStage: string | undefined, audienceSegment: string | undefined,
+    extras: AudienceExtras | undefined, chunkSize: number,
+    onChunk: (recipients: Recipient[]) => Promise<void>,
+  ): Promise<{ invalidCount: number }> {
+    // MX12: push audiences resolve from WebPushSubscription
+    // rows, never from contact address fields — a separate
+    // resolver (below) owns that rule entirely.
+    if (channel === "push") {
+      return this.resolvePushAudienceInChunks(organizationId, audienceType, audienceSegment, chunkSize, onChunk);
+    }
+    // MX13: telegram audiences resolve from the org's telegram
+    // ChannelConversation rows (the subscriber base — Telegram
+    // bots cannot initiate contact, so every subscriber has
+    // one), never from contact address fields — a separate
+    // resolver (below) owns that rule entirely.
+    if (channel === "telegram") {
+      return this.resolveTelegramAudienceInChunks(organizationId, audienceType, audienceStage ?? null, audienceSegment ?? null, chunkSize, onChunk);
+    }
+    // MX14: onsite audiences resolve from the org's Customer
+    // rows only — the notification center is keyed by the
+    // customer account, so there is no anonymous reach and no
+    // address to resolve leads/csv against. A separate resolver
+    // (below) owns that rule entirely.
+    if (channel === "onsite") {
+      return this.resolveOnsiteAudienceInChunks(organizationId, audienceType, audienceSegment, chunkSize, onChunk);
+    }
     const channelField = channel === "email" ? "email" : "phone";
     const hasAddress = (row: any) => (channelField === "email" ? row.email : row.phone);
+    // Bounded buffer: flushes the moment it reaches chunkSize, so
+    // at most chunkSize recipients are ever held by this layer.
+    let buffer: Recipient[] = [];
+    const emit = async (r: Recipient) => {
+      buffer.push(r);
+      if (buffer.length >= chunkSize) { const out = buffer; buffer = []; await onChunk(out); }
+    };
+    const flush = async () => { if (buffer.length) { const out = buffer; buffer = []; await onChunk(out); } };
+
     if (audienceType === "customers") {
-      const rows = await this.scanChunked((this.prisma as any).customer, { organizationId });
-      return {
-        invalidCount: 0,
-        recipients: rows
-          .filter(hasAddress)
-          .map((c: any) => ({ type: "customer" as const, id: c.id, name: MessagingService.customerName(c), email: c.email, phone: c.phone })),
-      };
+      await this.scanInChunks((this.prisma as any).customer, { organizationId }, async (rows) => {
+        for (const c of rows) {
+          if (!hasAddress(c)) continue;
+          await emit({ type: "customer" as const, id: c.id, name: MessagingService.customerName(c), email: c.email, phone: c.phone });
+        }
+      });
+      await flush();
+      return { invalidCount: 0 };
     }
     if (audienceType === "leads_stage") {
       if (!audienceStage) throw new BadRequestException("audienceStage is required for leads_stage audience");
-      const rows = await this.scanChunked((this.prisma as any).lead, { organizationId, stage: audienceStage });
-      return {
-        invalidCount: 0,
-        recipients: rows
-          .filter(hasAddress)
-          .map((l: any) => ({ type: "lead" as const, id: l.id, name: l.name, email: l.email, phone: l.phone })),
-      };
+      await this.scanInChunks((this.prisma as any).lead, { organizationId, stage: audienceStage }, async (rows) => {
+        for (const l of rows) {
+          if (!hasAddress(l)) continue;
+          await emit({ type: "lead" as const, id: l.id, name: l.name, email: l.email, phone: l.phone });
+        }
+      });
+      await flush();
+      return { invalidCount: 0 };
     }
     if (audienceType === "segment") {
       if (!audienceSegment) throw new BadRequestException("audienceSegment is required for segment audience");
       const rows = await computeRfm(this.prisma as any, organizationId);
-      return {
-        invalidCount: 0,
-        recipients: rows
-          .filter((r) => r.segment === audienceSegment)
-          .filter((r) => (channelField === "email" ? r.email : r.phone))
-          .map((r) => ({ type: "customer" as const, id: r.customerId, name: r.name, email: r.email, phone: r.phone })),
-      };
+      for (const r of rows) {
+        if (r.segment !== audienceSegment) continue;
+        if (!(channelField === "email" ? r.email : r.phone)) continue;
+        await emit({ type: "customer" as const, id: r.customerId, name: r.name, email: r.email, phone: r.phone });
+      }
+      await flush();
+      return { invalidCount: 0 };
     }
     if (audienceType === "custom") {
       const def = this.assertValidDefinition(extras?.audienceDefinition);
-      return { invalidCount: 0, recipients: await this.resolveCustomAudience(organizationId, channel, def) };
+      await this.resolveCustomAudienceInChunks(organizationId, channel, def, chunkSize, onChunk);
+      return { invalidCount: 0 };
     }
     if (audienceType === "saved") {
       if (!extras?.audienceSavedId) throw new BadRequestException("audienceSavedId is required for saved audience");
@@ -428,12 +1158,276 @@ export class MessagingService {
         throw new BadRequestException("Saved audience no longer exists — it may have been deleted. Choose another audience.");
       }
       const def = this.assertValidDefinition(saved.definition);
-      return { invalidCount: 0, recipients: await this.resolveCustomAudience(organizationId, channel, def) };
+      await this.resolveCustomAudienceInChunks(organizationId, channel, def, chunkSize, onChunk);
+      return { invalidCount: 0 };
     }
     if (audienceType === "csv") {
-      return this.resolveCsvAudience(organizationId, channel, extras?.audienceCsv);
+      const { recipients, invalidCount } = await this.resolveCsvAudience(organizationId, channel, extras?.audienceCsv);
+      for (let i = 0; i < recipients.length; i += chunkSize) await onChunk(recipients.slice(i, i + chunkSize));
+      return { invalidCount };
     }
     throw new BadRequestException("audienceType must be customers, leads_stage, segment, custom, saved or csv");
+  }
+
+  /**
+   * MX12 — THE push audience resolution rule (recorded in
+   * docs/messaging-mx12-acceptance.md): recipients come ONLY
+   * from ACTIVE WebPushSubscription rows of this org — a "gone"
+   * subscription is never resolved, and a subscription is
+   * consent for PUSH ONLY (it never makes the contact reachable
+   * on email/sms/whatsapp, and no email/phone audience ever
+   * reaches a subscription). Supported audience types:
+   *  - "push_subscribers": every active subscription of the
+   *    org — the audience the base AX16 system itself uses,
+   *    including anonymous storefront visitors.
+   *  - "customers": only subscriptions carrying a customerId
+   *    (identified subscribers), one recipient PER
+   *    SUBSCRIPTION — a customer with two subscribed devices
+   *    is two recipients (dedupe is by subscription, see
+   *    recipientDedupeKey). The recipient keeps type/id of the
+   *    customer (vars, revenue and frequency keys stay
+   *    person-level) and carries the subscription identity
+   *    alongside.
+   *  - "segment": subscriptions whose customerId belongs to
+   *    the named RFM segment (computeRfm, the same source the
+   *    contact-address segment path uses).
+   * Every other audience type is an honest 400 here (and at
+   * create): subscriptions carry a customerId only — there is
+   * no lead linkage to resolve leads_stage/custom/saved/csv
+   * against, and inventing one would mis-target real people.
+   * Customer name/email/phone are loaded from the real Customer
+   * row when the subscription is identified (a since-deleted
+   * customer degrades to an anonymous "push" recipient — the
+   * subscription itself is still the org's real subscriber).
+   */
+  private async resolvePushAudienceInChunks(
+    organizationId: string, audienceType: string, audienceSegment: string | undefined,
+    chunkSize: number, onChunk: (recipients: Recipient[]) => Promise<void>,
+  ): Promise<{ invalidCount: number }> {
+    if (!["push_subscribers", "customers", "segment"].includes(audienceType)) {
+      throw new BadRequestException(
+        `audienceType ${audienceType} is not available for the push channel — push audiences resolve from web push subscriptions (use push_subscribers, customers or segment)`,
+      );
+    }
+    let segmentCustomerIds: Set<string> | null = null;
+    if (audienceType === "segment") {
+      if (!audienceSegment) throw new BadRequestException("audienceSegment is required for segment audience");
+      const rows = await computeRfm(this.prisma as any, organizationId);
+      segmentCustomerIds = new Set(rows.filter((r) => r.segment === audienceSegment).map((r) => r.customerId));
+    }
+    const subTable = (this.prisma as any).webPushSubscription;
+    if (!subTable || typeof subTable.findMany !== "function") {
+      throw new BadRequestException("Web push subscriptions are not available in this deployment (the web push store is missing)");
+    }
+    let buffer: Recipient[] = [];
+    const emit = async (r: Recipient) => {
+      buffer.push(r);
+      if (buffer.length >= chunkSize) { const out = buffer; buffer = []; await onChunk(out); }
+    };
+    const flush = async () => { if (buffer.length) { const out = buffer; buffer = []; await onChunk(out); } };
+    await this.scanInChunks(subTable, { organizationId, status: "active" }, async (subs) => {
+      // Identified subscriptions: load their real customer rows
+      // for this chunk (name + contact fields for vars/report).
+      const customerIds = [...new Set((subs as any[]).map((sub) => sub.customerId).filter(Boolean))];
+      const customersById = new Map<string, any>();
+      if (customerIds.length) {
+        const rows: any[] = await (this.prisma as any).customer.findMany({
+          where: { organizationId, id: { in: customerIds } },
+        }).catch(() => []);
+        for (const c of rows ?? []) customersById.set(c.id, c);
+      }
+      for (const sub of subs as any[]) {
+        const customer = sub.customerId ? customersById.get(sub.customerId) : null;
+        if (audienceType === "customers" && !customer) continue;
+        if (segmentCustomerIds && !(sub.customerId && segmentCustomerIds.has(sub.customerId))) continue;
+        await emit({
+          type: customer ? "customer" : "push",
+          id: customer ? customer.id : sub.id,
+          name: customer ? MessagingService.customerName(customer) : "Push subscriber",
+          email: customer?.email ?? null,
+          phone: customer?.phone ?? null,
+          pushSubscriptionId: sub.id,
+          pushEndpoint: sub.endpoint,
+        });
+      }
+    });
+    await flush();
+    return { invalidCount: 0 };
+  }
+
+  /**
+   * MX13 — telegram audiences resolve from the org's telegram
+   * ChannelConversation rows (Conversation model via the
+   * channelConversation delegate), never from contact address
+   * fields. Telegram bots cannot initiate contact, so every
+   * subscriber HAS such a conversation — it IS the subscriber
+   * base (the order bot's BotSession rows are per-conversation
+   * state-machine state, NOT a registry; no recipient is ever
+   * resolved from them). The conversation's externalContactId
+   * is the chat id (the telegram channel address — unusable
+   * rows, a blank chat id, are skipped); its customerId/leadId
+   * linkage, where the inbox identified the sender, upgrades
+   * the recipient to that customer/lead. Supported:
+   *   - telegram_subscribers: every telegram conversation of
+   *     the org — anonymous ones as type "telegram" (id = the
+   *     conversation id), linked ones as their customer/lead;
+   *   - customers: conversations linked to a real Customer row;
+   *   - leads_stage: conversations linked to a real Lead whose
+   *     stage equals audienceStage (audienceStage is REQUIRED);
+   *   - segment: conversations whose linked customer sits in
+   *     the RFM segment (computeRfm, like other channels).
+   * custom / saved / csv definitions are REFUSED: they are
+   * keyed on email/phone addresses, and a chat id is neither —
+   * resolving them against chats would fabricate an audience.
+   * Dedupe is per chat id (the schema's unique
+   * [organizationId, channel, externalContactId] already gives
+   * one conversation per chat; the guard here keeps two rows
+   * from ever double-emitting one chat defensively). The
+   * suppression / pending / topic / frequency-cap stages apply
+   * unchanged downstream with channel "telegram" and address =
+   * chat id (recipientPrefAddress + normalizePrefAddress).
+   */
+  private async resolveTelegramAudienceInChunks(
+    organizationId: string, audienceType: string, audienceStage: string | null, audienceSegment: string | null,
+    chunkSize: number, onChunk: (recipients: Recipient[]) => Promise<void>,
+  ): Promise<{ invalidCount: number }> {
+    if (audienceType === "custom" || audienceType === "saved" || audienceType === "csv") {
+      throw new BadRequestException(
+        "Custom, saved and CSV audiences are keyed on email/phone addresses and cannot resolve telegram chats. Use the telegram_subscribers, customers, leads_stage or segment audiences for telegram.",
+      );
+    }
+    if (audienceType === "leads_stage" && !audienceStage) {
+      throw new BadRequestException("audienceStage is required for the leads_stage audience");
+    }
+    let segmentIds: Set<string> | null = null;
+    if (audienceType === "segment") {
+      if (!audienceSegment || !RFM_SEGMENTS.includes(audienceSegment as any)) {
+        throw new BadRequestException(`audienceSegment must be one of: ${RFM_SEGMENTS.join(", ")}`);
+      }
+      const rfm = await computeRfm(this.prisma as any, organizationId);
+      segmentIds = new Set(rfm.filter((r) => r.segment === audienceSegment).map((r) => r.customerId));
+    }
+    let buffer: Recipient[] = [];
+    const emit = async (r: Recipient) => {
+      buffer.push(r);
+      if (buffer.length >= chunkSize) { const out = buffer; buffer = []; await onChunk(out); }
+    };
+    const flush = async () => { if (buffer.length) { const out = buffer; buffer = []; await onChunk(out); } };
+    const seenChats = new Set<string>();
+    await this.scanInChunks((this.prisma as any).channelConversation, { organizationId, channel: "telegram" }, async (rows) => {
+      for (const conv of rows) {
+        const chatId = typeof conv?.externalContactId === "string" ? conv.externalContactId.trim() : "";
+        if (!chatId || seenChats.has(chatId)) continue;
+        seenChats.add(chatId);
+        // The linked contact rows are read only when the
+        // audience needs them (or to upgrade the recipient).
+        let customer: any = null;
+        if (conv.customerId) {
+          customer = await (this.prisma as any).customer.findFirst({ where: { id: conv.customerId, organizationId } }).catch(() => null);
+        }
+        if (audienceType === "customers") {
+          if (!customer) continue;
+          await emit({ type: "customer", id: customer.id, name: MessagingService.customerName(customer), email: customer.email ?? null, phone: customer.phone ?? null, telegramChatId: chatId });
+          continue;
+        }
+        if (audienceType === "segment") {
+          if (!customer || !segmentIds!.has(customer.id)) continue;
+          await emit({ type: "customer", id: customer.id, name: MessagingService.customerName(customer), email: customer.email ?? null, phone: customer.phone ?? null, telegramChatId: chatId });
+          continue;
+        }
+        let lead: any = null;
+        if (conv.leadId) {
+          lead = await (this.prisma as any).lead.findFirst({ where: { id: conv.leadId, organizationId } }).catch(() => null);
+        }
+        if (audienceType === "leads_stage") {
+          if (!lead || lead.stage !== audienceStage) continue;
+          await emit({ type: "lead", id: lead.id, name: lead.name, email: lead.email ?? null, phone: lead.phone ?? null, telegramChatId: chatId });
+          continue;
+        }
+        // telegram_subscribers (the channel's default audience):
+        // the conversation itself is the recipient; identified
+        // conversations upgrade to their customer, else lead.
+        if (customer) {
+          await emit({ type: "customer", id: customer.id, name: MessagingService.customerName(customer), email: customer.email ?? null, phone: customer.phone ?? null, telegramChatId: chatId });
+        } else if (lead) {
+          await emit({ type: "lead", id: lead.id, name: lead.name, email: lead.email ?? null, phone: lead.phone ?? null, telegramChatId: chatId });
+        } else {
+          await emit({ type: "telegram", id: conv.id, name: conv.contactName ?? "Telegram subscriber", telegramChatId: chatId });
+        }
+      }
+    });
+    await flush();
+    return { invalidCount: 0 };
+  }
+
+  /**
+   * MX14 — THE onsite audience resolution rule (recorded in
+   * docs/messaging-mx14-acceptance.md): recipients are the org's
+   * CUSTOMER rows — known identities only. The notification
+   * center lives inside the shop account area (EC25: the account
+   * identity IS the org-scoped Customer row, reached by phone-OTP
+   * login), so a Customer row is exactly the identity a
+   * notification can be delivered to; there is no anonymous
+   * reach, no lead reach and no address-list reach on this
+   * channel. Unlike email/sms, NO contact address is required:
+   * the channel address is the customer id itself, so a customer
+   * without an email/phone still receives the notification in
+   * their center (a customer without a phone cannot complete the
+   * phone-OTP login today — the notification waits in their
+   * center; see the acceptance doc's limits register).
+   * Supported audience types:
+   *  - "customers": every Customer row of the org, one recipient
+   *    per customer (dedupe is the shared `${type}:${id}` key —
+   *    the scan is id-ascending over unique rows, so a customer
+   *    can never be emitted twice).
+   *  - "segment": customers whose id belongs to the named RFM
+   *    segment (computeRfm, the same source every other channel
+   *    uses — membership is by customerId, so no contact-address
+   *    filter applies here either).
+   * Every other audience type is an honest 400 here (and at
+   * create): leads_stage names LEAD rows (no customer row to
+   * notify), custom/saved definitions are keyed on email/phone
+   * channel fields + address conditions, and csv is a pasted
+   * address list — none of them can name a notification-center
+   * account without fabricating an identity.
+   * All resolver stages apply unchanged downstream with channel
+   * "onsite" and address = customer id: suppression, pending
+   * exclusion, topic choices, per-contact + org frequency caps,
+   * the unsubscribed-column opt-out (customer rows), previous-
+   * recipient and recent-days exclusions.
+   */
+  private async resolveOnsiteAudienceInChunks(
+    organizationId: string, audienceType: string, audienceSegment: string | undefined,
+    chunkSize: number, onChunk: (recipients: Recipient[]) => Promise<void>,
+  ): Promise<{ invalidCount: number }> {
+    if (!["customers", "segment"].includes(audienceType)) {
+      throw new BadRequestException(
+        `audienceType ${audienceType} is not available for the onsite channel — on-site notifications reach shop customers only (use customers or segment)`,
+      );
+    }
+    let buffer: Recipient[] = [];
+    const emit = async (r: Recipient) => {
+      buffer.push(r);
+      if (buffer.length >= chunkSize) { const out = buffer; buffer = []; await onChunk(out); }
+    };
+    const flush = async () => { if (buffer.length) { const out = buffer; buffer = []; await onChunk(out); } };
+    if (audienceType === "segment") {
+      if (!audienceSegment) throw new BadRequestException("audienceSegment is required for segment audience");
+      const rows = await computeRfm(this.prisma as any, organizationId);
+      for (const r of rows) {
+        if (r.segment !== audienceSegment) continue;
+        await emit({ type: "customer" as const, id: r.customerId, name: r.name, email: r.email, phone: r.phone });
+      }
+      await flush();
+      return { invalidCount: 0 };
+    }
+    await this.scanInChunks((this.prisma as any).customer, { organizationId }, async (rows) => {
+      for (const c of rows) {
+        await emit({ type: "customer" as const, id: c.id, name: MessagingService.customerName(c), email: c.email ?? null, phone: c.phone ?? null });
+      }
+    });
+    await flush();
+    return { invalidCount: 0 };
   }
 
   /**
@@ -444,23 +1438,54 @@ export class MessagingService {
    * condition actually needs them.
    */
   private async resolveCustomAudience(organizationId: string, channel: string, def: AudienceDefinition): Promise<Recipient[]> {
+    const recipients: Recipient[] = [];
+    await this.resolveCustomAudienceInChunks(organizationId, channel, def, BROADCAST_RECIPIENT_WRITE_CHUNK, async (chunk) => { recipients.push(...chunk); });
+    return recipients;
+  }
+
+  /**
+   * MX1 — the streaming form of resolveCustomAudience: entity
+   * rows page through scanInChunks and each match is emitted in
+   * bounded slices. The aggregate / RFM lookup maps are computed
+   * exactly as before (only when a condition needs them).
+   */
+  private async resolveCustomAudienceInChunks(
+    organizationId: string, channel: string, def: AudienceDefinition, chunkSize: number,
+    onChunk: (recipients: Recipient[]) => Promise<void>,
+  ): Promise<void> {
     const channelField = channel === "email" ? "email" : "phone";
+    let buffer: Recipient[] = [];
+    const emit = async (r: Recipient) => {
+      buffer.push(r);
+      if (buffer.length >= chunkSize) { const out = buffer; buffer = []; await onChunk(out); }
+    };
+    const flush = async () => { if (buffer.length) { const out = buffer; buffer = []; await onChunk(out); } };
+    // MX11: engagement facts are built ONCE per resolve, only
+    // when a condition actually reads them (the RFM discipline).
+    const needsEngagement = def.conditions.some((c) => c.field === "engagement_score" || c.field === "predictive_segment");
+    const engagementMap = needsEngagement ? await this.buildEngagementMap(organizationId).catch(() => null) : null;
     if (def.entity === "leads") {
-      const rows = await this.scanChunked((this.prisma as any).lead, { organizationId });
-      return rows
-        .filter((l: any) => matchesAudienceDefinition(def, {
-          source: l.source ?? null,
-          createdDaysAgo: MessagingService.daysSince(l.createdAt),
-          hasEmail: !!l.email, hasPhone: !!l.phone,
-          customFields: l.customFields && typeof l.customFields === "object" ? l.customFields : null,
-          stage: l.stage ?? null,
-          tags: Array.isArray(l.tags) ? l.tags : [],
-          valueMinor: l.valueMinor === null || l.valueMinor === undefined ? null : Number(l.valueMinor),
-        }))
-        .filter((l: any) => (channelField === "email" ? l.email : l.phone))
-        .map((l: any) => ({ type: "lead" as const, id: l.id, name: l.name, email: l.email, phone: l.phone }));
+      await this.scanInChunks((this.prisma as any).lead, { organizationId }, async (rows) => {
+        for (const l of rows) {
+          const matches = matchesAudienceDefinition(def, {
+            source: l.source ?? null,
+            createdDaysAgo: MessagingService.daysSince(l.createdAt),
+            hasEmail: !!l.email, hasPhone: !!l.phone,
+            customFields: l.customFields && typeof l.customFields === "object" ? l.customFields : null,
+            stage: l.stage ?? null,
+            tags: Array.isArray(l.tags) ? l.tags : [],
+            valueMinor: l.valueMinor === null || l.valueMinor === undefined ? null : Number(l.valueMinor),
+            engagementScore: engagementMap ? (engagementMap.get(`lead:${l.id}`)?.score ?? 0) : null,
+            predictiveSegments: engagementMap ? (engagementMap.get(`lead:${l.id}`)?.segments ?? []) : [],
+          });
+          if (!matches) continue;
+          if (!(channelField === "email" ? l.email : l.phone)) continue;
+          await emit({ type: "lead" as const, id: l.id, name: l.name, email: l.email, phone: l.phone });
+        }
+      });
+      await flush();
+      return;
     }
-    const rows = await this.scanChunked((this.prisma as any).customer, { organizationId });
     const needsAggregates = def.conditions.some((c) => ["orders_count", "total_spent_minor", "last_order_days_ago"].includes(c.field));
     const needsRfm = def.conditions.some((c) => c.field === "rfm_segment");
     const aggregates = needsAggregates || needsRfm ? await computeOrderAggregates(this.prisma as any, organizationId) : null;
@@ -470,8 +1495,8 @@ export class MessagingService {
       segmentByCustomer = new Map(rfmRows.map((r) => [r.customerId, r.segment]));
     }
     const now = Date.now();
-    return rows
-      .filter((c: any) => {
+    await this.scanInChunks((this.prisma as any).customer, { organizationId }, async (rows) => {
+      for (const c of rows) {
         const agg = aggregates?.get(c.id);
         const facts: AudienceFacts = {
           source: c.source ?? null,
@@ -483,11 +1508,15 @@ export class MessagingService {
           lastOrderDaysAgo: agg ? Math.max(0, Math.floor((now - agg.last) / 86400000)) : null,
           rfmSegment: segmentByCustomer?.get(c.id) ?? null,
           address: c.address && typeof c.address === "object" && !Array.isArray(c.address) ? c.address : null,
+          engagementScore: engagementMap ? (engagementMap.get(`customer:${c.id}`)?.score ?? 0) : null,
+          predictiveSegments: engagementMap ? (engagementMap.get(`customer:${c.id}`)?.segments ?? []) : [],
         };
-        return matchesAudienceDefinition(def, facts);
-      })
-      .filter((c: any) => (channelField === "email" ? c.email : c.phone))
-      .map((c: any) => ({ type: "customer" as const, id: c.id, name: MessagingService.customerName(c), email: c.email, phone: c.phone }));
+        if (!matchesAudienceDefinition(def, facts)) continue;
+        if (!(channelField === "email" ? c.email : c.phone)) continue;
+        await emit({ type: "customer" as const, id: c.id, name: MessagingService.customerName(c), email: c.email, phone: c.phone });
+      }
+    });
+    await flush();
   }
 
   /**
@@ -624,13 +1653,107 @@ export class MessagingService {
     return tenantSmsFromRow(await this.getSenderConfigRow(organizationId));
   }
 
+  /**
+   * MX2 — ALL tenant SMS gateways of this org in failover
+   * order: the primary MessagingSenderConfig SMS config (its
+   * smsPriority) interleaved by priority with the additional
+   * MessagingSmsGatewayConfig rows (enabled + fully configured
+   * only). Ties keep the primary first (insertion order). A
+   * missing extra table (pre-MX2 deployment / fake fixture)
+   * reads as "no extras" — the single-config behaviour.
+   * Duplicate (gateway, senderId, key) configs are deduped so
+   * the same gateway is never tried twice for one message.
+   */
+  private async resolveTenantSmsGateways(organizationId: string): Promise<TenantSmsConfig[]> {
+    const out: TenantSmsConfig[] = [];
+    const primary = await this.resolveTenantSms(organizationId);
+    if (primary) out.push(primary);
+    try {
+      const rows: any[] = await (this.prisma as any).messagingSmsGatewayConfig?.findMany({
+        where: { organizationId, isEnabled: true }, orderBy: { priority: "asc" },
+      }) ?? [];
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const cfg = tenantSmsFromGatewayRow(row);
+        if (cfg) out.push(cfg);
+      }
+    } catch { /* no extras — single-config behaviour */ }
+    const seen = new Set<string>();
+    return out
+      .map((cfg, i) => ({ cfg, i }))
+      .sort((a, b) => (a.cfg.priority ?? 0) - (b.cfg.priority ?? 0) || a.i - b.i)
+      .map(({ cfg }) => cfg)
+      .filter((cfg) => {
+        const key = `${cfg.gatewayKey ?? smsGatewayKey(cfg)}:${cfg.apiKey}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  /** MX2 — the safe (secret-free) list of additional SMS
+   * gateways for the sender settings view. */
+  private async listExtraSmsGatewaysSafe(organizationId: string): Promise<any[]> {
+    try {
+      const rows: any[] = await (this.prisma as any).messagingSmsGatewayConfig?.findMany({
+        where: { organizationId }, orderBy: { priority: "asc" },
+      }) ?? [];
+      return (Array.isArray(rows) ? rows : []).map((r: any) => ({
+        id: r.id, gateway: r.smsGateway, smsSenderId: r.smsSenderId, smsApiUrl: r.smsApiUrl ?? null,
+        priority: r.priority ?? 10, isEnabled: r.isEnabled !== false,
+        smsApiKeyConfigured: Boolean(r.smsApiKeyEncrypted),
+      }));
+    } catch { return []; }
+  }
+
+  /** MX2 — add an ADDITIONAL tenant SMS gateway (failover set).
+   * Same honesty as updateTenantSms: no pre-save verification
+   * exists for these gateways, so the first real send through
+   * it is the proof — stated in the response note. */
+  async addSmsGateway(organizationId: string, actorId: string, dto: {
+    smsGateway?: string; smsApiKey?: string; smsSenderId?: string; smsApiUrl?: string; priority?: number;
+  }) {
+    if (!dto.smsGateway || !["sslwireless", "bulksmsbd", "alphasms"].includes(dto.smsGateway)) {
+      throw new BadRequestException("smsGateway must be sslwireless, bulksmsbd or alphasms");
+    }
+    if (!dto.smsSenderId) throw new BadRequestException("An SMS sender ID is required");
+    if (!dto.smsApiKey) throw new BadRequestException("An SMS API key is required");
+    const priority = dto.priority === undefined ? 10 : dto.priority;
+    if (!Number.isInteger(priority) || priority < 0 || priority > 1000) {
+      throw new BadRequestException("priority must be an integer between 0 and 1000 (lower sends first)");
+    }
+    const row = await (this.prisma as any).messagingSmsGatewayConfig.create({
+      data: {
+        organizationId, smsGateway: dto.smsGateway, smsApiKeyEncrypted: seal(dto.smsApiKey),
+        smsSenderId: dto.smsSenderId, smsApiUrl: dto.smsApiUrl || null, priority, isEnabled: true,
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.sender_sms_gateway_add", entityType: "MessagingSmsGatewayConfig", entityId: row.id, metadata: { gateway: dto.smsGateway, senderId: dto.smsSenderId, priority } });
+    return {
+      id: row.id, gateway: row.smsGateway, smsSenderId: row.smsSenderId, priority: row.priority, isEnabled: true,
+      note: "Saved as an additional failover gateway. SMS gateways offer no pre-save verification here — the first real send through it is the proof.",
+    };
+  }
+
+  /** MX2 — remove an additional SMS gateway. The primary
+   * config (MessagingSenderConfig) is NOT touched — clearing
+   * it stays updateTenantSms's `clear` path. */
+  async removeSmsGateway(organizationId: string, actorId: string, gatewayId: string) {
+    const row = await (this.prisma as any).messagingSmsGatewayConfig?.findFirst({ where: { id: gatewayId, organizationId } }).catch(() => null);
+    if (!row) throw new NotFoundException("SMS gateway not found");
+    await (this.prisma as any).messagingSmsGatewayConfig.delete({ where: { id: row.id } });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.sender_sms_gateway_remove", entityType: "MessagingSmsGatewayConfig", entityId: gatewayId, metadata: { gateway: row.smsGateway } });
+    return { deleted: true };
+  }
+
   /** The safe view only — secrets never leave the server. */
   async getSenderSettings(organizationId: string) {
     const row = await this.getSenderConfigRow(organizationId);
-    return senderConfigSafeView(row, {
+    const view = senderConfigSafeView(row, {
       emailConfigured: this.email.isConfigured(),
       smsConfigured: this.sms.isConfigured(),
     });
+    // MX2: the additional failover gateways (secret-free view).
+    return { ...view, smsGateways: await this.listExtraSmsGatewaysSafe(organizationId) };
   }
 
   private async upsertSenderConfig(organizationId: string, data: Record<string, unknown>) {
@@ -735,9 +1858,10 @@ export class MessagingService {
   /** MS4 — the org's own per-unit rates for preview estimates. */
   async updateSenderRates(organizationId: string, actorId: string, dto: {
     smsCostPerPartMinor?: number | null; whatsappCostPerMessageMinor?: number | null; emailCostPerMessageMinor?: number | null;
+    whatsappMarketingCostPerMessageMinor?: number | null; whatsappUtilityCostPerMessageMinor?: number | null; whatsappAuthenticationCostPerMessageMinor?: number | null;
   }) {
     const data: Record<string, unknown> = {};
-    for (const key of ["smsCostPerPartMinor", "whatsappCostPerMessageMinor", "emailCostPerMessageMinor"] as const) {
+    for (const key of ["smsCostPerPartMinor", "whatsappCostPerMessageMinor", "emailCostPerMessageMinor", "whatsappMarketingCostPerMessageMinor", "whatsappUtilityCostPerMessageMinor", "whatsappAuthenticationCostPerMessageMinor"] as const) {
       if (dto[key] !== undefined) {
         const v = dto[key];
         if (v !== null && (!Number.isInteger(v) || (v as number) < 0)) {
@@ -842,6 +1966,350 @@ export class MessagingService {
     return { domain, source, spf, dkim };
   }
 
+  // ---------- MX15: governance (approval, budget, health, seeds) ----------
+
+  /** MX15 — governance settings with the defensive-read
+   * discipline of every other setting here: a missing row /
+   * column / table reads as approval OFF and no caps, so
+   * pre-MX15 fixtures and deployments behave byte-identically. */
+  async getGovernanceSetting(organizationId: string): Promise<{
+    approvalEnabled: boolean; broadcastCostCapMinor: number | null; monthlySpendCapMinor: number | null;
+  }> {
+    const fallback = { approvalEnabled: false, broadcastCostCapMinor: null as number | null, monthlySpendCapMinor: null as number | null };
+    try {
+      const row = await (this.prisma as any).messagingSetting?.findFirst({ where: { organizationId } });
+      if (!row) return fallback;
+      const cap = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
+      return {
+        approvalEnabled: row.approvalEnabled === true,
+        broadcastCostCapMinor: cap(row.broadcastCostCapMinor),
+        monthlySpendCapMinor: cap(row.monthlySpendCapMinor),
+      };
+    } catch { return fallback; }
+  }
+
+  /** MX15 — an approver is an ACTIVE member of this org with
+   * role OWNER or ADMIN (the roles that already govern sender /
+   * settings writes). Defensive: an unreadable membership table
+   * means NOT an approver (fail closed for approval decisions). */
+  async isBroadcastApprover(organizationId: string, userId: string): Promise<boolean> {
+    try {
+      const m = await (this.prisma as any).membership?.findFirst({
+        where: { organizationId, userId, status: "ACTIVE", role: { in: ["OWNER", "ADMIN"] } },
+      });
+      return !!m;
+    } catch { return false; }
+  }
+
+  /** MX15 — true when this broadcast still needs an approval
+   * decision under the org's CURRENT setting: approval is on AND
+   * the row carries a pending/rejected approval state (or sits
+   * in the pending_approval status). Broadcasts created while
+   * approval was OFF carry no approval state and are never
+   * retroactively gated. */
+  private async approvalGateApplies(organizationId: string, broadcast: any): Promise<boolean> {
+    if (!broadcast) return false;
+    if (broadcast.status !== "pending_approval"
+      && broadcast.approvalStatus !== "pending" && broadcast.approvalStatus !== "rejected") return false;
+    const gov = await this.getGovernanceSetting(organizationId);
+    return gov.approvalEnabled;
+  }
+
+  /** MX15 — the send/schedule/prepare gate. When approval is ON
+   * and the broadcast awaits a decision, every path that could
+   * queue, schedule or send it refuses with the state named. */
+  async assertApprovalAllowsSend(organizationId: string, broadcast: any): Promise<void> {
+    if (await this.approvalGateApplies(organizationId, broadcast)) {
+      throw new BadRequestException(
+        broadcast.approvalStatus === "rejected"
+          ? "This broadcast was REJECTED in review and cannot be sent or scheduled. Edit it and submit it for approval again."
+          : "This broadcast is pending approval and cannot be sent or scheduled until a different authorised approver (OWNER/ADMIN) approves it.",
+      );
+    }
+  }
+
+  /** MX15 — approve a pending broadcast (four-eyes: the caller
+   * must be an OWNER/ADMIN approver AND not the creator). The
+   * decision + note land on the row and in the audit log. */
+  async approveBroadcast(organizationId: string, actorId: string, broadcastId: string, note?: string) {
+    const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
+    if (broadcast.status !== "pending_approval" || broadcast.approvalStatus !== "pending") {
+      throw new BadRequestException(`This broadcast is not pending approval (status: ${broadcast.status})`);
+    }
+    if (!(await this.isBroadcastApprover(organizationId, actorId))) {
+      throw new ForbiddenException("Only an OWNER or ADMIN member can approve a broadcast.");
+    }
+    if (broadcast.createdById === actorId) {
+      throw new ForbiddenException("Four-eyes rule: the broadcast's creator can never approve their own broadcast — a different approver must decide.");
+    }
+    const approvalNote = note !== undefined && note !== null ? String(note).slice(0, 500) : null;
+    const nextStatus = broadcast.scheduledAt && new Date(broadcast.scheduledAt).getTime() > Date.now() ? "scheduled" : "draft";
+    const updated = await (this.prisma as any).broadcast.update({
+      where: { id: broadcastId },
+      data: { status: nextStatus, approvalStatus: "approved", approvedById: actorId, approvedAt: new Date(), approvalNote },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "broadcast.approve", entityType: "Broadcast", entityId: broadcastId,
+      metadata: { createdById: broadcast.createdById, note: approvalNote, nextStatus },
+    });
+    const { recipientSnapshot: _s, ...rest } = updated as any;
+    return { ...rest, progress: MessagingService.broadcastProgress(updated) };
+  }
+
+  /** MX15 — reject a pending broadcast: back to draft with the
+   * rejected state kept, so the send gate still blocks it until
+   * it is edited and re-submitted. Same four-eyes rule. */
+  async rejectBroadcast(organizationId: string, actorId: string, broadcastId: string, note?: string) {
+    const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
+    if (broadcast.status !== "pending_approval" || broadcast.approvalStatus !== "pending") {
+      throw new BadRequestException(`This broadcast is not pending approval (status: ${broadcast.status})`);
+    }
+    if (!(await this.isBroadcastApprover(organizationId, actorId))) {
+      throw new ForbiddenException("Only an OWNER or ADMIN member can reject a broadcast.");
+    }
+    if (broadcast.createdById === actorId) {
+      throw new ForbiddenException("Four-eyes rule: the broadcast's creator can never reject their own broadcast — a different approver must decide.");
+    }
+    const approvalNote = note !== undefined && note !== null ? String(note).slice(0, 500) : null;
+    const updated = await (this.prisma as any).broadcast.update({
+      where: { id: broadcastId },
+      data: { status: "draft", scheduledAt: null, approvalStatus: "rejected", approvedById: actorId, approvedAt: new Date(), approvalNote },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "broadcast.reject", entityType: "Broadcast", entityId: broadcastId,
+      metadata: { createdById: broadcast.createdById, note: approvalNote },
+    });
+    const { recipientSnapshot: _s, ...rest } = updated as any;
+    return { ...rest, progress: MessagingService.broadcastProgress(updated) };
+  }
+
+  /** MX15 — (re)submit a draft for approval: used after a
+   * rejection (edit → submit again) and for a draft created
+   * while approval was off that the org now wants reviewed.
+   * Only meaningful while the org setting is ON. */
+  async submitBroadcastForApproval(organizationId: string, actorId: string, broadcastId: string) {
+    const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
+    const gov = await this.getGovernanceSetting(organizationId);
+    if (!gov.approvalEnabled) throw new BadRequestException("Broadcast approval is not enabled for this organization (Messaging settings).");
+    if (broadcast.status !== "draft") {
+      throw new BadRequestException(`Only a draft broadcast can be submitted for approval (this one is ${broadcast.status})`);
+    }
+    if (await this.isBroadcastApprover(organizationId, actorId)) {
+      throw new BadRequestException("Approvers (OWNER/ADMIN) do not need approval — their broadcasts are not gated.");
+    }
+    const updated = await (this.prisma as any).broadcast.update({
+      where: { id: broadcastId },
+      data: { status: "pending_approval", approvalStatus: "pending", approvedById: null, approvedAt: null, approvalNote: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "broadcast.submit_approval", entityType: "Broadcast", entityId: broadcastId, metadata: {},
+    });
+    const { recipientSnapshot: _s, ...rest } = updated as any;
+    return { ...rest, progress: MessagingService.broadcastProgress(updated) };
+  }
+
+  /** MX15 — the approval queue: broadcasts awaiting a decision. */
+  async listApprovalQueue(organizationId: string) {
+    const rows: any[] = await (this.prisma as any).broadcast.findMany({
+      where: { organizationId, status: "pending_approval" }, orderBy: { createdAt: "asc" }, take: 100,
+    }).catch(() => []);
+    return rows.map((b: any) => {
+      const { recipientSnapshot: _s, ...rest } = b;
+      return { ...rest, progress: MessagingService.broadcastProgress(b) };
+    });
+  }
+
+  /** MX15 — this calendar month's estimated spend (minor units)
+   * from REAL sent broadcasts: each sent broadcast's confirmed
+   * sentCount × the org-entered rate (buildCostEstimate). A sent
+   * broadcast whose channel has no rate makes the figure
+   * INCOMPLETE (never silently partial-as-total). */
+  private async monthlySpendEstimate(organizationId: string, excludeBroadcastId?: string): Promise<{ totalMinor: number; complete: boolean }> {
+    const monthStart = new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
+    let rows: any[] = [];
+    try {
+      rows = await (this.prisma as any).broadcast.findMany({
+        where: { organizationId, sentAt: { gte: monthStart } }, take: 500,
+      });
+    } catch { return { totalMinor: 0, complete: false }; }
+    let total = 0; let complete = true;
+    for (const b of rows ?? []) {
+      if (excludeBroadcastId && b.id === excludeBroadcastId) continue;
+      const sent = Number(b.sentCount ?? 0);
+      if (!sent) continue;
+      let category: string | null = null;
+      if (b.channel === "whatsapp" && b.whatsappTemplateId) {
+        const tpl = await (this.prisma as any).whatsAppTemplate?.findFirst({ where: { id: b.whatsappTemplateId, organizationId } }).catch(() => null);
+        category = tpl?.category ?? null;
+      }
+      const est = await this.buildCostEstimate(organizationId, b.channel, sent, b.body, category).catch(() => null);
+      if (!est || typeof est.totalMinor !== "number") { complete = false; continue; }
+      total += est.totalMinor;
+    }
+    return { totalMinor: total, complete };
+  }
+
+  /** MX15 — the budget decision for one broadcast about to send.
+   * Estimate = org-entered rate × planned recipients (the same
+   * buildCostEstimate the preview shows). Spend-based only —
+   * there is no messaging balance to check against. */
+  async checkBroadcastBudget(organizationId: string, broadcast: any, recipientCount: number): Promise<BudgetDecision> {
+    const gov = await this.getGovernanceSetting(organizationId);
+    const perBroadcastCapMinor = Number.isInteger((broadcast as any).budgetCapMinor) && (broadcast as any).budgetCapMinor > 0
+      ? (broadcast as any).budgetCapMinor : gov.broadcastCostCapMinor;
+    let category: string | null = null;
+    if (broadcast.channel === "whatsapp" && broadcast.whatsappTemplateId) {
+      const tpl = await (this.prisma as any).whatsAppTemplate?.findFirst({ where: { id: broadcast.whatsappTemplateId, organizationId } }).catch(() => null);
+      category = tpl?.category ?? null;
+    }
+    const est = await this.buildCostEstimate(organizationId, broadcast.channel, recipientCount, broadcast.body, category).catch(() => null);
+    let monthlySpentMinor: number | null = null;
+    let monthlyEstimateComplete = true;
+    if (gov.monthlySpendCapMinor !== null) {
+      const m = await this.monthlySpendEstimate(organizationId, broadcast.id);
+      monthlySpentMinor = m.totalMinor; monthlyEstimateComplete = m.complete;
+    }
+    return decideBudget({
+      estimateMinor: est && typeof est.totalMinor === "number" ? est.totalMinor : null,
+      basis: est?.basis ?? null,
+      perBroadcastCapMinor, monthlyCapMinor: gov.monthlySpendCapMinor,
+      monthlySpentMinor, monthlyEstimateComplete,
+    });
+  }
+
+  /** MX15 — throwing form of the budget check, called by the
+   * send choke point before any provider call of a fresh send. */
+  async assertBudgetAllowsSend(organizationId: string, broadcast: any, recipientCount: number): Promise<BudgetDecision> {
+    const decision = await this.checkBroadcastBudget(organizationId, broadcast, recipientCount);
+    if (decision.decision === "block") {
+      throw new BadRequestException(`Budget cap (spend-based, from your entered rates): ${decision.blockReason} Lower the audience, raise the cap in Messaging settings, or remove the cap.`);
+    }
+    return decision;
+  }
+
+  /** MX15 — delivery health over a stated window, computed from
+   * REAL MessageDelivery rows. Per-sender rates are null: a
+   * delivery row carries no sender identity (the org has at most
+   * one tenant SMTP + the platform path, chosen per send and not
+   * recorded per delivery), so no per-sender figure is invented;
+   * the SPF/DKIM domain-health view rides along instead. */
+  async getDeliveryHealth(organizationId: string, daysInput?: number) {
+    const days = Number.isInteger(daysInput) && (daysInput as number) >= 1 && (daysInput as number) <= 90 ? (daysInput as number) : 30;
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+    let rows: any[] | null = null;
+    try {
+      rows = await (this.prisma as any).messageDelivery.findMany({
+        where: { organizationId, createdAt: { gte: since } }, take: 50000,
+        select: { channel: true, status: true, deliveryStatus: true, deliveredAt: true, readAt: true, error: true },
+      });
+    } catch { rows = null; }
+    const domainHealth = await this.getDomainHealth(organizationId).catch(() => null);
+    if (!rows) {
+      return {
+        windowDays: days, available: false,
+        reason: "Delivery records could not be read, so no health figures are shown (never invented).",
+        channels: [], totals: null, bounceRate: null, complaintRate: null, bounceComplaintNote: BOUNCE_COMPLAINT_NOTE,
+        perSender: null, perSenderNote: "Per-sender rates are null: MessageDelivery rows record no sender identity, so no per-sender figure can be honestly computed.",
+        domainHealth,
+      };
+    }
+    const channels = aggregateChannelHealth(rows as any);
+    const sent = rows.filter((r: any) => r.status === "sent").length;
+    const failed = rows.filter((r: any) => r.status === "failed").length;
+    return {
+      windowDays: days, available: true, since: since.toISOString(),
+      channels,
+      totals: {
+        deliveries: rows.length, sent, failed,
+        skipped: rows.filter((r: any) => r.status === "skipped").length,
+        failureRate: sent + failed > 0 ? Math.round((failed / (sent + failed)) * 10000) / 10000 : null,
+        bounceRate: null, complaintRate: null,
+      },
+      bounceComplaintNote: BOUNCE_COMPLAINT_NOTE,
+      perSender: null,
+      perSenderNote: "Per-sender rates are null: MessageDelivery rows record no sender identity (tenant SMTP vs platform path is chosen per send and not stored per delivery), so no per-sender figure can be honestly computed. Domain (SPF/DKIM) health is shown instead.",
+      domainHealth,
+      autoSuppression: "WhatsApp webhook failures that identify the recipient as unreachable / not on WhatsApp now auto-suppress that address in the preference store (source \"auto_suppression\"). No email bounce/complaint webhook exists in this system, so no other channel has an auto-suppression path to close.",
+    };
+  }
+
+  /** MX15 — pre-send checklist v2 (extends MS5's composeCheck;
+   * the v1 warnings ride along verbatim). The recipient sample
+   * is REAL: when an audience is supplied it is resolved through
+   * the same resolver a send uses and its vars are built by the
+   * same buildSnapshotVars — capped at 5 recipients. */
+  async checkComposeV2(organizationId: string, dto: {
+    channel: string; subject?: string; body: string; htmlBody?: string | null;
+    audienceType?: string; audienceStage?: string; audienceSegment?: string;
+  } & AudienceExtras) {
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    const setting = await this.getMessagingSetting(organizationId);
+    let sampleVars: Record<string, unknown>[] | null = null;
+    if (dto.audienceType) {
+      try {
+        const resolved = await this.resolveBroadcastRecipients(organizationId, {
+          channel: dto.channel, audienceType: dto.audienceType, audienceStage: dto.audienceStage,
+          audienceSegment: dto.audienceSegment,
+          audienceDefinition: (dto as any).audienceDefinition, audienceSavedId: (dto as any).audienceSavedId,
+          audienceCsv: (dto as any).audienceCsv, topic: (dto as any).topic,
+        });
+        const sample = resolved.recipients.slice(0, 5);
+        if (sample.length) sampleVars = await this.buildSnapshotVars(organizationId, sample);
+      } catch { sampleVars = null; }
+    }
+    return composeCheckV2({
+      channel: dto.channel, subject: dto.subject, body: dto.body, htmlBody: dto.htmlBody ?? null,
+      linkTrackingEnabled: setting.linkTrackingEnabled, sampleVars, imageAssets: [],
+    });
+  }
+
+  // ---------- MX15: seed / test recipient list ----------
+
+  async listSeedRecipients(organizationId: string) {
+    const rows: any[] = await (this.prisma as any).messagingSeedRecipient?.findMany({
+      where: { organizationId }, orderBy: { createdAt: "asc" }, take: 200,
+    }).catch(() => []) ?? [];
+    return rows;
+  }
+
+  async addSeedRecipient(organizationId: string, actorId: string, dto: { channel: string; address: string; label?: string }) {
+    if (!["email", "sms", "whatsapp", "telegram"].includes(dto.channel)) {
+      throw new BadRequestException("channel must be email, sms, whatsapp or telegram (push/onsite test sends cannot target a typed address)");
+    }
+    const address = this.validatePrefAddress(dto.channel, dto.address);
+    const table = (this.prisma as any).messagingSeedRecipient;
+    if (!table?.create) throw new BadRequestException("Seed recipient storage is not available in this deployment yet (migration pending).");
+    const existing = await table.findFirst({ where: { organizationId, channel: dto.channel, address } }).catch(() => null);
+    if (existing) return existing;
+    const row = await table.create({
+      data: { organizationId, channel: dto.channel, address, label: dto.label ? String(dto.label).slice(0, 100) : null, createdById: actorId },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.seed_add", entityType: "MessagingSeedRecipient", entityId: row.id, metadata: { channel: dto.channel, address } });
+    return row;
+  }
+
+  async removeSeedRecipient(organizationId: string, actorId: string, seedId: string) {
+    const table = (this.prisma as any).messagingSeedRecipient;
+    const row = await table?.findFirst({ where: { id: seedId, organizationId } }).catch(() => null);
+    if (!row) throw new NotFoundException("Seed recipient not found");
+    await table.delete({ where: { id: seedId } });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.seed_remove", entityType: "MessagingSeedRecipient", entityId: seedId, metadata: { channel: row.channel, address: row.address } });
+    return { deleted: true, id: seedId };
+  }
+
+  /** MX15 — one-click test send to a seed recipient, through the
+   * EXISTING MS5 broadcast test-send path verbatim (no new send
+   * machinery). The seed's channel must match the broadcast's. */
+  async testSendBroadcastToSeed(organizationId: string, actorId: string, broadcastId: string, seedId: string) {
+    const seed = await (this.prisma as any).messagingSeedRecipient?.findFirst({ where: { id: seedId, organizationId } }).catch(() => null);
+    if (!seed) throw new NotFoundException("Seed recipient not found");
+    const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
+    if (broadcast.channel !== seed.channel) {
+      throw new BadRequestException(`Seed recipient is a ${seed.channel} address but this broadcast is ${broadcast.channel} — pick a seed of the broadcast's channel.`);
+    }
+    return this.testSendBroadcast(organizationId, actorId, broadcastId, seed.address);
+  }
+
   // ---------- MS2: preferences & settings ----------
 
   /**
@@ -869,14 +2337,174 @@ export class MessagingService {
     }
   }
 
+  /**
+   * MX9 — the WhatsApp quality guard switch. Defensive like the
+   * other setting reads: a missing row / column / table reads as
+   * OFF (the schema default), so pre-MX9 fixtures and deployments
+   * behave byte-identically.
+   */
+  async getWhatsAppQualityGuardEnabled(organizationId: string): Promise<boolean> {
+    try {
+      const row = await (this.prisma as any).messagingSetting?.findFirst({ where: { organizationId } });
+      return row?.whatsappQualityGuardEnabled === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * MX9 — refuse a NEW broadcast send through a template whose
+   * REAL Meta-synced state is low (quality RED or status
+   * REJECTED) when the org enabled the quality guard. Templates
+   * with no synced quality data are never refused here. Called
+   * at broadcast create (primary, A/B and cascade templates),
+   * at broadcast edit (template swap) and again when the
+   * WhatsApp sender is built at send time — a template that
+   * turns RED between create and send stops the send, with this
+   * reason recorded on every pending entry by the engine's
+   * build-error path.
+   */
+  async assertWhatsAppTemplateNotQualityBlocked(organizationId: string, template: { name?: string | null; qualityRating?: string | null; status?: string | null } | null | undefined): Promise<void> {
+    if (!template) return;
+    const enabled = await this.getWhatsAppQualityGuardEnabled(organizationId);
+    const decision = qualityGuardDecision(enabled, template);
+    if (decision.blocked) throw new BadRequestException(decision.reason);
+  }
+
+  /**
+   * MX3 — the org's timezone for quiet-hours evaluation:
+   * Organization.timezone (a real schema field, default
+   * "Asia/Dhaka"). Defensive: a missing delegate / row / value,
+   * or a value Intl cannot evaluate, falls back to the schema
+   * default — the decision + evidence are recorded in
+   * docs/messaging-mx3-acceptance.md. MX3 adds NO timezone
+   * field of its own: the org timezone already exists.
+   */
+  async getOrgTimezone(organizationId: string): Promise<string> {
+    try {
+      const org = await (this.prisma as any).organization?.findUnique?.({ where: { id: organizationId }, select: { timezone: true } });
+      if (isValidTimeZone(org?.timezone)) return org.timezone;
+    } catch { /* fall through to the schema default */ }
+    return QUIET_HOURS_FALLBACK_TIMEZONE;
+  }
+
+  /**
+   * MX3 — the org's marketing-stream controls: per-sweep caps
+   * (null setting = platform defaults, i.e. pre-MX3 behaviour)
+   * and the quiet-hours window evaluated against `now` in the
+   * org's timezone. Defensive like getMessagingSetting: a
+   * missing row / column / table reads as the defaults with
+   * quiet hours OFF, so pre-MX3 fixtures and deployments are
+   * byte-identical.
+   */
+  async getStreamSetting(organizationId: string, now: Date = new Date()): Promise<{
+    marketingMaxBroadcastsPerSweep: number | null;
+    marketingMaxEntriesPerSweep: number | null;
+    effectiveMaxBroadcastsPerSweep: number;
+    effectiveMaxEntriesPerSweep: number;
+    quietHoursEnabled: boolean;
+    quietHoursStart: string | null;
+    quietHoursEnd: string | null;
+    timezone: string;
+    quietHoursActive: boolean;
+  }> {
+    let row: any = null;
+    try {
+      row = await (this.prisma as any).messagingSetting?.findFirst({ where: { organizationId } });
+    } catch { row = null; }
+    const capBroadcasts = Number.isInteger(row?.marketingMaxBroadcastsPerSweep) && row.marketingMaxBroadcastsPerSweep >= 1
+      ? row.marketingMaxBroadcastsPerSweep : null;
+    const capEntries = Number.isInteger(row?.marketingMaxEntriesPerSweep) && row.marketingMaxEntriesPerSweep >= 1
+      ? row.marketingMaxEntriesPerSweep : null;
+    const quietHoursStart = isValidHhMm(row?.quietHoursStart) ? row.quietHoursStart : null;
+    const quietHoursEnd = isValidHhMm(row?.quietHoursEnd) ? row.quietHoursEnd : null;
+    const quietHoursEnabled = row?.quietHoursEnabled === true && quietHoursStart !== null && quietHoursEnd !== null;
+    const timezone = await this.getOrgTimezone(organizationId);
+    return {
+      marketingMaxBroadcastsPerSweep: capBroadcasts,
+      marketingMaxEntriesPerSweep: capEntries,
+      effectiveMaxBroadcastsPerSweep: capBroadcasts ?? MARKETING_SWEEP_DEFAULT_MAX_BROADCASTS,
+      effectiveMaxEntriesPerSweep: capEntries ?? BROADCAST_SWEEP_MAX_ENTRIES,
+      quietHoursEnabled,
+      quietHoursStart,
+      quietHoursEnd,
+      timezone,
+      quietHoursActive: isQuietHoursActive(
+        { enabled: quietHoursEnabled, start: quietHoursStart, end: quietHoursEnd, timezone }, now,
+      ),
+    };
+  }
+
+  /** MX3 — the settings-endpoint view: the MS2/MS5 fields plus
+   * the stream controls (configured caps + quiet hours + the
+   * org timezone they are evaluated in + whether the window is
+   * active right now). getMessagingSetting itself keeps its
+   * exact pre-MX3 shape for its internal callers. */
+  async getMessagingSettingsView(organizationId: string) {
+    const base = await this.getMessagingSetting(organizationId);
+    const stream = await this.getStreamSetting(organizationId);
+    const whatsappQualityGuardEnabled = await this.getWhatsAppQualityGuardEnabled(organizationId);
+    // MX11: the predictive thresholds are part of the settings
+    // view (org-visible, like every other threshold here).
+    const engagementThresholds = await this.getEngagementThresholds(organizationId);
+    // MX15: governance (approval switch + spend caps).
+    const governance = await this.getGovernanceSetting(organizationId);
+    // MX16: the A/B auto-winner org switch (default OFF).
+    const abAutoWinnerEnabled = await this.getAbAutoWinnerEnabled(organizationId);
+    return { ...base, ...stream, whatsappQualityGuardEnabled, ...engagementThresholds, ...governance, abAutoWinnerEnabled };
+  }
+
+  /** MX16 — the A/B auto-winner ORG switch. Defensive like
+   * every other setting read: a missing row / column / table
+   * reads as OFF (owner decision D3: default OFF), so pre-MX16
+   * fixtures and deployments behave byte-identically — the
+   * per-broadcast report winner stays a suggestion only. */
+  async getAbAutoWinnerEnabled(organizationId: string): Promise<boolean> {
+    try {
+      const row = await (this.prisma as any).messagingSetting?.findFirst({ where: { organizationId } });
+      return row?.abAutoWinnerEnabled === true;
+    } catch { return false; }
+  }
+
   /** MS2 — strict settings write (leads followup-setting pattern):
    * cap must be an integer 0..20 (0 = off); opt-in a real boolean.
-   * MS5 adds linkTrackingEnabled (a real boolean). */
-  async updateMessagingSetting(organizationId: string, actorId: string, dto: { frequencyCapPerDay?: number; whatsappOptInRequired?: boolean; linkTrackingEnabled?: boolean }) {
+   * MS5 adds linkTrackingEnabled (a real boolean).
+   * MX3 adds the marketing-stream controls: the sweep caps are
+   * null (platform default) or integers in range; quiet hours
+   * are a real boolean plus strict "HH:mm" bounds — enabling
+   * requires both bounds set (after this write) and different,
+   * because an empty window can only ever confuse. */
+  async updateMessagingSetting(organizationId: string, actorId: string, dto: {
+    frequencyCapPerDay?: number; whatsappOptInRequired?: boolean; linkTrackingEnabled?: boolean;
+    marketingMaxBroadcastsPerSweep?: number | null; marketingMaxEntriesPerSweep?: number | null;
+    quietHoursEnabled?: boolean; quietHoursStart?: string | null; quietHoursEnd?: string | null;
+    whatsappQualityGuardEnabled?: boolean;
+    // MX11: predictive-segment thresholds (strict ranges below).
+    churnRiskSilentDays?: number; likelyToBuyMinScore?: number; highLtvMinSpentMinor?: number;
+    unengagedSuppressDays?: number; unengagedMinSends?: number;
+    // MX15: governance — approval switch + spend caps (minor
+    // units; null clears a cap).
+    approvalEnabled?: boolean; broadcastCostCapMinor?: number | null; monthlySpendCapMinor?: number | null;
+    // MX16: A/B auto-winner org switch (default OFF).
+    abAutoWinnerEnabled?: boolean;
+  }) {
     const current = await this.getMessagingSetting(organizationId);
+    const stream = await this.getStreamSetting(organizationId);
+    const thresholds = await this.getEngagementThresholds(organizationId);
+    let churnRiskSilentDays = thresholds.churnRiskSilentDays;
+    let likelyToBuyMinScore = thresholds.likelyToBuyMinScore;
+    let highLtvMinSpentMinor = thresholds.highLtvMinSpentMinor;
+    let unengagedSuppressDays = thresholds.unengagedSuppressDays;
+    let unengagedMinSends = thresholds.unengagedMinSends;
+    let whatsappQualityGuardEnabled = await this.getWhatsAppQualityGuardEnabled(organizationId);
     let frequencyCapPerDay = current.frequencyCapPerDay;
     let whatsappOptInRequired = current.whatsappOptInRequired;
     let linkTrackingEnabled = current.linkTrackingEnabled;
+    let marketingMaxBroadcastsPerSweep = stream.marketingMaxBroadcastsPerSweep;
+    let marketingMaxEntriesPerSweep = stream.marketingMaxEntriesPerSweep;
+    let quietHoursEnabled = stream.quietHoursEnabled;
+    let quietHoursStart = stream.quietHoursStart;
+    let quietHoursEnd = stream.quietHoursEnd;
     if (dto.frequencyCapPerDay !== undefined) {
       if (!Number.isInteger(dto.frequencyCapPerDay) || dto.frequencyCapPerDay < 0 || dto.frequencyCapPerDay > 20) {
         throw new BadRequestException("frequencyCapPerDay must be an integer between 0 and 20 (0 = off)");
@@ -891,7 +2519,97 @@ export class MessagingService {
       if (typeof dto.linkTrackingEnabled !== "boolean") throw new BadRequestException("linkTrackingEnabled must be a boolean");
       linkTrackingEnabled = dto.linkTrackingEnabled;
     }
-    const data = { frequencyCapPerDay, whatsappOptInRequired, linkTrackingEnabled };
+    if (dto.marketingMaxBroadcastsPerSweep !== undefined) {
+      if (dto.marketingMaxBroadcastsPerSweep !== null
+        && (!Number.isInteger(dto.marketingMaxBroadcastsPerSweep) || dto.marketingMaxBroadcastsPerSweep < 1 || dto.marketingMaxBroadcastsPerSweep > MARKETING_SWEEP_MAX_BROADCASTS_LIMIT)) {
+        throw new BadRequestException(`marketingMaxBroadcastsPerSweep must be null (platform default) or an integer between 1 and ${MARKETING_SWEEP_MAX_BROADCASTS_LIMIT}`);
+      }
+      marketingMaxBroadcastsPerSweep = dto.marketingMaxBroadcastsPerSweep;
+    }
+    if (dto.marketingMaxEntriesPerSweep !== undefined) {
+      if (dto.marketingMaxEntriesPerSweep !== null
+        && (!Number.isInteger(dto.marketingMaxEntriesPerSweep) || dto.marketingMaxEntriesPerSweep < 1 || dto.marketingMaxEntriesPerSweep > MARKETING_SWEEP_MAX_ENTRIES_LIMIT)) {
+        throw new BadRequestException(`marketingMaxEntriesPerSweep must be null (platform default) or an integer between 1 and ${MARKETING_SWEEP_MAX_ENTRIES_LIMIT}`);
+      }
+      marketingMaxEntriesPerSweep = dto.marketingMaxEntriesPerSweep;
+    }
+    if (dto.quietHoursEnabled !== undefined) {
+      if (typeof dto.quietHoursEnabled !== "boolean") throw new BadRequestException("quietHoursEnabled must be a boolean");
+      quietHoursEnabled = dto.quietHoursEnabled;
+    }
+    if (dto.quietHoursStart !== undefined) {
+      if (dto.quietHoursStart !== null && !isValidHhMm(dto.quietHoursStart)) {
+        throw new BadRequestException("quietHoursStart must be null or a HH:mm time (00:00–23:59)");
+      }
+      quietHoursStart = dto.quietHoursStart;
+    }
+    if (dto.quietHoursEnd !== undefined) {
+      if (dto.quietHoursEnd !== null && !isValidHhMm(dto.quietHoursEnd)) {
+        throw new BadRequestException("quietHoursEnd must be null or a HH:mm time (00:00–23:59)");
+      }
+      quietHoursEnd = dto.quietHoursEnd;
+    }
+    if (dto.whatsappQualityGuardEnabled !== undefined) {
+      if (typeof dto.whatsappQualityGuardEnabled !== "boolean") throw new BadRequestException("whatsappQualityGuardEnabled must be a boolean");
+      whatsappQualityGuardEnabled = dto.whatsappQualityGuardEnabled;
+    }
+    // MX11: predictive thresholds — strict integer ranges, the
+    // same discipline as the frequency cap.
+    const thresholdField = (name: string, value: number | undefined, min: number, max: number, apply: (v: number) => void) => {
+      if (value === undefined) return;
+      if (!Number.isInteger(value) || value < min || value > max) {
+        throw new BadRequestException(`${name} must be an integer between ${min} and ${max}`);
+      }
+      apply(value);
+    };
+    thresholdField("churnRiskSilentDays", dto.churnRiskSilentDays, 1, 3650, (v) => { churnRiskSilentDays = v; });
+    thresholdField("likelyToBuyMinScore", dto.likelyToBuyMinScore, 0, 100, (v) => { likelyToBuyMinScore = v; });
+    thresholdField("highLtvMinSpentMinor", dto.highLtvMinSpentMinor, 0, 1000000000, (v) => { highLtvMinSpentMinor = v; });
+    thresholdField("unengagedSuppressDays", dto.unengagedSuppressDays, 1, 3650, (v) => { unengagedSuppressDays = v; });
+    thresholdField("unengagedMinSends", dto.unengagedMinSends, 1, 1000, (v) => { unengagedMinSends = v; });
+    // MX15: governance fields — approval a real boolean; caps
+    // null (cleared) or a positive integer of minor units.
+    const governance = await this.getGovernanceSetting(organizationId);
+    let approvalEnabled = governance.approvalEnabled;
+    let broadcastCostCapMinor = governance.broadcastCostCapMinor;
+    let monthlySpendCapMinor = governance.monthlySpendCapMinor;
+    if (dto.approvalEnabled !== undefined) {
+      if (typeof dto.approvalEnabled !== "boolean") throw new BadRequestException("approvalEnabled must be a boolean");
+      approvalEnabled = dto.approvalEnabled;
+    }
+    const capField = (name: string, value: number | null | undefined, apply: (v: number | null) => void) => {
+      if (value === undefined) return;
+      if (value !== null && (!Number.isInteger(value) || value < 1 || value > 1000000000)) {
+        throw new BadRequestException(`${name} must be null (no cap) or a positive integer of minor units`);
+      }
+      apply(value);
+    };
+    capField("broadcastCostCapMinor", dto.broadcastCostCapMinor, (v) => { broadcastCostCapMinor = v; });
+    capField("monthlySpendCapMinor", dto.monthlySpendCapMinor, (v) => { monthlySpendCapMinor = v; });
+    // MX16: auto-winner org switch — a real boolean.
+    let abAutoWinnerEnabled = await this.getAbAutoWinnerEnabled(organizationId);
+    if (dto.abAutoWinnerEnabled !== undefined) {
+      if (typeof dto.abAutoWinnerEnabled !== "boolean") throw new BadRequestException("abAutoWinnerEnabled must be a boolean");
+      abAutoWinnerEnabled = dto.abAutoWinnerEnabled;
+    }
+    if (quietHoursEnabled) {
+      if (!quietHoursStart || !quietHoursEnd) {
+        throw new BadRequestException("quietHoursStart and quietHoursEnd are both required to enable quiet hours");
+      }
+      if (quietHoursStart === quietHoursEnd) {
+        throw new BadRequestException("quietHoursStart and quietHoursEnd must differ (an empty quiet window is not allowed)");
+      }
+    }
+    const data = {
+      frequencyCapPerDay, whatsappOptInRequired, linkTrackingEnabled,
+      marketingMaxBroadcastsPerSweep, marketingMaxEntriesPerSweep,
+      quietHoursEnabled, quietHoursStart, quietHoursEnd,
+      whatsappQualityGuardEnabled,
+      churnRiskSilentDays, likelyToBuyMinScore, highLtvMinSpentMinor,
+      unengagedSuppressDays, unengagedMinSends,
+      approvalEnabled, broadcastCostCapMinor, monthlySpendCapMinor,
+      abAutoWinnerEnabled,
+    };
     const existing = await (this.prisma as any).messagingSetting.findFirst({ where: { organizationId } }).catch(() => null);
     const row = existing
       ? await (this.prisma as any).messagingSetting.update({ where: { id: existing.id }, data })
@@ -900,14 +2618,137 @@ export class MessagingService {
     return {
       frequencyCapPerDay: row.frequencyCapPerDay, whatsappOptInRequired: row.whatsappOptInRequired,
       linkTrackingEnabled: typeof row.linkTrackingEnabled === "boolean" ? row.linkTrackingEnabled : linkTrackingEnabled,
+      marketingMaxBroadcastsPerSweep: row.marketingMaxBroadcastsPerSweep ?? null,
+      marketingMaxEntriesPerSweep: row.marketingMaxEntriesPerSweep ?? null,
+      quietHoursEnabled: row.quietHoursEnabled === true,
+      quietHoursStart: row.quietHoursStart ?? null,
+      quietHoursEnd: row.quietHoursEnd ?? null,
+      whatsappQualityGuardEnabled: row.whatsappQualityGuardEnabled === true,
+      churnRiskSilentDays: Number.isInteger(row.churnRiskSilentDays) ? row.churnRiskSilentDays : churnRiskSilentDays,
+      likelyToBuyMinScore: Number.isInteger(row.likelyToBuyMinScore) ? row.likelyToBuyMinScore : likelyToBuyMinScore,
+      highLtvMinSpentMinor: Number.isInteger(row.highLtvMinSpentMinor) ? row.highLtvMinSpentMinor : highLtvMinSpentMinor,
+      unengagedSuppressDays: Number.isInteger(row.unengagedSuppressDays) ? row.unengagedSuppressDays : unengagedSuppressDays,
+      unengagedMinSends: Number.isInteger(row.unengagedMinSends) ? row.unengagedMinSends : unengagedMinSends,
+      approvalEnabled: row.approvalEnabled === true,
+      broadcastCostCapMinor: Number.isInteger(row.broadcastCostCapMinor) ? row.broadcastCostCapMinor : broadcastCostCapMinor,
+      monthlySpendCapMinor: Number.isInteger(row.monthlySpendCapMinor) ? row.monthlySpendCapMinor : monthlySpendCapMinor,
+      abAutoWinnerEnabled: row.abAutoWinnerEnabled === true,
     };
   }
 
+  /**
+   * MX3 — the unified READ-ONLY transactional view (owner
+   * decision D4: combined view only). Aggregates the org's
+   * OrderNotificationSetting status (merged over the ON5
+   * defaults via the module's own mergeConfig, so "enabled"
+   * means exactly what the transactional engine itself would
+   * use) and the latest OrderNotificationLog rows. NO writes,
+   * NO sender changes, and NO changes to the commerce/orders
+   * modules — plain prisma reads from here, each defensive
+   * (.catch → empty/null) in the MS2 preference-read style, so
+   * a missing table can never break Messaging. The
+   * transactional SEND path (OrderNotificationService.notify,
+   * Shop OTP) does not pass through this service at all — see
+   * docs/messaging-mx3-acceptance.md for the code-path proof.
+   */
+  async getTransactionalOverview(organizationId: string): Promise<{
+    setting: {
+      configured: boolean;
+      enabledEvents: number;
+      totalEvents: number;
+      channelsInUse: string[];
+      events: { event: string; enabled: boolean; channels: string[] }[];
+    } | null;
+    recent: {
+      id: string; orderId: string; orderRef: string; event: string; channel: string;
+      status: string; providerMessageId: string | null; error: string | null; createdAt: unknown;
+    }[];
+    summary: { total: number | null; sent: number | null; failed: number | null };
+  }> {
+    // Setting status: the stored Json config merged over the
+    // ON5 defaults. `configured` = a row exists at all.
+    let setting: {
+      configured: boolean; enabledEvents: number; totalEvents: number;
+      channelsInUse: string[]; events: { event: string; enabled: boolean; channels: string[] }[];
+    } | null = null;
+    try {
+      const table = (this.prisma as any).orderNotificationSetting;
+      // No delegate at all (pre-ON5 deployment / fixture) ⇒ the
+      // setting is honestly UNREADABLE here (null). A delegate
+      // with no row is different: the ON5 defaults apply and
+      // `configured` says no row exists.
+      if (!table?.findFirst && !table?.findUnique) throw new Error("orderNotificationSetting unavailable");
+      let row: any = null;
+      if (table?.findFirst) row = await table.findFirst({ where: { organizationId } }).catch(() => null);
+      if (!row && table?.findUnique) row = await table.findUnique({ where: { organizationId } }).catch(() => null);
+      const merged = mergeConfig(row?.config ?? null);
+      const events = NOTIFICATION_EVENTS.map((event) => ({
+        event,
+        enabled: merged[event]?.enabled === true,
+        channels: [...(merged[event]?.channels ?? [])],
+      }));
+      setting = {
+        configured: !!row,
+        enabledEvents: events.filter((e) => e.enabled).length,
+        totalEvents: events.length,
+        channelsInUse: [...new Set(events.filter((e) => e.enabled).flatMap((e) => e.channels))],
+        events,
+      };
+    } catch { setting = null; }
+    // Recent log rows (latest 20), newest first. orderRef is the
+    // order's human number when the relation resolves, else its
+    // external id, else the raw orderId — never invented.
+    let recent: {
+      id: string; orderId: string; orderRef: string; event: string; channel: string;
+      status: string; providerMessageId: string | null; error: string | null; createdAt: unknown;
+    }[] = [];
+    try {
+      const rows: any[] = await (this.prisma as any).orderNotificationLog.findMany({
+        where: { organizationId },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        include: { order: { select: { externalNumber: true, externalId: true } } },
+      });
+      recent = (Array.isArray(rows) ? rows : []).map((r) => ({
+        id: String(r.id),
+        orderId: String(r.orderId),
+        orderRef: r.order?.externalNumber ?? r.order?.externalId ?? String(r.orderId),
+        event: String(r.event),
+        channel: String(r.channel),
+        status: String(r.status),
+        providerMessageId: r.providerMessageId ?? null,
+        error: r.error ?? null,
+        createdAt: r.createdAt,
+      }));
+    } catch { recent = []; }
+    // Count summary over ALL of the org's log rows (not just
+    // the page above). A failed count read is null — never a
+    // fabricated 0.
+    const countWhere = async (where: Record<string, unknown>): Promise<number | null> => {
+      try {
+        const n = await (this.prisma as any).orderNotificationLog.count({ where });
+        return typeof n === "number" ? n : null;
+      } catch { return null; }
+    };
+    const summary = {
+      total: await countWhere({ organizationId }),
+      sent: await countWhere({ organizationId, status: "sent" }),
+      failed: await countWhere({ organizationId, status: { in: ["failed_error", "failed_no_channel"] } }),
+    };
+    return { setting, recent, summary };
+  }
+
   /** MS2 — upsert one preference row (the unique org+channel+
-   * address row flips in place; the latest status/source wins). */
+   * address row flips in place; the latest status/source wins).
+   * MX10: status may also be "pending" (double opt-in), and every
+   * CREATE or STATUS CHANGE records a MessageConsentEvent (the
+   * consent history that begins at MX10) — best-effort and
+   * defensive, so a pre-migration DB or a fake-prisma spec
+   * without the table never breaks a preference write. */
   async setPreference(organizationId: string, input: {
-    channel: string; address: string; status: "opted_out" | "opted_in"; source: string;
+    channel: string; address: string; status: "opted_out" | "opted_in" | "pending"; source: string;
     recipientType?: string | null; recipientId?: string | null; note?: string | null;
+    actor?: string;
   }) {
     const address = normalizePrefAddress(input.channel, input.address);
     const data = {
@@ -918,12 +2759,42 @@ export class MessagingService {
     const existing = await (this.prisma as any).messagePreference.findFirst({
       where: { organizationId, channel: input.channel, address },
     }).catch(() => null);
-    if (existing) {
-      return (this.prisma as any).messagePreference.update({ where: { id: existing.id }, data });
+    const row = existing
+      ? await (this.prisma as any).messagePreference.update({ where: { id: existing.id }, data })
+      : await (this.prisma as any).messagePreference.create({
+        data: { organizationId, channel: input.channel, address, ...data },
+      });
+    if (!existing || existing.status !== input.status) {
+      await this.recordConsentEvent(organizationId, {
+        channel: input.channel, address, fromStatus: existing?.status ?? null, toStatus: input.status,
+        source: input.source, actor: input.actor ?? "system",
+        recipientType: input.recipientType ?? existing?.recipientType ?? null,
+        recipientId: input.recipientId ?? existing?.recipientId ?? null,
+        note: input.note ?? null,
+      });
     }
-    return (this.prisma as any).messagePreference.create({
-      data: { organizationId, channel: input.channel, address, ...data },
-    });
+    return row;
+  }
+
+  /** MX10 — the consent-event write. History begins at MX10;
+   * nothing before it is backfilled. Never throws. */
+  async recordConsentEvent(organizationId: string, input: {
+    channel: string; address: string; fromStatus?: string | null; toStatus: string;
+    source: string; actor: string; recipientType?: string | null; recipientId?: string | null; note?: string | null;
+  }): Promise<void> {
+    try {
+      const table = (this.prisma as any).messageConsentEvent;
+      if (!table || typeof table.create !== "function") return;
+      await table.create({
+        data: {
+          organizationId, channel: input.channel,
+          address: normalizePrefAddress(input.channel, input.address),
+          recipientType: input.recipientType ?? null, recipientId: input.recipientId ?? null,
+          fromStatus: input.fromStatus ?? null, toStatus: input.toStatus,
+          source: input.source, actor: input.actor, note: input.note ?? null,
+        },
+      });
+    } catch { /* consent history is best-effort; the preference write already landed */ }
   }
 
   /** MS2 — the opted_out row for one (org, channel, address), or
@@ -972,109 +2843,176 @@ export class MessagingService {
     channel: string; audienceType: string; audienceStage?: string; audienceSegment?: string;
     excludePreviousRecipients?: boolean;
     excludePastDays?: number; excludeOptOut?: boolean;
+    /** MX10: the broadcast's topic (topic-preference stage). */
+    topic?: string;
   } & AudienceExtras): Promise<BroadcastResolution> {
-    const { recipients: all, invalidCount } = await this.resolveAudienceInternal(organizationId, opts.channel, opts.audienceType, opts.audienceStage, opts.audienceSegment, opts);
-    const audienceTotal = all.length;
-    let recipients = all;
-    let excludedPreviousCount = 0;
+    const recipients: Recipient[] = [];
+    const counts = await this.resolveBroadcastRecipientsInChunks(
+      organizationId, opts, BROADCAST_RECIPIENT_WRITE_CHUNK,
+      async (chunk) => { recipients.push(...chunk); },
+    );
+    return { recipients, ...counts };
+  }
+
+  /**
+   * MX1 — the streaming form of THE shared resolver: the
+   * exclusion stages are built ONCE (the same queries as the
+   * collecting form always ran) into a per-recipient filter
+   * applied in the original stage order, and resolved recipients
+   * stream through it in chunks. The collecting form above is
+   * built on this one, so preview and prepare read the identical
+   * set — now including a prepare that never accumulates it.
+   */
+  async resolveBroadcastRecipientsInChunks(organizationId: string, opts: {
+    channel: string; audienceType: string; audienceStage?: string; audienceSegment?: string;
+    excludePreviousRecipients?: boolean;
+    excludePastDays?: number; excludeOptOut?: boolean;
+    topic?: string;
+  } & AudienceExtras, chunkSize: number, onChunk: (recipients: Recipient[]) => Promise<void>): Promise<Omit<BroadcastResolution, "recipients">> {
+    const filter = await this.buildBroadcastRecipientFilter(organizationId, opts);
+    let audienceTotal = 0;
+    const { invalidCount } = await this.resolveAudienceInChunks(
+      organizationId, opts.channel, opts.audienceType, opts.audienceStage, opts.audienceSegment, opts, chunkSize,
+      async (chunk) => {
+        const kept: Recipient[] = [];
+        for (const r of chunk) {
+          audienceTotal++;
+          if (filter.apply(r)) kept.push(r);
+        }
+        if (kept.length) await onChunk(kept);
+      },
+    );
+    return { audienceTotal, ...filter.counts, invalidCount };
+  }
+
+  /**
+   * MX1 — the exclusion stages of resolveBroadcastRecipients,
+   * built once per resolve and applied per recipient in the
+   * ORIGINAL order (previous → recent-days → suppression →
+   * unsubscribed-column opt-out → frequency cap → WhatsApp
+   * opt-in), so the stage counts and the final set are exactly
+   * the pre-MX1 ones. Each stage's data comes from the same
+   * query (and the same defensive .catch) as before.
+   */
+  private async buildBroadcastRecipientFilter(organizationId: string, opts: {
+    channel: string;
+    excludePreviousRecipients?: boolean;
+    excludePastDays?: number; excludeOptOut?: boolean;
+    /** MX10: when set, recipients whose preference-center topics
+     * for this channel exclude it are dropped (suppression count). */
+    topic?: string;
+  }): Promise<{
+    counts: { excludedPreviousCount: number; excludedSuppressedCount: number; excludedFrequencyCount: number; excludedNoOptInCount: number; excludedPendingCount: number };
+    apply: (r: Recipient) => boolean;
+  }> {
+    const counts = { excludedPreviousCount: 0, excludedSuppressedCount: 0, excludedFrequencyCount: 0, excludedNoOptInCount: 0, excludedPendingCount: 0 };
+
+    // Stage 1 — previous confirmed recipients (CX10).
+    let prevSeen: Set<string> | null = null;
     if (opts.excludePreviousRecipients) {
       const deliveries = await (this.prisma as any).messageDelivery.findMany({
         where: { organizationId, broadcastId: { not: null }, status: "sent" },
         select: { recipientType: true, recipientId: true },
         take: 10000,
       });
-      const seen = new Set(
+      prevSeen = new Set(
         (deliveries as any[])
           .filter((d) => d.recipientId)
           .map((d) => `${d.recipientType}:${d.recipientId}`),
       );
-      recipients = recipients.filter((r) => !seen.has(`${r.type}:${r.id}`));
-      excludedPreviousCount = audienceTotal - recipients.length;
     }
 
-    // Stage 1b (integration, owner CX10 variant) — recent-days
-    // window exclusion: drop anyone with a delivery in the last
-    // excludePastDays days (address OR recipient id match), the
-    // semantics the owner's broadcast fields promise. Counted into
-    // excludedPreviousCount (it is a previous-delivery exclusion).
-    if (opts.excludePastDays && opts.excludePastDays > 0 && recipients.length) {
+    // Stage 1b — recent-days window exclusion (CX10 variant),
+    // counted into excludedPreviousCount.
+    let excludedAddresses: Set<any> | null = null;
+    let excludedIds: Set<any> | null = null;
+    if (opts.excludePastDays && opts.excludePastDays > 0) {
       const cutoff = new Date(Date.now() - opts.excludePastDays * 24 * 60 * 60 * 1000);
       const recentDeliveries = await (this.prisma as any).messageDelivery.findMany({
         where: { organizationId, createdAt: { gte: cutoff } },
         select: { address: true, recipientId: true },
         take: 50000,
       }).catch(() => []);
-      const excludedAddresses = new Set((recentDeliveries as any[]).map((d) => d.address).filter(Boolean));
-      const excludedIds = new Set((recentDeliveries as any[]).map((d) => d.recipientId).filter(Boolean));
-      const before = recipients.length;
-      recipients = recipients.filter((r) => {
-        const addr = opts.channel === "email" ? r.email : r.phone;
-        if (excludedIds.has(r.id)) return false;
-        if (addr && excludedAddresses.has(addr)) return false;
-        return true;
-      });
-      excludedPreviousCount += before - recipients.length;
+      excludedAddresses = new Set((recentDeliveries as any[]).map((d) => d.address).filter(Boolean));
+      excludedIds = new Set((recentDeliveries as any[]).map((d) => d.recipientId).filter(Boolean));
     }
 
     // Stage 2 — suppression by this channel's normalized address.
-    let excludedSuppressedCount = 0;
-    let suppressedRows: any[] = [];
+    let suppressed: Set<string> | null = null;
     try {
-      suppressedRows = await (this.prisma as any).messagePreference.findMany({
+      const suppressedRows = await (this.prisma as any).messagePreference.findMany({
         where: { organizationId, channel: opts.channel, status: "opted_out" },
         select: { address: true },
       }) ?? [];
-    } catch { suppressedRows = []; }
-    if (suppressedRows.length) {
-      const suppressed = new Set(suppressedRows.map((p: any) => p.address));
-      const before = recipients.length;
-      recipients = recipients.filter((r) => !suppressed.has(recipientPrefAddress(opts.channel, r)));
-      excludedSuppressedCount = before - recipients.length;
-    }
+      if (suppressedRows.length) suppressed = new Set(suppressedRows.map((p: any) => p.address));
+    } catch { suppressed = null; }
+
+    // MX10 Stage 2b — pending double opt-in signups: a pending
+    // address has NOT consented yet, so it receives no marketing
+    // sends (excluded here at resolve time, not merely hidden).
+    let pendingSet: Set<string> | null = null;
+    try {
+      const pendingRows = await (this.prisma as any).messagePreference.findMany({
+        where: { organizationId, channel: opts.channel, status: "pending" },
+        select: { address: true },
+      }) ?? [];
+      if (pendingRows.length) pendingSet = new Set(pendingRows.map((p: any) => p.address));
+    } catch { pendingSet = null; }
+
+    // MX10 — preference-center choices for this channel: topic
+    // subscriptions + per-contact frequency caps. Loaded once;
+    // missing columns (pre-migration) read as "no choices".
+    let topicPrefs: Map<string, string[]> | null = null;
+    let prefCaps: Map<string, number> | null = null;
+    try {
+      const choiceRows = await (this.prisma as any).messagePreference.findMany({
+        where: { organizationId, channel: opts.channel },
+        select: { address: true, topics: true, maxPerDay: true },
+      }) ?? [];
+      for (const row of choiceRows as any[]) {
+        if (Array.isArray(row.topics)) (topicPrefs ??= new Map()).set(row.address, row.topics.map(String));
+        if (typeof row.maxPerDay === "number") (prefCaps ??= new Map()).set(row.address, row.maxPerDay);
+      }
+    } catch { topicPrefs = null; prefCaps = null; }
 
     const setting = await this.getMessagingSetting(organizationId);
 
-    // Stage 1c (integration, owner CX10 variant) — the
-    // unsubscribed-column opt-out: only when the caller explicitly
-    // passes excludeOptOut (the owner's DTO paths do; MS callers
-    // omit it and keep pure MS2 preference behaviour).
-    if (opts.excludeOptOut && recipients.length) {
+    // Stage 1c — the unsubscribed-column opt-out (CX10 variant),
+    // counted into excludedSuppressedCount.
+    let outIds: Set<any> | null = null;
+    if (opts.excludeOptOut) {
       const [custOut, leadOut] = await Promise.all([
         (this.prisma as any).customer.findMany({ where: { organizationId, unsubscribed: true }, select: { id: true } }).catch(() => []),
         (this.prisma as any).lead.findMany({ where: { organizationId, unsubscribed: true }, select: { id: true } }).catch(() => []),
       ]);
-      const outIds = new Set([...(custOut as any[]), ...(leadOut as any[])].map((r) => r.id));
-      if (outIds.size) {
-        const before = recipients.length;
-        recipients = recipients.filter((r) => !outIds.has(r.id));
-        excludedSuppressedCount += before - recipients.length;
-      }
+      const set = new Set([...(custOut as any[]), ...(leadOut as any[])].map((r) => r.id));
+      if (set.size) outIds = set;
     }
 
     // Stage 3 — frequency cap over confirmed broadcast deliveries.
-    let excludedFrequencyCount = 0;
-    if (setting.frequencyCapPerDay > 0 && recipients.length) {
+    // MX10: a contact's own maxPerDay (preference center) applies
+    // as min(org cap, contact cap), and on its own when the org
+    // cap is off — the delivery counts are needed in both cases.
+    let freqCounts: Map<string, number> | null = null;
+    if (setting.frequencyCapPerDay > 0 || (prefCaps && prefCaps.size > 0)) {
       const since = Date.now() - 24 * 3600 * 1000;
       const recent: any[] = await (this.prisma as any).messageDelivery.findMany({
         where: { organizationId, broadcastId: { not: null }, status: "sent" },
         select: { recipientType: true, recipientId: true, createdAt: true },
         take: 20000,
       }).catch(() => []);
-      const counts = new Map<string, number>();
+      freqCounts = new Map<string, number>();
       for (const d of recent) {
         if (!d.recipientId) continue;
         const t = d.createdAt ? new Date(d.createdAt).getTime() : NaN;
         if (!Number.isFinite(t) || t < since) continue;
         const key = `${d.recipientType}:${d.recipientId}`;
-        counts.set(key, (counts.get(key) ?? 0) + 1);
+        freqCounts.set(key, (freqCounts.get(key) ?? 0) + 1);
       }
-      const before = recipients.length;
-      recipients = recipients.filter((r) => (counts.get(`${r.type}:${r.id}`) ?? 0) < setting.frequencyCapPerDay);
-      excludedFrequencyCount = before - recipients.length;
     }
 
     // Stage 4 — WhatsApp opt-in required.
-    let excludedNoOptInCount = 0;
+    let optedIn: Set<string> | null = null;
     if (opts.channel === "whatsapp" && setting.whatsappOptInRequired) {
       let optInRows: any[] = [];
       try {
@@ -1083,17 +3021,33 @@ export class MessagingService {
           select: { address: true },
         }) ?? [];
       } catch { optInRows = []; }
-      const optedIn = new Set(optInRows.map((p: any) => p.address));
-      const before = recipients.length;
-      recipients = recipients.filter((r) => optedIn.has(recipientPrefAddress("whatsapp", r)));
-      excludedNoOptInCount = before - recipients.length;
+      optedIn = new Set(optInRows.map((p: any) => p.address));
     }
 
-    return {
-      recipients, audienceTotal,
-      excludedPreviousCount, excludedSuppressedCount, excludedFrequencyCount, excludedNoOptInCount,
-      invalidCount,
+    const apply = (r: Recipient): boolean => {
+      if (prevSeen && prevSeen.has(`${r.type}:${r.id}`)) { counts.excludedPreviousCount++; return false; }
+      if (excludedAddresses && excludedIds) {
+        const addr = opts.channel === "email" ? r.email : opts.channel === "push" ? r.pushEndpoint : opts.channel === "telegram" ? r.telegramChatId : opts.channel === "onsite" ? r.id : r.phone;
+        if (excludedIds.has(r.id) || (addr && excludedAddresses.has(addr))) { counts.excludedPreviousCount++; return false; }
+      }
+      if (suppressed && suppressed.has(recipientPrefAddress(opts.channel, r))) { counts.excludedSuppressedCount++; return false; }
+      if (pendingSet && pendingSet.has(recipientPrefAddress(opts.channel, r))) { counts.excludedPendingCount++; return false; }
+      if (outIds && outIds.has(r.id)) { counts.excludedSuppressedCount++; return false; }
+      if (freqCounts) {
+        const prefCap = prefCaps?.get(recipientPrefAddress(opts.channel, r));
+        const cap = prefCap !== undefined
+          ? (setting.frequencyCapPerDay > 0 ? Math.min(setting.frequencyCapPerDay, prefCap) : prefCap)
+          : (setting.frequencyCapPerDay > 0 ? setting.frequencyCapPerDay : null);
+        if (cap !== null && (freqCounts.get(`${r.type}:${r.id}`) ?? 0) >= cap) { counts.excludedFrequencyCount++; return false; }
+      }
+      if (opts.topic && topicPrefs) {
+        const topics = topicPrefs.get(recipientPrefAddress(opts.channel, r));
+        if (topics && !topics.includes(opts.topic)) { counts.excludedSuppressedCount++; return false; }
+      }
+      if (optedIn && !optedIn.has(recipientPrefAddress("whatsapp", r))) { counts.excludedNoOptInCount++; return false; }
+      return true;
     };
+    return { counts, apply };
   }
 
   /**
@@ -1135,9 +3089,15 @@ export class MessagingService {
     const totalEligible = filtered.length;
 
     const sample = filtered.slice(0, 10).map((r) => {
-      const rawContact = input.channel === "email" ? (r.email ?? "") : (r.phone ?? "");
+      const rawContact = input.channel === "email" ? (r.email ?? "") : input.channel === "push" ? (r.pushEndpoint ?? "") : input.channel === "telegram" ? (r.telegramChatId ?? "") : input.channel === "onsite" ? (r.id ?? "") : (r.phone ?? "");
       let masked = rawContact;
-      if (input.channel === "email" && rawContact.includes("@")) {
+      if (input.channel === "push") {
+        masked = maskRecipientAddress("push", r);
+      } else if (input.channel === "telegram") {
+        masked = maskRecipientAddress("telegram", r);
+      } else if (input.channel === "onsite") {
+        masked = maskRecipientAddress("onsite", r);
+      } else if (input.channel === "email" && rawContact.includes("@")) {
         const [user, domain] = rawContact.split("@");
         masked = `${user.slice(0, 2)}***@${domain}`;
       } else if (rawContact.length >= 6) {
@@ -1165,10 +3125,106 @@ export class MessagingService {
     // MS3: the form's message body, used ONLY for the MS4 SMS
     // parts count in the cost estimate (never stored here).
     body?: string;
+    // MX9: the selected WhatsApp template (preview only) — its
+    // stored Meta category selects the per-category rate.
+    whatsappTemplateId?: string;
+    // MX11: the form's holdout percentage (preview only) — the
+    // SAME deterministic bucket as prepare, so the preview's
+    // held-out count is exactly what a send would hold out.
+    holdoutPercent?: number;
+  } & AudienceExtras) {
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    if (dto.holdoutPercent !== undefined && dto.holdoutPercent !== null
+      && (!Number.isInteger(dto.holdoutPercent) || dto.holdoutPercent < 1 || dto.holdoutPercent > 50)) {
+      throw new BadRequestException("holdoutPercent must be an integer between 1 and 50 (omit it for no holdout)");
+    }
+    const resolved = await this.resolveBroadcastRecipients(organizationId, dto);
+    // MX11: preview shows the post-holdout set (what would
+    // actually be sent to); the held-out count is reported too.
+    const holdoutSplit = this.splitHoldout(resolved.recipients, dto.holdoutPercent ?? null);
+    const recipients = holdoutSplit.kept;
+    let whatsappCategory: string | null = null;
+    if (dto.channel === "whatsapp" && dto.whatsappTemplateId) {
+      const tpl = await (this.prisma as any).whatsAppTemplate?.findFirst({ where: { id: dto.whatsappTemplateId, organizationId } }).catch(() => null);
+      whatsappCategory = tpl?.category ?? null;
+    }
+    return {
+      audienceTotal: resolved.audienceTotal,
+      excludedPreviousCount: resolved.excludedPreviousCount,
+      excludedSuppressedCount: resolved.excludedSuppressedCount,
+      excludedFrequencyCount: resolved.excludedFrequencyCount,
+      excludedNoOptInCount: resolved.excludedNoOptInCount,
+      excludedPendingCount: resolved.excludedPendingCount ?? 0,
+      // MX11: present only when the form set a holdout, so a
+      // pre-MX11 preview response is byte-identical.
+      ...(dto.holdoutPercent ? { excludedHoldoutCount: holdoutSplit.heldOutCount } : {}),
+      invalidCount: resolved.invalidCount,
+      total: recipients.length,
+      sample: recipients.slice(0, 20).map((r) => ({
+        type: r.type, name: r.name, address: maskRecipientAddress(dto.channel, r),
+      })),
+      costEstimate: await this.buildCostEstimate(organizationId, dto.channel, recipients.length, dto.body, whatsappCategory),
+    };
+  }
+
+  /**
+   * SA-B20 (G2) — personalisation preview: runs the SAME
+   * resolver stages as a send (suppressed recipients are
+   * already excluded — they are never personalised and no LLM
+   * call is spent on them), the SAME buildSnapshotVars and the
+   * SAME personaliseRecipients core prepareBroadcast runs, then
+   * renders up to K sample variants with renderPersonalizedBody
+   * — the exact merge sendToRecipient performs. Tier 2 hooks
+   * are generated ONLY for the sampled recipients; the counts
+   * cover the whole resolved set from deterministic facts, and
+   * the Tier 2 projection is an LLM CALL COUNT (no LLM money
+   * rate exists in this tree — a price is never invented).
+   * Sample labels are the staff's own CRM view: name + masked
+   * address (the CX10 preview precedent), never a full address.
+   */
+  async previewBroadcastPersonalisation(organizationId: string, actorId: string, dto: {
+    channel: string; body?: string; subject?: string;
+    audienceType: string; audienceStage?: string; audienceSegment?: string;
+    excludePreviousRecipients?: boolean;
+    excludePastDays?: number; excludeOptOut?: boolean;
+    personalization?: unknown;
+    sampleSize?: number;
   } & AudienceExtras) {
     if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
-    const resolved = await this.resolveBroadcastRecipients(organizationId, dto);
+    if (!dto.body) throw new BadRequestException("Broadcast body is required to preview personalisation");
+    const body = dto.body;
+    const config = normalizePersonalizationConfig(dto.personalization, dto.channel);
+    if (!config?.enabled) {
+      throw new BadRequestException("personalisation is not enabled in this preview request — pass personalization: { enabled: true } (with tier2AiHook: true for AI hooks)");
+    }
+    assertTier2HookPlaceholder(body, config);
+    const resolved = await this.resolveBroadcastRecipients(organizationId, {
+      channel: dto.channel, audienceType: dto.audienceType,
+      audienceStage: dto.audienceStage, audienceSegment: dto.audienceSegment,
+      excludePreviousRecipients: dto.excludePreviousRecipients,
+      excludePastDays: dto.excludePastDays, excludeOptOut: dto.excludeOptOut,
+      audienceDefinition: dto.audienceDefinition, audienceSavedId: dto.audienceSavedId, audienceCsv: dto.audienceCsv,
+    });
     const { recipients } = resolved;
+    const sampleSize = Math.min(
+      BROADCAST_PERSONALIZATION_SAMPLE_MAX,
+      Math.max(1, Math.floor(dto.sampleSize ?? 3) || 3),
+    );
+    const sampleIndexes = new Set(recipients.map((_, i) => i).slice(0, sampleSize));
+    const baseVarsList = await this.buildSnapshotVars(organizationId, recipients);
+    const outcome = await this.personalization().personaliseRecipients({
+      organizationId, channel: dto.channel,
+      body, subject: dto.subject ?? null,
+      recipients, baseVarsList, config, actorId,
+      generateFor: (i) => sampleIndexes.has(i),
+    });
+    const samples = recipients.slice(0, sampleSize).map((r, i) => ({
+      type: r.type,
+      name: r.name,
+      address: maskRecipientAddress(dto.channel, r),
+      tier: outcome.tiers[i],
+      body: renderPersonalizedBody(body, r, outcome.varsList[i]),
+    }));
     return {
       audienceTotal: resolved.audienceTotal,
       excludedPreviousCount: resolved.excludedPreviousCount,
@@ -1176,11 +3232,21 @@ export class MessagingService {
       excludedFrequencyCount: resolved.excludedFrequencyCount,
       excludedNoOptInCount: resolved.excludedNoOptInCount,
       invalidCount: resolved.invalidCount,
-      total: recipients.length,
-      sample: recipients.slice(0, 20).map((r) => ({
-        type: r.type, name: r.name, address: maskRecipientAddress(dto.channel, r),
-      })),
-      costEstimate: await this.buildCostEstimate(organizationId, dto.channel, recipients.length, dto.body),
+      counts: {
+        total: outcome.counts.total,
+        base: outcome.counts.base,
+        tier1Memory: outcome.counts.memory,
+        tier2Ai: outcome.counts.ai,
+        tier2Eligible: outcome.counts.tier2Eligible,
+        tier2Fallbacks: outcome.counts.tier2Fallbacks,
+      },
+      tier2FallbackReasons: outcome.tier2FallbackReasons,
+      // Tier 2 cost surface: CALL COUNTS only (projected for
+      // the full send at prepare; actually made for these
+      // samples). No money figure — no LLM rate is configured.
+      tier2LlmCallsProjected: config.tier2AiHook ? outcome.llmCallsProjected : 0,
+      tier2LlmCallsMadeForPreview: outcome.llmCallsMade,
+      samples,
     };
   }
 
@@ -1193,7 +3259,7 @@ export class MessagingService {
    * a body the parts (and therefore the total) stay unknown and
    * the basis says so.
    */
-  private async buildCostEstimate(organizationId: string, channel: string, recipientCount: number, body?: string): Promise<{
+  private async buildCostEstimate(organizationId: string, channel: string, recipientCount: number, body?: string, whatsappCategory?: string | null): Promise<{
     currency: "BDT"; smsParts?: number; totalMinor?: number; basis: string;
   } | null> {
     const row = await this.getSenderConfigRow(organizationId);
@@ -1213,12 +3279,43 @@ export class MessagingService {
       };
     }
     if (channel === "whatsapp") {
-      const rate = row.whatsappCostPerMessageMinor;
-      if (rate === null || rate === undefined) return null;
+      // MX9: when the preview names a template, its REAL Meta
+      // category (as synced/stored) selects the org's per-category
+      // rate when one is set, falling back to the flat rate. No
+      // category rate and no flat rate ⇒ null (no figure at all).
+      const resolved = resolveWhatsAppRateMinor(row, whatsappCategory ?? null);
+      if (resolved.rateMinor === null) return null;
+      const rate = resolved.rateMinor;
       return {
         currency: "BDT", totalMinor: recipientCount * rate,
-        basis: `Estimate only: ${recipientCount} recipients × BDT ${rateText(rate)} per WhatsApp message at the rate you set. Meta's actual charge may differ.`,
+        basis: resolved.basis === "category"
+          ? `Estimate only: ${recipientCount} recipients × BDT ${rateText(rate)} per WhatsApp ${resolved.category} message at the per-category rate you set. Meta's actual charge may differ.`
+          : `Estimate only: ${recipientCount} recipients × BDT ${rateText(rate)} per WhatsApp message at the rate you set. Meta's actual charge may differ.`,
       };
+    }
+    if (channel === "push") {
+      // MX12: push has NO org-entered rate anywhere in the
+      // sender config (and the push service itself charges the
+      // org nothing per message) — following the convention,
+      // no rate means NO cost figure, never an invented one.
+      return null;
+    }
+    if (channel === "telegram") {
+      // MX13: telegram has NO org-entered rate anywhere in the
+      // sender config (the Bot API is free for bot owners) —
+      // following the convention, no rate means NO cost
+      // figure, never an invented one.
+      return null;
+    }
+    if (channel === "onsite") {
+      // MX14: onsite has NO provider at all — the send writes a
+      // row into the customer's notification center in the
+      // org's own database, so there is genuinely no provider
+      // cost and NO org-entered rate. Following the convention,
+      // no cost figure is returned (null), and the composer /
+      // report surfaces say "no provider cost" in words —
+      // never an invented 0 rate.
+      return null;
     }
     if (channel === "email") {
       const rate = row.emailCostPerMessageMinor;
@@ -1262,10 +3359,10 @@ export class MessagingService {
    * so a blocked org never reaches provider HTTP.
    */
   private async checkMessagingAiLimit(organizationId: string) {
-    const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
+    const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
-    if (ks.aiDisabledOrgIds.includes(organizationId)) {
-      throw new HttpException("AI features are temporarily disabled for this organization by the platform team.", 403);
+    if (isAiDisabledForOrg(ks, organizationId)) {
+      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -1587,6 +3684,419 @@ export class MessagingService {
     return suggestions;
   }
 
+  // ---------- MX11: engagement score, predictive segments, holdout ----------
+
+  /**
+   * MX11 — the org's predictive-segment thresholds from
+   * MessagingSetting (the MessagingSetting pattern: one row per
+   * org, strict ranges at write time). Defensive like every
+   * other setting read: a missing row/column/table reads as the
+   * documented defaults, so pre-MX11 fixtures behave identically.
+   */
+  async getEngagementThresholds(organizationId: string): Promise<EngagementThresholds> {
+    const d = DEFAULT_ENGAGEMENT_THRESHOLDS;
+    try {
+      const row = await (this.prisma as any).messagingSetting?.findFirst({ where: { organizationId } });
+      if (!row) return { ...d };
+      const pick = (v: unknown, fallback: number, min: number, max: number) =>
+        Number.isInteger(v) && (v as number) >= min && (v as number) <= max ? (v as number) : fallback;
+      return {
+        churnRiskSilentDays: pick(row.churnRiskSilentDays, d.churnRiskSilentDays, 1, 3650),
+        likelyToBuyMinScore: pick(row.likelyToBuyMinScore, d.likelyToBuyMinScore, 0, 100),
+        highLtvMinSpentMinor: pick(row.highLtvMinSpentMinor, d.highLtvMinSpentMinor, 0, 1000000000),
+        unengagedSuppressDays: pick(row.unengagedSuppressDays, d.unengagedSuppressDays, 1, 3650),
+        unengagedMinSends: pick(row.unengagedMinSends, d.unengagedMinSends, 1, 1000),
+      };
+    } catch {
+      return { ...d };
+    }
+  }
+
+  /**
+   * MX11 — THE engagement data plumbing: one bounded pass over
+   * the org's real MessageDelivery rows (confirmed sends only —
+   * broadcast AND workflow deliveries both count: engagement is
+   * engagement, and MessageDelivery is the one shared store),
+   * its MessageLinkClick rows, and the SAME computeOrderAggregates
+   * the RFM/MS3 paths read (no second order-aggregation path).
+   * Keyed "customer:<id>" / "lead:<id>" — the MessageLinkClick
+   * recipientKey format. csv/test recipients have no entity id
+   * behind their deliveries, so they honestly never appear here.
+   * Missing tables read as empty (the MS2 defensive discipline).
+   */
+  async buildEngagementMap(organizationId: string): Promise<Map<string, EngagementContact>> {
+    const thresholds = await this.getEngagementThresholds(organizationId);
+    const now = Date.now();
+    const deliveries: any[] = await (this.prisma as any).messageDelivery?.findMany({
+      where: { organizationId, status: "sent" },
+      select: {
+        recipientType: true, recipientId: true, createdAt: true,
+        deliveredAt: true, readAt: true, openedAt: true, deliveryStatus: true,
+      },
+      take: 50000,
+    }).catch(() => []) ?? [];
+    const clicks: any[] = await (this.prisma as any).messageLinkClick?.findMany({
+      where: { organizationId }, select: { recipientKey: true, createdAt: true }, take: 50000,
+    }).catch(() => []) ?? [];
+    const aggregates = await computeOrderAggregates(this.prisma as any, organizationId).catch(() => new Map());
+
+    interface Acc {
+      type: "customer" | "lead"; id: string;
+      sentCount: number; deliveredOnlyCount: number; openCount: number; clickCount: number;
+      sendTimes: number[]; lastEngagementAt: number | null;
+    }
+    const accs = new Map<string, Acc>();
+    const accFor = (type: "customer" | "lead", id: string): Acc => {
+      const key = `${type}:${id}`;
+      let acc = accs.get(key);
+      if (!acc) {
+        acc = { type, id, sentCount: 0, deliveredOnlyCount: 0, openCount: 0, clickCount: 0, sendTimes: [], lastEngagementAt: null };
+        accs.set(key, acc);
+      }
+      return acc;
+    };
+    const engage = (acc: Acc, at: unknown) => {
+      const t = at ? new Date(at as any).getTime() : NaN;
+      if (Number.isFinite(t) && (acc.lastEngagementAt === null || t > acc.lastEngagementAt)) acc.lastEngagementAt = t;
+    };
+    for (const d of Array.isArray(deliveries) ? deliveries : []) {
+      if ((d.recipientType !== "customer" && d.recipientType !== "lead") || !d.recipientId) continue;
+      const acc = accFor(d.recipientType, String(d.recipientId));
+      acc.sentCount++;
+      const sentAt = d.createdAt ? new Date(d.createdAt).getTime() : NaN;
+      if (Number.isFinite(sentAt)) acc.sendTimes.push(sentAt);
+      const opened = Boolean(d.openedAt) || Boolean(d.readAt) || d.deliveryStatus === "read";
+      const delivered = Boolean(d.deliveredAt) || d.deliveryStatus === "delivered" || d.deliveryStatus === "read";
+      if (opened) {
+        acc.openCount++;
+        engage(acc, d.readAt ?? d.openedAt ?? d.createdAt);
+      } else if (delivered) {
+        acc.deliveredOnlyCount++;
+        // A delivered signal alone is reachability, not
+        // engagement — it never moves lastEngagementAt.
+      }
+    }
+    for (const c of Array.isArray(clicks) ? clicks : []) {
+      const key = String(c.recipientKey ?? "");
+      const sep = key.indexOf(":");
+      if (sep <= 0) continue;
+      const type = key.slice(0, sep);
+      const id = key.slice(sep + 1);
+      if ((type !== "customer" && type !== "lead") || !id) continue;
+      const acc = accFor(type, id);
+      acc.clickCount++;
+      engage(acc, c.createdAt);
+    }
+    // Customers whose only history is orders still get an entry:
+    // an order IS engagement, and high-LTV needs them.
+    for (const [customerId, agg] of aggregates as Map<string, { frequency: number; monetary: bigint; last: number }>) {
+      const acc = accFor("customer", customerId);
+      if (agg.last) engage(acc, new Date(agg.last));
+      void acc;
+    }
+
+    const out = new Map<string, EngagementContact>();
+    for (const [key, acc] of accs) {
+      const agg = acc.type === "customer" ? (aggregates as Map<string, { frequency: number; monetary: bigint; last: number }>).get(acc.id) : undefined;
+      const raw = {
+        sentCount: acc.sentCount,
+        deliveredOnlyCount: acc.deliveredOnlyCount,
+        openCount: acc.openCount,
+        clickCount: acc.clickCount,
+        orderFrequency: agg?.frequency ?? 0,
+        lastEngagementAt: acc.lastEngagementAt,
+      };
+      const score = computeEngagementScore(raw, now);
+      const daysSinceLastEngagement = acc.lastEngagementAt === null
+        ? null
+        : Math.max(0, Math.floor((now - acc.lastEngagementAt) / 86400000));
+      const segments = predictiveSegmentsFor({
+        ...raw, score, totalSpentMinor: agg ? Number(agg.monetary) : 0,
+        isCustomer: acc.type === "customer", daysSinceLastEngagement,
+      }, thresholds);
+      const sortedSends = [...acc.sendTimes].sort((a, b) => a - b);
+      out.set(key, {
+        type: acc.type, id: acc.id, ...raw,
+        totalSpentMinor: agg ? Number(agg.monetary) : 0,
+        score, segments, daysSinceLastEngagement,
+        firstSendAt: sortedSends.length ? sortedSends[0] : null,
+        lastSendAt: sortedSends.length ? sortedSends[sortedSends.length - 1] : null,
+        sendsSinceLastEngagement: acc.lastEngagementAt === null
+          ? acc.sentCount
+          : acc.sendTimes.filter((t) => t > (acc.lastEngagementAt as number)).length,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * MX11 — the engagement report: formula + segment rules in
+   * plain language (verbatim from engagement.ts), the org's live
+   * thresholds, per-segment counts and the top contacts by score
+   * WITH their evidence (the raw counts the score came from).
+   * Everything is labelled "rule-based estimate" — these are
+   * deterministic rules over real records, not a model.
+   * Contacts with no history at all are counted (score 0) but
+   * listed only in the total, never dressed up as a segment.
+   */
+  async getEngagementReport(organizationId: string) {
+    const thresholds = await this.getEngagementThresholds(organizationId);
+    const map = await this.buildEngagementMap(organizationId);
+    const customers = await this.scanChunked((this.prisma as any).customer, { organizationId }).catch(() => []);
+    const leads = await this.scanChunked((this.prisma as any).lead, { organizationId }).catch(() => []);
+    const nameOf = new Map<string, string>();
+    for (const c of customers as any[]) nameOf.set(`customer:${c.id}`, MessagingService.customerName(c));
+    for (const l of leads as any[]) nameOf.set(`lead:${l.id}`, String(l.name ?? ""));
+    const totalContacts = (customers as any[]).length + (leads as any[]).length;
+    const segmentCounts: Record<string, number> = { churn_risk: 0, likely_to_buy: 0, high_ltv: 0 };
+    for (const contact of map.values()) {
+      for (const s of contact.segments) segmentCounts[s] = (segmentCounts[s] ?? 0) + 1;
+    }
+    const rows = [...map.values()]
+      .sort((a, b) => b.score - a.score || `${a.type}:${a.id}`.localeCompare(`${b.type}:${b.id}`))
+      .slice(0, 200)
+      .map((c) => ({
+        type: c.type, id: c.id, name: nameOf.get(`${c.type}:${c.id}`) ?? "",
+        score: c.score, segments: c.segments,
+        sentCount: c.sentCount, openCount: c.openCount, clickCount: c.clickCount,
+        orderFrequency: c.orderFrequency, totalSpentMinor: String(c.totalSpentMinor),
+        lastEngagementAt: c.lastEngagementAt ? new Date(c.lastEngagementAt).toISOString() : null,
+        daysSinceLastEngagement: c.daysSinceLastEngagement,
+      }));
+    return {
+      label: "rule-based estimate",
+      formula: ENGAGEMENT_FORMULA_TEXT,
+      segmentRules: PREDICTIVE_SEGMENT_RULES.map((r) => ({
+        segment: r.segment, label: r.label,
+        rule: r.segment === "churn_risk"
+          ? `${r.rule} (threshold: ${thresholds.churnRiskSilentDays} days)`
+          : r.segment === "likely_to_buy"
+            ? `${r.rule} (threshold: score ≥ ${thresholds.likelyToBuyMinScore})`
+            : `${r.rule} (threshold: ৳${(thresholds.highLtvMinSpentMinor / 100).toLocaleString("en-IN")} total spent)`,
+      })),
+      thresholds,
+      totalContacts,
+      scoredContacts: map.size,
+      zeroHistoryContacts: Math.max(0, totalContacts - map.size),
+      segmentCounts,
+      rows,
+    };
+  }
+
+  /**
+   * MX11 — natural-language segment draft. The org describes a
+   * segment in free text; the LLM (through the MS9 guard path —
+   * checkMessagingAiLimit FIRST: kill switch 403, daily cap 429,
+   * both before any provider call) returns a DRAFT definition in
+   * the MS3 evaluator's exact format. The draft is RETURNED ONLY:
+   * nothing is saved here, ever — a human reviews it and creates
+   * the audience through the existing saved-audience path.
+   * A draft that fails the evaluator's strict validation is
+   * returned AS-IS with the validation errors — never silently
+   * corrected, never applied. With no real LLM configured there
+   * is no honest draft (a template cannot write audience rules),
+   * so that is a 502, exactly like an unconfigured provider.
+   */
+  async draftSegmentFromDescription(organizationId: string, actorId: string, dto: { description: string; entity?: string }) {
+    const description = String(dto.description ?? "").trim();
+    if (!description) throw new BadRequestException("description is required — describe the segment in your own words");
+    if (description.length > 1000) throw new BadRequestException("description is too long (max 1000 characters)");
+    const entity = dto.entity === "leads" ? "leads" : "customers";
+    // MS9 guard path, verbatim: kill switch + daily cap BEFORE
+    // the provider is even resolved.
+    await this.checkMessagingAiLimit(organizationId);
+    const provider = await this.messagingAiProvider(organizationId);
+    if (!provider.isRealLlm) {
+      throw new HttpException("AI is not configured for this organization, so a segment draft cannot be generated. Configure an AI provider, or build the audience with the condition builder instead.", 502);
+    }
+    const { fieldsForEntity } = await import("./audience-rules");
+    const fields = fieldsForEntity(entity as any);
+    const vocabulary = Object.entries(fields)
+      .map(([field, spec]) => `${field} (ops: ${spec.ops.join("|")}, value: ${spec.kind})`)
+      .join("; ");
+    const systemPrompt = [
+      "You translate a merchant's plain-language description of a customer/lead segment into ONE audience definition for a strict rule evaluator.",
+      `Return ONLY JSON of the exact shape {"entity":"${entity}","match":"all"|"any","conditions":[{"field":string,"op":string,"value":...,"key"?:string}]}.`,
+      `Allowed fields for entity "${entity}": ${vocabulary}.`,
+      "rfm_segment values: champions, loyal, big_spenders, at_risk, lost, new, regular. predictive_segment values: churn_risk, likely_to_buy, high_ltv (rule-based estimates computed from real delivery/click/order records).",
+      "Use ONLY the allowed fields and ops. Never invent a field. At most 5 conditions. If the description cannot be expressed, return your best partial draft — it will be shown to a human with validation errors, so do not hide uncertainty by inventing fields.",
+    ].join("\n");
+    let result: { text: string; model: string; inputTokens: number; outputTokens: number; tokensEstimated: boolean };
+    try {
+      result = await provider.complete(
+        [{ role: "system", content: systemPrompt }, { role: "user", content: `Segment description: ${description}` }],
+        { jsonMode: true, maxTokens: 800 },
+      );
+    } catch (e: any) {
+      throw new HttpException(e?.message ?? String(e), 502);
+    }
+    await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    if (parsed === null || typeof parsed !== "object") {
+      return {
+        valid: false, draft: null, rawText: String(result.text ?? "").slice(0, 4000),
+        errors: ["The AI response was not a JSON audience definition. Edit the raw response into the evaluator format, or describe the segment differently and try again."],
+        providerLabel: provider.name, isRealLlm: true,
+        notice: "খসড়াটি যাচাইয়ে পাস করেনি — কিছুই তৈরি হয়নি। ত্রুটি দেখে ঠিক করে তারপর Saved Audience হিসেবে সংরক্ষণ করুন।",
+      };
+    }
+    try {
+      const definition = validateAudienceDefinition(parsed);
+      if (definition.entity !== entity) {
+        return {
+          valid: false, draft: parsed, rawText: null,
+          errors: [`The draft describes entity "${definition.entity}" but "${entity}" was requested. Edit the draft's entity, or re-run for the other entity.`],
+          providerLabel: provider.name, isRealLlm: true,
+          notice: "খসড়াটি যাচাইয়ে পাস করেনি — কিছুই তৈরি হয়নি। ত্রুটি দেখে ঠিক করে তারপর Saved Audience হিসেবে সংরক্ষণ করুন।",
+        };
+      }
+      return {
+        valid: true, draft: definition, rawText: null, errors: [],
+        providerLabel: provider.name, isRealLlm: true,
+        notice: "এটি শুধু একটি খসড়া (draft) — এখনো কোনো Audience তৈরি হয়নি। পর্যালোচনা করে \"Saved Audience তৈরি করুন\" চাপলেই কেবল তৈরি হবে।",
+      };
+    } catch (e) {
+      return {
+        valid: false, draft: parsed, rawText: null,
+        errors: [e instanceof Error ? e.message : "The draft failed audience validation."],
+        providerLabel: provider.name, isRealLlm: true,
+        notice: "খসড়াটি যাচাইয়ে পাস করেনি — কিছুই তৈরি হয়নি। ত্রুটি দেখে ঠিক করে তারপর Saved Audience হিসেবে সংরক্ষণ করুন।",
+      };
+    }
+  }
+
+  /**
+   * MX11 — unengaged suppression SUGGESTIONS. READ-ONLY: this
+   * method performs no writes of any kind (the spec proves the
+   * preference + consent tables are untouched by calling it).
+   * A contact is suggested when they have received at least
+   * unengagedMinSends confirmed messages AND have not engaged
+   * (open/read/click/order) for at least unengagedSuppressDays —
+   * never-engaged contacts count as silent since forever, with
+   * sendsSinceLastEngagement = all their sends. Contacts already
+   * opted out on EVERY channel they have an address for are not
+   * suggested (there is nothing left to suppress); a partial
+   * opt-out is shown in the evidence.
+   */
+  async listSuppressionSuggestions(organizationId: string) {
+    const thresholds = await this.getEngagementThresholds(organizationId);
+    const map = await this.buildEngagementMap(organizationId);
+    const customers = await this.scanChunked((this.prisma as any).customer, { organizationId }).catch(() => []);
+    const leads = await this.scanChunked((this.prisma as any).lead, { organizationId }).catch(() => []);
+    const contactRows = new Map<string, any>();
+    for (const c of customers as any[]) contactRows.set(`customer:${c.id}`, { type: "customer", row: c, name: MessagingService.customerName(c) });
+    for (const l of leads as any[]) contactRows.set(`lead:${l.id}`, { type: "lead", row: l, name: String(l.name ?? "") });
+    const optedOut: any[] = await (this.prisma as any).messagePreference?.findMany({
+      where: { organizationId, status: "opted_out" }, select: { channel: true, address: true },
+    }).catch(() => []) ?? [];
+    const optedOutKeys = new Set((optedOut as any[]).map((p) => `${p.channel}:${p.address}`));
+    const now = Date.now();
+    const suggestions: any[] = [];
+    for (const contact of map.values()) {
+      if (contact.sentCount < thresholds.unengagedMinSends) continue;
+      const silentDays = contact.daysSinceLastEngagement ?? Number.POSITIVE_INFINITY;
+      if (silentDays < thresholds.unengagedSuppressDays) continue;
+      const entry = contactRows.get(`${contact.type}:${contact.id}`);
+      if (!entry) continue;
+      const row = entry.row;
+      const channels: { channel: string; address: string }[] = [];
+      if (row.email) channels.push({ channel: "email", address: String(row.email) });
+      if (row.phone) { channels.push({ channel: "sms", address: String(row.phone) }); channels.push({ channel: "whatsapp", address: String(row.phone) }); }
+      if (!channels.length) continue;
+      const alreadyOut = channels.filter((c) => optedOutKeys.has(`${c.channel}:${normalizePrefAddress(c.channel, c.address)}`));
+      if (alreadyOut.length === channels.length) continue;
+      suggestions.push({
+        type: contact.type, id: contact.id, name: entry.name,
+        email: row.email ?? null, phone: row.phone ?? null,
+        score: contact.score,
+        totalSends: contact.sentCount,
+        sendsSinceLastEngagement: contact.sendsSinceLastEngagement,
+        lastEngagementAt: contact.lastEngagementAt ? new Date(contact.lastEngagementAt).toISOString() : null,
+        daysSinceLastEngagement: contact.daysSinceLastEngagement,
+        lastSendAt: contact.lastSendAt ? new Date(contact.lastSendAt).toISOString() : null,
+        alreadyOptedOutChannels: alreadyOut.map((c) => c.channel),
+        rule: `Rule-based estimate: at least ${thresholds.unengagedMinSends} confirmed sends and no open/read/click/order for at least ${thresholds.unengagedSuppressDays} days.`,
+        computedAt: new Date(now).toISOString(),
+      });
+    }
+    suggestions.sort((a, b) => b.sendsSinceLastEngagement - a.sendsSinceLastEngagement || String(a.id).localeCompare(String(b.id)));
+    return {
+      label: "rule-based estimate",
+      thresholds: { unengagedSuppressDays: thresholds.unengagedSuppressDays, unengagedMinSends: thresholds.unengagedMinSends },
+      note: "এগুলো শুধু পরামর্শ — তালিকা দেখলেই কেউ বাদ পড়ে না। Suppression কার্যকর হবে কেবল আপনি নিশ্চিত করে Apply চাপলে, আসল Preference Store-এ Opt-out হিসেবে।",
+      suggestions: suggestions.slice(0, 200),
+      total: suggestions.length,
+    };
+  }
+
+  /**
+   * MX11 — apply suppression suggestions: the ONE write path,
+   * an explicit human action. Each confirmed (channel, contact)
+   * goes through the REAL preference store — setPreference with
+   * source "manual", which also records the MX10 consent event —
+   * so the resolver's suppression stage excludes them from the
+   * next resolve, exactly like any other opt-out. Already-opted-out
+   * and address-less items are reported as skipped, never faked.
+   */
+  async applySuppressionSuggestions(organizationId: string, actorId: string, dto: {
+    channel: string; items: { type: string; id: string }[];
+  }) {
+    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    const items = Array.isArray(dto.items) ? dto.items.slice(0, 500) : [];
+    if (!items.length) throw new BadRequestException("items is required — confirm at least one contact to suppress");
+    let applied = 0;
+    const skipped: { type: string; id: string; reason: string }[] = [];
+    for (const item of items) {
+      if ((item.type !== "customer" && item.type !== "lead") || !item.id) {
+        skipped.push({ type: String(item.type ?? ""), id: String(item.id ?? ""), reason: "Unknown contact type" });
+        continue;
+      }
+      const table = item.type === "customer" ? (this.prisma as any).customer : (this.prisma as any).lead;
+      const row = await table?.findFirst({ where: { id: item.id, organizationId } }).catch(() => null);
+      if (!row) { skipped.push({ type: item.type, id: item.id, reason: "Contact not found in this organization" }); continue; }
+      const address = dto.channel === "email" ? row.email : row.phone;
+      if (!address) { skipped.push({ type: item.type, id: item.id, reason: `Contact has no ${dto.channel === "email" ? "email address" : "phone number"} for the ${dto.channel} channel` }); continue; }
+      const existing = await (this.prisma as any).messagePreference?.findFirst({
+        where: { organizationId, channel: dto.channel, address: normalizePrefAddress(dto.channel, String(address)), status: "opted_out" },
+      }).catch(() => null);
+      if (existing) { skipped.push({ type: item.type, id: item.id, reason: "Already opted out on this channel" }); continue; }
+      await this.setPreference(organizationId, {
+        channel: dto.channel, address: String(address), status: "opted_out", source: "manual",
+        recipientType: item.type, recipientId: item.id,
+        note: "MX11 unengaged suppression — human-confirmed from the suggestions list (rule-based estimate)",
+        actor: `user:${actorId}`,
+      });
+      applied++;
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.suppression_apply", entityType: "MessagePreference",
+      entityId: "", metadata: { channel: dto.channel, applied, skipped: skipped.length },
+    });
+    return { applied, skipped };
+  }
+
+  /**
+   * MX11 — holdout split at prepare time: drop the deterministic
+   * holdout bucket of the SAME hash the A/B split reads (see
+   * engagement.ts). Applied BEFORE the A/B filter in both
+   * prepare paths, so a recipient is held out OR in exactly one
+   * variant. Returns the kept recipients + the held-out count;
+   * the caller stamps the count on the Broadcast row (the report
+   * reads it from there — held-out recipients are never written
+   * as recipient rows/snapshot entries, so resume cannot re-roll).
+   */
+  private splitHoldout<T extends { type: string; id: string | null }>(recipients: T[], percent: number | null | undefined): { kept: T[]; heldOutCount: number } {
+    if (!percent || percent <= 0) return { kept: recipients, heldOutCount: 0 };
+    const kept: T[] = [];
+    let heldOutCount = 0;
+    for (const r of recipients) {
+      if (isHeldOut(`${r.type}:${r.id}`, percent)) heldOutCount++;
+      else kept.push(r);
+    }
+    return { kept, heldOutCount };
+  }
+
   // ---------- Single send (used by broadcasts AND workflows) ----------
   /**
    * MS2 guard, applied to EVERY send through here (broadcasts and
@@ -1607,14 +4117,63 @@ export class MessagingService {
     // pre-MS5 text-only behaviour.
     htmlBody?: string | null;
     vars: Record<string, unknown>; broadcastId?: string; workflowRunId?: string;
-  }): Promise<{ status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string }> {
-    if (input.channel === "email" || input.channel === "sms") {
+    // MX2: cascade attempt linking (stamped onto the delivery
+    // row) + the run-scoped SMS circuit breaker shared by every
+    // attempt of one broadcast run. Absent = pre-MX2 behaviour.
+    recipientRowId?: string; attemptIndex?: number; cascadeGroupId?: string;
+    smsBreaker?: SmsCircuitBreaker;
+    // MX12: channel "push" only — the broadcast's click-through
+    // URL, handed to the push port verbatim (already validated
+    // shop-relative at create/edit).
+    pushUrl?: string | null;
+    // MX13: the broadcast's validated inline URL buttons for
+    // channel "telegram" (null/absent = text-only message).
+    telegramButtons?: TelegramButton[] | null;
+    // MX14: channel "onsite" only — the broadcast's
+    // shop-relative click-through URL, stamped onto the
+    // notification row verbatim (already validated
+    // shop-relative at create/edit).
+    onsiteUrl?: string | null;
+    // MX4: the workflow step position that produced this send
+    // (engine stepRef format — "3" / "3.then.0"), stamped onto
+    // the delivery row for per-step journey stats. Absent (all
+    // broadcast sends, the coupon step) ⇒ the row's stepRef
+    // stays null.
+    stepRef?: string;
+  }): Promise<{ status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string; smsGatewayUsed?: string }> {
+    if (input.channel === "email" || input.channel === "sms" || input.channel === "push" || input.channel === "telegram" || input.channel === "onsite") {
       const prefAddress = recipientPrefAddress(input.channel, input.recipient);
       const optOut = await this.findOptOut(organizationId, input.channel, prefAddress);
+      // MX10: a PENDING double opt-in address has not consented —
+      // the single-send guard treats it exactly like an opt-out
+      // (provider never called, a skipped delivery records why).
+      const pendingPref = !optOut && prefAddress ? await (this.prisma as any).messagePreference?.findFirst({
+        where: { organizationId, channel: input.channel, address: prefAddress, status: "pending" },
+      }).catch(() => null) : null;
+      if (pendingPref) {
+        const address = input.channel === "email"
+          ? (input.recipient.email ?? "")
+          : input.channel === "push"
+            ? (input.recipient.pushEndpoint ?? "")
+            : input.channel === "telegram"
+              ? (input.recipient.telegramChatId ?? "")
+              : input.channel === "onsite"
+                ? (input.recipient.id ?? "")
+                : (normalizeBdPhone(input.recipient.phone ?? "") ?? normalizePhoneGeneric(input.recipient.phone ?? "") ?? (input.recipient.phone ?? ""));
+        const error = "Recipient has not confirmed double opt-in (pending)";
+        await this.recordDelivery(organizationId, input, address, "skipped", undefined, error);
+        return { status: "skipped", error, address };
+      }
       if (optOut) {
         const address = input.channel === "email"
           ? (input.recipient.email ?? "")
-          : (normalizeBdPhone(input.recipient.phone ?? "") ?? normalizePhoneGeneric(input.recipient.phone ?? "") ?? (input.recipient.phone ?? ""));
+          : input.channel === "push"
+            ? (input.recipient.pushEndpoint ?? "")
+            : input.channel === "telegram"
+              ? (input.recipient.telegramChatId ?? "")
+              : input.channel === "onsite"
+                ? (input.recipient.id ?? "")
+                : (normalizeBdPhone(input.recipient.phone ?? "") ?? normalizePhoneGeneric(input.recipient.phone ?? "") ?? (input.recipient.phone ?? ""));
         const error = `Recipient opted out (${optOut.source})`;
         await this.recordDelivery(organizationId, input, address, "skipped", undefined, error);
         return { status: "skipped", error, address };
@@ -1685,6 +4244,142 @@ export class MessagingService {
     }
     let address = "";
     try {
+      if (input.channel === "push") {
+        // MX12: the send goes through the REGISTERED push port
+        // (webpush module) — messaging never touches the
+        // WebPushSubscription/WebPushCampaign tables and never
+        // creates a parallel campaign. The port returns the
+        // push service's real outcome; "gone" (404/410) is a
+        // FAILED delivery here with the real reason, and the
+        // port has already marked the subscription gone so
+        // future resolves skip it. A missing subscription or an
+        // absent port throws into the shared catch below, which
+        // records the honest failure — never a fake success.
+        address = input.recipient.pushEndpoint ?? "";
+        const subscriptionId = input.recipient.pushSubscriptionId ?? null;
+        if (!subscriptionId) throw new Error("Recipient has no web push subscription");
+        if (!this.pushSendPort) throw new Error("Web Push send port is not available in this deployment (the web push module did not register) — push cannot be sent");
+        const title = renderTemplate(input.subject ?? "", { name: input.recipient.name, ...input.vars });
+        if (!title.trim()) throw new Error("Push broadcast has no title");
+        const outcome = await this.pushSendPort.sendPush(organizationId, {
+          subscriptionId, title, body: text, url: input.pushUrl ?? null,
+        });
+        if (outcome.outcome === "sent") {
+          await this.recordDelivery(organizationId, input, address, "sent", undefined);
+          return { status: "sent" as const, address };
+        }
+        const reason = outcome.error
+          ?? (outcome.outcome === "gone" ? "Push subscription is gone (the push service reported it dead)" : "Push send failed");
+        const error = outcome.statusCode ? `${reason} (HTTP ${outcome.statusCode})` : reason;
+        await this.recordDelivery(organizationId, input, address, "failed", undefined, error);
+        return { status: "failed" as const, error, address };
+      }
+      if (input.channel === "telegram") {
+        // MX13: the send goes through the REGISTERED telegram
+        // port (inbox module) — messaging never touches the
+        // Integration credential rows and never calls the Bot
+        // API itself. The port returns Telegram's real outcome;
+        // "sent" carries the real message_id (stored as the
+        // delivery's providerMessageId), anything else is a
+        // FAILED delivery with Telegram's real description
+        // (e.g. "Forbidden: bot was blocked by the user"). A
+        // missing chat id or an absent port throws into the
+        // shared catch below, which records the honest
+        // failure — never a fake success.
+        address = input.recipient.telegramChatId ?? "";
+        if (!address.trim()) throw new Error("Recipient has no Telegram chat");
+        if (!this.telegramSendPort) throw new Error("Telegram send port is not available in this deployment (the inbox module did not register) — telegram cannot be sent");
+        const outcome = await this.telegramSendPort.sendTelegram(organizationId, {
+          chatId: address.trim(), text, buttons: input.telegramButtons ?? null,
+        });
+        if (outcome.outcome === "sent" && outcome.messageId) {
+          await this.recordDelivery(organizationId, input, address, "sent", outcome.messageId);
+          return { status: "sent" as const, providerMessageId: outcome.messageId, address };
+        }
+        const error = outcome.outcome === "sent"
+          ? "Telegram port reported sent without a message_id"
+          : (outcome.error ?? "Telegram send failed");
+        await this.recordDelivery(organizationId, input, address, "failed", undefined, error);
+        return { status: "failed" as const, error, address };
+      }
+      if (input.channel === "onsite") {
+        // MX14: the send IS a database write — creating the
+        // customer's OnsiteNotification row places the message
+        // in their shop-account notification center, and that
+        // creation is the delivery itself (no external provider
+        // exists for this channel, hence no provider cost and
+        // no providerMessageId). The linked MessageDelivery is
+        // written FIRST with deliveryStatus "delivered" +
+        // deliveredAt stamped at creation: the row's presence in
+        // the center is a real, observed delivered signal, not
+        // an assumption (see the funnel note in
+        // broadcastFunnel). "read" is stamped later by the
+        // customer's real open action on the shop side, which
+        // writes this delivery's readAt.
+        // Resume idempotency: a crash between this write and the
+        // engine persisting the recipient row's outcome leaves
+        // the row pending, so a resume calls here again — the
+        // existing-notification check (backed by the
+        // (broadcastId, customerId) and deliveryId uniques)
+        // makes that second call return "sent" WITHOUT creating
+        // a second notification or a second delivery.
+        address = input.recipient.id ?? "";
+        if (input.recipient.type !== "customer" || !address) {
+          throw new Error("Recipient has no customer account for an on-site notification");
+        }
+        const notifTable = (this.prisma as any).onsiteNotification;
+        if (!notifTable || typeof notifTable.create !== "function") {
+          throw new Error("On-site notification store is not available in this deployment (the MX14 migration has not run) — onsite cannot be sent");
+        }
+        if (input.broadcastId && typeof notifTable.findFirst === "function") {
+          const existing = await notifTable.findFirst({
+            where: { organizationId, broadcastId: input.broadcastId, customerId: address },
+          }).catch(() => null);
+          if (existing) return { status: "sent" as const, address };
+        }
+        const title = renderTemplate(input.subject ?? "", { name: input.recipient.name, ...input.vars });
+        if (!title.trim()) throw new Error("On-site broadcast has no title");
+        const now = new Date();
+        const delivery = await (this.prisma as any).messageDelivery.create({
+          data: {
+            organizationId, broadcastId: input.broadcastId ?? null, workflowRunId: input.workflowRunId ?? null,
+            stepRef: input.stepRef ?? null,
+            cascadeGroupId: input.cascadeGroupId ?? null,
+            recipientRowId: input.recipientRowId ?? null,
+            attemptIndex: input.attemptIndex ?? null,
+            channel: "onsite", recipientType: input.recipient.type, recipientId: address,
+            address, status: "sent", providerMessageId: null, error: null,
+            deliveryStatus: "delivered", deliveredAt: now,
+          },
+        });
+        try {
+          await notifTable.create({
+            data: {
+              organizationId, customerId: address,
+              broadcastId: input.broadcastId ?? null, deliveryId: delivery?.id ?? null,
+              title, body: text, url: input.onsiteUrl ?? null,
+            },
+          });
+        } catch (e) {
+          // The notification is the delivery — if it could not
+          // be created, the delivery just written must not stand
+          // as "sent": remove it (best effort) and fail honestly
+          // through the shared catch, which records the failed
+          // attempt. A unique-violation here means a concurrent
+          // attempt already created this customer's notification
+          // for this broadcast — that IS a successful delivery,
+          // so the duplicate delivery row goes and "sent" stands.
+          await (this.prisma as any).messageDelivery.delete({ where: { id: delivery.id } }).catch(() => undefined);
+          if (input.broadcastId && typeof notifTable.findFirst === "function") {
+            const existing = await notifTable.findFirst({
+              where: { organizationId, broadcastId: input.broadcastId, customerId: address },
+            }).catch(() => null);
+            if (existing) return { status: "sent" as const, address };
+          }
+          throw e;
+        }
+        return { status: "sent" as const, address };
+      }
       if (input.channel === "email") {
         address = input.recipient.email ?? "";
         if (!address) throw new Error("Recipient has no email address");
@@ -1709,7 +4404,47 @@ export class MessagingService {
         const reference = randomUUID().replace(/-/g, "").slice(0, 20);
         // MS4: this org's own gateway when configured, else the
         // platform SSL Wireless path (unchanged).
-        const tenantSms = await this.resolveTenantSms(organizationId);
+        // MX2: with tenant gateways configured, they are tried
+        // in failover (priority) order — a provider failure
+        // moves to the next gateway; the run's circuit breaker
+        // skips a gateway after SMS_CIRCUIT_BREAKER_THRESHOLD
+        // consecutive failures. A delivery counts sent ONLY
+        // when one gateway confirms; if every gateway fails,
+        // the LAST gateway's error is thrown so the recorded
+        // failure is the real final reason. The platform path
+        // is used only when NO tenant gateway exists (MS4
+        // semantics, unchanged).
+        const tenantGateways = await this.resolveTenantSmsGateways(organizationId);
+        if (tenantGateways.length && typeof (this.sms as any).sendWithGateway === "function") {
+          let lastError: unknown = null;
+          let usedGateway: string | undefined;
+          let sent: { providerMessageId: string } | null = null;
+          let attempted = 0;
+          for (const cfg of tenantGateways) {
+            const key = cfg.gatewayKey ?? smsGatewayKey(cfg);
+            if (input.smsBreaker?.isOpen(key)) continue;
+            attempted++;
+            try {
+              sent = await this.sms.sendWithGateway(cfg.gateway, cfg, { to: normalized, text, reference });
+              input.smsBreaker?.recordSuccess(key);
+              usedGateway = key;
+              break;
+            } catch (e) {
+              lastError = e;
+              input.smsBreaker?.recordFailure(key);
+            }
+          }
+          if (!sent) {
+            throw lastError instanceof Error
+              ? lastError
+              : new Error(attempted === 0
+                ? "All configured SMS gateways are circuit-broken for this run (too many consecutive provider failures)"
+                : "SMS send failed on every configured gateway");
+          }
+          await this.recordDelivery(organizationId, input, address, "sent", sent.providerMessageId);
+          return { status: "sent", providerMessageId: sent.providerMessageId, address, smsGatewayUsed: usedGateway };
+        }
+        const tenantSms = tenantGateways[0] ?? null;
         const result = tenantSms && typeof (this.sms as any).sendWithGateway === "function"
           ? await this.sms.sendWithGateway(tenantSms.gateway, tenantSms, { to: normalized, text, reference })
           : await this.sms.send({ to: normalized, text, reference });
@@ -1719,15 +4454,23 @@ export class MessagingService {
       throw new Error(`Unknown channel: ${input.channel}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Send failed";
-      await this.recordDelivery(organizationId, input, address || input.recipient.email || input.recipient.phone || "", "failed", undefined, message);
+      await this.recordDelivery(organizationId, input, address || input.recipient.email || input.recipient.phone || input.recipient.telegramChatId || (input.channel === "onsite" ? (input.recipient.id ?? "") : ""), "failed", undefined, message);
       return { status: "failed", error: message, address };
     }
   }
 
-  private async recordDelivery(organizationId: string, input: { channel: string; recipient: Recipient; broadcastId?: string; workflowRunId?: string }, address: string, status: string, providerMessageId?: string, error?: string) {
+  private async recordDelivery(organizationId: string, input: { channel: string; recipient: Recipient; broadcastId?: string; workflowRunId?: string; recipientRowId?: string; attemptIndex?: number; cascadeGroupId?: string; stepRef?: string }, address: string, status: string, providerMessageId?: string, error?: string) {
     await (this.prisma as any).messageDelivery.create({
       data: {
         organizationId, broadcastId: input.broadcastId ?? null, workflowRunId: input.workflowRunId ?? null,
+        // MX4: per-step attribution for workflow sends (null
+        // everywhere else, exactly as before).
+        stepRef: input.stepRef ?? null,
+        // MX2: cascade attempt linking — present only on
+        // cascade attempts; every other delivery keeps nulls.
+        cascadeGroupId: input.cascadeGroupId ?? null,
+        recipientRowId: input.recipientRowId ?? null,
+        attemptIndex: input.attemptIndex ?? null,
         channel: input.channel, recipientType: input.recipient.type,
         // MS3: a csv recipient has no org entity — its delivery
         // records recipientId null (the address column carries the
@@ -1756,11 +4499,56 @@ export class MessagingService {
     // MS8: recurrence shape ({ freq, interval, weekdays?,
     // endsAt? }) — validated strictly by recurrence.ts.
     recurrence?: unknown;
+    // MX2: fallback cascade config — validated strictly by
+    // cascade.ts (parseCascadeConfig); shape-only here.
+    cascade?: unknown;
+    // MX8: per-recipient personalization config — validated
+    // strictly by personalization.ts (parsePersonalization
+    // Config); shape-only here.
+    personalization?: unknown;
+    // SA-B20 (G2): the SAME input also carries the G2 config
+    // ({ enabled, tier2AiHook? }) — validated by
+    // broadcast-personalization.service.ts, persisted on the
+    // row's `personalization` column (distinct from MX8's
+    // personalizationConfig above).
+    // MX10: optional topic tag (preference-center enforcement).
+    topic?: string;
+    // MX11: holdout percentage (1–50) — a deterministic bucket
+    // of the resolved audience held out of the send for
+    // comparison. Composes with A/B (same hash, disjoint
+    // buckets — see messaging/engagement.ts).
+    holdoutPercent?: number;
+    // MX12: push click-through URL (shop-relative only — see
+    // validatePushUrl). Channel "push" only.
+    pushUrl?: string | null;
+    // MX13: telegram inline URL buttons — shape-only here (a
+    // Json array of {label, url}); validateTelegramButtons
+    // enforces the real rules at create. Channel "telegram"
+    // only.
+    telegramButtons?: unknown;
+    // MX14: onsite click-through URL (shop-relative only — see
+    // validateOnsiteUrl). Channel "onsite" only.
+    onsiteUrl?: string | null;
+    // MX15: per-broadcast estimated-cost cap (minor units) —
+    // overrides the org default for this broadcast.
+    budgetCapMinor?: number;
+    // MX16: per-pair A/B auto-winner override — true/false
+    // stored on BOTH variants; absent = inherit the org switch.
+    abAutoWinnerEnabled?: boolean;
   } & AudienceExtras) {
-    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    // MX11: the holdout percentage is validated AT CREATE —
+    // an honest 400, never silently clamped or ignored.
+    let holdoutPercent: number | null = null;
+    if (dto.holdoutPercent !== undefined && dto.holdoutPercent !== null) {
+      if (!Number.isInteger(dto.holdoutPercent) || dto.holdoutPercent < 1 || dto.holdoutPercent > 50) {
+        throw new BadRequestException("holdoutPercent must be an integer between 1 and 50 (omit it for no holdout)");
+      }
+      holdoutPercent = dto.holdoutPercent;
+    }
     // MS5: HTML is an email-only part — sms/whatsapp + htmlBody
     // is an honest 400, checked before any channel path runs.
-    if (dto.htmlBody && dto.channel !== "email") throw new BadRequestException("htmlBody is only allowed for email broadcasts (SMS/WhatsApp have no HTML part)");
+    if (dto.htmlBody && dto.channel !== "email") throw new BadRequestException("htmlBody is only allowed for email broadcasts (SMS/WhatsApp/Push have no HTML part)");
     // MS6: templateComponents is a WhatsApp-only input — any other
     // channel + templateComponents is an honest 400 (the MS5
     // htmlBody rule), never silently ignored. The shape is
@@ -1768,6 +4556,115 @@ export class MessagingService {
     // validation itself lives in validateTemplateComponents —
     // create and PATCH share it verbatim.
     const templateComponents = this.validateTemplateComponents(dto.channel, dto.templateComponents ?? null);
+    // MX2: the cascade config is validated AT CREATE (strict —
+    // unknown channels, a missing primary channel, or fewer
+    // than two channels are an honest 400, never reinterpreted).
+    let cascadeConfig: CascadeConfig | null = null;
+    if (dto.cascade != null) {
+      try { cascadeConfig = parseCascadeConfig(dto.cascade, dto.channel); }
+      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid cascade config"); }
+      // A cascade INTO whatsapp needs a real approved-template
+      // row of this org — checked now, at create, not at send.
+      if (cascadeConfig && cascadeConfig.channels.includes("whatsapp") && dto.channel !== "whatsapp" && cascadeConfig.whatsappTemplateId) {
+        const waTpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: cascadeConfig.whatsappTemplateId, organizationId } });
+        if (!waTpl) throw new NotFoundException("Cascade WhatsApp template not found in this organization");
+        await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, waTpl);
+      }
+    }
+    // MX12: push-channel create rules, all honest 400s at
+    // create (never discovered mid-send):
+    //  - the cascade cannot include or fall back FROM push in
+    //    this version (see the cascade verdict in
+    //    docs/messaging-mx12-acceptance.md): CASCADE_CHANNELS
+    //    stays email|sms|whatsapp, and parseCascadeConfig above
+    //    already refuses a cascade whose channels name push or
+    //    omit the primary channel — a push broadcast WITH any
+    //    enabled cascade therefore never reaches storage.
+    //  - pushUrl is validated by the ONE rule the base push
+    //    system uses (shop-relative paths only).
+    //  - the audience must be one the subscription resolver
+    //    can express (the resolver re-checks at resolve time).
+    let pushUrl: string | null = null;
+    if (dto.channel === "push") {
+      if (dto.templateId) throw new BadRequestException("Push broadcasts do not use message templates — the title/body are written directly on the broadcast");
+      if (dto.whatsappTemplateId || dto.templateComponents) throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+      if (!["push_subscribers", "customers", "segment"].includes(dto.audienceType)) {
+        throw new BadRequestException(`audienceType ${dto.audienceType} is not available for the push channel — push audiences resolve from web push subscriptions (use push_subscribers, customers or segment)`);
+      }
+      try { pushUrl = validatePushUrl(dto.pushUrl); }
+      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid pushUrl"); }
+    } else if (dto.pushUrl !== undefined && dto.pushUrl !== null && String(dto.pushUrl).trim() !== "") {
+      throw new BadRequestException("pushUrl is only allowed for push broadcasts");
+    }
+    // MX13: telegram-channel create rules, all honest 400s at
+    // create (never discovered mid-send):
+    //  - the cascade cannot include or fall back FROM telegram
+    //    in this version (see the cascade verdict in
+    //    docs/messaging-mx13-acceptance.md): CASCADE_CHANNELS
+    //    stays email|sms|whatsapp — it has no telegram content
+    //    slot — and parseCascadeConfig above already refuses a
+    //    cascade whose channels name telegram or omit the
+    //    primary channel, so a telegram broadcast WITH any
+    //    enabled cascade never reaches storage.
+    //  - telegram sends a free-text message through the org's
+    //    bot: no message templates, no WhatsApp template
+    //    inputs, and no subject (Telegram messages have none —
+    //    the composer does not ask for one; a non-empty subject
+    //    is refused rather than silently dropped).
+    //  - the audience must be one the conversation resolver
+    //    can express (the resolver re-checks at resolve time).
+    //  - buttons are validated by validateTelegramButtons.
+    let telegramButtons: TelegramButton[] | null = null;
+    if (dto.channel === "telegram") {
+      if (dto.templateId) throw new BadRequestException("Telegram broadcasts do not use message templates — the message text is written directly on the broadcast");
+      if (dto.whatsappTemplateId || dto.templateComponents) throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+      if (dto.subject !== undefined && dto.subject !== null && String(dto.subject).trim() !== "") {
+        throw new BadRequestException("Telegram broadcasts have no subject — the message text is the whole message");
+      }
+      if (!["telegram_subscribers", "customers", "leads_stage", "segment"].includes(dto.audienceType)) {
+        throw new BadRequestException(`audienceType ${dto.audienceType} is not available for the telegram channel — telegram audiences resolve from the org's Telegram conversations (use telegram_subscribers, customers, leads_stage or segment)`);
+      }
+      try { telegramButtons = validateTelegramButtons(dto.telegramButtons); }
+      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid telegramButtons"); }
+    } else if (dto.telegramButtons !== undefined && dto.telegramButtons !== null
+      && !(Array.isArray(dto.telegramButtons) && dto.telegramButtons.length === 0)) {
+      throw new BadRequestException("telegramButtons is only allowed for telegram broadcasts");
+    }
+    // MX14: onsite-channel create rules, all honest 400s at
+    // create (never discovered mid-send):
+    //  - the cascade cannot include or fall back FROM onsite
+    //    in this version (see the cascade verdict in
+    //    docs/messaging-mx14-acceptance.md): CASCADE_CHANNELS
+    //    stays email|sms|whatsapp — it has no onsite content
+    //    slot (title/url) — and parseCascadeConfig above
+    //    already refuses a cascade whose channels name onsite
+    //    or omit the primary channel, so an onsite broadcast
+    //    WITH any enabled cascade never reaches storage.
+    //  - onsite sends a title + body written directly on the
+    //    broadcast into the customer's notification center: no
+    //    message templates, no WhatsApp template inputs.
+    //  - the audience must be one the customer resolver can
+    //    express (the resolver re-checks at resolve time).
+    //  - onsiteUrl is validated by validateOnsiteUrl (the
+    //    MX12 shop-relative rule).
+    let onsiteUrl: string | null = null;
+    if (dto.channel === "onsite") {
+      if (dto.templateId) throw new BadRequestException("On-site broadcasts do not use message templates — the title/body are written directly on the broadcast");
+      if (dto.whatsappTemplateId || dto.templateComponents) throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+      if (!["customers", "segment"].includes(dto.audienceType)) {
+        throw new BadRequestException(`audienceType ${dto.audienceType} is not available for the onsite channel — on-site notifications reach shop customers only (use customers or segment)`);
+      }
+      try { onsiteUrl = validateOnsiteUrl(dto.onsiteUrl); }
+      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid onsiteUrl"); }
+    } else if (dto.onsiteUrl !== undefined && dto.onsiteUrl !== null && String(dto.onsiteUrl).trim() !== "") {
+      throw new BadRequestException("onsiteUrl is only allowed for onsite broadcasts");
+    }
+    // SA-B20 (G2): the personalisation config is shape-validated
+    // up front (Tier 2 + WhatsApp is a 400 here — Meta templates
+    // have no free-text body); the {{aiHook}} placeholder check
+    // runs below once the final body (dto / template / A/B) is
+    // known. Null = off.
+    const personalization = normalizePersonalizationConfig(dto.personalization, dto.channel);
     // MS3: the new audience types are validated AT CREATE (the
     // shared base objects below carry the fields to both A/B
     // variants and both channel paths).
@@ -1786,6 +4683,78 @@ export class MessagingService {
         throw new BadRequestException(`CSV audience has ${audienceCsv.length} addresses, over the cap of ${CSV_AUDIENCE_CAP}. Split the list instead of silently truncating it.`);
       }
     }
+    // MX8: the personalization config is validated AT CREATE
+    // (strict — a bad coupon kind/value, an oversized segment
+    // block list or an invalid inline audience definition is an
+    // honest 400, never reinterpreted at send time). A segment
+    // block referencing a saved audience must name a REAL saved
+    // audience of this org — checked now, not discovered mid-send.
+    let personalizationConfig: PersonalizationConfig | null = null;
+    // UNION (MX8 x SA-B20 G2, 2026-10-17): the create DTO's single
+    // `personalization` input carries TWO vocabularies persisted on
+    // two different columns — MX8's (uniqueCoupon / recommendations
+    // / segmentBlocks -> the personalizationConfig column) and G2's
+    // ({ enabled, tier2AiHook } -> the personalization column,
+    // normalized above). The MX8 validation below applies only when
+    // the input actually carries MX8 vocabulary: a G2-only config
+    // must not die in the MX8 parser ("configures nothing"), and a
+    // Tier-1 G2 config must not hit the MX8 channel refusals (G2
+    // Tier 1 works on WhatsApp; only Tier 2 is refused there, by
+    // the G2 normalizer itself).
+    const rawPersonalization = dto.personalization as Record<string, unknown> | null | undefined;
+    const hasMx8Shape = !!rawPersonalization && typeof rawPersonalization === "object" && !Array.isArray(rawPersonalization)
+      && (rawPersonalization.uniqueCoupon != null || rawPersonalization.recommendations != null || rawPersonalization.segmentBlocks != null);
+    if (dto.personalization != null && hasMx8Shape) {
+      // MX8 personalization rewrites the free-text body/htmlBody
+      // a plain email/sms send renders. WhatsApp sends Meta
+      // templates (nothing to rewrite) and a cascade run owns
+      // its per-channel content — combining them would silently
+      // half-apply, so both are honest 400s at create.
+      if (dto.channel === "whatsapp") {
+        throw new BadRequestException("personalization is not available for WhatsApp broadcasts (they send Meta-approved templates, not free-text content)");
+      }
+      if (dto.channel === "push") {
+        // MX12: the push payload is a length-capped title/body
+        // (the base system's rule) — MX8 dynamic blocks append
+        // content at send time and could silently overflow the
+        // cap, so the combination is refused at create instead.
+        throw new BadRequestException("personalization is not available for push broadcasts (the push payload is a length-capped title/body — dynamic blocks could overflow it)");
+      }
+      if (dto.channel === "telegram") {
+        // MX13: a telegram message is length-capped by the Bot
+        // API itself (4096 chars, enforced at create below) —
+        // MX8 dynamic blocks append content at send time and
+        // could silently overflow it, so the combination is
+        // refused at create instead (the MX12 push precedent).
+        throw new BadRequestException("personalization is not available for telegram broadcasts (Telegram caps a message at 4096 characters — dynamic blocks could overflow it)");
+      }
+      if (dto.channel === "onsite") {
+        // MX14: an onsite notification is a length-capped
+        // title/body stored verbatim in the customer's center
+        // (caps enforced at create below) — MX8 dynamic blocks
+        // append content at send time and could silently
+        // overflow them, so the combination is refused at
+        // create instead (the MX12/MX13 precedent).
+        throw new BadRequestException("personalization is not available for onsite broadcasts (the notification is a length-capped title/body — dynamic blocks could overflow it)");
+      }
+      if (cascadeConfig) {
+        throw new BadRequestException("personalization cannot be combined with a channel cascade in this version — the cascade owns per-channel content");
+      }
+      try { personalizationConfig = parsePersonalizationConfig(dto.personalization); }
+      catch (e) {
+        throw new BadRequestException(e instanceof PersonalizationConfigError ? e.message : "Invalid personalization config");
+      }
+      if (personalizationConfig?.segmentBlocks?.length) {
+        for (const block of personalizationConfig.segmentBlocks) {
+          if (block.savedAudienceId) {
+            const saved = await (this.prisma as any).messagingSavedAudience?.findFirst?.({
+              where: { id: block.savedAudienceId, organizationId },
+            }).catch(() => null);
+            if (!saved) throw new NotFoundException("Segment block saved audience not found in this organization");
+          }
+        }
+      }
+    }
     const scheduledAt: Date | null = dto.scheduledAt ? this.parseFutureScheduledAt(dto.scheduledAt) : null;
     // MS8: recurrence is validated strictly at create (unknown
     // freq/shape ⇒ 400, never reinterpreted). One generated
@@ -1800,7 +4769,28 @@ export class MessagingService {
       }
       recurrenceGroupId = randomUUID();
     }
-    const initialStatus = scheduledAt ? "scheduled" : "draft";
+    // MX15: budget cap validated AT CREATE like every other
+    // strict field (a positive integer of minor units).
+    let budgetCapMinor: number | null = null;
+    if (dto.budgetCapMinor !== undefined && dto.budgetCapMinor !== null) {
+      if (!Number.isInteger(dto.budgetCapMinor) || dto.budgetCapMinor < 1) {
+        throw new BadRequestException("budgetCapMinor must be a positive integer (minor units)");
+      }
+      budgetCapMinor = dto.budgetCapMinor;
+    }
+    // MX16: the per-pair auto-winner override is a real boolean
+    // when given (never silently coerced).
+    if (dto.abAutoWinnerEnabled !== undefined && typeof dto.abAutoWinnerEnabled !== "boolean") {
+      throw new BadRequestException("abAutoWinnerEnabled must be a boolean");
+    }
+    // MX15: approval workflow — when the org enabled it and the
+    // creator is NOT an approver, the broadcast enters review
+    // instead of draft/scheduled. When approval is OFF (the
+    // default) nothing below changes a single stored field.
+    const governanceAtCreate = await this.getGovernanceSetting(organizationId);
+    const needsApproval = governanceAtCreate.approvalEnabled
+      && !(await this.isBroadcastApprover(organizationId, actorId));
+    const initialStatus = needsApproval ? "pending_approval" : scheduledAt ? "scheduled" : "draft";
     let subject = dto.subject ?? null;
     let body = dto.body ?? "";
     // MS5: the HTML part (email only, guarded above). When the
@@ -1814,6 +4804,7 @@ export class MessagingService {
       if (!dto.whatsappTemplateId) throw new BadRequestException("WhatsApp broadcasts need a registered template (whatsappTemplateId)");
       const tpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: dto.whatsappTemplateId, organizationId } });
       if (!tpl) throw new NotFoundException("WhatsApp template not found in this organization");
+      await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, tpl);
       body = tpl.bodyText ?? `[WhatsApp template: ${tpl.name}]`;
       const baseWa = {
         organizationId, channel: "whatsapp", templateId: null,
@@ -1824,11 +4815,19 @@ export class MessagingService {
         excludePastDays: dto.excludePastDays ?? null, excludeOptOut: dto.excludeOptOut ?? true,
         status: initialStatus, scheduledAt, createdById: actorId,
         recurrence, recurrenceGroupId,
+        cascadeConfig: cascadeConfig ?? undefined,
+        topic: dto.topic ? String(dto.topic).trim() : null,
+        holdoutPercent,
+        ...(needsApproval ? { approvalStatus: "pending" } : {}),
+        ...(budgetCapMinor !== null ? { budgetCapMinor } : {}),
+        ...(dto.abAutoWinnerEnabled !== undefined ? { abAutoWinnerEnabled: dto.abAutoWinnerEnabled } : {}),
+        personalization: personalization ?? undefined,
       };
       if (dto.abTest) {
         if (!dto.abWhatsappTemplateId) throw new BadRequestException("A/B WhatsApp broadcasts need a second template (abWhatsappTemplateId)");
         const tplB = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: dto.abWhatsappTemplateId, organizationId } });
         if (!tplB) throw new NotFoundException("A/B WhatsApp template not found in this organization");
+        await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, tplB);
         const abGroupId = randomUUID();
         const a = await (this.prisma as any).broadcast.create({ data: { ...baseWa, name: `${dto.name} (A)`, whatsappTemplateId: tpl.id, body, abVariant: "A", abGroupId } });
         const b = await (this.prisma as any).broadcast.create({ data: { ...baseWa, name: `${dto.name} (B)`, whatsappTemplateId: tplB.id, body: tplB.bodyText ?? `[WhatsApp template: ${tplB.name}]`, abVariant: "B", abGroupId } });
@@ -1839,21 +4838,88 @@ export class MessagingService {
       });
       return broadcast;
     }
+    let templateVersion: number | null = null;
     if (dto.templateId) {
       const template = await this.getTemplate(organizationId, dto.templateId);
       if (template.channel !== dto.channel) throw new BadRequestException("Template channel does not match the broadcast channel");
       subject = template.subject; body = template.body; htmlBody = template.htmlBody ?? null;
+      // MX7: stamp the version the content is taken from, and —
+      // for a block-built template — RE-RENDER the blocks NOW
+      // (use time) so product/coupon slots and the brand kit
+      // reflect the org's current real rows. The broadcast then
+      // stores its own copy as always: later kit/catalog changes
+      // never rewrite this broadcast or anything already sent.
+      templateVersion = template.version ?? null;
+      if (template.channel === "email" && Array.isArray(template.blocks) && template.blocks.length) {
+        const rendered = await this.renderBlocksForOrg(organizationId, template.blocks);
+        body = rendered.body; htmlBody = rendered.htmlBody;
+      }
     }
     if (!body) throw new BadRequestException("Broadcast body is required (write one or choose a template)");
     if (dto.channel === "email" && !subject) throw new BadRequestException("Email broadcasts need a subject");
+    if (dto.channel === "push") {
+      // MX12: for push, `subject` carries the notification
+      // TITLE and `body` the notification text — the exact
+      // payload the shop service worker renders. Length caps
+      // are the base push system's own (webpush validateSend:
+      // title ≤ 120, body ≤ 300), enforced here at create so a
+      // broadcast can never be stored in a shape the push
+      // service would refuse at send time.
+      if (!subject || !String(subject).trim()) throw new BadRequestException("Push broadcasts need a title (subject)");
+      if (String(subject).length > 120) throw new BadRequestException("Push title must be at most 120 characters");
+      if (String(body).length > 300) throw new BadRequestException("Push body must be at most 300 characters");
+    }
+    if (dto.channel === "telegram") {
+      // MX13: Telegram's own Bot API hard cap — a message text
+      // longer than 4096 characters is refused by Telegram at
+      // send time, so it is refused here at create instead
+      // (the MX12 push-cap precedent).
+      if (String(body).length > 4096) throw new BadRequestException("Telegram message text must be at most 4096 characters (the Bot API limit)");
+    }
+    if (dto.channel === "onsite") {
+      // MX14: for onsite, `subject` carries the notification
+      // TITLE and `body` the notification text — the exact
+      // content the customer's notification center renders.
+      // The caps are this channel's own store rules (title
+      // ≤ 120, the MX12 title precedent; body ≤ 2000, a full
+      // in-center message — no provider imposes a cap here, so
+      // the rule is stated as ours, not a provider's), enforced
+      // at create so a stored notification is always renderable
+      // as composed.
+      if (!subject || !String(subject).trim()) throw new BadRequestException("On-site broadcasts need a title (subject)");
+      if (String(subject).length > 120) throw new BadRequestException("On-site title must be at most 120 characters");
+      if (String(body).length > 2000) throw new BadRequestException("On-site body must be at most 2000 characters");
+    }
+    // SA-B20 (G2): the {{aiHook}} placeholder check against the
+    // FINAL bodies (variant B gets the same config, so its body
+    // must carry the placeholder too).
+    assertTier2HookPlaceholder(body, personalization);
+    if (dto.abTest && dto.abBody) assertTier2HookPlaceholder(dto.abBody, personalization);
     const baseData = {
       organizationId, channel: dto.channel,
+      // MX12: the push click-through URL (null on every other
+      // channel — validated above, push-only).
+      pushUrl: dto.channel === "push" ? pushUrl : null,
+      // MX13: the telegram inline URL buttons (null on every
+      // other channel — validated above, telegram-only).
+      telegramButtons: dto.channel === "telegram" ? telegramButtons : null,
+      // MX14: the onsite click-through URL (null on every other
+      // channel — validated above, onsite-only).
+      onsiteUrl: dto.channel === "onsite" ? onsiteUrl : null,
       audienceType: dto.audienceType, audienceStage: dto.audienceStage ?? null, audienceSegment: dto.audienceSegment ?? null,
       audienceDefinition, audienceSavedId, audienceCsv,
       excludePreviousRecipients: dto.excludePreviousRecipients ?? false,
       excludePastDays: dto.excludePastDays ?? null, excludeOptOut: dto.excludeOptOut ?? true,
       status: initialStatus, scheduledAt, createdById: actorId,
       recurrence, recurrenceGroupId,
+      cascadeConfig: cascadeConfig ?? undefined,
+      personalizationConfig: personalizationConfig ?? undefined,
+      topic: dto.topic ? String(dto.topic).trim() : null,
+      holdoutPercent,
+      ...(needsApproval ? { approvalStatus: "pending" } : {}),
+      ...(budgetCapMinor !== null ? { budgetCapMinor } : {}),
+      ...(dto.abAutoWinnerEnabled !== undefined ? { abAutoWinnerEnabled: dto.abAutoWinnerEnabled } : {}),
+      personalization: personalization ?? undefined,
     };
     if (dto.abTest) {
       if (!dto.abBody) throw new BadRequestException("A/B broadcasts need a variant B body (abBody)");
@@ -1862,7 +4928,7 @@ export class MessagingService {
       // abHtmlBody input, so variant B's htmlBody is null and its
       // sends stay text-only (honest asymmetry, not a silent copy).
       const a = await (this.prisma as any).broadcast.create({
-        data: { ...baseData, name: `${dto.name} (A)`, templateId: dto.templateId ?? null, subject, body, htmlBody, abVariant: "A", abGroupId },
+        data: { ...baseData, name: `${dto.name} (A)`, templateId: dto.templateId ?? null, templateVersion, subject, body, htmlBody, abVariant: "A", abGroupId },
       });
       const b = await (this.prisma as any).broadcast.create({
         data: { ...baseData, name: `${dto.name} (B)`, templateId: null, subject: dto.abSubject ?? subject, body: dto.abBody, htmlBody: null, abVariant: "B", abGroupId },
@@ -1870,7 +4936,7 @@ export class MessagingService {
       return { abGroupId, variants: [a, b] };
     }
     const broadcast = await (this.prisma as any).broadcast.create({
-      data: { ...baseData, name: dto.name, templateId: dto.templateId ?? null, subject, body, htmlBody },
+      data: { ...baseData, name: dto.name, templateId: dto.templateId ?? null, templateVersion, subject, body, htmlBody },
     });
     return broadcast;
   }
@@ -1888,7 +4954,12 @@ export class MessagingService {
     const total = Number(broadcast?.totalRecipients ?? 0);
     const sent = Number(broadcast?.sentCount ?? 0);
     const failed = Number(broadcast?.failedCount ?? 0);
-    return { total, sent, failed, skipped: 0, pending: Math.max(0, total - sent - failed) };
+    // MX1: recipient-table broadcasts carry a derived
+    // skippedCount (written from the recipient rows per chunk);
+    // rows without it (every pre-MX1 row) read 0, exactly as the
+    // old fallback did.
+    const skipped = Number(broadcast?.skippedCount ?? 0);
+    return { total, sent, failed, skipped, pending: Math.max(0, total - sent - failed - skipped) };
   }
 
   /**
@@ -2069,10 +5140,796 @@ export class MessagingService {
     recipients.forEach((r, i) => {
       if (r.type === "csv") varsList[i] = { name: "", address: r.id ?? "" };
     });
+    // MX8: loyalty / gift-card balance vars from the real
+    // Advanced ledgers (defensive — any read failure leaves the
+    // vars unset, which renders empty, never an invented number).
+    await this.addBalanceVars(organizationId, recipients, varsList);
     return varsList;
   }
 
+  /**
+   * MX8 — fill {{loyaltyPoints}} / {{giftCardBalance}} from the
+   * REAL Advanced ledgers. NOTE: these two keys are deliberately
+   * NOT added to TEMPLATE_VARIABLES — ms5-composer.spec.ts pins
+   * that catalogue to exactly the MS5 keys ("lists exactly the
+   * keys prepare builds"), and pins are never edited to fit a
+   * new feature. The vars are built here and render normally;
+   * they are documented in docs/messaging-mx8-acceptance.md
+   * instead of the composer catalogue (recorded NOT BUILT
+   * there, with this pin as the evidence).
+   * Messaging reads these tables through
+   * Prisma exactly like it already reads Customer/Order/Product/
+   * StoreDiscount (the MX7 precedent — messaging imports no
+   * commerce service; the module boundary is import-level).
+   *  - Loyalty: LoyaltyService.checkoutSnapshot is the ledger's
+   *    own read path and it returns the Customer
+   *    .loyaltyBalanceCache the ledger maintains (null when the
+   *    program is disabled or the customer was merged away).
+   *    MX8 mirrors that read: program disabled ⇒ the var stays
+   *    EMPTY (no program, no balance to report); enabled ⇒ the
+   *    real cached balance, including a real 0 or a negative
+   *    clawback balance, rendered as-is.
+   *  - Gift cards are BEARER instruments — there is no per-
+   *    customer balance API and no holder field. The honest
+   *    per-recipient sum is over ACTIVE, unexpired GiftCard rows
+   *    that are the recipient's own: addressed to their
+   *    email/phone (the card's recipient fields), or bought by
+   *    the customer with NO addressee (a self-purchase). A card
+   *    bought by one customer for another person counts only
+   *    for the addressee. No matching card ⇒ 0.00 for an
+   *    identified customer/lead; csv recipients have no identity
+   *    record to match against, so their var stays empty.
+   */
+  private async addBalanceVars(organizationId: string, recipients: Recipient[], varsList: Record<string, unknown>[]): Promise<void> {
+    const money = (minor: bigint): string => (Number(minor) / 100).toFixed(2);
+    // --- loyalty (customers only; the ledger is customer-keyed)
+    try {
+      const settingTable = (this.prisma as any).loyaltySetting;
+      const setting = settingTable?.findFirst
+        ? await settingTable.findFirst({ where: { organizationId } }).catch(() => null)
+        : null;
+      const custIdx = recipients.map((r, i) => ({ r, i })).filter(({ r }) => r.type === "customer" && r.id);
+      if (setting?.enabled && custIdx.length) {
+        const ids = [...new Set(custIdx.map(({ r }) => r.id!))];
+        const balances = new Map<string, number>();
+        for (let s = 0; s < ids.length; s += 500) {
+          const rows: any[] = await (this.prisma as any).customer.findMany({
+            where: { organizationId, id: { in: ids.slice(s, s + 500) } },
+            select: { id: true, loyaltyBalanceCache: true, mergedIntoId: true },
+          });
+          for (const c of rows ?? []) {
+            // checkoutSnapshot parity: a merged-away customer
+            // reports no balance of its own.
+            if (!c.mergedIntoId) balances.set(c.id, Number(c.loyaltyBalanceCache ?? 0));
+          }
+        }
+        for (const { r, i } of custIdx) {
+          if (balances.has(r.id!)) varsList[i] = { ...varsList[i], loyaltyPoints: balances.get(r.id!) };
+        }
+      }
+    } catch { /* no readable ledger ⇒ vars stay empty */ }
+    // --- gift cards (customers + leads, by real card linkage)
+    try {
+      const gc = (this.prisma as any).giftCard;
+      if (!gc?.findMany) return;
+      const targets = recipients.map((r, i) => ({ r, i })).filter(({ r }) => r.type === "customer" || r.type === "lead");
+      if (!targets.length) return;
+      const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+      for (let s = 0; s < targets.length; s += 500) {
+        const chunk = targets.slice(s, s + 500);
+        const customerIds = chunk.filter(({ r }) => r.type === "customer" && r.id).map(({ r }) => r.id!);
+        const emails = [...new Set(chunk.map(({ r }) => (r.email ?? "").trim().toLowerCase()).filter(Boolean))];
+        const phoneForms = [...new Set(chunk.flatMap(({ r }) => [String(r.phone ?? "").trim(), digits(r.phone)]).filter(Boolean))];
+        const or: Record<string, unknown>[] = [];
+        if (customerIds.length) or.push({ buyerCustomerId: { in: customerIds } });
+        if (emails.length) or.push({ recipientEmail: { in: emails, mode: "insensitive" } });
+        if (phoneForms.length) or.push({ recipientPhone: { in: phoneForms } });
+        if (!or.length) continue;
+        const cards: any[] = await gc.findMany({
+          where: { organizationId, status: "active", OR: or },
+          select: { buyerCustomerId: true, recipientEmail: true, recipientPhone: true, balanceCache: true, expiresAt: true },
+        }).catch(() => []);
+        const now = Date.now();
+        for (const { r, i } of chunk) {
+          const email = (r.email ?? "").trim().toLowerCase();
+          const phone = digits(r.phone);
+          let sum = 0n;
+          for (const card of cards ?? []) {
+            if (card.expiresAt && new Date(card.expiresAt).getTime() <= now) continue;
+            const addrEmail = String(card.recipientEmail ?? "").trim().toLowerCase();
+            const addrPhone = digits(card.recipientPhone);
+            const addressedToMe = (addrEmail !== "" && addrEmail === email) || (addrPhone !== "" && addrPhone === phone);
+            const selfBought = r.type === "customer" && r.id != null
+              && card.buyerCustomerId === r.id && addrEmail === "" && addrPhone === "";
+            if (!addressedToMe && !selfBought) continue;
+            try { sum += BigInt(card.balanceCache ?? 0); } catch { /* an unreadable balance contributes nothing */ }
+          }
+          varsList[i] = { ...varsList[i], giftCardBalance: money(sum) };
+        }
+      }
+    } catch { /* same honesty rule: empty, never invented */ }
+  }
+
+  // ---------- MX8: per-recipient dynamic personalization ----------
+
+  /**
+   * MX8 — issue ONE unique coupon for ONE recipient of ONE
+   * broadcast: a real StoreDiscount row (the audit's verdict —
+   * the platform Coupon model is plan-billing only), with
+   * usageLimit 1 (the checkout evaluator refuses once
+   * usedCount reaches it, and redeem() increments usedCount at
+   * placement) AND perCustomerLimit 1 (counted from the
+   * customer's stamped orders), origin "messaging_unique" and
+   * sourceRef `<broadcastId>:<dedupeKey>` (the GB7 provenance
+   * pattern, extended with the recipient key).
+   * IDEMPOTENT by construction: before creating, any row already
+   * carrying this exact sourceRef is reused — so even a crash
+   * between the create and the state persist can never produce
+   * a second coupon for the same recipient on resume.
+   * Failure is RETURNED, never thrown: the recipient is sent to
+   * without a coupon (variable empty) and the error is recorded
+   * in their personalization state.
+   */
+  private async issueUniqueCoupon(
+    organizationId: string, broadcastId: string, recipientKey: string, cfg: UniqueCouponConfig,
+  ): Promise<{ code: string; discountId: string } | { error: string }> {
+    const table = (this.prisma as any).storeDiscount;
+    if (!table?.create || !table?.findFirst) return { error: "coupon store (StoreDiscount) is not available in this deployment" };
+    const sourceRef = `${broadcastId}:${recipientKey}`;
+    try {
+      const existing = await table.findFirst({ where: { organizationId, origin: "messaging_unique", sourceRef } });
+      if (existing?.code) return { code: String(existing.code), discountId: String(existing.id) };
+    } catch { /* fall through to issuance */ }
+    let lastError = "coupon issuance failed";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = buildUniqueCouponCode(cfg.prefix, randomBytes(5).toString("hex"));
+      try {
+        const row = await table.create({
+          data: {
+            organizationId, code, kind: cfg.kind, value: cfg.value,
+            endsAt: new Date(Date.now() + cfg.expiryDays * 86400_000),
+            usageLimit: 1, perCustomerLimit: 1, usedCount: 0,
+            active: true, origin: "messaging_unique", sourceRef,
+          },
+        });
+        return { code: String(row.code ?? code), discountId: String(row.id) };
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+        if (!/unique|P2002/i.test(lastError)) return { error: lastError };
+        // A code collision retries with fresh bytes; a sourceRef
+        // claim won concurrently is picked up by the next loop's
+        // create failing again — so re-check the claim first.
+        try {
+          const won = await table.findFirst({ where: { organizationId, origin: "messaging_unique", sourceRef } });
+          if (won?.code) return { code: String(won.code), discountId: String(won.id) };
+        } catch { /* keep retrying */ }
+      }
+    }
+    return { error: lastError };
+  }
+
+  /** MX8 — the recipient's audience facts for ONE definition,
+   * built with the resolver's exact rules (resolveCustomAudience
+   * InChunks): aggregates/RFM are computed only when a condition
+   * needs them, missing facts stay null (which the evaluator
+   * reads as FALSE). Entity mismatch ⇒ null (never a member). */
+  private async audienceFactsForRecipient(organizationId: string, entry: SnapshotEntry, def: AudienceDefinition): Promise<AudienceFacts | null> {
+    if (!entry.id) return null;
+    // MX11: engagement facts for this one contact, only when a
+    // condition reads them (org-wide map, the RFM precedent in
+    // this very method — computeRfm is likewise org-wide here).
+    const needsEngagement = def.conditions.some((c) => c.field === "engagement_score" || c.field === "predictive_segment");
+    const engagementMap = needsEngagement ? await this.buildEngagementMap(organizationId).catch(() => null) : null;
+    if (def.entity === "leads") {
+      if (entry.type !== "lead") return null;
+      const l = await (this.prisma as any).lead?.findFirst?.({ where: { id: entry.id, organizationId } }).catch(() => null);
+      if (!l) return null;
+      return {
+        source: l.source ?? null,
+        createdDaysAgo: MessagingService.daysSince(l.createdAt),
+        hasEmail: !!l.email, hasPhone: !!l.phone,
+        customFields: l.customFields && typeof l.customFields === "object" ? l.customFields : null,
+        stage: l.stage ?? null,
+        tags: Array.isArray(l.tags) ? l.tags : [],
+        valueMinor: l.valueMinor === null || l.valueMinor === undefined ? null : Number(l.valueMinor),
+        engagementScore: engagementMap ? (engagementMap.get(`lead:${l.id}`)?.score ?? 0) : null,
+        predictiveSegments: engagementMap ? (engagementMap.get(`lead:${l.id}`)?.segments ?? []) : [],
+      };
+    }
+    if (entry.type !== "customer") return null;
+    const c = await (this.prisma as any).customer?.findFirst?.({ where: { id: entry.id, organizationId } }).catch(() => null);
+    if (!c) return null;
+    const needsAggregates = def.conditions.some((cond) => ["orders_count", "total_spent_minor", "last_order_days_ago"].includes(cond.field));
+    const needsRfm = def.conditions.some((cond) => cond.field === "rfm_segment");
+    let agg: { frequency: number; monetary: bigint; last: number } | undefined;
+    let segment: string | null = null;
+    if (needsAggregates || needsRfm) {
+      const aggregates = await computeOrderAggregates(this.prisma as any, organizationId).catch(() => null);
+      agg = aggregates?.get(entry.id);
+      if (needsRfm) {
+        const rows = await computeRfm(this.prisma as any, organizationId).catch(() => []);
+        segment = new Map((rows ?? []).map((r: any) => [r.customerId, r.segment])).get(entry.id) ?? null;
+      }
+    }
+    const now = Date.now();
+    return {
+      source: c.source ?? null,
+      createdDaysAgo: MessagingService.daysSince(c.createdAt),
+      hasEmail: !!c.email, hasPhone: !!c.phone,
+      customFields: c.customFields && typeof c.customFields === "object" ? c.customFields : null,
+      ordersCount: agg?.frequency ?? 0,
+      totalSpentMinor: agg ? Number(agg.monetary) : 0,
+      lastOrderDaysAgo: agg ? Math.max(0, Math.floor((now - agg.last) / 86400000)) : null,
+      rfmSegment: segment,
+      address: c.address && typeof c.address === "object" && !Array.isArray(c.address) ? c.address : null,
+      engagementScore: engagementMap ? (engagementMap.get(`customer:${c.id}`)?.score ?? 0) : null,
+      predictiveSegments: engagementMap ? (engagementMap.get(`customer:${c.id}`)?.segments ?? []) : [],
+    };
+  }
+
+  /** MX8 — resolve one segment block's definition: its own
+   * inline definition, or the CURRENT definition of the saved
+   * audience it references (the MS3 rule — a draft broadcast
+   * reads the saved audience at use time; a missing/deleted one
+   * matches NOBODY, never everybody). */
+  private async segmentDefinitionFor(organizationId: string, block: SegmentBlockConfig): Promise<AudienceDefinition | null> {
+    if (block.definition) return block.definition;
+    if (!block.savedAudienceId) return null;
+    const row = await (this.prisma as any).messagingSavedAudience?.findFirst?.({
+      where: { id: block.savedAudienceId, organizationId },
+    }).catch(() => null);
+    if (!row?.definition) return null;
+    try { return this.assertValidDefinition(row.definition); } catch { return null; }
+  }
+
+  /**
+   * MX8 — the recommendation block for ONE recipient, from real
+   * data only (see personalization.ts for the rule): the
+   * recipient's most recent purchased category → in-stock ACTIVE
+   * catalog products of that category they have not bought;
+   * failing that, the category of products they VIEWED as an
+   * identified visitor (Visitor matched by their own email or
+   * phone — the MX5 honesty rule: an unidentified visitor has
+   * no resolvable recipient, and an unmatched recipient has no
+   * browsing signal). No signal ⇒ the org's fallback text or
+   * nothing. csv recipients have no identity record and are
+   * never recommended to. Every read is defensive: a failure
+   * degrades to "no signal", never to an invented product.
+   */
+  private async recommendationForRecipient(
+    organizationId: string, entry: SnapshotEntry, cfg: NonNullable<PersonalizationConfig["recommendations"]>,
+  ): Promise<{ text: string; html: string; signal: string; productIds: string[] }> {
+    const none = { text: "", html: "", signal: "none", productIds: [] as string[] };
+    if (entry.type !== "customer" && entry.type !== "lead") return none;
+    try {
+      const productTable = (this.prisma as any).product;
+      if (!productTable?.findMany) return none;
+      // Purchased catalog products, most recent order first.
+      const purchased: { productId: string; category: string | null }[] = [];
+      const purchasedIds = new Set<string>();
+      if (entry.type === "customer" && entry.id) {
+        const orders: any[] = await (this.prisma as any).order.findMany({
+          where: { organizationId, customerId: entry.id, status: { not: "cancelled" } },
+          orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }], take: 20, select: { id: true },
+        }).catch(() => []);
+        if (orders?.length) {
+          const items: any[] = await (this.prisma as any).orderItem.findMany({
+            where: { orderId: { in: orders.map((o: any) => o.id) } }, select: { orderId: true, productId: true },
+          }).catch(() => []);
+          const byOrder = new Map<string, any[]>();
+          for (const it of items ?? []) {
+            if (!it.productId) continue;
+            const arr = byOrder.get(it.orderId) ?? [];
+            arr.push(it);
+            byOrder.set(it.orderId, arr);
+          }
+          const orderedIds: string[] = [];
+          for (const o of orders) {
+            for (const it of byOrder.get(o.id) ?? []) {
+              if (!purchasedIds.has(it.productId)) { purchasedIds.add(it.productId); orderedIds.push(it.productId); }
+            }
+          }
+          if (orderedIds.length) {
+            const rows: any[] = await productTable.findMany({ where: { organizationId, id: { in: orderedIds } } }).catch(() => []);
+            const byId = new Map((rows ?? []).map((p: any) => [p.id, p]));
+            for (const pid of orderedIds) {
+              const p = byId.get(pid);
+              if (p) purchased.push({ productId: pid, category: p.category ?? null });
+            }
+          }
+        }
+      }
+      // Browsing signal: identified visitor (email/phone match)
+      // → their product_view events, most recent first.
+      const browsedCategories: (string | null)[] = [];
+      const visitorTable = (this.prisma as any).visitor;
+      const eventTable = (this.prisma as any).trackingEvent;
+      if (visitorTable?.findMany && eventTable?.findMany && (entry.email || entry.phone)) {
+        const or: Record<string, unknown>[] = [];
+        if (entry.email) or.push({ email: entry.email });
+        if (entry.phone) or.push({ phone: entry.phone });
+        const visitors: any[] = await visitorTable.findMany({ where: { organizationId, OR: or }, select: { id: true } }).catch(() => []);
+        const visitorIds = (visitors ?? []).map((v: any) => v.id).filter(Boolean);
+        if (visitorIds.length) {
+          const events: any[] = await eventTable.findMany({
+            where: { organizationId, visitorId: { in: visitorIds }, type: "product_view" },
+            orderBy: { occurredAt: "desc" }, take: 100,
+          }).catch(() => []);
+          const viewedIds: string[] = [];
+          const seenViewed = new Set<string>();
+          for (const e of events ?? []) {
+            const pid = e?.properties && typeof e.properties === "object" ? (e.properties as any).productId : null;
+            if (pid != null && !seenViewed.has(String(pid))) { seenViewed.add(String(pid)); viewedIds.push(String(pid)); }
+          }
+          if (viewedIds.length) {
+            const rows: any[] = await productTable.findMany({ where: { organizationId, id: { in: viewedIds } } }).catch(() => []);
+            const byId = new Map((rows ?? []).map((p: any) => [p.id, p]));
+            for (const pid of viewedIds) {
+              const p = byId.get(pid);
+              if (p) browsedCategories.push(p.category ?? null);
+            }
+          }
+        }
+      }
+      // The org's real catalog: ACTIVE, in stock (a null
+      // stockQuantity is untracked inventory — the product is
+      // sellable, as elsewhere in this codebase), newest first.
+      const catalogRows: any[] = await productTable.findMany({
+        where: { organizationId, status: "ACTIVE" }, orderBy: { createdAt: "desc" }, take: 200,
+      }).catch(() => []);
+      const catalog = (catalogRows ?? [])
+        .filter((p: any) => p.stockQuantity === null || p.stockQuantity === undefined || Number(p.stockQuantity) > 0)
+        .map((p: any) => ({
+          id: p.id, name: p.name, priceMinor: p.priceMinor, currency: p.currency ?? "BDT",
+          url: p.slug ? `${webBaseUrl()}/checkout/${p.slug}` : null, category: p.category ?? null,
+        }));
+      const result = pickRecommendations({ purchased, browsedCategories, catalog, limit: cfg.limit });
+      const rendered = renderRecommendationBlock(result, cfg);
+      return { text: rendered.text, html: rendered.html, signal: result.signal, productIds: result.products.map((p) => p.id) };
+    } catch {
+      return none;
+    }
+  }
+
+  /**
+   * MX8 — compute ONE recipient's personalized content for a
+   * broadcast send (broadcast engines only — workflow sends
+   * never come here, so the MS5/MS7 pins hold structurally).
+   * `existing` is the recipient's persisted MX8 state (recipient
+   * row / snapshot entry): anything already computed there —
+   * above all an issued coupon code — is REUSED verbatim, so a
+   * resume or retry-failed can never issue a second coupon or
+   * change the dynamic content mid-broadcast. The caller
+   * persists a changed state BEFORE the provider call.
+   */
+  private async personalizeForRecipient(
+    organizationId: string, broadcast: any, config: PersonalizationConfig,
+    entry: SnapshotEntry, existing: Record<string, unknown> | null,
+  ): Promise<{ body: string; htmlBody: string | null; vars: Record<string, unknown>; state: Record<string, unknown>; stateChanged: boolean }> {
+    const state: Record<string, unknown> = { ...(existing ?? {}) };
+    let stateChanged = false;
+    let vars: Record<string, unknown> = entry.vars ?? {};
+
+    // Unique coupon — issued at send time, once per recipient.
+    let couponCode: string | null = typeof state.couponCode === "string" ? state.couponCode : null;
+    if (config.uniqueCoupon) {
+      if (!couponCode) {
+        const recipientKey = recipientDedupeKey({ type: entry.type, id: entry.id });
+        const issued = await this.issueUniqueCoupon(organizationId, broadcast.id, recipientKey, config.uniqueCoupon);
+        if ("code" in issued) {
+          couponCode = issued.code;
+          state.couponCode = issued.code;
+          state.couponDiscountId = issued.discountId;
+          delete state.couponError;
+        } else {
+          // Recorded per recipient; the variable renders empty
+          // and NO shared/fake code is substituted.
+          state.couponError = issued.error;
+        }
+        stateChanged = true;
+      }
+      vars = { ...vars, [UNIQUE_COUPON_VARIABLE]: couponCode ?? "" };
+    }
+
+    // Recommendation block — computed once, then reused from
+    // state (rendered bytes are stored, so retries are stable
+    // even if the catalog moves in between).
+    let recommendation: { text: string; html: string } | null = null;
+    if (config.recommendations?.enabled) {
+      if (typeof state.recommendationSignal === "string") {
+        recommendation = {
+          text: typeof state.recommendationText === "string" ? state.recommendationText : "",
+          html: typeof state.recommendationHtml === "string" ? state.recommendationHtml : "",
+        };
+      } else {
+        const rec = await this.recommendationForRecipient(organizationId, entry, config.recommendations);
+        state.recommendationSignal = rec.signal;
+        state.recommendationProductIds = rec.productIds;
+        state.recommendationText = rec.text;
+        state.recommendationHtml = rec.html;
+        stateChanged = true;
+        recommendation = { text: rec.text, html: rec.html };
+      }
+    }
+
+    // Segment-conditional blocks — membership via the MS3
+    // evaluator over this recipient's real facts, computed once.
+    let memberBlocks: SegmentBlockConfig[] = [];
+    if (config.segmentBlocks?.length) {
+      let matched: number[];
+      if (Array.isArray(state.segmentBlocksMatched)) {
+        matched = (state.segmentBlocksMatched as unknown[]).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n < config.segmentBlocks!.length);
+      } else {
+        matched = [];
+        for (let i = 0; i < config.segmentBlocks.length; i++) {
+          const block = config.segmentBlocks[i];
+          const def = await this.segmentDefinitionFor(organizationId, block).catch(() => null);
+          if (!def) continue;
+          const facts = await this.audienceFactsForRecipient(organizationId, entry, def).catch(() => null);
+          if (facts && matchesAudienceDefinition(def, facts)) matched.push(i);
+        }
+        state.segmentBlocksMatched = matched;
+        stateChanged = true;
+      }
+      memberBlocks = matched.map((i) => config.segmentBlocks![i]);
+    }
+
+    const content = applyDynamicBlocks({
+      body: broadcast.body, htmlBody: broadcast.htmlBody ?? null, memberBlocks, recommendation,
+    });
+
+    // The rendered message must CARRY the recipient's code: if
+    // the org did not reference {{uniqueCouponCode}} anywhere,
+    // the standard coupon line (MS5 snippet format) is appended.
+    if (couponCode && config.uniqueCoupon) {
+      const referenced = [broadcast.body, broadcast.htmlBody, broadcast.subject]
+        .some((part) => typeof part === "string" && new RegExp(`\\{\\{\\s*${UNIQUE_COUPON_VARIABLE}\\s*\\}\\}`).test(part));
+      if (!referenced) {
+        const label = discountLabel({ code: couponCode, kind: config.uniqueCoupon.kind, value: config.uniqueCoupon.value });
+        const snippet = { code: couponCode, label: label || null };
+        content.body = content.body ? `${content.body}\n\n${couponSnippetText(snippet)}` : couponSnippetText(snippet);
+        if (content.htmlBody !== null) content.htmlBody = `${content.htmlBody}\n${couponSnippetHtml(snippet)}`;
+      }
+    }
+
+    return { body: content.body, htmlBody: content.htmlBody, vars, state, stateChanged };
+  }
+
+  /** MX8 — persist one recipient row's personalization state
+   * (BEFORE the provider call — see the schema note). A persist
+   * failure must not lose the send: the StoreDiscount sourceRef
+   * claim still makes a later re-issuance return the same code. */
+  private async persistRecipientPersonalization(rowId: string, state: Record<string, unknown>): Promise<void> {
+    const t = this.recipientTable();
+    if (!t) return;
+    await t.update({ where: { id: rowId }, data: { personalization: state } }).catch(() => undefined);
+  }
+
+  // ---------- MX1: recipient table (BroadcastRecipient) ----------
+
+  /**
+   * MX1 — the recipient-table delegate, or null when it does not
+   * exist (pre-MX1 deployments and every pre-MX1 fake-prisma
+   * fixture). That null is the dual-path switch: without the
+   * table the engine keeps the MS1 snapshot behaviour
+   * byte-for-byte; with it, NEW broadcasts materialize into
+   * BroadcastRecipient rows and leave recipientSnapshot NULL.
+   * Broadcasts that already carry a snapshot always stay on the
+   * snapshot path, table or not (see processBroadcast).
+   */
+  private recipientTable(): any | null {
+    const t = (this.prisma as any).broadcastRecipient;
+    if (!t || typeof t.findMany !== "function" || typeof t.create !== "function") return null;
+    return t;
+  }
+
+  /** MX1 — does this broadcast have recipient rows? Defensive:
+   * any read failure reads as "no rows" (the snapshot path then
+   * decides, exactly as it did pre-MX1). */
+  private async hasRecipientRows(broadcastId: string): Promise<boolean> {
+    const t = this.recipientTable();
+    if (!t) return false;
+    try {
+      if (typeof t.count === "function") return (await t.count({ where: { broadcastId } })) > 0;
+      const row = await t.findFirst({ where: { broadcastId }, select: { id: true } });
+      return !!row;
+    } catch {
+      return false;
+    }
+  }
+
+  /** MX1 — walk a broadcast's recipient rows in sortIndex order,
+   * in pages of 500 (the chunk-read index). Used by the report
+   * helpers; the engine's hot loop reads its own pending pages. */
+  private async walkRecipientRows(broadcastId: string, onChunk: (rows: any[]) => Promise<void>): Promise<void> {
+    const t = this.recipientTable();
+    if (!t) return;
+    let last = -1;
+    for (;;) {
+      const rows: any[] = await t.findMany({
+        where: { broadcastId, sortIndex: { gt: last } },
+        orderBy: { sortIndex: "asc" }, take: 500,
+      }).catch(() => []);
+      const list = Array.isArray(rows) ? rows : [];
+      if (!list.length) break;
+      await onChunk(list);
+      last = list[list.length - 1].sortIndex;
+      if (list.length < 500) break;
+    }
+  }
+
+  /** MX1 — per-status counts DERIVED from the recipient rows.
+   * The broadcast's progress counters are only ever written from
+   * these counts, so they can never claim more than the rows
+   * (and therefore the deliveries) actually recorded. */
+  private async countRecipientsByStatus(broadcastId: string): Promise<{ total: number; sent: number; failed: number; skipped: number; pending: number }> {
+    const t = this.recipientTable();
+    const counts = { total: 0, sent: 0, failed: 0, skipped: 0, pending: 0 };
+    if (!t) return counts;
+    if (typeof t.count === "function") {
+      counts.sent = await t.count({ where: { broadcastId, status: "sent" } });
+      counts.failed = await t.count({ where: { broadcastId, status: "failed" } });
+      counts.skipped = await t.count({ where: { broadcastId, status: "skipped" } });
+      counts.pending = await t.count({ where: { broadcastId, status: "pending" } });
+      counts.total = counts.sent + counts.failed + counts.skipped + counts.pending;
+      return counts;
+    }
+    await this.walkRecipientRows(broadcastId, async (rows) => {
+      for (const r of rows) {
+        counts.total++;
+        if (r.status === "sent") counts.sent++;
+        else if (r.status === "failed") counts.failed++;
+        else if (r.status === "skipped") counts.skipped++;
+        else if (r.status === "pending") counts.pending++;
+      }
+    });
+    return counts;
+  }
+
+  /** MX1 — a recipient row as the SnapshotEntry the senders
+   * already speak (WhatsApp sender, sendToRecipient via the
+   * process loop). providerMessageId / error / address / vars are
+   * present only when the row carries them — the snapshot
+   * entry's own optional-field discipline. */
+  private static recipientRowToEntry(row: any): SnapshotEntry {
+    return {
+      type: row.recipientType, id: row.recipientId, name: row.name,
+      email: row.email ?? null, phone: row.phone ?? null,
+      status: row.status, attempts: row.attempts ?? 0,
+      ...(row.error ? { error: row.error } : {}),
+      ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
+      ...(row.address ? { address: row.address } : {}),
+      ...(row.vars ? { vars: row.vars } : {}),
+      ...(row.personalization ? { personalization: row.personalization } : {}),
+      // MX12: a push row's endpoint was stamped into `address`
+      // at prepare — it is the entry's pushEndpoint.
+      ...(row.pushSubscriptionId ? { pushSubscriptionId: row.pushSubscriptionId, pushEndpoint: row.address ?? null } : {}),
+      // MX13: a telegram row's chat id rides in its own column
+      // (and was stamped into `address` at prepare too).
+      ...(row.telegramChatId ? { telegramChatId: row.telegramChatId } : {}),
+    };
+  }
+
+  /** MX1 — persist ONE processed recipient row (its outcome was
+   * already recorded as a MessageDelivery by the send path; this
+   * row is the resume truth — once written non-pending it is
+   * never selected for sending again). */
+  private async persistRecipientOutcome(rowId: string, entry: SnapshotEntry): Promise<void> {
+    const t = this.recipientTable();
+    if (!t) return;
+    await t.update({
+      where: { id: rowId },
+      data: {
+        status: entry.status, attempts: entry.attempts,
+        address: entry.address ?? null,
+        providerMessageId: entry.providerMessageId ?? null,
+        error: entry.error ?? null,
+      },
+    });
+  }
+
+  /** MX1 — delete ALL recipient rows of a broadcast (the
+   * plan-cap cleanup: rows written before the cap was known are
+   * removed again, so a refused prepare leaves no partial
+   * recipient set behind). */
+  private async deleteRecipientRows(broadcastId: string): Promise<void> {
+    const t = this.recipientTable();
+    if (!t) return;
+    if (typeof t.deleteMany === "function") {
+      await t.deleteMany({ where: { broadcastId } });
+      return;
+    }
+    const ids: string[] = [];
+    await this.walkRecipientRows(broadcastId, async (rows) => { ids.push(...rows.map((r) => r.id)); });
+    for (const id of ids) await t.delete({ where: { id } });
+  }
+
+  /** MX1 — mark every pending recipient row skipped with a
+   * reason (cancel semantics), in pages. Attempts are untouched:
+   * a skipped-by-cancel recipient was never attempted. */
+  private async markPendingRecipientsSkipped(broadcastId: string, reason: string): Promise<void> {
+    const t = this.recipientTable();
+    if (!t) return;
+    if (typeof t.updateMany === "function") {
+      await t.updateMany({ where: { broadcastId, status: "pending" }, data: { status: "skipped", error: reason } });
+      return;
+    }
+    for (;;) {
+      const rows: any[] = await t.findMany({ where: { broadcastId, status: "pending" }, orderBy: { sortIndex: "asc" }, take: 500 });
+      const list = Array.isArray(rows) ? rows : [];
+      if (!list.length) break;
+      for (const r of list) await t.update({ where: { id: r.id }, data: { status: "skipped", error: reason } });
+      if (list.length < 500) break;
+    }
+  }
+
+  /** MX1 — reset ONLY the failed recipient rows back to pending
+   * (retry-failed). Attempts and the last error stay on the row
+   * until the next attempt's outcome overwrites them — the
+   * snapshot retry's discipline, on rows. */
+  private async resetFailedRecipients(broadcastId: string): Promise<void> {
+    const t = this.recipientTable();
+    if (!t) return;
+    if (typeof t.updateMany === "function") {
+      await t.updateMany({ where: { broadcastId, status: "failed" }, data: { status: "pending" } });
+      return;
+    }
+    for (;;) {
+      const rows: any[] = await t.findMany({ where: { broadcastId, status: "failed" }, orderBy: { sortIndex: "asc" }, take: 500 });
+      const list = Array.isArray(rows) ? rows : [];
+      if (!list.length) break;
+      for (const r of list) await t.update({ where: { id: r.id }, data: { status: "pending" } });
+      if (list.length < 500) break;
+    }
+  }
+
   // ---------- MS1: async send engine ----------
+
+  /**
+   * MX1 — prepare, recipient-table form. Same guards, same
+   * messages, same ONE shared resolver as the snapshot form —
+   * but the resolved set STREAMS through
+   * resolveBroadcastRecipientsInChunks and is written to
+   * BroadcastRecipient in chunks (createMany per chunk,
+   * BROADCAST_RECIPIENT_WRITE_CHUNK or the caller's smaller
+   * size): no recipient array is accumulated and no Json
+   * snapshot is stamped (recipientSnapshot stays NULL on new
+   * broadcasts — the documented MX1 choice).
+   * Order of the policy checks, adapted to streaming honestly:
+   * the kill-switch and the plan cap are read BEFORE any row is
+   * written; recipients stream in and dedupe by dedupeKey (the
+   * unique constraint is the backstop — an overlapping audience
+   * source can never produce a second row); the A/B hash split
+   * applies per recipient exactly as in the snapshot form. The
+   * cap is a POLICY limit on the total: when the streamed total
+   * passes it, the remaining recipients are only COUNTED (so
+   * the refusal names the true audience size), the rows written
+   * so far are deleted again, and the refusal is the snapshot
+   * form's exact message. An empty audience likewise refuses
+   * with the exact message, before the broadcast moves.
+   */
+  private async prepareBroadcastTable(organizationId: string, broadcast: any, opts?: { recipientChunkSize?: number }) {
+    const broadcastId: string = broadcast.id;
+    const t = this.recipientTable()!;
+    const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
+    const ks = await killSwitches(this.prisma as any);
+    if (ks.broadcastsPaused) {
+      throw new BadRequestException("Broadcasts are temporarily paused platform-wide by the platform team (incident mode). Try again later.");
+    }
+    const baselineCap = Number(process.env.BROADCAST_MAX_RECIPIENTS ?? 1000);
+    const { broadcastCap: max } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: 200, broadcastCap: baselineCap });
+
+    const writeChunkSize = Math.max(1, opts?.recipientChunkSize ?? BROADCAST_RECIPIENT_WRITE_CHUNK);
+    const seen = new Set<string>();
+    let nextSort = 0;
+    let total = 0;
+    let overCap = false;
+    // MX11: held-out recipients are counted (for the stamp +
+    // report) but never written as rows — resume reads the
+    // frozen rows, so the holdout can never be re-rolled.
+    let heldOutTotal = 0;
+
+    const resolution = await this.resolveBroadcastRecipientsInChunks(organizationId, {
+      channel: broadcast.channel, audienceType: broadcast.audienceType,
+      audienceStage: broadcast.audienceStage ?? undefined, audienceSegment: broadcast.audienceSegment ?? undefined,
+      excludePreviousRecipients: !!broadcast.excludePreviousRecipients,
+      excludePastDays: broadcast.excludePastDays ?? undefined,
+      excludeOptOut: broadcast.excludeOptOut ?? true,
+      audienceDefinition: broadcast.audienceDefinition ?? undefined,
+      audienceSavedId: broadcast.audienceSavedId ?? undefined,
+      audienceCsv: broadcast.audienceCsv ?? undefined,
+      topic: broadcast.topic ?? undefined,
+    }, writeChunkSize, async (chunk) => {
+      let kept = chunk;
+      // MX11: holdout FIRST (a bucket of the same hash), then
+      // the A/B split runs over the survivors — disjoint by
+      // construction, no double exclusion.
+      if (broadcast.holdoutPercent) {
+        const split = this.splitHoldout(kept, broadcast.holdoutPercent);
+        kept = split.kept;
+        heldOutTotal += split.heldOutCount;
+      }
+      if (broadcast.abGroupId && broadcast.abVariant) {
+        // Deterministic split, per recipient — the same hash as
+        // the snapshot form, so variants stay disjoint and cover
+        // the audience.
+        const want = broadcast.abVariant === "A" ? 0 : 1;
+        kept = kept.filter((r) => {
+          const key = `${r.type}:${r.id}`;
+          let h = 0; for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+          return h % 2 === want;
+        });
+      }
+      if (!kept.length) return;
+      if (overCap) {
+        // Counting only, for the honest refusal total.
+        for (const r of kept) {
+          const key = recipientDedupeKey(r);
+          if (!seen.has(key)) { seen.add(key); total++; }
+        }
+        return;
+      }
+      // MS5 vars per chunk (buildSnapshotVars pages its own
+      // lookups), built only for the recipients in this chunk.
+      const varsList = await this.buildSnapshotVars(organizationId, kept);
+      const data: any[] = [];
+      kept.forEach((r, i) => {
+        const key = recipientDedupeKey(r);
+        if (seen.has(key)) return;
+        seen.add(key);
+        data.push({
+          organizationId, broadcastId,
+          recipientType: r.type, recipientId: r.id ?? "", dedupeKey: key,
+          name: r.name, email: r.email ?? null, phone: r.phone ?? null,
+          // MX12: push rows carry their subscription id, and
+          // the endpoint is stamped into `address` at prepare
+          // (for push the endpoint IS the channel address — the
+          // preference-store identity used by every resolver
+          // stage). Non-push rows keep address null here,
+          // exactly as before (stamped at send time).
+          pushSubscriptionId: r.pushSubscriptionId ?? null,
+          // MX13: telegram rows carry their chat id, stamped
+          // into `address` at prepare for the same reason (for
+          // telegram the chat id IS the channel address).
+          // Non-telegram rows keep address from pushEndpoint,
+          // exactly as before.
+          telegramChatId: r.telegramChatId ?? null,
+          // MX14: for onsite the customer id IS the channel
+          // address (the preference-store identity), stamped
+          // into `address` at prepare like push/telegram.
+          address: broadcast.channel === "onsite" ? (r.id ?? null) : (r.telegramChatId ?? r.pushEndpoint ?? null),
+          vars: varsList[i], status: "pending", attempts: 0, sortIndex: nextSort++,
+        });
+      });
+      if (data.length) {
+        if (typeof t.createMany === "function") await t.createMany({ data, skipDuplicates: true });
+        else for (const d of data) await t.create({ data: d });
+        total += data.length;
+      }
+      if (total > max) overCap = true;
+    });
+
+    if (total === 0) {
+      const excluded = resolution.excludedPreviousCount + resolution.excludedSuppressedCount + resolution.excludedFrequencyCount + resolution.excludedNoOptInCount;
+      throw new BadRequestException(resolution.audienceTotal > 0 && excluded > 0
+        ? `Audience is empty after exclusions: ${resolution.audienceTotal} in the audience, ${excluded} excluded (previous recipients ${resolution.excludedPreviousCount}, opted out ${resolution.excludedSuppressedCount}, frequency cap ${resolution.excludedFrequencyCount}, no WhatsApp opt-in ${resolution.excludedNoOptInCount})${heldOutTotal > 0 ? `, ${heldOutTotal} held out (holdout ${broadcast.holdoutPercent}%)` : ""}.`
+        : heldOutTotal > 0
+          ? `Audience is empty after the holdout: ${heldOutTotal} recipients held out (holdout ${broadcast.holdoutPercent}%). Lower the holdout percentage.`
+          : "Audience is empty: no recipients with a usable address for this channel");
+    }
+    if (total > max) {
+      await this.deleteRecipientRows(broadcastId);
+      throw new BadRequestException(`Audience has ${total} recipients, over the per-send cap of ${max}. Narrow the audience (e.g. a lead stage) instead of silently truncating.`);
+    }
+    const updated = await (this.prisma as any).broadcast.update({
+      where: { id: broadcastId },
+      data: {
+        status: "sending", recipientSnapshot: null, totalRecipients: total, sentCount: 0, failedCount: 0, skippedCount: 0,
+        ...(broadcast.holdoutPercent ? { holdoutCount: heldOutTotal } : {}),
+      },
+    });
+    return updated;
+  }
 
   /**
    * MS1 — prepare: everything the pre-MS1 sendBroadcast checked at
@@ -2083,7 +5940,7 @@ export class MessagingService {
    * "sending". A broadcast that already has a snapshot is never
    * re-prepared (its recipient set is frozen).
    */
-  async prepareBroadcast(organizationId: string, broadcastId: string, opts?: { fromSweep?: boolean }) {
+  async prepareBroadcast(organizationId: string, broadcastId: string, opts?: { fromSweep?: boolean; recipientChunkSize?: number }) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     // MS10: archived broadcasts never prepare — for the sweep
     // this surfaces as a per-broadcast error in its result,
@@ -2091,6 +5948,11 @@ export class MessagingService {
     if ((broadcast as any).archivedAt) {
       throw new BadRequestException("This broadcast is archived — unarchive it to send.");
     }
+    // MX15: the approval gate also lives here — prepare is the
+    // choke point the sweep, manual sends and retries all share,
+    // so a pending/rejected broadcast can never be prepared (and
+    // therefore never sent) by any path.
+    await this.assertApprovalAllowsSend(organizationId, broadcast);
     if (broadcast.status === "cancelled") {
       throw new BadRequestException("This broadcast was cancelled and can never be sent.");
     }
@@ -2112,6 +5974,17 @@ export class MessagingService {
     if (!opts?.fromSweep && broadcast.status === "scheduled" && broadcast.scheduledAt && new Date(broadcast.scheduledAt).getTime() > Date.now()) {
       throw new BadRequestException(`This broadcast is scheduled for ${new Date(broadcast.scheduledAt).toISOString()}. Cancel the schedule to send it now.`);
     }
+    // MX1 dual path: with the recipient table present, a
+    // broadcast that already has recipient rows was already
+    // prepared (its set is frozen, like a snapshot); otherwise a
+    // NEW broadcast prepares into the table. Without the table
+    // (pre-MX1) everything below is the original snapshot form.
+    if (this.recipientTable()) {
+      if (await this.hasRecipientRows(broadcastId)) {
+        throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+      }
+      return this.prepareBroadcastTable(organizationId, broadcast, opts);
+    }
     const resolved = await this.resolveBroadcastRecipients(organizationId, {
       channel: broadcast.channel, audienceType: broadcast.audienceType,
       audienceStage: broadcast.audienceStage ?? undefined, audienceSegment: broadcast.audienceSegment ?? undefined,
@@ -2121,8 +5994,17 @@ export class MessagingService {
       audienceDefinition: broadcast.audienceDefinition ?? undefined,
       audienceSavedId: broadcast.audienceSavedId ?? undefined,
       audienceCsv: broadcast.audienceCsv ?? undefined,
+      topic: (broadcast as any).topic ?? undefined,
     });
     let recipients = resolved.recipients;
+    // MX11: holdout FIRST (same hash bucket discipline as the
+    // recipient-table path), then the A/B split over survivors.
+    let heldOutCount = 0;
+    if ((broadcast as any).holdoutPercent) {
+      const split = this.splitHoldout(recipients, (broadcast as any).holdoutPercent);
+      recipients = split.kept;
+      heldOutCount = split.heldOutCount;
+    }
     if (broadcast.abGroupId && broadcast.abVariant) {
       // Deterministic split: each recipient belongs to exactly one
       // variant across the whole A/B group.
@@ -2143,8 +6025,10 @@ export class MessagingService {
     if (recipients.length === 0) {
       const excluded = resolved.excludedPreviousCount + resolved.excludedSuppressedCount + resolved.excludedFrequencyCount + resolved.excludedNoOptInCount;
       throw new BadRequestException(resolved.audienceTotal > 0 && excluded > 0
-        ? `Audience is empty after exclusions: ${resolved.audienceTotal} in the audience, ${excluded} excluded (previous recipients ${resolved.excludedPreviousCount}, opted out ${resolved.excludedSuppressedCount}, frequency cap ${resolved.excludedFrequencyCount}, no WhatsApp opt-in ${resolved.excludedNoOptInCount}).`
-        : "Audience is empty: no recipients with a usable address for this channel");
+        ? `Audience is empty after exclusions: ${resolved.audienceTotal} in the audience, ${excluded} excluded (previous recipients ${resolved.excludedPreviousCount}, opted out ${resolved.excludedSuppressedCount}, frequency cap ${resolved.excludedFrequencyCount}, no WhatsApp opt-in ${resolved.excludedNoOptInCount})${heldOutCount > 0 ? `, ${heldOutCount} held out (holdout ${(broadcast as any).holdoutPercent}%)` : ""}.`
+        : heldOutCount > 0
+          ? `Audience is empty after the holdout: ${heldOutCount} recipients held out (holdout ${(broadcast as any).holdoutPercent}%). Lower the holdout percentage.`
+          : "Audience is empty: no recipients with a usable address for this channel");
     }
     if (recipients.length > max) {
       throw new BadRequestException(`Audience has ${recipients.length} recipients, over the per-send cap of ${max}. Narrow the audience (e.g. a lead stage) instead of silently truncating.`);
@@ -2152,7 +6036,38 @@ export class MessagingService {
     // MS5: real personalization vars per recipient, built AFTER
     // resolution + the A/B split (only the recipients who will
     // actually be sent to get vars).
-    const varsList = await this.buildSnapshotVars(organizationId, recipients);
+    let varsList = await this.buildSnapshotVars(organizationId, recipients);
+    // SA-B20 (G2): the personalisation pass — ONLY when the
+    // broadcast carries an enabled config (persisted on the row
+    // at create/edit, so this later prepare — manual, scheduled
+    // or sweep — applies exactly what staff previewed). It runs
+    // on the FINAL recipient set: everyone the resolver
+    // suppressed is already gone, so no personalisation (and no
+    // LLM call) is ever spent on them. A refusal here (Tier 2
+    // cap / no real LLM / daily cap / missing {{aiHook}})
+    // refuses the prepare — the row stays untouched, nothing
+    // sends half-personalised.
+    let personalTiers: PersonalTier[] | null = null;
+    const pConfig = normalizePersonalizationConfig((broadcast as any).personalization, broadcast.channel);
+    if (pConfig?.enabled) {
+      const outcome = await this.personalization().personaliseRecipients({
+        organizationId, channel: broadcast.channel,
+        body: broadcast.body, subject: broadcast.subject ?? null,
+        recipients, baseVarsList: varsList, config: pConfig,
+        actorId: broadcast.createdById ?? "system",
+      });
+      varsList = outcome.varsList;
+      personalTiers = outcome.tiers;
+      await this.audit.log({
+        organizationId, userId: broadcast.createdById ?? "system",
+        action: "broadcast.personalised", entityType: "Broadcast", entityId: broadcastId,
+        metadata: {
+          tier1Memory: outcome.counts.memory, tier2Ai: outcome.counts.ai, base: outcome.counts.base,
+          tier2Eligible: outcome.counts.tier2Eligible, tier2Fallbacks: outcome.counts.tier2Fallbacks,
+          tier2FallbackReasons: outcome.tier2FallbackReasons, llmCalls: outcome.llmCallsMade,
+        },
+      }).catch(() => undefined);
+    }
     const snapshot: SnapshotEntry[] = recipients.map((r, i) => ({
       // The resolver never yields a null id (entity rows have
       // ids; a csv recipient's id is its normalized address).
@@ -2160,12 +6075,389 @@ export class MessagingService {
       email: r.email ?? null, phone: r.phone ?? null,
       status: "pending", attempts: 0,
       vars: varsList[i],
+      // MX12: push identity rides in the snapshot Json, so the
+      // legacy engine sends push identically to the table one.
+      ...(r.pushSubscriptionId ? { pushSubscriptionId: r.pushSubscriptionId, pushEndpoint: r.pushEndpoint ?? undefined } : {}),
+      // MX13: telegram identity (the chat id) rides in the
+      // snapshot Json the same way, so the legacy engine sends
+      // telegram identically to the table one.
+      ...(r.telegramChatId ? { telegramChatId: r.telegramChatId } : {}),
+      ...(personalTiers ? { personalTier: personalTiers[i] } : {}),
     }));
     const updated = await (this.prisma as any).broadcast.update({
       where: { id: broadcastId },
-      data: { status: "sending", recipientSnapshot: snapshot, totalRecipients: snapshot.length, sentCount: 0, failedCount: 0 },
+      data: {
+        status: "sending", recipientSnapshot: snapshot, totalRecipients: snapshot.length, sentCount: 0, failedCount: 0,
+        ...((broadcast as any).holdoutPercent ? { holdoutCount: heldOutCount } : {}),
+      },
     });
     return updated;
+  }
+
+  /** MX2 — build the per-run cascade state: which cascade
+   * channels are usable at all (content check, recorded once
+   * with the honest reason), and the org-entered rates for
+   * cheapest-first (SMS rate is per PART, so it is scaled by
+   * the cascade SMS body's segment count — the only honest
+   * per-message figure available). */
+  private async buildCascadeRun(organizationId: string, broadcast: any, config: CascadeConfig): Promise<{
+    breaker: SmsCircuitBreaker;
+    skippedChannels: { channel: string; reason: string }[];
+    ratesMissing: Set<CascadeChannel>;
+    rates: Partial<Record<CascadeChannel, number | null>>;
+    engagementCache: Map<string, ReturnType<typeof engagementStats>>;
+    waSenders: Map<string, { send: ((entry: SnapshotEntry) => Promise<{ status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string }>) | null; buildError: string | null }>;
+  }> {
+    const skippedChannels: { channel: string; reason: string }[] = [];
+    for (const ch of config.channels) {
+      if (ch === "email") {
+        const ok = broadcast.channel === "email"
+          ? Boolean(broadcast.subject && broadcast.body)
+          : Boolean(config.emailSubject && config.emailBody);
+        if (!ok) skippedChannels.push({ channel: "email", reason: "No email content configured for the cascade (the broadcast has no email subject/body for this channel) — email attempts skipped" });
+      } else if (ch === "sms") {
+        const ok = broadcast.channel === "sms" ? Boolean(broadcast.body) : Boolean(config.smsBody);
+        if (!ok) skippedChannels.push({ channel: "sms", reason: "No SMS content configured for the cascade (smsBody missing) — SMS attempts skipped" });
+      } else if (ch === "whatsapp") {
+        const tplId = broadcast.channel === "whatsapp" ? broadcast.whatsappTemplateId : config.whatsappTemplateId;
+        if (!tplId) skippedChannels.push({ channel: "whatsapp", reason: "No WhatsApp template configured for the cascade (whatsappTemplateId missing) — WhatsApp attempts require an approved template, so the channel is skipped" });
+      }
+    }
+    const senderRow = await this.getSenderConfigRow(organizationId);
+    const smsText = broadcast.channel === "sms" ? String(broadcast.body ?? "") : (config.smsBody ?? "");
+    const smsParts = smsText ? smsSegments(smsText).parts : 1;
+    const rates: Partial<Record<CascadeChannel, number | null>> = {
+      email: senderRow?.emailCostPerMessageMinor ?? null,
+      sms: senderRow?.smsCostPerPartMinor == null ? null : Number(senderRow.smsCostPerPartMinor) * smsParts,
+      whatsapp: senderRow?.whatsappCostPerMessageMinor ?? null,
+    };
+    return {
+      breaker: new SmsCircuitBreaker(),
+      skippedChannels,
+      ratesMissing: new Set<CascadeChannel>(),
+      rates,
+      engagementCache: new Map(),
+      waSenders: new Map(),
+    };
+  }
+
+  /** MX2 — one recipient's historical engagement, gathered
+   * from their REAL MessageDelivery rows + MessageLinkClick
+   * rows (this org only), reduced by the pure engagementStats.
+   * csv/test recipients have no entity id behind their
+   * deliveries (recipientId is null there), so they honestly
+   * have no gatherable history — org order applies. Cached
+   * per run. */
+  private async cascadeEngagement(organizationId: string, run: { engagementCache: Map<string, ReturnType<typeof engagementStats>> }, recipient: { type: string; id: string | null }): Promise<ReturnType<typeof engagementStats>> {
+    if (!recipient.id || recipient.type === "csv" || recipient.type === "test") return [];
+    const key = `${recipient.type}:${recipient.id}`;
+    const cached = run.engagementCache.get(key);
+    if (cached) return cached;
+    const deliveries: any[] = await (this.prisma as any).messageDelivery.findMany({
+      where: { organizationId, recipientType: recipient.type, recipientId: recipient.id, status: "sent" },
+      take: 200,
+    }).catch(() => []);
+    const clicks: any[] = await (this.prisma as any).messageLinkClick.findMany({
+      where: { organizationId, recipientKey: key }, take: 200,
+    }).catch(() => []);
+    const stats = engagementStats(
+      Array.isArray(deliveries) ? deliveries : [],
+      new Set((Array.isArray(clicks) ? clicks : []).map((c: any) => String(c.broadcastId))),
+    );
+    run.engagementCache.set(key, stats);
+    return stats;
+  }
+
+  /** MX2 — ONE cascade attempt on ONE channel for ONE
+   * recipient. Every attempt records its own MessageDelivery
+   * row (via the channel's existing send path, or directly for
+   * the missing-address skip), linked by recipientRowId +
+   * attemptIndex + cascadeGroupId (= the recipient row id). */
+  private async sendCascadeAttempt(organizationId: string, broadcast: any, config: CascadeConfig, run: any,
+    channel: CascadeChannel, entry: SnapshotEntry, recipientRowId: string, attemptIndex: number,
+  ): Promise<{ status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string }> {
+    const broadcastId: string = broadcast.id;
+    const recipient: Recipient = { type: entry.type, id: entry.id, name: entry.name, email: entry.email, phone: entry.phone };
+    const link = { recipientRowId, attemptIndex, cascadeGroupId: recipientRowId };
+    const hasAddress = channel === "email" ? Boolean(entry.email) : Boolean(entry.phone);
+    if (!hasAddress) {
+      const error = channel === "email"
+        ? "Recipient has no email address — email attempt skipped"
+        : "Recipient has no phone number — " + channel + " attempt skipped";
+      await this.recordDelivery(organizationId, { channel, recipient, broadcastId, ...link }, "", "skipped", undefined, error);
+      return { status: "skipped", error, address: "" };
+    }
+    if (channel === "whatsapp") {
+      const tplId = broadcast.channel === "whatsapp" ? broadcast.whatsappTemplateId : config.whatsappTemplateId;
+      let slot = run.waSenders.get(String(tplId));
+      if (!slot) {
+        slot = { send: null, buildError: null };
+        try {
+          slot.send = await this.createWhatsAppSender(
+            organizationId, { ...broadcast, channel: "whatsapp", whatsappTemplateId: tplId }, broadcastId,
+            broadcast.createdById ?? null, () => link,
+          );
+        } catch (e) { slot.buildError = e instanceof Error ? e.message : "WhatsApp sender unavailable"; }
+        run.waSenders.set(String(tplId), slot);
+      }
+      if (slot.buildError) return this.failWhatsAppEntry(organizationId, entry, broadcastId, slot.buildError, link);
+      return slot.send!(entry);
+    }
+    const isPrimary = broadcast.channel === channel;
+    const subject = channel === "email" ? (isPrimary ? broadcast.subject : config.emailSubject) : undefined;
+    const body = channel === "email"
+      ? (isPrimary ? broadcast.body : config.emailBody ?? "")
+      : (isPrimary ? broadcast.body : config.smsBody ?? "");
+    return this.sendToRecipient(organizationId, {
+      channel, recipient, subject, body,
+      htmlBody: channel === "email" && isPrimary ? (broadcast.htmlBody ?? null) : null,
+      vars: entry.vars ?? {}, broadcastId, ...link,
+      smsBreaker: run.breaker,
+    });
+  }
+
+  /** MX2 — run the cascade for ONE recipient: decide the
+   * attempt order (org / cheapest / smart-routing), then try
+   * channels until one confirms sent. A per-channel opt-out
+   * "skipped" (checked inside the channel send path, as
+   * always) does NOT stop the cascade — the next channel may
+   * legitimately reach this recipient; the resolve-time
+   * suppression stages already removed fully-suppressed
+   * recipients at prepare, so they never reach this runner.
+   * Final status: sent if ANY channel confirmed; failed if at
+   * least one real attempt failed and none succeeded; skipped
+   * when every attempt was a skip. */
+  private async runCascadeForRecipient(organizationId: string, broadcast: any, config: CascadeConfig, run: any,
+    entry: SnapshotEntry, recipientRowId: string,
+  ): Promise<{ status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string; attemptsMade: number }> {
+    const engagement = config.smartRouting
+      ? await this.cascadeEngagement(organizationId, run, { type: entry.type, id: entry.id })
+      : undefined;
+    const { order, ratesMissing } = resolveAttemptOrder({ config, ratesMinorPerMessage: run.rates, engagement });
+    for (const ch of ratesMissing) run.ratesMissing.add(ch);
+    const skipped = new Set(run.skippedChannels.map((x: any) => x.channel));
+    let attemptsMade = 0;
+    let last: { status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string } | null = null;
+    let anyFailed = false;
+    for (const channel of order) {
+      if (skipped.has(channel)) continue;
+      const result = await this.sendCascadeAttempt(organizationId, broadcast, config, run, channel, entry, recipientRowId, attemptsMade);
+      attemptsMade++;
+      last = result;
+      if (result.status === "sent") return { ...result, attemptsMade };
+      if (result.status === "failed") anyFailed = true;
+    }
+    return {
+      status: anyFailed ? "failed" : "skipped",
+      error: last?.error, address: last?.address ?? "", attemptsMade,
+    };
+  }
+
+  /**
+   * MX1 — process, recipient-table form. Pending rows are read
+   * in sortIndex order in chunks of BROADCAST_CHUNK_SIZE (or the
+   * caller's chunkSize); each outcome is persisted to its row
+   * immediately, and the broadcast's counters are re-derived
+   * from the rows after every chunk. Between chunks the
+   * broadcast row is re-read: "paused" stops leaving the rest
+   * pending; "cancelled" marks the rest skipped ("cancelled").
+   * Resume IS this same loop: it selects only pending rows, so
+   * a recipient whose row already records sent/failed/skipped
+   * (and whose delivery is recorded) is never sent again.
+   * Final-status rule is the MS1 rule, computed from row counts.
+   */
+  private async processBroadcastTable(organizationId: string, broadcastId: string, initial: any, opts?: { maxEntries?: number; chunkSize?: number }): Promise<{
+    status: string; processed: number; sent: number; failed: number; skipped: number; pending: number; finalized: boolean; stopped?: "paused" | "cancelled";
+  }> {
+    const t = this.recipientTable()!;
+    const chunkSize = Math.max(1, opts?.chunkSize ?? BROADCAST_CHUNK_SIZE);
+    const maxEntries = opts?.maxEntries ?? Number.POSITIVE_INFINITY;
+    const delayMs = Number(process.env.BROADCAST_CHUNK_DELAY_MS ?? 0);
+    let broadcast = initial;
+    let processed = 0;
+    let stopped: "paused" | "cancelled" | undefined;
+    // WhatsApp sender built ONCE for the run, as in the snapshot
+    // form; a build failure becomes an honest per-row failure.
+    let waSend: ((entry: SnapshotEntry) => Promise<{ status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string }>) | null = null;
+    let waBuildError: string | null = null;
+    if (broadcast.channel === "whatsapp") {
+      try { waSend = await this.createWhatsAppSender(organizationId, broadcast, broadcastId, broadcast.createdById ?? null); }
+      catch (e) { waBuildError = e instanceof Error ? e.message : "WhatsApp sender unavailable"; }
+    }
+    // MX16: A/B auto-winner content state for THIS run.
+    // `abContent` is the row whose content the sends below use:
+    // this broadcast itself until a winner is decided; after a
+    // decision, the WINNING variant's row — so the losing
+    // variant's PENDING recipients receive the winning content
+    // (their delivery rows still record this broadcastId; the
+    // decision + its inputs are recorded on both rows).
+    // waBuiltForId tracks which row the WhatsApp sender above
+    // was built from, so a mid-flight winner switch rebuilds it.
+    let abContent: any = broadcast;
+    let waBuiltForId: string = broadcast.id;
+    // MX2: cascade state for THIS run (null = single-channel
+    // broadcast — the loop below is then byte-identical to
+    // MX1). The cascade runner builds its own per-template
+    // WhatsApp senders, so a cascade broadcast never uses the
+    // waSend above.
+    const cascade = readCascadeConfig((broadcast as any).cascadeConfig, String(broadcast.channel));
+    const cascadeRun = cascade ? await this.buildCascadeRun(organizationId, broadcast, cascade) : null;
+    // MX8: per-recipient personalization config for THIS run
+    // (null = pre-MX8 broadcast — the loop is then byte-identical
+    // to MX1/MX2). Applied on the plain email/sms path only: a
+    // cascade run owns its per-channel content, and WhatsApp
+    // sends Meta templates — neither is rewritten here.
+    const personalization = cascade ? null : readPersonalizationConfig((broadcast as any).personalizationConfig);
+    const persistCounters = async () => {
+      const c = await this.countRecipientsByStatus(broadcastId);
+      await (this.prisma as any).broadcast.update({
+        where: { id: broadcastId },
+        data: { totalRecipients: c.total, sentCount: c.sent, failedCount: c.failed, skippedCount: c.skipped },
+      });
+      return c;
+    };
+
+    while (processed < maxEntries) {
+      // Re-read between chunks: external pause/cancel lands here.
+      const fresh = await this.getBroadcastOrThrow(organizationId, broadcastId);
+      if (fresh.status === "paused") { stopped = "paused"; break; }
+      if (fresh.status === "cancelled") {
+        stopped = "cancelled";
+        await this.markPendingRecipientsSkipped(broadcastId, "cancelled");
+        await persistCounters();
+        break;
+      }
+      broadcast = fresh;
+      // MX16: A/B auto-winner — evaluated HERE, at the chunk
+      // boundary the MB6 audit named, and ONLY on this
+      // recipient-table path (the legacy snapshot path in
+      // processBroadcast never decides — stated in the report
+      // and the acceptance doc). It re-reads the pair's current
+      // state every chunk, so a human disabling it mid-flight
+      // (the toggle endpoint writes both rows) takes effect at
+      // this next chunk. An evaluation failure must never break
+      // a send: it is caught and the chunk proceeds undecided.
+      abContent = broadcast;
+      if (broadcast.abGroupId) {
+        try {
+          const st = await this.evaluateAbAutoWinner(organizationId, broadcastId);
+          if (st.decided && st.winnerBroadcast && broadcast.abVariant !== st.winner) {
+            abContent = st.winnerBroadcast;
+          }
+        } catch { /* an undecided chunk sends this variant's own content */ }
+        // A winner switch on WhatsApp means a different Meta
+        // template: rebuild the sender from the winning row
+        // (a build failure becomes the honest per-row failure,
+        // exactly like the initial build).
+        if (broadcast.channel === "whatsapp" && abContent.id !== waBuiltForId) {
+          waBuiltForId = abContent.id;
+          waSend = null; waBuildError = null;
+          try { waSend = await this.createWhatsAppSender(organizationId, abContent, broadcastId, abContent.createdById ?? null); }
+          catch (e) { waBuildError = e instanceof Error ? e.message : "WhatsApp sender unavailable"; }
+        }
+      }
+      const take = Math.min(chunkSize, maxEntries - processed);
+      if (take <= 0) break;
+      const rows: any[] = await t.findMany({
+        where: { broadcastId, status: "pending" }, orderBy: { sortIndex: "asc" }, take,
+      });
+      const chunk = Array.isArray(rows) ? rows : [];
+      if (!chunk.length) break;
+      for (const row of chunk) {
+        const entry = MessagingService.recipientRowToEntry(row);
+        const baseAttempts = entry.attempts ?? 0;
+        entry.attempts = baseAttempts + 1;
+        let result: { status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string };
+        if (cascade && cascadeRun) {
+          const r = await this.runCascadeForRecipient(organizationId, broadcast, cascade, cascadeRun, entry, row.id);
+          result = r;
+          // The row's attempts count CHANNEL attempts on the
+          // cascade path (each is a real provider attempt with
+          // its own delivery row).
+          entry.attempts = baseAttempts + Math.max(1, r.attemptsMade);
+        } else if (broadcast.channel === "whatsapp") {
+          result = waBuildError
+            ? await this.failWhatsAppEntry(organizationId, entry, broadcastId, waBuildError)
+            : await waSend!(entry);
+        } else {
+          // MX8: personalize for THIS recipient (issuing their
+          // unique coupon on first attempt). The state is
+          // persisted BEFORE the provider call, so a crash or a
+          // later resume reuses it verbatim — never a second
+          // coupon, never different dynamic content.
+          // MX16: the content comes from abContent — the winning
+          // variant's row once a winner is decided, else this
+          // broadcast itself (byte-identical to pre-MX16).
+          let sendBody = abContent.body;
+          let sendHtml = abContent.htmlBody ?? null;
+          let sendVars = entry.vars ?? {};
+          if (personalization) {
+            const pz = await this.personalizeForRecipient(organizationId, broadcast, personalization, entry, entry.personalization ?? null);
+            sendBody = pz.body; sendHtml = pz.htmlBody; sendVars = pz.vars;
+            if (pz.stateChanged) await this.persistRecipientPersonalization(row.id, pz.state);
+          }
+          result = await this.sendToRecipient(organizationId, {
+              channel: broadcast.channel,
+              recipient: { type: entry.type, id: entry.id, name: entry.name, email: entry.email, phone: entry.phone, pushSubscriptionId: entry.pushSubscriptionId ?? null, pushEndpoint: entry.pushEndpoint ?? null, telegramChatId: entry.telegramChatId ?? null },
+              subject: abContent.subject, body: sendBody,
+              vars: sendVars,
+              htmlBody: sendHtml,
+              broadcastId,
+              pushUrl: (broadcast as any).pushUrl ?? null,
+              telegramButtons: (broadcast as any).telegramButtons ?? null,
+              onsiteUrl: (broadcast as any).onsiteUrl ?? null,
+            });
+        }
+        entry.status = result.status;
+        entry.address = result.address;
+        if (result.providerMessageId) entry.providerMessageId = result.providerMessageId;
+        if (result.error) entry.error = result.error; else delete entry.error;
+        await this.persistRecipientOutcome(row.id, entry);
+        processed++;
+      }
+      const c = await persistCounters();
+      if (c.pending > 0 && delayMs > 0 && processed < maxEntries) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+
+    const c = await this.countRecipientsByStatus(broadcastId);
+    let finalized = false;
+    let status = String(broadcast.status ?? "sending");
+    if (!stopped && c.pending === 0) {
+      status = c.sent > 0 && (c.failed > 0 || c.skipped > 0) ? "partial" : c.sent > 0 ? "sent" : "failed";
+      await (this.prisma as any).broadcast.update({
+        where: { id: broadcastId },
+        data: { status, totalRecipients: c.total, sentCount: c.sent, failedCount: c.failed, skippedCount: c.skipped, sentAt: new Date() },
+      });
+      finalized = true;
+      // MS8 recurrence chaining: the same finalize hook as the
+      // snapshot form (best-effort, never fails the send).
+      await this.chainRecurrence(organizationId, broadcastId).catch(() => undefined);
+    } else if (stopped === "paused") {
+      status = "paused";
+    } else if (stopped === "cancelled") {
+      status = "cancelled";
+    }
+    // MX2: persist the run's cascade facts that delivery rows
+    // cannot express (breaker events, broadcast-level skipped
+    // channels, missing rates) for the report. Only when the
+    // run actually produced any — a clean cascade run leaves
+    // cascadeReport null and the report derives everything
+    // from the delivery chains.
+    if (cascadeRun && (cascadeRun.breaker.events.length || cascadeRun.skippedChannels.length || cascadeRun.ratesMissing.size)) {
+      await (this.prisma as any).broadcast.update({
+        where: { id: broadcastId },
+        data: {
+          cascadeReport: {
+            breakerEvents: cascadeRun.breaker.events,
+            skippedChannels: cascadeRun.skippedChannels,
+            ratesMissing: [...cascadeRun.ratesMissing],
+          },
+        },
+      }).catch(() => undefined);
+    }
+    return { status, processed, sent: c.sent, failed: c.failed, skipped: c.skipped, pending: c.pending, finalized, ...(stopped ? { stopped } : {}) };
   }
 
   /**
@@ -2181,13 +6473,72 @@ export class MessagingService {
    * fully-skipped audience — nothing reached anyone).
    */
   async processBroadcast(organizationId: string, broadcastId: string, opts?: { maxEntries?: number; chunkSize?: number }): Promise<{
-    status: string; processed: number; sent: number; failed: number; skipped: number; pending: number; finalized: boolean; stopped?: "paused" | "cancelled";
+    status: string; processed: number; sent: number; failed: number; skipped: number; pending: number; finalized: boolean; stopped?: "paused" | "cancelled"; deferred?: "quiet_hours";
   }> {
     const chunkSize = Math.max(1, opts?.chunkSize ?? BROADCAST_CHUNK_SIZE);
     const maxEntries = opts?.maxEntries ?? Number.POSITIVE_INFINITY;
     const delayMs = Number(process.env.BROADCAST_CHUNK_DELAY_MS ?? 0);
     let broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
-    let snapshot: SnapshotEntry[] = Array.isArray(broadcast.recipientSnapshot) ? broadcast.recipientSnapshot : [];
+    // MX1 dual path: recipient rows present and NO snapshot ⇒
+    // the table engine. A snapshot (pre-MX1 broadcast) always
+    // wins and keeps the legacy loop below byte-for-byte.
+    const snapshotEntries: SnapshotEntry[] = Array.isArray(broadcast.recipientSnapshot) ? broadcast.recipientSnapshot : [];
+    const hasRows = !snapshotEntries.length && (await this.hasRecipientRows(broadcastId));
+    if (!snapshotEntries.length && !hasRows && broadcast.status === "sending") {
+      // A "sending" row with neither a snapshot nor recipient
+      // rows: its recipient set was never recorded (a pre-MS1
+      // row stuck mid-send), so there is nothing honest to
+      // resume — the historical refusal.
+      throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+    }
+    // MX15 — budget gate: on a FRESH send (nothing sent, failed
+    // or skipped yet) the estimated cost — org-entered rate ×
+    // planned recipients — is checked against the per-broadcast
+    // cap (broadcast override, else the org default) and the
+    // monthly spend cap BEFORE any provider call. A blocked
+    // broadcast throws here: manual sends surface the figures
+    // as a 400, the sweep records it as that broadcast's error.
+    // A partially-sent broadcast (resume / retry / stale
+    // recovery) is NEVER re-gated — part of its spend already
+    // happened and stopping mid-send would strand it. When the
+    // cost cannot be estimated (no org rate), the decision is
+    // allow-with-warning (see governance.ts decideBudget).
+    {
+      const progress = MessagingService.broadcastProgress(broadcast);
+      if (progress.total > 0 && progress.sent === 0 && progress.failed === 0 && progress.skipped === 0) {
+        await this.assertBudgetAllowsSend(organizationId, broadcast, progress.total);
+      }
+    }
+    // MX3 — quiet-hours gate: while the org's marketing quiet
+    // window is active, chunk processing DEFERS. No provider is
+    // called, nothing is written, and the broadcast keeps its
+    // current status with every recipient still pending — the
+    // next sweep (or a later manual send) after the window ends
+    // picks it up exactly where it is. The deferral is RETURNED
+    // (deferred: "quiet_hours"), never a silent swallow. This
+    // gate lives ONLY here, in the broadcast engine: the shared
+    // providers and every transactional path (OrderNotification,
+    // Shop OTP) are untouched by it.
+    const stream = await this.getStreamSetting(organizationId);
+    if (stream.quietHoursActive) {
+      const c = hasRows
+        ? await this.countRecipientsByStatus(broadcastId)
+        : {
+            sent: snapshotEntries.filter((e) => e.status === "sent").length,
+            failed: snapshotEntries.filter((e) => e.status === "failed").length,
+            skipped: snapshotEntries.filter((e) => e.status === "skipped").length,
+            pending: snapshotEntries.filter((e) => e.status === "pending").length,
+          };
+      return {
+        status: String(broadcast.status ?? "sending"), processed: 0,
+        sent: c.sent, failed: c.failed, skipped: c.skipped, pending: c.pending,
+        finalized: false, deferred: "quiet_hours",
+      };
+    }
+    if (hasRows) {
+      return this.processBroadcastTable(organizationId, broadcastId, broadcast, opts);
+    }
+    let snapshot: SnapshotEntry[] = snapshotEntries;
     let processed = 0;
     let stopped: "paused" | "cancelled" | undefined;
     // WhatsApp: resolve the sender ONCE for the whole run. A build
@@ -2235,19 +6586,44 @@ export class MessagingService {
       for (const idx of chunk) {
         const entry = snapshot[idx];
         entry.attempts = (entry.attempts ?? 0) + 1;
+        // MX8: same personalization as the recipient-table
+        // engine, for legacy snapshot broadcasts carrying an
+        // MX8 config (a config can only be set at create, and
+        // new broadcasts use the table — so this serves rows
+        // whose snapshot was stamped by a deployment where the
+        // recipient table was absent). The state rides inside
+        // the entry and is persisted with the snapshot after
+        // the chunk; the StoreDiscount sourceRef claim covers
+        // the crash window before that persist. WhatsApp is
+        // not personalized (Meta templates), exactly as on
+        // the table path.
+        let snapBody = broadcast.body;
+        let snapHtml = broadcast.htmlBody ?? null;
+        let snapVars = entry.vars ?? {};
+        const snapPersonalization = broadcast.channel === "whatsapp"
+          ? null
+          : readPersonalizationConfig((broadcast as any).personalizationConfig);
+        if (snapPersonalization) {
+          const pz = await this.personalizeForRecipient(organizationId, broadcast, snapPersonalization, entry, entry.personalization ?? null);
+          snapBody = pz.body; snapHtml = pz.htmlBody; snapVars = pz.vars;
+          if (pz.stateChanged) entry.personalization = pz.state;
+        }
         const result = broadcast.channel === "whatsapp"
           ? waBuildError
             ? await this.failWhatsAppEntry(organizationId, entry, broadcastId, waBuildError)
             : await waSend!(entry)
           : await this.sendToRecipient(organizationId, {
               channel: broadcast.channel,
-              recipient: { type: entry.type, id: entry.id, name: entry.name, email: entry.email, phone: entry.phone },
-              subject: broadcast.subject, body: broadcast.body,
+              recipient: { type: entry.type, id: entry.id, name: entry.name, email: entry.email, phone: entry.phone, pushSubscriptionId: entry.pushSubscriptionId ?? null, pushEndpoint: entry.pushEndpoint ?? null, telegramChatId: entry.telegramChatId ?? null },
+              subject: broadcast.subject, body: snapBody,
               // MS5: the snapshot entry's real vars (pre-MS5
               // entries have none — read defensively as {}).
-              vars: entry.vars ?? {},
-              htmlBody: broadcast.htmlBody ?? null,
+              vars: snapVars,
+              htmlBody: snapHtml,
               broadcastId,
+              pushUrl: (broadcast as any).pushUrl ?? null,
+              telegramButtons: (broadcast as any).telegramButtons ?? null,
+              onsiteUrl: (broadcast as any).onsiteUrl ?? null,
             });
         entry.status = result.status;
         entry.address = result.address;
@@ -2323,6 +6699,14 @@ export class MessagingService {
       ? new Date(broadcast.scheduledAt)
       : broadcast.sentAt ? new Date(broadcast.sentAt) : new Date();
     const next = nextOccurrence(rec, anchor);
+    // MX15: a chained instance is a NEW broadcast by the
+    // original creator — under an approval-enabled org, a
+    // non-approver creator's next instance enters review like
+    // any create, instead of inheriting the previous instance's
+    // approval by being born "scheduled".
+    const govChain = await this.getGovernanceSetting(organizationId);
+    const chainNeedsApproval = govChain.approvalEnabled
+      && !(await this.isBroadcastApprover(organizationId, broadcast.createdById));
     const groupId = (broadcast as any).recurrenceGroupId ?? broadcast.id;
     await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { recurrence: null } });
     if (!next) return;
@@ -2334,6 +6718,9 @@ export class MessagingService {
         templateParams: broadcast.templateParams ?? undefined,
         templateComponents: broadcast.templateComponents ?? undefined,
         subject: broadcast.subject ?? null, body: broadcast.body, htmlBody: broadcast.htmlBody ?? null,
+        pushUrl: (broadcast as any).pushUrl ?? null,
+        telegramButtons: (broadcast as any).telegramButtons ?? null,
+        onsiteUrl: (broadcast as any).onsiteUrl ?? null,
         audienceType: broadcast.audienceType, audienceStage: broadcast.audienceStage ?? null,
         audienceSegment: broadcast.audienceSegment ?? null,
         audienceDefinition: broadcast.audienceDefinition ?? undefined,
@@ -2341,7 +6728,28 @@ export class MessagingService {
         audienceCsv: broadcast.audienceCsv ?? undefined,
         abVariant: broadcast.abVariant ?? null, abGroupId: broadcast.abGroupId ?? null,
         excludePreviousRecipients: broadcast.excludePreviousRecipients ?? false,
-        status: "scheduled", scheduledAt: next,
+        // MX15: the per-broadcast budget cap carries into the
+        // next recurrence instance — each instance is a fresh
+        // send and the cap the org set must govern it too.
+        // Approval state is NOT carried: the next instance is
+        // created by the chain under the original creator, and
+        // if approval is on it must be decided like any send
+        // (prepareBroadcast's gate stops an unapproved chain
+        // instance — see the MX15 doc).
+        ...((broadcast as any).budgetCapMinor != null ? { budgetCapMinor: (broadcast as any).budgetCapMinor } : {}),
+        // MX16: the auto-winner override is pair configuration
+        // and carries like the budget cap; a recorded winner
+        // decision is NEVER carried (each instance decides its
+        // own, or not at all).
+        ...((broadcast as any).abAutoWinnerEnabled != null ? { abAutoWinnerEnabled: (broadcast as any).abAutoWinnerEnabled } : {}),
+        ...(chainNeedsApproval ? { approvalStatus: "pending" } : {}),
+        cascadeConfig: (broadcast as any).cascadeConfig ?? undefined,
+        personalizationConfig: (broadcast as any).personalizationConfig ?? undefined,
+        // SA-B20 (G2): a recurring chain keeps its personalisation
+        // config — dropping it would silently un-personalise
+        // every later instance.
+        personalization: (broadcast as any).personalization ?? undefined,
+        status: chainNeedsApproval ? "pending_approval" : "scheduled", scheduledAt: next,
         recurrence: rec, recurrenceGroupId: groupId,
         createdById: broadcast.createdById,
       },
@@ -2363,7 +6771,9 @@ export class MessagingService {
     if ((broadcast as any).archivedAt) {
       throw new BadRequestException("This broadcast is archived — unarchive it to send.");
     }
-    if (!broadcast.recipientSnapshot) {
+    // MX15: approval gate (prepareBroadcast re-checks it too).
+    await this.assertApprovalAllowsSend(organizationId, broadcast);
+    if (!broadcast.recipientSnapshot && !(await this.hasRecipientRows(broadcastId))) {
       broadcast = await this.prepareBroadcast(organizationId, broadcastId);
     } else if (broadcast.status === "sent" || broadcast.status === "cancelled") {
       throw new BadRequestException(broadcast.status === "cancelled"
@@ -2374,10 +6784,15 @@ export class MessagingService {
     const updated = await this.getBroadcastOrThrow(organizationId, broadcastId);
     await this.audit.log({
       organizationId, userId: actorId, action: "broadcast.send", entityType: "Broadcast", entityId: broadcastId,
-      metadata: { channel: updated.channel, total: result.sent + result.failed + result.skipped, sent: result.sent, failed: result.failed, skipped: result.skipped, status: result.status },
+      metadata: { channel: updated.channel, total: result.sent + result.failed + result.skipped, sent: result.sent, failed: result.failed, skipped: result.skipped, status: result.status, ...(result.deferred ? { deferred: result.deferred } : {}) },
     });
     const { recipientSnapshot: _snapshot, ...rest } = updated as any;
-    return { ...rest, progress: MessagingService.broadcastProgress(updated) };
+    // MX3: a manual send inside quiet hours DEFERS like any
+    // other chunk processing (processBroadcast is the one gate)
+    // — the response says so honestly instead of implying a
+    // send happened: the broadcast stays "sending" with its
+    // recipients pending for the next sweep after the window.
+    return { ...rest, progress: MessagingService.broadcastProgress(updated), ...(result.deferred ? { deferred: result.deferred } : {}) };
   }
 
   /** MS1 — schedule a draft (or move a schedule). A null time
@@ -2394,6 +6809,9 @@ export class MessagingService {
     if ((broadcast as any).archivedAt) {
       throw new BadRequestException("This broadcast is archived — unarchive it to schedule.");
     }
+    // MX15: a pending/rejected broadcast cannot be scheduled to
+    // send either — scheduling IS queueing for the sweep.
+    await this.assertApprovalAllowsSend(organizationId, broadcast);
     if (scheduledAt === null) {
       if (broadcast.status !== "scheduled") throw new BadRequestException("Only a scheduled broadcast has a schedule to cancel");
       const updated = await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { status: "draft", scheduledAt: null } });
@@ -2445,7 +6863,7 @@ export class MessagingService {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (broadcast.status !== "paused") throw new BadRequestException(`Only a paused broadcast can be resumed (this one is ${broadcast.status})`);
     await this.audit.log({ organizationId, userId: actorId, action: "broadcast.resume", entityType: "Broadcast", entityId: broadcastId, metadata: {} });
-    if (!broadcast.recipientSnapshot) {
+    if (!broadcast.recipientSnapshot && !(await this.hasRecipientRows(broadcastId))) {
       if (broadcast.scheduledAt && new Date(broadcast.scheduledAt).getTime() > Date.now()) {
         return (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { status: "scheduled" } });
       }
@@ -2467,6 +6885,19 @@ export class MessagingService {
     if (!["draft", "scheduled", "paused", "sending"].includes(broadcast.status)) {
       throw new BadRequestException(`A ${broadcast.status} broadcast cannot be cancelled`);
     }
+    // MX1: a recipient-table broadcast cancels on its rows —
+    // pending rows become skipped ("cancelled") and the counters
+    // are re-derived from the rows.
+    if (await this.hasRecipientRows(broadcastId)) {
+      await this.markPendingRecipientsSkipped(broadcastId, "cancelled");
+      const c = await this.countRecipientsByStatus(broadcastId);
+      const updatedTable = await (this.prisma as any).broadcast.update({
+        where: { id: broadcastId },
+        data: { status: "cancelled", totalRecipients: c.total, sentCount: c.sent, failedCount: c.failed, skippedCount: c.skipped },
+      });
+      await this.audit.log({ organizationId, userId: actorId, action: "broadcast.cancel", entityType: "Broadcast", entityId: broadcastId, metadata: { from: broadcast.status } });
+      return updatedTable;
+    }
     let snapshot = broadcast.recipientSnapshot;
     if (Array.isArray(snapshot)) {
       snapshot = (snapshot as SnapshotEntry[]).map((e) => (e.status === "pending" ? { ...e, status: "skipped" as const, error: "cancelled" } : e));
@@ -2487,6 +6918,20 @@ export class MessagingService {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (!["sent", "partial", "failed"].includes(broadcast.status)) {
       throw new BadRequestException(`Only a finished broadcast (sent/partial/failed) can retry failures (this one is ${broadcast.status})`);
+    }
+    // MX1: a recipient-table broadcast retries on its rows —
+    // only failed rows reset to pending; sent rows are never
+    // touched, so a retry can never double-send.
+    if (await this.hasRecipientRows(broadcastId)) {
+      const c = await this.countRecipientsByStatus(broadcastId);
+      if (!c.failed) throw new BadRequestException("This broadcast has no failed recipients to retry");
+      await this.resetFailedRecipients(broadcastId);
+      await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { status: "sending" } });
+      await this.audit.log({ organizationId, userId: actorId, action: "broadcast.retry_failed", entityType: "Broadcast", entityId: broadcastId, metadata: { retrying: c.failed } });
+      const resultTable = await this.processBroadcast(organizationId, broadcastId);
+      const updatedTable = await this.getBroadcastOrThrow(organizationId, broadcastId);
+      const { recipientSnapshot: _snapshotTable, ...restTable } = updatedTable as any;
+      return { ...restTable, progress: MessagingService.broadcastProgress(updatedTable), retried: resultTable };
     }
     const snapshot: SnapshotEntry[] = Array.isArray(broadcast.recipientSnapshot) ? broadcast.recipientSnapshot : [];
     const failedCount = snapshot.filter((e) => e.status === "failed").length;
@@ -2526,13 +6971,23 @@ export class MessagingService {
     name?: string; subject?: string | null; body?: string; htmlBody?: string | null;
     templateId?: string | null; whatsappTemplateId?: string; templateParams?: string[];
     templateComponents?: unknown; scheduledAt?: string | null;
+    // MX12: push click-through URL (push channel only; null clears).
+    pushUrl?: string | null;
+    // MX13: telegram inline URL buttons (telegram channel
+    // only; null clears back to a text-only message).
+    telegramButtons?: unknown;
+    // MX14: onsite click-through URL (onsite channel only;
+    // null clears back to no link).
+    onsiteUrl?: string | null;
+    // SA-B20 (G2): personalisation config; null turns it off.
+    personalization?: unknown;
   }) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if ((broadcast as any).archivedAt) {
       throw new BadRequestException("This broadcast is archived — unarchive it before editing.");
     }
-    if (!["draft", "scheduled", "paused"].includes(broadcast.status)) {
-      throw new BadRequestException(`A ${broadcast.status} broadcast cannot be edited (only draft, scheduled or paused)`);
+    if (!["draft", "scheduled", "paused", "pending_approval"].includes(broadcast.status)) {
+      throw new BadRequestException(`A ${broadcast.status} broadcast cannot be edited (only draft, scheduled, paused or pending approval)`);
     }
     const channel: string = broadcast.channel;
     const data: Record<string, unknown> = {};
@@ -2557,7 +7012,12 @@ export class MessagingService {
         }
       } else {
         data.scheduledAt = this.parseFutureScheduledAt(dto.scheduledAt);
-        data.status = "scheduled";
+        // MX15: a pending-approval broadcast keeps its review
+        // status — editing its planned time must never become a
+        // back door into "scheduled" (approval decides the next
+        // status, and it restores "scheduled" itself when the
+        // approved time is still in the future).
+        if (broadcast.status !== "pending_approval") data.status = "scheduled";
       }
     }
     if (channel === "whatsapp") {
@@ -2567,6 +7027,7 @@ export class MessagingService {
       if (dto.whatsappTemplateId !== undefined && dto.whatsappTemplateId !== broadcast.whatsappTemplateId) {
         const tpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: dto.whatsappTemplateId, organizationId } });
         if (!tpl) throw new NotFoundException("WhatsApp template not found in this organization");
+        await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, tpl);
         data.whatsappTemplateId = tpl.id;
         // Create derives the stored body from the template —
         // an edit that swaps the template does the same.
@@ -2587,6 +7048,39 @@ export class MessagingService {
     } else {
       if (dto.whatsappTemplateId !== undefined || dto.templateComponents !== undefined) {
         throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+      }
+      // MX12: pushUrl edits — push channel only, same
+      // shop-relative rule as create (validatePushUrl); an
+      // explicit null clears back to the shop-root default.
+      if (dto.pushUrl !== undefined) {
+        if (channel !== "push") throw new BadRequestException("pushUrl is only allowed for push broadcasts");
+        try { data.pushUrl = validatePushUrl(dto.pushUrl); }
+        catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid pushUrl"); }
+      }
+      if (channel === "push" && dto.templateId !== undefined && dto.templateId !== null) {
+        throw new BadRequestException("Push broadcasts do not use message templates — edit the title/body directly");
+      }
+      if (channel === "telegram" && dto.templateId !== undefined && dto.templateId !== null) {
+        throw new BadRequestException("Telegram broadcasts do not use message templates — edit the message text directly");
+      }
+      if (channel === "onsite" && dto.templateId !== undefined && dto.templateId !== null) {
+        throw new BadRequestException("On-site broadcasts do not use message templates — edit the title/body directly");
+      }
+      // MX14: onsiteUrl edits — onsite channel only, same
+      // shop-relative rule as create (validateOnsiteUrl); an
+      // explicit null clears back to no link.
+      if (dto.onsiteUrl !== undefined) {
+        if (channel !== "onsite") throw new BadRequestException("onsiteUrl is only allowed for onsite broadcasts");
+        try { data.onsiteUrl = validateOnsiteUrl(dto.onsiteUrl); }
+        catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid onsiteUrl"); }
+      }
+      // MX13: telegramButtons edits — telegram channel only,
+      // the same validateTelegramButtons rule as create; an
+      // explicit null clears back to a text-only message.
+      if (dto.telegramButtons !== undefined) {
+        if (channel !== "telegram") throw new BadRequestException("telegramButtons is only allowed for telegram broadcasts");
+        try { data.telegramButtons = validateTelegramButtons(dto.telegramButtons); }
+        catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid telegramButtons"); }
       }
       if (dto.templateId !== undefined) {
         if (dto.templateId === null) {
@@ -2614,6 +7108,41 @@ export class MessagingService {
     if (!mergedBody) throw new BadRequestException("Broadcast body is required (write one or choose a template)");
     const mergedSubject = data.subject !== undefined ? data.subject : broadcast.subject;
     if (channel === "email" && !mergedSubject) throw new BadRequestException("Email broadcasts need a subject");
+    if (channel === "push") {
+      // MX12: create's push invariants on the MERGED row — a
+      // title is always required and the base system's length
+      // caps (title ≤ 120, body ≤ 300) always hold.
+      if (!mergedSubject || !String(mergedSubject).trim()) throw new BadRequestException("Push broadcasts need a title (subject)");
+      if (String(mergedSubject).length > 120) throw new BadRequestException("Push title must be at most 120 characters");
+      if (String(mergedBody).length > 300) throw new BadRequestException("Push body must be at most 300 characters");
+    }
+    if (channel === "telegram") {
+      // MX13: create's telegram invariants on the MERGED row —
+      // the Bot API's 4096-char cap and no subject, always.
+      if (String(mergedBody).length > 4096) throw new BadRequestException("Telegram message text must be at most 4096 characters (the Bot API limit)");
+      if (mergedSubject && String(mergedSubject).trim() !== "") throw new BadRequestException("Telegram broadcasts have no subject — the message text is the whole message");
+    }
+    if (channel === "onsite") {
+      // MX14: create's onsite invariants on the MERGED row — a
+      // title is always required and the channel's own caps
+      // (title ≤ 120, body ≤ 2000) always hold.
+      if (!mergedSubject || !String(mergedSubject).trim()) throw new BadRequestException("On-site broadcasts need a title (subject)");
+      if (String(mergedSubject).length > 120) throw new BadRequestException("On-site title must be at most 120 characters");
+      if (String(mergedBody).length > 2000) throw new BadRequestException("On-site body must be at most 2000 characters");
+    }
+    // SA-B20 (G2): personalisation edits validate against the
+    // MERGED body (create's closing-invariant pattern) — a body
+    // edit that removes {{aiHook}} while Tier 2 stays on is
+    // refused here, not discovered at send time.
+    if (dto.personalization !== undefined) {
+      if (dto.personalization === null) {
+        data.personalization = null;
+      } else {
+        const pConfig = normalizePersonalizationConfig(dto.personalization, channel);
+        assertTier2HookPlaceholder(String(mergedBody ?? ""), pConfig);
+        data.personalization = pConfig ?? null;
+      }
+    }
     const updated = await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data });
     await this.audit.log({
       organizationId, userId: actorId, action: "broadcast.update", entityType: "Broadcast", entityId: broadcastId,
@@ -2641,12 +7170,30 @@ export class MessagingService {
         templateParams: broadcast.templateParams ?? undefined,
         templateComponents: broadcast.templateComponents ?? undefined,
         subject: broadcast.subject ?? null, body: broadcast.body, htmlBody: broadcast.htmlBody ?? null,
+        // MX12: the push click-through URL is content — a clone
+        // without it would silently change where clicks land.
+        pushUrl: (broadcast as any).pushUrl ?? null,
+        // MX13: the telegram inline buttons are content too —
+        // a clone without them would silently lose the buttons.
+        telegramButtons: (broadcast as any).telegramButtons ?? null,
+        // MX14: the onsite click-through URL is content too.
+        onsiteUrl: (broadcast as any).onsiteUrl ?? null,
         audienceType: broadcast.audienceType, audienceStage: broadcast.audienceStage ?? null,
         audienceSegment: broadcast.audienceSegment ?? null,
         audienceDefinition: broadcast.audienceDefinition ?? undefined,
         audienceSavedId: broadcast.audienceSavedId ?? null,
         audienceCsv: broadcast.audienceCsv ?? undefined,
         excludePreviousRecipients: broadcast.excludePreviousRecipients ?? false,
+        // MX15: the per-broadcast budget cap is configuration —
+        // a clone without it would silently lose the governance
+        // the original carried. Approval state is NOT copied:
+        // the clone is a fresh draft by its own creator.
+        ...((broadcast as any).budgetCapMinor != null ? { budgetCapMinor: (broadcast as any).budgetCapMinor } : {}),
+        cascadeConfig: (broadcast as any).cascadeConfig ?? undefined,
+        personalizationConfig: (broadcast as any).personalizationConfig ?? undefined,
+        // SA-B20 (G2): the personalisation config is content,
+        // not send state — a clone keeps it.
+        personalization: (broadcast as any).personalization ?? undefined,
         status: "draft", createdById: actorId,
       },
     });
@@ -2715,41 +7262,91 @@ export class MessagingService {
    * simply stays "sending" for the next run when more remain.
    * Per-broadcast failures are reported, never hidden, and never
    * stop the other broadcasts.
+   *
+   * MX3 — stream controls: the per-org caps bound the WHOLE run
+   * for this org — at most effectiveMaxBroadcastsPerSweep
+   * broadcasts are attempted across both phases (due first, then
+   * stale recovery with what is left) and each broadcast gets at
+   * most effectiveMaxEntriesPerSweep entries. Broadcasts beyond
+   * the cap are counted in `skippedByLimit` and stay queued for
+   * the next run. While the org's quiet hours are active the
+   * whole run defers: nothing is prepared or processed, no
+   * provider is called, and the result says so
+   * (deferred: "quiet_hours" + how many broadcasts were waiting).
+   * Null settings read as the platform defaults, which reproduce
+   * the pre-MX3 behaviour exactly.
    */
   async runDueBroadcasts(organizationId: string): Promise<{
     started: number; recovered: number; processed: number; finalized: number;
     errors: { broadcastId: string; error: string }[];
+    skippedByLimit: number;
+    deferred?: "quiet_hours";
+    deferredBroadcasts?: number;
   }> {
-    const out = { started: 0, recovered: 0, processed: 0, finalized: 0, errors: [] as { broadcastId: string; error: string }[] };
+    const out = {
+      started: 0, recovered: 0, processed: 0, finalized: 0,
+      errors: [] as { broadcastId: string; error: string }[], skippedByLimit: 0,
+    };
+    const stream = await this.getStreamSetting(organizationId);
+    const maxBroadcasts = stream.effectiveMaxBroadcastsPerSweep;
+    const maxEntries = stream.effectiveMaxEntriesPerSweep;
     const now = new Date();
+    const dueWhere = { organizationId, status: "scheduled", scheduledAt: { lte: now } };
+    const staleBefore = new Date(Date.now() - BROADCAST_STALE_MS);
+    const staleWhere = { organizationId, status: "sending", updatedAt: { lt: staleBefore } };
+    // Defensive count: some deployments/fixtures lack the
+    // delegate method entirely — a synchronous throw must read
+    // as "unknown" (null), never crash the sweep.
+    const safeBroadcastCount = async (where: Record<string, unknown>): Promise<number | null> => {
+      try {
+        const n = await (this.prisma as any).broadcast.count({ where });
+        return typeof n === "number" ? n : null;
+      } catch { return null; }
+    };
+    if (stream.quietHoursActive) {
+      // Count what is waiting (honest deferral signal), touch
+      // nothing: due broadcasts stay scheduled, stale rows stay
+      // sending, and the next sweep after the window sends them.
+      const dueCount = await safeBroadcastCount(dueWhere);
+      const staleCount = await safeBroadcastCount(staleWhere);
+      return { ...out, deferred: "quiet_hours", deferredBroadcasts: (dueCount ?? 0) + (staleCount ?? 0) };
+    }
     const due: any[] = await (this.prisma as any).broadcast.findMany({
-      where: { organizationId, status: "scheduled", scheduledAt: { lte: now } },
-      orderBy: { scheduledAt: "asc" }, take: 10,
+      where: dueWhere,
+      orderBy: { scheduledAt: "asc" }, take: Math.min(MARKETING_SWEEP_PHASE_MAX, maxBroadcasts),
     }).catch(() => []);
+    const dueTotal = await safeBroadcastCount(dueWhere);
+    let attempted = 0;
     for (const b of due) {
       try {
-        if (!b.recipientSnapshot) await this.prepareBroadcast(organizationId, b.id, { fromSweep: true });
-        const r = await this.processBroadcast(organizationId, b.id, { maxEntries: BROADCAST_SWEEP_MAX_ENTRIES });
+        if (!b.recipientSnapshot && !(await this.hasRecipientRows(b.id))) await this.prepareBroadcast(organizationId, b.id, { fromSweep: true });
+        const r = await this.processBroadcast(organizationId, b.id, { maxEntries });
         out.started++; out.processed += r.processed; if (r.finalized) out.finalized++;
         await this.audit.log({ organizationId, userId: "system", action: "broadcast.sweep_send", entityType: "Broadcast", entityId: b.id, metadata: { kind: "scheduled", processed: r.processed, status: r.status } }).catch(() => undefined);
       } catch (e) {
         out.errors.push({ broadcastId: b.id, error: e instanceof Error ? e.message : "Sweep send failed" });
       }
+      attempted++;
     }
-    const staleBefore = new Date(Date.now() - BROADCAST_STALE_MS);
-    const stale: any[] = await (this.prisma as any).broadcast.findMany({
-      where: { organizationId, status: "sending", updatedAt: { lt: staleBefore } },
-      orderBy: { updatedAt: "asc" }, take: 10,
-    }).catch(() => []);
+    out.skippedByLimit += Math.max(0, (dueTotal ?? due.length) - attempted);
+    const staleTake = Math.min(MARKETING_SWEEP_PHASE_MAX, Math.max(0, maxBroadcasts - attempted));
+    const stale: any[] = staleTake > 0 ? await (this.prisma as any).broadcast.findMany({
+      where: staleWhere,
+      orderBy: { updatedAt: "asc" }, take: staleTake,
+    }).catch(() => []) : [];
+    const staleTotal = await safeBroadcastCount(staleWhere);
+    let staleAttempted = 0;
     for (const b of stale) {
       try {
-        const r = await this.processBroadcast(organizationId, b.id, { maxEntries: BROADCAST_SWEEP_MAX_ENTRIES });
+        const r = await this.processBroadcast(organizationId, b.id, { maxEntries });
         out.recovered++; out.processed += r.processed; if (r.finalized) out.finalized++;
         await this.audit.log({ organizationId, userId: "system", action: "broadcast.sweep_send", entityType: "Broadcast", entityId: b.id, metadata: { kind: "recovery", processed: r.processed, status: r.status } }).catch(() => undefined);
       } catch (e) {
         out.errors.push({ broadcastId: b.id, error: e instanceof Error ? e.message : "Sweep recovery failed" });
       }
+      staleAttempted++;
     }
+    out.skippedByLimit += Math.max(0, (staleTotal ?? stale.length) - staleAttempted);
     return out;
   }
 
@@ -2763,7 +7360,11 @@ export class MessagingService {
    * MS2 suppression guard applies here too (sendToRecipient's
    * guard covers email/sms only — WhatsApp sends through Meta).
    */
-  private async createWhatsAppSender(organizationId: string, broadcast: any, broadcastId: string, denyActorId?: string | null) {
+  private async createWhatsAppSender(organizationId: string, broadcast: any, broadcastId: string, denyActorId?: string | null,
+    // MX2: optional per-entry cascade link (recipient row +
+    // attempt index + group) stamped onto every delivery this
+    // sender records. Absent = pre-MX2 rows (null links).
+    linkForEntry?: (entry: SnapshotEntry) => { recipientRowId?: string; attemptIndex?: number; cascadeGroupId?: string } | undefined) {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { organizationId, provider: "whatsapp", status: "CONNECTED" }, include: { credential: true },
     });
@@ -2784,6 +7385,10 @@ export class MessagingService {
     }
     const template = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: broadcast.whatsappTemplateId, organizationId } });
     if (!template) throw new NotFoundException("WhatsApp template not found");
+    // MX9: send-time quality-guard re-check — the template's
+    // synced quality may have dropped after this broadcast was
+    // created. The throw lands in the engine's build-error path.
+    await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, template);
     const secrets = decryptJson(integration.credential.encryptedData) as any;
     const client = new MetaMessagingClient({ accessToken: secrets.accessToken, phoneNumberId: secrets.phoneNumberId });
     const paramsTemplate: string[] = Array.isArray(broadcast.templateParams) ? broadcast.templateParams : [];
@@ -2794,7 +7399,7 @@ export class MessagingService {
       const optOut = await this.findOptOut(organizationId, "whatsapp", recipientPrefAddress("whatsapp", recipient));
       if (optOut) {
         const error = `Recipient opted out (${optOut.source})`;
-        await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId }, address, "skipped", undefined, error);
+        await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId, ...(linkForEntry?.(entry) ?? {}) }, address, "skipped", undefined, error);
         return { status: "skipped", error, address };
       }
       try {
@@ -2835,11 +7440,11 @@ export class MessagingService {
           if (built.headerMedia || built.headerTextParams || built.buttonParams) rich = built;
         }
         const { messageId } = await client.sendWhatsAppTemplate(normalized, template.name, template.language, params, rich);
-        await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId }, address, "sent", messageId);
+        await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId, ...(linkForEntry?.(entry) ?? {}) }, address, "sent", messageId);
         return { status: "sent", providerMessageId: messageId, address };
       } catch (e) {
         const message = e instanceof Error ? e.message : "Send failed";
-        await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId }, address, "failed", undefined, message);
+        await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId, ...(linkForEntry?.(entry) ?? {}) }, address, "failed", undefined, message);
         return { status: "failed", error: message, address };
       }
     };
@@ -2848,10 +7453,11 @@ export class MessagingService {
   /** A WhatsApp entry whose sender could not be built at all
    * (no connected integration / template missing): recorded as a
    * failed delivery with the verbatim build error. */
-  private async failWhatsAppEntry(organizationId: string, entry: SnapshotEntry, broadcastId: string, error: string): Promise<{ status: "failed"; providerMessageId?: string; error: string; address: string }> {
+  private async failWhatsAppEntry(organizationId: string, entry: SnapshotEntry, broadcastId: string, error: string,
+    link?: { recipientRowId?: string; attemptIndex?: number; cascadeGroupId?: string }): Promise<{ status: "failed"; providerMessageId?: string; error: string; address: string }> {
     const recipient: Recipient = { type: entry.type, id: entry.id, name: entry.name, email: entry.email, phone: entry.phone };
     const address = normalizeBdPhone(entry.phone ?? "") ?? normalizePhoneGeneric(entry.phone ?? "") ?? (entry.phone ?? "");
-    await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId }, address, "failed", undefined, error);
+    await this.recordDelivery(organizationId, { channel: "whatsapp", recipient, broadcastId, ...(link ?? {}) }, address, "failed", undefined, error);
     return { status: "failed" as const, error, address };
   }
 
@@ -2866,11 +7472,49 @@ export class MessagingService {
    * id, page size 50) returning { items, nextCursor } (IN9
    * precedent).
    */
+  /**
+   * MX6 — delivery → inbox bridge: each row gains
+   * `conversationId: string | null`. Resolved ONLY for channel
+   * "whatsapp" rows, by matching a ChannelConversation of the
+   * same org + channel whose digits-only(externalContactId)
+   * equals digits-only(delivery.address) (wa_id is phone digits;
+   * a delivery address may carry a "+" or BD prefix form).
+   * Batched: the page's rows resolve through ONE conversation
+   * query. Every other channel, no conversation, or any lookup
+   * failure → null. Never guessed.
+   */
+  private async withDeliveryConversationIds(organizationId: string, rows: any[]): Promise<any[]> {
+    if (!Array.isArray(rows) || rows.length === 0) return rows;
+    const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+    const resolved = new Map<string, string>();
+    try {
+      const waRows = rows.filter((r) => r?.channel === "whatsapp" && digits(r.address));
+      const table = (this.prisma as any).channelConversation;
+      if (waRows.length && table?.findMany) {
+        const convs: any[] = await table.findMany({
+          where: { organizationId, channel: "whatsapp" },
+          select: { id: true, externalContactId: true },
+        });
+        const byDigits = new Map<string, string>();
+        for (const c of convs ?? []) {
+          const d = digits(c.externalContactId);
+          if (d && !byDigits.has(d)) byDigits.set(d, c.id);
+        }
+        for (const r of waRows) {
+          const hit = byDigits.get(digits(r.address));
+          if (hit) resolved.set(r.id, hit);
+        }
+      }
+    } catch { /* best-effort bridge: an unresolved row is null, never a failed listing */ }
+    return rows.map((r) => ({ ...r, conversationId: r?.channel === "whatsapp" ? (resolved.get(r.id) ?? null) : null }));
+  }
+
   async listDeliveries(organizationId: string, broadcastId: string, opts?: { status?: string; q?: string; cursor?: string }) {
     if (!opts) {
-      return (this.prisma as any).messageDelivery.findMany({
+      const rows = await (this.prisma as any).messageDelivery.findMany({
         where: { organizationId, broadcastId }, orderBy: { createdAt: "desc" }, take: 200,
       });
+      return this.withDeliveryConversationIds(organizationId, rows);
     }
     const pageSize = 50;
     const where: Record<string, unknown> = { organizationId, broadcastId };
@@ -2895,7 +7539,7 @@ export class MessagingService {
     const nextCursor = rows.length > pageSize && last
       ? Buffer.from(JSON.stringify({ c: new Date(last.createdAt).toISOString(), i: last.id })).toString("base64url")
       : null;
-    return { items, nextCursor };
+    return { items: await this.withDeliveryConversationIds(organizationId, items), nextCursor };
   }
 
   /**
@@ -2983,6 +7627,28 @@ export class MessagingService {
           where: { id: delivery.id },
           data: { deliveryStatus: "failed", ...(error ? { error } : {}) },
         });
+        // MX15 — auto-suppression gap closure. Audit verdict:
+        // NO bounce/complaint webhook exists anywhere in this
+        // system and, before MX15, NO webhook path wrote a
+        // preference — a WhatsApp "failed" status only stamped
+        // deliveryStatus. When the failure identifies the
+        // RECIPIENT as unreachable / not on WhatsApp (the hard-
+        // failure patterns in governance.ts — template, quality
+        // or rate failures never match), the address is now
+        // suppressed in the SAME MS2 preference store every send
+        // path enforces, with the source recorded honestly.
+        // Best-effort: a suppression failure never breaks the
+        // webhook's applied result.
+        if (isHardRecipientFailure(error)) {
+          try {
+            await this.setPreference(organizationId, {
+              channel: "whatsapp", address: delivery.address, status: "opted_out",
+              source: "auto_suppression", actor: "system",
+              recipientType: delivery.recipientType ?? null, recipientId: delivery.recipientId ?? null,
+              note: `Auto-suppressed after a WhatsApp hard delivery failure: ${String(error).slice(0, 200)}`,
+            });
+          } catch { /* the lifecycle update above already landed */ }
+        }
         return { applied: true };
       }
       if (current === "failed") return { applied: false };
@@ -3064,7 +7730,17 @@ export class MessagingService {
    * delivered/read/opened aggregate the delivery rows' lifecycle
    * fields by recipient key. A stage the channel cannot produce
    * is null, NEVER 0:
-   *  - delivered/read: WhatsApp webhooks only. Email over SMTP
+   *  - delivered/read: WhatsApp webhooks only — plus MX14
+   *    onsite, where both are REAL first-class signals of this
+   *    system itself: the send creates the notification row in
+   *    the customer's center and stamps the delivery delivered
+   *    at creation (the create IS the delivery — the row's
+   *    presence in the center is observed, not assumed), and
+   *    the customer's real open action stamps readAt on the
+   *    notification AND this delivery. Push (MX12) has
+   *    no browser delivery/read signal at all — the push
+   *    service's acceptance IS the sent stage, so both stay
+   *    null. Email over SMTP
    *    has no delivery signal; platform SMS has no documented
    *    DLR query API (verify-first outcome (c) — see the B4
    *    acceptance), and tenant-gateway DLR is out of scope.
@@ -3110,11 +7786,19 @@ export class MessagingService {
       sent: progress.sent,
       failed: progress.failed,
       skipped: progress.skipped,
-      delivered: channel === "whatsapp" ? deliveredKeys.size : null,
-      read: channel === "whatsapp" ? readKeys.size : null,
+      delivered: channel === "whatsapp" || channel === "onsite" ? deliveredKeys.size : null,
+      read: channel === "whatsapp" || channel === "onsite" ? readKeys.size : null,
       opened: channel === "email" && broadcast.htmlBody ? openedKeys.size : null,
-      clickedRecipients: channel === "whatsapp" ? null : clickedKeys.size,
-      totalClicks: channel === "whatsapp" ? null : totalClicks,
+      // MX12: push joins WhatsApp here — its click-through is
+      // the service worker opening the payload URL directly;
+      // no tracked-link wrap exists, so clicks are null.
+      // MX14: onsite joins them — opening a notification in the
+      // center follows its shop-relative URL directly in the
+      // shop UI; no tracked-link wrap exists, so clicks are
+      // null (the READ stage is this channel's real engagement
+      // signal instead).
+      clickedRecipients: channel === "whatsapp" || channel === "push" || channel === "telegram" || channel === "onsite" ? null : clickedKeys.size,
+      totalClicks: channel === "whatsapp" || channel === "push" || channel === "telegram" || channel === "onsite" ? null : totalClicks,
       failureReasons: groupFailureReasons(failedErrors),
     };
   }
@@ -3132,7 +7816,16 @@ export class MessagingService {
     const method = "প্রাপক কাস্টমারদের পাঠানোর পর ৭ দিনের অর্ডার (সম্পর্ক, কারণের প্রমাণ নয়)";
     if (!broadcast.sentAt) return null;
     const snapshot: SnapshotEntry[] = Array.isArray(broadcast.recipientSnapshot) ? broadcast.recipientSnapshot : [];
-    const customerIds = [...new Set(snapshot.filter((e) => e.type === "customer" && e.id).map((e) => e.id))];
+    // MX1: recipient-table broadcasts carry no snapshot — their
+    // customer ids come from the recipient rows instead.
+    let customerIds = [...new Set(snapshot.filter((e) => e.type === "customer" && e.id).map((e) => e.id))];
+    if (!snapshot.length) {
+      const fromRows = new Set<string>();
+      await this.walkRecipientRows(broadcast.id, async (rows) => {
+        for (const r of rows) if (r.recipientType === "customer" && r.recipientId) fromRows.add(r.recipientId);
+      });
+      customerIds = [...fromRows];
+    }
     const start = new Date(broadcast.sentAt);
     const end = new Date(start.getTime() + 7 * 24 * 3600 * 1000);
     let orders = 0;
@@ -3166,8 +7859,18 @@ export class MessagingService {
     const method = "পাঠানোর পর প্রাপকদের WhatsApp কথোপকথনে আসা ইনবাউন্ড জবাব — ফোন নম্বর (externalContactId) মিলিয়ে গোনা";
     if (broadcast.channel !== "whatsapp" || !broadcast.sentAt) return { count: null, method };
     const snapshot: SnapshotEntry[] = Array.isArray(broadcast.recipientSnapshot) ? broadcast.recipientSnapshot : [];
-    const phones = [...new Set(snapshot
-      .map((e) => normalizeBdPhone(e.phone ?? "") ?? normalizePhoneGeneric(e.phone ?? "") ?? (e.phone ?? ""))
+    // MX1: recipient-table broadcasts carry no snapshot — their
+    // phones come from the recipient rows instead.
+    let rawPhones = snapshot.map((e) => e.phone ?? "");
+    if (!snapshot.length) {
+      const fromRows: string[] = [];
+      await this.walkRecipientRows(broadcast.id, async (rows) => {
+        for (const r of rows) fromRows.push(r.phone ?? "");
+      });
+      rawPhones = fromRows;
+    }
+    const phones = [...new Set(rawPhones
+      .map((phone) => normalizeBdPhone(phone) ?? normalizePhoneGeneric(phone) ?? phone)
       .filter(Boolean))];
     const conversationIds: string[] = [];
     for (let s = 0; s < phones.length; s += 500) {
@@ -3210,15 +7913,68 @@ export class MessagingService {
         variants[String(v.abVariant ?? "")] = f;
         lite[String(v.abVariant ?? "")] = { sent: f.sent, read: f.read, clickedRecipients: f.clickedRecipients };
       }
+      // MX16: the auto-winner state of this pair — the org /
+      // pair opt-in resolution, the recorded decision (winner,
+      // the z-test inputs and the timestamp) when one exists,
+      // and the stated rule. With no decision this stays a
+      // status view; the suggestion above remains a suggestion.
+      const decidedRow = rows.find((v: any) => v.abWinnerVariant);
+      const orgAutoWinner = await this.getAbAutoWinnerEnabled(organizationId);
+      const autoWinnerEnabled = rows.some((v: any) => v.abAutoWinnerEnabled === false)
+        ? false
+        : rows.some((v: any) => v.abAutoWinnerEnabled === true) ? true : orgAutoWinner;
       ab = {
         groupId: broadcast.abGroupId,
         variants,
         suggestion: abSuggestion({ A: lite.A, B: lite.B }),
-      };
+        autoWinner: {
+          enabled: autoWinnerEnabled,
+          winner: decidedRow ? decidedRow.abWinnerVariant : null,
+          decidedAt: decidedRow?.abWinnerAt ? new Date(decidedRow.abWinnerAt).toISOString() : null,
+          detail: decidedRow?.abWinnerDetail ?? null,
+          rule: AUTO_WINNER_RULE_TEXT_BN,
+          scopeNote: "Auto-winner শুধু Recipient-Table (MX1) পথে কাজ করে; Legacy Snapshot-path Broadcast-এ সিদ্ধান্ত হয় না। Cascade Broadcast-এও হয় না (Cascade নিজে Channel Content নির্ধারণ করে)।",
+        },
+      } as any;
+    }
+    // MX2: the cascade section — per-channel attempt breakdown
+    // + final-channel success counts + per-recipient chains,
+    // all derived from the linked delivery rows, merged with
+    // the stored run facts (breaker events, skipped channels,
+    // missing rates). Null for a broadcast with no cascade
+    // config and no linked attempts (every pre-MX2 report is
+    // byte-identical).
+    let cascade: Record<string, unknown> | null = null;
+    {
+      const cfg = readCascadeConfig((broadcast as any).cascadeConfig, String(broadcast.channel));
+      const deliveries = await this.walkDeliveries(organizationId, broadcast.id);
+      const hasLinked = deliveries.some((d: any) => d.attemptIndex !== null && d.attemptIndex !== undefined);
+      if (cfg || hasLinked) {
+        const breakdown = cascadeBreakdown(deliveries);
+        const stored = ((broadcast as any).cascadeReport ?? {}) as any;
+        const ratesMissing: string[] = Array.isArray(stored.ratesMissing) ? stored.ratesMissing : [];
+        cascade = {
+          config: cfg,
+          channels: breakdown.channels,
+          chains: breakdown.chains.slice(0, 200),
+          breakerEvents: Array.isArray(stored.breakerEvents) ? stored.breakerEvents : [],
+          skippedChannels: Array.isArray(stored.skippedChannels) ? stored.skippedChannels : [],
+          ratesMissing,
+          ...(ratesMissing.length
+            ? { ratesNote: `Cheapest-first চাওয়া হয়েছিল, কিন্তু এই চ্যানেলগুলোর org-দেওয়া rate নেই (${ratesMissing.join(", ")}) — তাই org-এর নিজের ক্রমই ব্যবহার হয়েছে; কোনো দাম অনুমান করা হয়নি।` }
+            : {}),
+        };
+      }
     }
     return {
       broadcast: {
         id: broadcast.id, name: broadcast.name, channel: broadcast.channel,
+        // MX12: the push click-through URL (null elsewhere).
+        pushUrl: (broadcast as any).pushUrl ?? null,
+        // MX13: the telegram inline URL buttons (null elsewhere).
+        telegramButtons: (broadcast as any).telegramButtons ?? null,
+        // MX14: the onsite click-through URL (null elsewhere).
+        onsiteUrl: (broadcast as any).onsiteUrl ?? null,
         status: broadcast.status, abVariant: broadcast.abVariant ?? null, abGroupId: broadcast.abGroupId ?? null,
         sentAt: broadcast.sentAt ?? null, scheduledAt: broadcast.scheduledAt ?? null,
         recurrence: (broadcast as any).recurrence ?? null,
@@ -3230,6 +7986,450 @@ export class MessagingService {
       replies: replies.count,
       repliesMethod: replies.method,
       ab,
+      cascade,
+      // MX11: the holdout section — present only on broadcasts
+      // that set a holdout (pre-MX11 reports are byte-identical).
+      // heldOutCount was stamped at prepare; held-out contacts
+      // received nothing, by construction.
+      ...((broadcast as any).holdoutPercent
+        ? {
+          holdout: {
+            percent: (broadcast as any).holdoutPercent,
+            heldOutCount: (broadcast as any).holdoutCount ?? 0,
+            label: "Holdout group (comparison) — these contacts were deliberately NOT sent this broadcast. Count stamped at prepare time; a resumed send never re-rolls it.",
+          },
+        }
+        : {}),
+    };
+  }
+
+  // ---------- MX16: comparative analytics, auto-winner, AI v2 ----------
+
+  /** MX16 — the funnel fields the analytics/auto-winner
+   * consumers read (broadcastFunnel's report shape minus the
+   * failure-reason list). */
+  private static funnelShape(funnel: any): BroadcastFunnelShape {
+    return {
+      audience: funnel.audience, sent: funnel.sent, failed: funnel.failed, skipped: funnel.skipped,
+      delivered: funnel.delivered, read: funnel.read, opened: funnel.opened,
+      clickedRecipients: funnel.clickedRecipients, totalClicks: funnel.totalClicks,
+    };
+  }
+
+  /**
+   * MX16 — cross-broadcast comparative analytics over a Dhaka
+   * date range (default: the finance range convention, last 30
+   * days). Every figure comes from the SAME per-broadcast
+   * machinery the report uses (broadcastFunnel +
+   * broadcastRevenue), aggregated by the pure analytics module:
+   * a stage a channel cannot report stays null at every level.
+   * Revenue is ASSOCIATION only (the labelled 7-day figure) —
+   * per the MB6 Step-0 audit there is NO honest join from a
+   * messaging delivery to Touchpoint/AttributionCredit, so
+   * `attribution` is null here and the note says why; nothing
+   * in this payload presents association as attribution.
+   * A broadcast belongs to the range by sentAt ?? createdAt.
+   */
+  async getComparativeAnalytics(organizationId: string, rangeInput?: { from?: string; to?: string }) {
+    let range;
+    try { range = parseFinanceRange(rangeInput?.from, rangeInput?.to); }
+    catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid date range"); }
+    const rows: any[] = await (this.prisma as any).broadcast.findMany({
+      where: { organizationId }, orderBy: { createdAt: "desc" }, take: 500,
+    }).catch(() => []);
+    const inRange = (rows ?? []).filter((b: any) => {
+      const d = new Date(b.sentAt ?? b.createdAt);
+      return !Number.isNaN(d.getTime()) && d.getTime() >= range.fromDate.getTime() && d.getTime() <= range.toDate.getTime();
+    });
+    const broadcasts: any[] = [];
+    for (const b of inRange) {
+      const funnel = await this.broadcastFunnel(organizationId, b);
+      const revenue = await this.broadcastRevenue(organizationId, b);
+      broadcasts.push({
+        id: b.id, name: b.name, channel: b.channel, status: b.status,
+        sentAt: b.sentAt ? new Date(b.sentAt).toISOString() : null,
+        createdAt: b.createdAt ? new Date(b.createdAt).toISOString() : null,
+        funnel: MessagingService.funnelShape(funnel),
+        revenueAssociation: revenue
+          ? { orders: revenue.orders, totalMinor: revenue.totalMinor, customerRecipients: revenue.customerRecipients, windowDays: revenue.windowDays }
+          : null,
+      });
+    }
+    const channels = aggregateFunnels(broadcasts.map((b) => ({ channel: b.channel, funnel: b.funnel })));
+    const totalsList = aggregateFunnels(broadcasts.map((b) => ({ channel: "all", funnel: b.funnel })));
+    const totals = totalsList[0] ?? {
+      channel: "all", broadcasts: 0, audience: 0, sent: 0, failed: 0, skipped: 0,
+      delivered: null, read: null, opened: null, clickedRecipients: null, totalClicks: null,
+    };
+    let assocOrders = 0;
+    let assocTotal = BigInt(0);
+    for (const b of broadcasts) {
+      if (!b.revenueAssociation) continue;
+      assocOrders += b.revenueAssociation.orders;
+      try { assocTotal += BigInt(b.revenueAssociation.totalMinor ?? 0); } catch { /* a malformed stored figure contributes nothing */ }
+    }
+    return {
+      range: { from: range.from, to: range.to },
+      broadcasts,
+      channels,
+      totals,
+      association: {
+        orders: assocOrders, totalMinor: assocTotal.toString(),
+        label: ASSOCIATION_LABEL_BN,
+      },
+      // Honest by construction: no AttributionCredit figure is
+      // computed for messaging, because no honest join exists.
+      attribution: null,
+      attributionNote: "Touchpoint/AttributionCredit ওয়েব-ভিজিটরের ডেটা — Broadcast Delivery-র সঙ্গে কোনো shared key নেই, তাই Messaging-এর জন্য Attribution সংখ্যা দেখানো হয় না; উপরের অর্ডার-সংখ্যা শুধুই Association।",
+      stageNote: "যে ধাপ কোনো Channel রিপোর্ট করতে পারে না, সেই ঘর null (\"—\") — কখনো বানানো ০ নয়। Email-এর opened শুধু HTML Broadcast থেকে যোগ হয়।",
+    };
+  }
+
+  /** MX16 — CSV export of the comparative analytics, built by
+   * the pure builder from the SAME aggregates the screen shows
+   * (so the numbers match by construction). Audited like every
+   * other messaging export. */
+  async exportComparativeAnalyticsCsv(organizationId: string, actorId: string, rangeInput?: { from?: string; to?: string }) {
+    const analytics = await this.getComparativeAnalytics(organizationId, rangeInput);
+    const csv = buildAnalyticsCsv({
+      range: analytics.range,
+      broadcasts: analytics.broadcasts.map((b: any) => ({
+        id: b.id, name: b.name, channel: b.channel, status: b.status, sentAt: b.sentAt,
+        funnel: b.funnel, revenueAssociation: b.revenueAssociation,
+      })),
+      channels: analytics.channels,
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.analytics_export", entityType: "Broadcast", entityId: "analytics",
+      metadata: { from: analytics.range.from, to: analytics.range.to, broadcasts: analytics.broadcasts.length },
+    });
+    return csv;
+  }
+
+  /**
+   * MX16 — the A/B auto-winner evaluation for one pair, run at
+   * the chunk boundary of the recipient-table send path (the
+   * seam the MB6 Step-0 audit named: processBroadcastTable
+   * re-reads state per chunk, so a decision taken here honestly
+   * affects only PENDING recipients — sent rows are frozen
+   * truth). The rule lives in messaging/analytics.ts
+   * (decideAutoWinner): opt-in first (per-pair override, else
+   * the org switch, default OFF), never twice, never on a
+   * cascade pair, never without an honestly-reported metric,
+   * never below 100 sent per variant, never on a tie or below
+   * |z| >= 1.96 on the two-proportion z-test. A taken decision
+   * is recorded on BOTH variant rows (winner, timestamp, and
+   * the full test inputs) and in the audit log.
+   *
+   * Returns the state the engine needs: whether a decision
+   * exists after this call, and the winning variant's row (its
+   * content is what the losing variant's remaining recipients
+   * receive).
+   */
+  async evaluateAbAutoWinner(organizationId: string, broadcastId: string): Promise<{
+    decided: boolean; newlyDecided: boolean; winner: "A" | "B" | null;
+    winnerBroadcast: any | null; detail: any | null; reason: string; enabled: boolean;
+  }> {
+    const idle = (reason: string, enabled = false) => ({
+      decided: false, newlyDecided: false, winner: null as "A" | "B" | null,
+      winnerBroadcast: null, detail: null, reason, enabled,
+    });
+    const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
+    if (!broadcast.abGroupId) return idle("not_ab_pair");
+    const variants: any[] = await (this.prisma as any).broadcast.findMany({
+      where: { organizationId, abGroupId: broadcast.abGroupId }, orderBy: { abVariant: "asc" },
+    }).catch(() => []);
+    const rowA = variants.find((v: any) => v.abVariant === "A");
+    const rowB = variants.find((v: any) => v.abVariant === "B");
+    if (!rowA || !rowB) return idle("pair_incomplete");
+    // Never twice: a decision recorded on either row stands.
+    const decidedRow = variants.find((v: any) => v.abWinnerVariant);
+    if (decidedRow) {
+      return {
+        decided: true, newlyDecided: false,
+        winner: decidedRow.abWinnerVariant as "A" | "B",
+        winnerBroadcast: variants.find((v: any) => v.abVariant === decidedRow.abWinnerVariant) ?? null,
+        detail: decidedRow.abWinnerDetail ?? null,
+        reason: "already_decided", enabled: true,
+      };
+    }
+    // Opt-in resolution: an explicit false on EITHER variant
+    // disables the pair (the mid-flight off-switch); else an
+    // explicit true on either enables it; else the org switch.
+    const enabled = variants.some((v: any) => v.abAutoWinnerEnabled === false)
+      ? false
+      : variants.some((v: any) => v.abAutoWinnerEnabled === true)
+        ? true
+        : await this.getAbAutoWinnerEnabled(organizationId);
+    const funnelA = MessagingService.funnelShape(await this.broadcastFunnel(organizationId, rowA));
+    const funnelB = MessagingService.funnelShape(await this.broadcastFunnel(organizationId, rowB));
+    const decision = decideAutoWinner({
+      enabled,
+      alreadyDecided: false,
+      hasCascade: Boolean((rowA as any).cascadeConfig || (rowB as any).cascadeConfig),
+      channel: String(broadcast.channel),
+      funnelA, funnelB,
+    });
+    if (!decision.decided || !decision.winner || !decision.a || !decision.b || !decision.metric) {
+      return { ...idle(decision.reason, enabled), detail: null };
+    }
+    const now = new Date();
+    const rate = (s: { sent: number; success: number }) => (s.sent > 0 ? s.success / s.sent : 0);
+    const detail = {
+      winner: decision.winner,
+      metric: decision.metric,
+      test: AUTO_WINNER_TEST_NAME,
+      alpha: 0.05,
+      zCritical: 1.96,
+      minSamplePerVariant: AUTO_WINNER_MIN_SAMPLE,
+      a: { sent: decision.a.sent, success: decision.a.success, rate: rate(decision.a) },
+      b: { sent: decision.b.sent, success: decision.b.success, rate: rate(decision.b) },
+      z: decision.z, pValue: decision.pValue,
+      decidedAt: now.toISOString(),
+      rule: AUTO_WINNER_RULE_TEXT_BN,
+    };
+    for (const v of variants) {
+      await (this.prisma as any).broadcast.update({
+        where: { id: v.id },
+        data: { abWinnerVariant: decision.winner, abWinnerAt: now, abWinnerDetail: detail },
+      });
+    }
+    await this.audit.log({
+      organizationId, userId: "system", action: "broadcast.ab_winner", entityType: "Broadcast", entityId: broadcastId,
+      metadata: { abGroupId: broadcast.abGroupId, ...detail },
+    }).catch(() => undefined);
+    return {
+      decided: true, newlyDecided: true, winner: decision.winner,
+      winnerBroadcast: decision.winner === "A" ? rowA : rowB,
+      detail, reason: "significant", enabled,
+    };
+  }
+
+  /** MX16 — flip the per-pair auto-winner override (true /
+   * false / null = back to inheriting the org switch) on BOTH
+   * variant rows. This is the human mid-flight switch: it is
+   * deliberately NOT the broadcast edit path (a "sending"
+   * broadcast cannot be edited), and the engine re-reads it at
+   * the next chunk, so disabling takes effect there. A pair
+   * that already finished sending cannot be toggled. */
+  async setBroadcastAbAutoWinner(organizationId: string, actorId: string, broadcastId: string, enabled: boolean | null) {
+    if (enabled !== null && typeof enabled !== "boolean") {
+      throw new BadRequestException("enabled must be true, false, or null (inherit the organization setting)");
+    }
+    const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
+    if (!broadcast.abGroupId) throw new BadRequestException("This broadcast is not part of an A/B test — there is no auto-winner to toggle.");
+    if (["sent", "partial", "failed", "cancelled"].includes(String(broadcast.status))) {
+      throw new BadRequestException(`This broadcast already finished (${broadcast.status}) — the auto-winner can no longer be toggled.`);
+    }
+    const variants: any[] = await (this.prisma as any).broadcast.findMany({
+      where: { organizationId, abGroupId: broadcast.abGroupId }, select: { id: true },
+    }).catch(() => []);
+    for (const v of variants) {
+      await (this.prisma as any).broadcast.update({ where: { id: v.id }, data: { abAutoWinnerEnabled: enabled } });
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "broadcast.ab_auto_winner_toggle", entityType: "Broadcast", entityId: broadcastId,
+      metadata: { abGroupId: broadcast.abGroupId, enabled },
+    });
+    return { abGroupId: broadcast.abGroupId, abAutoWinnerEnabled: enabled, variants: variants.map((v: any) => v.id) };
+  }
+
+  /**
+   * MX16 — AI campaign planner (through the MS9 guard path
+   * VERBATIM: checkMessagingAiLimit first — kill switch 403,
+   * daily cap 429, both before any provider call; ONE usage
+   * record per usable response on the shared messaging_copy
+   * ledger). Returns a PROPOSAL ONLY: an audience rule in the
+   * MS3 evaluator format, a content draft, a channel
+   * recommendation and a timing suggestion. It creates NO
+   * audience, NO template and NO broadcast — the composer
+   * applies each piece only on an explicit human click.
+   * With no real LLM configured there is no honest proposal
+   * (a template cannot plan a campaign), so that is a 502 —
+   * the MX11 segment-draft precedent.
+   */
+  async planCampaign(organizationId: string, actorId: string, dto: {
+    goal: string; channel?: string; audienceHint?: string;
+  }) {
+    const goal = String(dto.goal ?? "").trim();
+    if (!goal) throw new BadRequestException("goal is required — say what this campaign should achieve");
+    if (goal.length > 1000) throw new BadRequestException("goal is too long (max 1000 characters)");
+    const channelHint = dto.channel && ["email", "sms", "whatsapp"].includes(dto.channel) ? dto.channel : null;
+    await this.checkMessagingAiLimit(organizationId);
+    const provider = await this.messagingAiProvider(organizationId);
+    if (!provider.isRealLlm) {
+      throw new HttpException("AI is not configured for this organization, so a campaign plan cannot be generated. Configure an AI provider, or build the campaign manually in the composer.", 502);
+    }
+    const facts: string[] = [`Campaign goal: ${goal}`];
+    if (channelHint) facts.push(`Preferred channel hint: ${channelHint}`);
+    if (dto.audienceHint?.trim()) facts.push(`Audience hint: ${dto.audienceHint.trim()}`);
+    facts.push(...(await this.businessProfileFacts(organizationId)));
+    const { fieldsForEntity } = await import("./audience-rules");
+    const vocabulary = (entity: string) => Object.entries(fieldsForEntity(entity as any))
+      .map(([field, spec]) => `${field} (ops: ${spec.ops.join("|")}, value: ${spec.kind})`).join("; ");
+    const systemPrompt = [
+      "You plan ONE marketing campaign for an ecommerce business and return a PROPOSAL for a human to review — nothing you return is sent or saved automatically.",
+      "Use ONLY the facts given. Never invent prices, discounts, stock, delivery promises or results.",
+      'Return ONLY JSON {"audienceDefinition":{"entity":"customers"|"leads","match":"all"|"any","conditions":[{"field":string,"op":string,"value":...,"key"?:string}]},"contentDraft":{"subject":string|null,"body":string},"channelRecommendation":"email"|"sms"|"whatsapp","timingSuggestion":string,"rationale":string}.',
+      `Allowed audience fields for customers: ${vocabulary("customers")}. For leads: ${vocabulary("leads")}. At most 5 conditions.`,
+      "contentDraft.body is the message text (the personalization variables {{name}} and {{firstName}} may be used); subject is for email (null otherwise). Write the content in the goal's language (Bengali goals get Bangla script).",
+      "timingSuggestion is a short suggestion in the same language as the goal, stated as a suggestion — never a guarantee.",
+    ].join("\n");
+    let result: { text: string; model: string; inputTokens: number; outputTokens: number; tokensEstimated: boolean };
+    try {
+      result = await provider.complete(
+        [{ role: "system", content: systemPrompt }, { role: "user", content: facts.join("\n") }],
+        { jsonMode: true, maxTokens: 1200 },
+      );
+    } catch (e: any) {
+      throw new HttpException(e?.message ?? String(e), 502);
+    }
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const draft = parsed?.contentDraft ?? {};
+    const body = typeof draft?.body === "string" ? draft.body.trim() : "";
+    if (!parsed || !body) {
+      // Unusable answer: honest 502, NO usage record, nothing
+      // stored (the draftMessagingCopy rule).
+      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+    }
+    await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
+    let audienceDefinition: unknown = parsed.audienceDefinition ?? null;
+    let audienceValid = false;
+    const audienceErrors: string[] = [];
+    if (audienceDefinition) {
+      try {
+        audienceDefinition = validateAudienceDefinition(audienceDefinition as any);
+        audienceValid = true;
+      } catch (e) {
+        audienceErrors.push(e instanceof Error ? e.message : "The proposed audience definition failed validation.");
+      }
+    } else {
+      audienceErrors.push("The AI returned no audience definition.");
+    }
+    const channelRecommendation = ["email", "sms", "whatsapp"].includes(parsed.channelRecommendation)
+      ? parsed.channelRecommendation : null;
+    return {
+      proposal: {
+        audienceDefinition, audienceValid, audienceErrors,
+        contentDraft: {
+          subject: typeof draft.subject === "string" && draft.subject.trim() ? draft.subject.trim().slice(0, 200) : null,
+          body: body.slice(0, 4000),
+        },
+        channelRecommendation,
+        timingSuggestion: typeof parsed.timingSuggestion === "string" ? parsed.timingSuggestion.trim().slice(0, 500) : null,
+        rationale: typeof parsed.rationale === "string" ? parsed.rationale.trim().slice(0, 1000) : null,
+      },
+      providerLabel: provider.name, isRealLlm: true,
+      notice: "এটি শুধু একটি প্রস্তাব (proposal) — কোনো Audience, Template বা Broadcast তৈরি হয়নি। প্রতিটি অংশ আলাদাভাবে যাচাই করে Composer-এ নিজে বসান।",
+    };
+  }
+
+  /**
+   * MX16 — Bangla↔English translation DRAFT (through the MS9
+   * guard path verbatim, like every AI feature here). The
+   * translation is RETURNED ONLY: it is never written to a
+   * template or broadcast — a human inserts it into the
+   * composer and saves through the existing paths. The dev
+   * provider cannot translate, so without a real LLM this is
+   * an honest 502 (the MX6 classify precedent).
+   */
+  async translateDraft(organizationId: string, actorId: string, dto: {
+    subject?: string; body: string; targetLanguage: string;
+  }) {
+    const body = String(dto.body ?? "").trim();
+    if (!body) throw new BadRequestException("body is required — write the message to translate first");
+    if (body.length > 10000) throw new BadRequestException("body is too long to translate (max 10000 characters)");
+    const target = dto.targetLanguage === "en" ? "en" : dto.targetLanguage === "bn" ? "bn" : null;
+    if (!target) throw new BadRequestException('targetLanguage must be "bn" or "en"');
+    const subject = dto.subject !== undefined && dto.subject !== null ? String(dto.subject) : null;
+    await this.checkMessagingAiLimit(organizationId);
+    const provider = await this.messagingAiProvider(organizationId);
+    if (!provider.isRealLlm) {
+      throw new HttpException("আসল AI (LLM) কনফিগার করা হয়নি — Dev Template Adapter অনুবাদ করতে পারে না।", 502);
+    }
+    const systemPrompt = [
+      `You translate marketing message text into ${target === "bn" ? "Bengali (Bangla script)" : "English"}.`,
+      "Translate faithfully — add nothing, promise nothing new, and keep every {{variable}} token, URL and line break exactly as in the source.",
+      'Return ONLY JSON {"subject": string|null, "body": string} — subject is the translation of the given subject (null when no subject was given).',
+    ].join("\n");
+    const userText = [subject ? `Subject: ${subject}` : "Subject: (none)", `Body:\n${body}`].join("\n");
+    let result: { text: string; model: string; inputTokens: number; outputTokens: number; tokensEstimated: boolean };
+    try {
+      result = await provider.complete(
+        [{ role: "system", content: systemPrompt }, { role: "user", content: userText }],
+        { jsonMode: true, maxTokens: 2000 },
+      );
+    } catch (e: any) {
+      throw new HttpException(e?.message ?? String(e), 502);
+    }
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const translatedBody = typeof parsed?.body === "string" ? parsed.body.trim() : "";
+    if (!translatedBody) {
+      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+    }
+    await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
+    return {
+      subject: typeof parsed.subject === "string" && parsed.subject.trim() ? parsed.subject.trim().slice(0, 200) : null,
+      body: translatedBody.slice(0, 10000),
+      targetLanguage: target,
+      providerLabel: provider.name, isRealLlm: true,
+      notice: "এটি একটি অনুবাদ-খসড়া — কোথাও সংরক্ষিত হয়নি। Composer-এ নিজে বসিয়ে তারপর বিদ্যমান পথে সংরক্ষণ করুন।",
+    };
+  }
+
+  /** MX16 — subject-line quality score: a DETERMINISTIC
+   * HEURISTIC (see analytics.ts), not AI and not a measured
+   * open-rate prediction. No guard path is consumed because
+   * no AI is involved; the payload labels itself heuristic. */
+  scoreSubjectQuality(dto: { subject: string }) {
+    const subject = String(dto.subject ?? "");
+    if (!subject.trim()) throw new BadRequestException("subject is required");
+    return subjectQualityScore(subject);
+  }
+
+  /**
+   * MX16 — per-recipient send-time suggestion: a DETERMINISTIC
+   * statistic (not AI) — the modal Asia/Dhaka hour of THIS
+   * recipient's own recorded engagement (MessageLinkClick rows
+   * for their recipient key + their deliveries' openedAt /
+   * readAt). Below RECIPIENT_SEND_TIME_MIN_EVENTS recorded
+   * events the answer is "insufficient data" with the real
+   * count — never a fabricated time.
+   */
+  async recipientSendTimeSuggestion(organizationId: string, recipientType: string, recipientId: string) {
+    if (!["customer", "lead"].includes(recipientType)) throw new BadRequestException('recipientType must be "customer" or "lead"');
+    const id = String(recipientId ?? "").trim();
+    if (!id) throw new BadRequestException("recipientId is required");
+    const recipientKey = `${recipientType}:${id}`;
+    const clicks: any[] = await (this.prisma as any).messageLinkClick.findMany({
+      where: { organizationId, recipientKey }, select: { createdAt: true }, take: 5000,
+    }).catch(() => []);
+    const opened: any[] = await (this.prisma as any).messageDelivery.findMany({
+      where: { organizationId, recipientType, recipientId: id, openedAt: { not: null } },
+      select: { openedAt: true }, take: 5000,
+    }).catch(() => []);
+    const read: any[] = await (this.prisma as any).messageDelivery.findMany({
+      where: { organizationId, recipientType, recipientId: id, readAt: { not: null } },
+      select: { readAt: true }, take: 5000,
+    }).catch(() => []);
+    const stamps: Date[] = [
+      ...(clicks ?? []).map((r: any) => new Date(r.createdAt)),
+      ...(opened ?? []).map((r: any) => new Date(r.openedAt)),
+      ...(read ?? []).map((r: any) => new Date(r.readAt)),
+    ];
+    const stat = recipientSendTimeFromEvents(stamps);
+    return {
+      recipientKey,
+      available: stat.available,
+      totalEvents: stat.totalEvents,
+      minEvents: stat.minEvents,
+      modalHour: stat.modalHour,
+      modalHourEvents: stat.modalHourEvents,
+      ...(stat.available
+        ? { method: "এই প্রাপকের নিজের রেকর্ডকৃত Click/Open/Read ইভেন্টের সবচেয়ে ঘন ঘণ্টা (ঢাকা সময়) — একটি পরিসংখ্যান, AI নয়; ভবিষ্যতে এই সময়ে পাঠালেই সাড়া মিলবে এমন গ্যারান্টি নয়।" }
+        : { reason: `এই প্রাপকের মাত্র ${stat.totalEvents}টি engagement ইভেন্ট রেকর্ড আছে — নির্ভরযোগ্য পরামর্শের জন্য কমপক্ষে ${stat.minEvents}টি দরকার (insufficient data)। কোনো সময় অনুমান করা হয়নি।` }),
     };
   }
 
@@ -3241,7 +8441,11 @@ export class MessagingService {
     return {
       type: "test", id: null, name: "Test",
       email: channel === "email" ? to : null,
-      phone: channel === "email" ? null : to,
+      // MX13: for telegram the typed address IS a chat id — it
+      // rides in telegramChatId (and stays out of phone, so no
+      // phone logic can ever mistake it for a number).
+      phone: channel === "email" || channel === "telegram" ? null : to,
+      ...(channel === "telegram" ? { telegramChatId: to } : {}),
     };
   }
 
@@ -3262,6 +8466,24 @@ export class MessagingService {
    */
   async testSendBroadcast(organizationId: string, actorId: string, broadcastId: string, toInput: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
+    if (broadcast.channel === "push") {
+      // MX12: a push test send cannot target a typed address —
+      // push reaches BROWSER SUBSCRIPTIONS, not addresses. The
+      // honest path is the base system's test devices (Web
+      // Push panel: register this browser, then test-send
+      // there); a fake "test" delivery here would lie.
+      throw new BadRequestException("Push broadcasts cannot be test-sent to a typed address — push reaches browser subscriptions, not addresses. Register a test device in the Web Push panel and test-send from there instead.");
+    }
+    if (broadcast.channel === "onsite") {
+      // MX14: an onsite test send cannot target a typed address
+      // either — the channel reaches a customer's shop account
+      // notification center, and writing a "test" notification
+      // into a real customer's center would pollute it with a
+      // message that is not a real broadcast. The honest path
+      // is a real broadcast to a narrow customers audience
+      // (e.g. a segment containing only the test account).
+      throw new BadRequestException("On-site broadcasts cannot be test-sent to a typed address — they appear in a customer's shop account notification center, and a test must not pollute a real customer's center. Send a real broadcast to a narrow customers audience (e.g. a segment with only your test account) instead.");
+    }
     const to = String(toInput ?? "").trim();
     if (!to) throw new BadRequestException("A test recipient address is required (to)");
     let result: { status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string };
@@ -3286,6 +8508,12 @@ export class MessagingService {
           : (broadcast.htmlBody ?? null),
         vars: { name: "Test" },
         broadcastId,
+        // MX13: a telegram test send carries the broadcast's
+        // buttons, so the tester sees exactly what subscribers
+        // get. MX12: a push "to" never reaches this branch (the
+        // refusal above), so pushUrl stays unset here.
+        telegramButtons: (broadcast as any).telegramButtons ?? null,
+        onsiteUrl: (broadcast as any).onsiteUrl ?? null,
       });
     }
     await this.audit.log({
@@ -3344,8 +8572,33 @@ export class MessagingService {
    * channel. Email must look like an email; phone channels must
    * normalize to a BD number or at least 10 digits. */
   private validatePrefAddress(channel: string, raw: string): string {
-    if (!["email", "sms", "whatsapp"].includes(channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
     const address = normalizePrefAddress(channel, raw ?? "");
+    if (channel === "onsite") {
+      // MX14: an onsite preference address is a CUSTOMER ID —
+      // the notification-center account identity. Customer ids
+      // are uuids in this schema; the rule is a non-empty id
+      // of at most 100 chars with no whitespace (an id with a
+      // space in it can never match a real customer row).
+      if (!address || address.length > 100 || /\s/.test(address)) throw new BadRequestException(`Invalid onsite customer id: ${raw}`);
+      return address;
+    }
+    if (channel === "telegram") {
+      // MX13: a telegram preference address is a chat id —
+      // Telegram's own shape: an integer (user chats positive,
+      // group chats negative), at most 20 digits.
+      if (!/^-?\d{1,20}$/.test(address)) throw new BadRequestException(`Invalid Telegram chat id: ${raw}`);
+      return address;
+    }
+    if (channel === "push") {
+      // MX12: a manually-entered push preference address is a
+      // subscription endpoint — the base system's own rule
+      // (an https URL, ≤ 1000 chars) applies verbatim.
+      let ok = address.length > 0 && address.length <= 1000;
+      if (ok) { try { ok = new URL(address).protocol === "https:"; } catch { ok = false; } }
+      if (!ok) throw new BadRequestException(`Invalid push subscription endpoint: ${raw}`);
+      return address;
+    }
     if (channel === "email") {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new BadRequestException(`Invalid email address: ${raw}`);
     } else if (address.replace(/\D/g, "").length < 10) {
@@ -3370,7 +8623,7 @@ export class MessagingService {
     if (!["opted_out", "opted_in"].includes(status)) throw new BadRequestException("status must be opted_out or opted_in");
     const address = this.validatePrefAddress(dto.channel, dto.address);
     const row = await this.setPreference(organizationId, {
-      channel: dto.channel, address, status: status as "opted_out" | "opted_in", source: "manual", note: dto.note ?? null,
+      channel: dto.channel, address, status: status as "opted_out" | "opted_in", source: "manual", note: dto.note ?? null, actor: `user:${actorId}`,
     });
     await this.audit.log({ organizationId, userId: actorId, action: "messaging.preference_add", entityType: "MessagePreference", entityId: row.id, metadata: { channel: dto.channel, address, status } });
     return row;
@@ -3387,7 +8640,7 @@ export class MessagingService {
   /** Bulk opt-out import: per-row results, never all-or-nothing
    * and never silent — bad rows come back with their error. */
   async importPreferences(organizationId: string, actorId: string, dto: { channel: string; addresses: string[] }) {
-    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
     if (!Array.isArray(dto.addresses) || dto.addresses.length === 0) throw new BadRequestException("addresses must be a non-empty array");
     if (dto.addresses.length > 1000) throw new BadRequestException("Import is capped at 1000 addresses per request");
     let imported = 0;
@@ -3395,7 +8648,7 @@ export class MessagingService {
     for (const raw of dto.addresses) {
       try {
         const address = this.validatePrefAddress(dto.channel, String(raw ?? ""));
-        await this.setPreference(organizationId, { channel: dto.channel, address, status: "opted_out", source: "import" });
+        await this.setPreference(organizationId, { channel: dto.channel, address, status: "opted_out", source: "import", actor: `user:${actorId}` });
         imported++;
       } catch (e) {
         errors.push({ address: String(raw ?? ""), error: e instanceof Error ? e.message : "Invalid address" });
@@ -3436,9 +8689,574 @@ export class MessagingService {
     const payload = verifyUnsubscribeToken(token);
     if (!payload) throw new BadRequestException("এই আনসাবস্ক্রাইব লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। নতুন ইমেইলের লিংক ব্যবহার করুন।");
     await this.setPreference(payload.orgId, {
-      channel: payload.channel, address: payload.address, status: "opted_out", source: "unsubscribe_link",
+      channel: payload.channel, address: payload.address, status: "opted_out", source: "unsubscribe_link", actor: "public",
     });
     return { ok: true, message: "আপনাকে আনসাবস্ক্রাইব করা হয়েছে। এই ঠিকানায় আর কোনো Broadcast ইমেইল যাবে না।" };
+  }
+
+  // ---------- MX10: growth tools & preference center v2 ----------
+  // Opt-out is supreme everywhere below: no growth path ever
+  // flips an opted_out row, and a pending (unconfirmed) signup
+  // receives no marketing sends — the resolver excludes pending
+  // addresses and sendToRecipient skips them.
+
+  private optInFormTable(): any | null {
+    const t = (this.prisma as any).messagingOptInForm;
+    return t && typeof t.findMany === "function" ? t : null;
+  }
+
+  private slugifyOptIn(value: string): string {
+    return String(value ?? "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  }
+
+  private validateOptInChannels(raw: unknown): string[] {
+    const channels = Array.isArray(raw) ? raw.map(String) : [];
+    const out = channels.filter((c) => ["email", "sms", "whatsapp"].includes(c));
+    if (!out.length || out.length !== channels.length) throw new BadRequestException("channels must be a non-empty subset of email, sms, whatsapp");
+    return [...new Set(out)];
+  }
+
+  /** Shared keyword-claim check for opt-in forms: the keyword may
+   * not be a reserved STOP/START keyword, may not be claimed by
+   * another enabled opt-in form, and may not collide with an
+   * MX6 keyword-campaign rule (inbound dispatch order is
+   * STOP/START → opt-in keyword → campaign rules). */
+  private async assertOptInKeywordFree(organizationId: string, keyword: string, excludeFormId?: string) {
+    if (isReservedKeyword(normalizeKeywordText(keyword))) throw new BadRequestException(`"${keyword}" is a reserved keyword (STOP/START set) and can never be an opt-in keyword.`);
+    const forms: any[] = await (this.optInFormTable()?.findMany({ where: { organizationId, enabled: true } }) ?? Promise.resolve([])).catch(() => []);
+    if (forms.some((f) => f.id !== excludeFormId && f.keyword && normalizeKeywordText(f.keyword) === normalizeKeywordText(keyword))) {
+      throw new BadRequestException(`Keyword "${keyword}" is already used by another opt-in form.`);
+    }
+    const ruleTable = this.keywordRuleTable();
+    if (ruleTable) {
+      const rules: any[] = await ruleTable.findMany({ where: { organizationId, enabled: true } }).catch(() => []);
+      const claimed = rules.some((r) => (r.keyword && normalizeKeywordText(r.keyword) === normalizeKeywordText(keyword))
+        || (Array.isArray(r.pollOptions) && r.pollOptions.some((o: any) => Array.isArray(o?.keywords) && o.keywords.some((k: string) => normalizeKeywordText(k) === normalizeKeywordText(keyword)))));
+      if (claimed) throw new BadRequestException(`Keyword "${keyword}" is already claimed by a keyword campaign rule.`);
+    }
+  }
+
+  async listOptInForms(organizationId: string) {
+    const t = this.optInFormTable();
+    if (!t) return [];
+    const forms: any[] = await t.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" } }).catch(() => []);
+    return forms.map((f) => ({ ...f, joinUrl: this.optInJoinUrl(organizationId, f.slug) }));
+  }
+
+  optInJoinUrl(organizationId: string, slug: string): string {
+    return `${webBaseUrl()}/join/${organizationId}/${slug}`;
+  }
+
+  async createOptInForm(organizationId: string, actorId: string, dto: {
+    name: string; slug?: string; headline?: string; description?: string; channels: unknown;
+    topic?: string; doubleOptIn?: boolean; successMessage?: string; popup?: unknown; keyword?: string;
+  }) {
+    const t = this.optInFormTable();
+    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    const name = String(dto.name ?? "").trim();
+    if (!name) throw new BadRequestException("name is required");
+    const channels = this.validateOptInChannels(dto.channels);
+    const slug = this.slugifyOptIn(dto.slug || name);
+    if (!slug) throw new BadRequestException("slug must contain letters or digits");
+    const existing = await t.findFirst({ where: { organizationId, slug } }).catch(() => null);
+    if (existing) throw new BadRequestException(`An opt-in form with slug "${slug}" already exists in this organization.`);
+    const doubleOptIn = dto.doubleOptIn !== false;
+    const keyword = dto.keyword ? normalizeKeywordText(dto.keyword) : null;
+    if (keyword) await this.assertOptInKeywordFree(organizationId, keyword);
+    if (doubleOptIn && !channels.includes("email") && !keyword) {
+      throw new BadRequestException("Double opt-in needs a confirmation path: include the email channel (confirmation link) or set a WhatsApp opt-in keyword.");
+    }
+    const row = await t.create({
+      data: {
+        organizationId, name, slug,
+        headline: dto.headline ?? null, description: dto.description ?? null,
+        channels, topic: dto.topic ? String(dto.topic).trim() : null,
+        doubleOptIn, successMessage: dto.successMessage ?? null,
+        popup: dto.popup ?? null, keyword, enabled: true, createdById: actorId,
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.optin_form_create", entityType: "MessagingOptInForm", entityId: row.id, metadata: { slug, channels } });
+    return { ...row, joinUrl: this.optInJoinUrl(organizationId, slug) };
+  }
+
+  async updateOptInForm(organizationId: string, actorId: string, formId: string, dto: {
+    name?: string; headline?: string; description?: string; channels?: unknown; topic?: string;
+    doubleOptIn?: boolean; successMessage?: string; popup?: unknown; keyword?: string | null; enabled?: boolean;
+  }) {
+    const t = this.optInFormTable();
+    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    const row = await t.findFirst({ where: { id: formId, organizationId } });
+    if (!row) throw new NotFoundException("Opt-in form not found");
+    const data: Record<string, unknown> = {};
+    if (dto.name !== undefined) data.name = String(dto.name).trim();
+    if (dto.headline !== undefined) data.headline = dto.headline;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.channels !== undefined) data.channels = this.validateOptInChannels(dto.channels);
+    if (dto.topic !== undefined) data.topic = dto.topic ? String(dto.topic).trim() : null;
+    if (dto.doubleOptIn !== undefined) data.doubleOptIn = !!dto.doubleOptIn;
+    if (dto.successMessage !== undefined) data.successMessage = dto.successMessage;
+    if (dto.popup !== undefined) data.popup = dto.popup;
+    if (dto.enabled !== undefined) data.enabled = !!dto.enabled;
+    if (dto.keyword !== undefined) {
+      const keyword = dto.keyword ? normalizeKeywordText(dto.keyword) : null;
+      if (keyword) await this.assertOptInKeywordFree(organizationId, keyword, formId);
+      data.keyword = keyword;
+    }
+    const channels = (data.channels as string[] | undefined) ?? (Array.isArray(row.channels) ? row.channels : []);
+    const doubleOptIn = (data.doubleOptIn as boolean | undefined) ?? row.doubleOptIn;
+    const keyword = (data.keyword as string | null | undefined) ?? row.keyword;
+    if (doubleOptIn && !channels.includes("email") && !keyword) {
+      throw new BadRequestException("Double opt-in needs a confirmation path: include the email channel (confirmation link) or set a WhatsApp opt-in keyword.");
+    }
+    const updated = await t.update({ where: { id: formId }, data });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.optin_form_update", entityType: "MessagingOptInForm", entityId: formId, metadata: {} });
+    return { ...updated, joinUrl: this.optInJoinUrl(organizationId, updated.slug) };
+  }
+
+  async deleteOptInForm(organizationId: string, actorId: string, formId: string) {
+    const t = this.optInFormTable();
+    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    const row = await t.findFirst({ where: { id: formId, organizationId } });
+    if (!row) throw new NotFoundException("Opt-in form not found");
+    await t.delete({ where: { id: formId } });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.optin_form_delete", entityType: "MessagingOptInForm", entityId: formId, metadata: { slug: row.slug } });
+    return { deleted: true };
+  }
+
+  /** QR code (PNG data URL) of the form's real public join URL,
+   * generated server-side with the repo's qrcode dependency — no
+   * external shortening or tracking service. */
+  async getOptInFormQr(organizationId: string, formId: string): Promise<{ url: string; dataUrl: string }> {
+    const t = this.optInFormTable();
+    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    const row = await t.findFirst({ where: { id: formId, organizationId } });
+    if (!row) throw new NotFoundException("Opt-in form not found");
+    const url = this.optInJoinUrl(organizationId, row.slug);
+    const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 320 });
+    return { url, dataUrl };
+  }
+
+  /** The public form view: config only — never any subscriber data. */
+  async getPublicOptInForm(organizationId: string, slug: string) {
+    const t = this.optInFormTable();
+    if (!t) throw new NotFoundException("Form not found");
+    const form = await t.findFirst({ where: { organizationId, slug, enabled: true } }).catch(() => null);
+    if (!form) throw new NotFoundException("Form not found");
+    const org = await (this.prisma as any).organization?.findUnique({ where: { id: organizationId }, select: { name: true } }).catch(() => null);
+    return {
+      name: form.name, slug: form.slug, headline: form.headline, description: form.description,
+      channels: form.channels, topic: form.topic, doubleOptIn: form.doubleOptIn,
+      popup: form.popup ?? null, organizationName: org?.name ?? null,
+    };
+  }
+
+  /** Find the contact behind an email/phone pair: an existing
+   * customer first, then a lead (the MS3 csv-resolver precedent). */
+  private async findContactByAddress(organizationId: string, email: string, phone: string): Promise<{ type: "customer" | "lead"; row: any } | null> {
+    const phoneNorm = phone ? (normalizeBdPhone(phone) ?? phone.replace(/\D/g, "")) : "";
+    const matchesContact = (r: any) => {
+      if (email && r.email && String(r.email).trim().toLowerCase() === email) return true;
+      if (phoneNorm && r.phone && (normalizeBdPhone(String(r.phone)) ?? String(r.phone).replace(/\D/g, "")) === phoneNorm) return true;
+      return false;
+    };
+    for (const [table, type] of [["customer", "customer"], ["lead", "lead"]] as const) {
+      const rows: any[] = await (this.prisma as any)[table]?.findMany({ where: { organizationId }, take: 5000 }).catch(() => []) ?? [];
+      const hit = rows.find(matchesContact);
+      if (hit) return { type, row: hit };
+    }
+    return null;
+  }
+
+  /**
+   * Public signup submit. Lands as a REAL Lead (or the existing
+   * customer/lead) + MessagePreference rows — never a parallel
+   * subscriber store. With double opt-in the preferences start
+   * "pending" (no marketing sends until confirmed); an existing
+   * opted_out row is NEVER flipped by a signup (opt-out supreme).
+   */
+  async submitOptInForm(organizationId: string, slug: string, dto: { name?: string; email?: string; phone?: string }) {
+    const t = this.optInFormTable();
+    if (!t) throw new NotFoundException("Form not found");
+    const form = await t.findFirst({ where: { organizationId, slug, enabled: true } }).catch(() => null);
+    if (!form) throw new NotFoundException("Form not found");
+    const channels: string[] = Array.isArray(form.channels) ? form.channels : [];
+    const email = String(dto.email ?? "").trim().toLowerCase();
+    const phoneRaw = String(dto.phone ?? "").trim();
+    if (channels.includes("email")) {
+      if (!email) throw new BadRequestException("Email is required");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException("Invalid email address");
+    }
+    if (channels.some((c) => c === "sms" || c === "whatsapp")) {
+      if (!phoneRaw) throw new BadRequestException("Phone is required");
+      if ((normalizeBdPhone(phoneRaw) ?? phoneRaw.replace(/\D/g, "")).replace(/\D/g, "").length < 10) throw new BadRequestException("Invalid phone number");
+    }
+    const found = await this.findContactByAddress(organizationId, email, phoneRaw);
+    let recipientType: "customer" | "lead";
+    let recipientId: string;
+    if (found) {
+      recipientType = found.type; recipientId = found.row.id;
+    } else {
+      const lead = await (this.prisma as any).lead.create({
+        data: {
+          organizationId, name: String(dto.name ?? "").trim() || email || phoneRaw,
+          email: email || null, phone: phoneRaw || null,
+          source: "messaging_form", stage: "new", tags: [`optin:${form.slug}`],
+        },
+      });
+      recipientType = "lead"; recipientId = lead.id;
+    }
+    const target = form.doubleOptIn ? "pending" : "opted_in";
+    const skippedOptOut: string[] = [];
+    let confirmationSent = false;
+    for (const channel of channels) {
+      const address = channel === "email" ? email : phoneRaw;
+      if (!address) continue;
+      const existing = await (this.prisma as any).messagePreference.findFirst({
+        where: { organizationId, channel, address: normalizePrefAddress(channel, address) },
+      }).catch(() => null);
+      if (existing?.status === "opted_out") { skippedOptOut.push(channel); continue; }
+      await this.setPreference(organizationId, {
+        channel, address, status: target as "pending" | "opted_in", source: "signup_form", actor: "public",
+        recipientType, recipientId, note: `Opt-in form "${form.name}"`,
+      });
+    }
+    if (form.doubleOptIn && email && channels.includes("email") && !skippedOptOut.includes("email")) {
+      confirmationSent = await this.sendOptInConfirmationEmail(organizationId, form, email).catch(() => false);
+    }
+    return {
+      ok: true,
+      status: form.doubleOptIn ? "pending" : "active",
+      confirmationSent,
+      message: form.successMessage ?? (form.doubleOptIn
+        ? "ধন্যবাদ! নিশ্চিত করতে আপনার ইমেইলে পাঠানো লিংকটি ক্লিক করুন।"
+        : "ধন্যবাদ! আপনার সাবস্ক্রিপশন সম্পন্ন হয়েছে।"),
+    };
+  }
+
+  /** The double opt-in confirmation email — sent through the
+   * org's real email path (tenant SMTP when configured, else the
+   * platform provider), carrying the signed confirm link AND the
+   * preference-center link. NOT routed through sendToRecipient:
+   * that guard (correctly) refuses pending addresses. */
+  private async sendOptInConfirmationEmail(organizationId: string, form: any, email: string): Promise<boolean> {
+    const token = issueOptInToken({ orgId: organizationId, channel: "email", address: normalizePrefAddress("email", email) });
+    const confirmUrl = `${webBaseUrl()}/optin/${token}`;
+    const text = `ধন্যবাদ! "${form.name}"-এ আপনার সাবস্ক্রিপশন নিশ্চিত করতে নিচের লিংকে ক্লিক করুন:\n\n${confirmUrl}\n\nআপনি এই সাইনআপ না করে থাকলে এই ইমেইল উপেক্ষা করুন — নিশ্চিত না করলে কোনো মার্কেটিং বার্তা পাঠানো হবে না।`;
+    const tenantSmtp = await this.resolveTenantSmtp(organizationId).catch(() => null);
+    const mailInput = { to: email, subject: "আপনার সাবস্ক্রিপশন নিশ্চিত করুন", text };
+    const result = tenantSmtp && typeof (this.email as any).sendTenant === "function"
+      ? await this.email.sendTenant(organizationId, tenantSmtp, mailInput)
+      : await this.email.send(mailInput);
+    return !!result;
+  }
+
+  inspectOptInToken(token: string) {
+    const payload = verifyOptInToken(token);
+    if (!payload) throw new BadRequestException("এই নিশ্চিতকরণ লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। আবার সাইন আপ করুন।");
+    return { valid: true, channel: payload.channel, address: payload.channel === "email" ? maskEmailAddress(payload.address) : maskPhoneAddress(payload.address) };
+  }
+
+  /** Confirm a double opt-in: the token's (channel, address)
+   * flips pending → opted_in; other PENDING rows of the SAME
+   * contact (from the same signup) confirm with it — one person,
+   * one confirmation. An opted_out row is never flipped. */
+  async confirmOptIn(token: string) {
+    const payload = verifyOptInToken(token);
+    if (!payload) throw new BadRequestException("এই নিশ্চিতকরণ লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। আবার সাইন আপ করুন।");
+    const row = await (this.prisma as any).messagePreference.findFirst({
+      where: { organizationId: payload.orgId, channel: payload.channel, address: payload.address },
+    }).catch(() => null);
+    if (!row) throw new BadRequestException("এই সাবস্ক্রিপশনের কোনো রেকর্ড পাওয়া যায়নি।");
+    if (row.status === "opted_out") return { ok: true, message: "আপনি এই ঠিকানায় আনসাবস্ক্রাইব করেছেন — সেটি বহাল আছে।" };
+    if (row.status === "opted_in") return { ok: true, message: "আপনার সাবস্ক্রিপশন আগেই নিশ্চিত হয়েছে। ধন্যবাদ!" };
+    await this.setPreference(payload.orgId, {
+      channel: payload.channel, address: payload.address, status: "opted_in", source: "double_optin", actor: "public",
+      recipientType: row.recipientType ?? null, recipientId: row.recipientId ?? null,
+    });
+    if (row.recipientId) {
+      const siblings: any[] = await (this.prisma as any).messagePreference.findMany({
+        where: { organizationId: payload.orgId, recipientId: row.recipientId, status: "pending" },
+      }).catch(() => []);
+      for (const sib of siblings) {
+        await this.setPreference(payload.orgId, {
+          channel: sib.channel, address: sib.address, status: "opted_in", source: "double_optin", actor: "public",
+          recipientType: sib.recipientType ?? null, recipientId: sib.recipientId ?? null,
+        });
+      }
+    }
+    return { ok: true, message: "ধন্যবাদ! আপনার সাবস্ক্রিপশন নিশ্চিত হয়েছে।" };
+  }
+
+  // ----- MX10: public preference center -----
+  // The token (same HMAC discipline as unsubscribe) identifies
+  // ONE contact; the page manages channel on/off (real
+  // opted_in/opted_out rows — enforced by the existing resolver),
+  // topics and a per-contact frequency cap (stored on the
+  // contact's preference rows and enforced in the resolver's
+  // topic + frequency stages). Unsubscribe-all stays ONE click.
+
+  private async resolvePreferenceContact(organizationId: string, payload: { recipientType?: string | null; recipientId?: string | null; channel: string; address: string }) {
+    let row: any = null; let type: "customer" | "lead" | null = null;
+    if (payload.recipientId) {
+      const table = payload.recipientType === "customer" ? "customer" : "lead";
+      row = await (this.prisma as any)[table]?.findFirst({ where: { id: payload.recipientId, organizationId } }).catch(() => null);
+      if (row) type = table as "customer" | "lead";
+    }
+    if (!row) {
+      const found = await this.findContactByAddress(
+        organizationId,
+        payload.channel === "email" ? payload.address : "",
+        payload.channel === "email" ? "" : payload.address,
+      );
+      if (found) { row = found.row; type = found.type; }
+    }
+    const email = row?.email ? String(row.email).trim().toLowerCase() : (payload.channel === "email" ? payload.address : "");
+    const phone = row?.phone ? String(row.phone) : (payload.channel !== "email" ? payload.address : "");
+    return {
+      recipientType: type, recipientId: row?.id ?? null,
+      name: row ? (type === "customer" ? MessagingService.customerName(row) : row.name ?? "") : "",
+      email, phone,
+    };
+  }
+
+  private async preferenceRowsForContact(organizationId: string, contact: { email: string; phone: string }) {
+    const out: { channel: string; address: string; row: any }[] = [];
+    for (const channel of ["email", "sms", "whatsapp"]) {
+      const raw = channel === "email" ? contact.email : contact.phone;
+      if (!raw) continue;
+      const address = normalizePrefAddress(channel, raw);
+      const row = await (this.prisma as any).messagePreference.findFirst({ where: { organizationId, channel, address } }).catch(() => null);
+      out.push({ channel, address, row });
+    }
+    return out;
+  }
+
+  async getPreferenceCenter(token: string) {
+    const payload = verifyPreferenceToken(token);
+    if (!payload) throw new BadRequestException("এই লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ।");
+    const contact = await this.resolvePreferenceContact(payload.orgId, payload);
+    const rows = await this.preferenceRowsForContact(payload.orgId, contact);
+    const formTopics: any[] = await (this.optInFormTable()?.findMany({ where: { organizationId: payload.orgId } }) ?? Promise.resolve([])).catch(() => []);
+    const broadcasts: any[] = await (this.prisma as any).broadcast?.findMany({ where: { organizationId: payload.orgId }, select: { topic: true }, take: 500 }).catch(() => []) ?? [];
+    const availableTopics = [...new Set([...formTopics.map((f) => f.topic), ...broadcasts.map((b) => b.topic)].filter(Boolean).map(String))];
+    const firstTopics = rows.find((r) => Array.isArray(r.row?.topics))?.row?.topics ?? null;
+    const firstCap = rows.find((r) => typeof r.row?.maxPerDay === "number")?.row?.maxPerDay ?? null;
+    const org = await (this.prisma as any).organization?.findUnique({ where: { id: payload.orgId }, select: { name: true } }).catch(() => null);
+    return {
+      organizationName: org?.name ?? null,
+      name: contact.name,
+      channels: rows.map(({ channel, address, row }) => ({
+        channel,
+        address: channel === "email" ? maskEmailAddress(address) : maskPhoneAddress(address),
+        status: row?.status ?? "none", // none = no explicit preference recorded; broadcasts may still reach this channel unless opted out
+      })),
+      topics: firstTopics, availableTopics,
+      maxPerDay: firstCap,
+    };
+  }
+
+  async updatePreferenceCenter(token: string, dto: { channels?: Record<string, boolean>; topics?: string[] | null; maxPerDay?: number | null }) {
+    const payload = verifyPreferenceToken(token);
+    if (!payload) throw new BadRequestException("এই লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ।");
+    const organizationId = payload.orgId;
+    const contact = await this.resolvePreferenceContact(organizationId, payload);
+    if (dto.maxPerDay !== undefined && dto.maxPerDay !== null && (!Number.isInteger(dto.maxPerDay) || dto.maxPerDay < 0 || dto.maxPerDay > 20)) {
+      throw new BadRequestException("maxPerDay must be an integer between 0 and 20, or null");
+    }
+    if (dto.channels) {
+      for (const [channel, on] of Object.entries(dto.channels)) {
+        if (!["email", "sms", "whatsapp"].includes(channel)) continue;
+        const raw = channel === "email" ? contact.email : contact.phone;
+        if (!raw) continue;
+        await this.setPreference(organizationId, {
+          channel, address: raw, status: on ? "opted_in" : "opted_out", source: "preference_center", actor: "public",
+          recipientType: contact.recipientType, recipientId: contact.recipientId,
+        });
+      }
+    }
+    if (dto.topics !== undefined || dto.maxPerDay !== undefined) {
+      const rows = await this.preferenceRowsForContact(organizationId, contact);
+      for (const { channel, address, row } of rows) {
+        if (!row) continue;
+        const data: Record<string, unknown> = {};
+        if (dto.topics !== undefined) data.topics = dto.topics === null ? null : dto.topics.map(String).slice(0, 50);
+        if (dto.maxPerDay !== undefined) data.maxPerDay = dto.maxPerDay;
+        await (this.prisma as any).messagePreference.update({ where: { id: row.id }, data }).catch(() => null);
+        await this.recordConsentEvent(organizationId, {
+          channel, address, fromStatus: row.status, toStatus: "preferences_updated",
+          source: "preference_center", actor: "public",
+          recipientType: contact.recipientType, recipientId: contact.recipientId,
+          note: `topics=${dto.topics === undefined ? "unchanged" : JSON.stringify(data.topics ?? null)} maxPerDay=${dto.maxPerDay === undefined ? "unchanged" : String(dto.maxPerDay)}`,
+        });
+      }
+    }
+    return this.getPreferenceCenter(token);
+  }
+
+  /** ONE-CLICK unsubscribe-all from the preference center: every
+   * channel of this contact flips to opted_out in one action —
+   * the center adds choice, never friction to opting out. */
+  async unsubscribeAllFromCenter(token: string) {
+    const payload = verifyPreferenceToken(token);
+    if (!payload) throw new BadRequestException("এই লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ।");
+    const contact = await this.resolvePreferenceContact(payload.orgId, payload);
+    for (const channel of ["email", "sms", "whatsapp"]) {
+      const raw = channel === "email" ? contact.email : contact.phone;
+      if (!raw) continue;
+      await this.setPreference(payload.orgId, {
+        channel, address: raw, status: "opted_out", source: "preference_center", actor: "public",
+        recipientType: contact.recipientType, recipientId: contact.recipientId, note: "Unsubscribe all (preference center)",
+      });
+    }
+    return { ok: true, message: "আপনাকে সব চ্যানেল থেকে আনসাবস্ক্রাইব করা হয়েছে।" };
+  }
+
+  /** Authenticated: mint a preference-center link for one contact
+   * address (dashboard use + inclusion in org-sent mail). */
+  async issuePreferenceCenterLink(organizationId: string, actorId: string, dto: { channel: string; address: string }) {
+    const channel = dto.channel;
+    if (!["email", "sms", "whatsapp"].includes(channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    const address = this.validatePrefAddress(channel, dto.address);
+    const pref = await (this.prisma as any).messagePreference.findFirst({ where: { organizationId, channel, address } }).catch(() => null);
+    const found = await this.findContactByAddress(organizationId, channel === "email" ? address : "", channel === "email" ? "" : address);
+    const token = issuePreferenceToken({
+      orgId: organizationId, channel, address,
+      recipientType: pref?.recipientType ?? found?.type ?? null,
+      recipientId: pref?.recipientId ?? found?.row?.id ?? null,
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.preference_link_issue", entityType: "MessagePreference", entityId: organizationId, metadata: { channel } });
+    return { url: `${webBaseUrl()}/preferences/${token}` };
+  }
+
+  // ----- MX10: CSV import wizard -----
+
+  private async existingAddressSet(organizationId: string, channel: string): Promise<Set<string>> {
+    const set = new Set<string>();
+    for (const table of ["customer", "lead"] as const) {
+      const rows: any[] = await (this.prisma as any)[table]?.findMany({ where: { organizationId }, take: 20000 }).catch(() => []) ?? [];
+      for (const r of rows) {
+        const raw = channel === "email" ? r.email : r.phone;
+        if (raw) set.add(normalizePrefAddress(channel, String(raw)));
+      }
+    }
+    return set;
+  }
+
+  /** Step 1+2 of the wizard: parse + map + hygiene report. The
+   * report is PERSISTED (MessagingCsvImport, status previewed)
+   * BEFORE any contact exists; commit reads it back verbatim. */
+  async previewCsvImport(organizationId: string, actorId: string, dto: { channel: string; csv: string; mapping: CsvImportMapping }) {
+    const table = (this.prisma as any).messagingCsvImport;
+    if (!table || typeof table.create !== "function") throw new BadRequestException("CSV import is not available (database migration pending).");
+    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    const { headers, records } = parseContactsCsv(dto.csv ?? "");
+    if (!headers.length) throw new BadRequestException("CSV must have a header row");
+    if (!records.length) throw new BadRequestException("CSV has no data rows");
+    if (records.length > 5000) throw new BadRequestException("CSV import is capped at 5000 rows per file");
+    const mapping = dto.mapping ?? {};
+    if (dto.channel === "email" && !mapping.email) throw new BadRequestException("Map the email column for an email import");
+    if (dto.channel !== "email" && !mapping.phone) throw new BadRequestException("Map the phone column for a phone-channel import");
+    for (const key of ["name", "email", "phone"] as const) {
+      if (mapping[key] && !headers.includes(mapping[key]!)) throw new BadRequestException(`Mapped column "${mapping[key]}" is not in the CSV header (${headers.join(", ")})`);
+    }
+    const existing = await this.existingAddressSet(organizationId, dto.channel);
+    const result = classifyCsvRows({ records, mapping, channel: dto.channel, existingAddresses: existing });
+    const row = await table.create({
+      data: {
+        organizationId, createdById: actorId, channel: dto.channel, mapping,
+        totalRows: records.length, cleanCount: result.cleanCount,
+        duplicateCount: result.duplicateCount, invalidCount: result.invalidCount, roleCount: result.roleCount,
+        report: result.rows, status: "previewed",
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.csv_import_preview", entityType: "MessagingCsvImport", entityId: row.id, metadata: { channel: dto.channel, totalRows: records.length, clean: result.cleanCount } });
+    return { importId: row.id, headers, totalRows: records.length, cleanCount: result.cleanCount, duplicateCount: result.duplicateCount, invalidCount: result.invalidCount, roleCount: result.roleCount, rows: result.rows };
+  }
+
+  /** Step 3: import ONLY the clean rows of a previewed report —
+   * each becomes a real Lead (source "csv_import") + an opted_in
+   * preference stamped source "import" (the org's asserted
+   * consent source for the file). An existing opted_out for the
+   * address stays opted_out (supreme) and is counted, not hidden. */
+  async commitCsvImport(organizationId: string, actorId: string, importId: string) {
+    const table = (this.prisma as any).messagingCsvImport;
+    if (!table) throw new BadRequestException("CSV import is not available (database migration pending).");
+    const row = await table.findFirst({ where: { id: importId, organizationId } });
+    if (!row) throw new NotFoundException("Import not found");
+    if (row.status === "committed") throw new BadRequestException("This import was already committed — preview again for a new import.");
+    const outcomes: any[] = Array.isArray(row.report) ? row.report : [];
+    let imported = 0, suppressedOptOut = 0;
+    const errors: { row: number; error: string }[] = [];
+    for (const o of outcomes) {
+      if (o.status !== "clean") continue;
+      try {
+        const existingPref = await (this.prisma as any).messagePreference.findFirst({
+          where: { organizationId, channel: row.channel, address: o.address },
+        }).catch(() => null);
+        const lead = await (this.prisma as any).lead.create({
+          data: {
+            organizationId, name: o.name || o.address,
+            email: o.email || null, phone: o.phone || null,
+            source: "csv_import", stage: "new", tags: ["csv-import"],
+          },
+        });
+        if (existingPref?.status === "opted_out") { suppressedOptOut++; imported++; continue; }
+        await this.setPreference(organizationId, {
+          channel: row.channel, address: o.address, status: "opted_in", source: "import", actor: `user:${actorId}`,
+          recipientType: "lead", recipientId: lead.id, note: `CSV import ${row.id}`,
+        });
+        imported++;
+      } catch (e) {
+        errors.push({ row: o.row, error: e instanceof Error ? e.message : "Import failed" });
+      }
+    }
+    await table.update({ where: { id: importId }, data: { status: "committed", committedAt: new Date() } });
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.csv_import_commit", entityType: "MessagingCsvImport", entityId: importId, metadata: { imported, suppressedOptOut, failed: errors.length } });
+    return { imported, suppressedOptOut, errors };
+  }
+
+  async getCsvImport(organizationId: string, importId: string) {
+    const table = (this.prisma as any).messagingCsvImport;
+    if (!table) throw new BadRequestException("CSV import is not available (database migration pending).");
+    const row = await table.findFirst({ where: { id: importId, organizationId } });
+    if (!row) throw new NotFoundException("Import not found");
+    return row;
+  }
+
+  /** The persisted hygiene report as a downloadable CSV — every
+   * row with its outcome and (for exclusions) its reason. */
+  async csvImportReportCsv(organizationId: string, importId: string): Promise<string> {
+    const row = await this.getCsvImport(organizationId, importId);
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = ["row,name,email,phone,address,status,reason,reasonText"];
+    for (const o of (Array.isArray(row.report) ? row.report : []) as any[]) {
+      lines.push([o.row, o.name ?? "", o.email ?? "", o.phone ?? "", o.address ?? "", o.status, o.reason ?? "", o.reasonText ?? ""].map(esc).join(","));
+    }
+    return lines.join("\n");
+  }
+
+  // ----- MX10: consent audit export -----
+  // From the REAL MessageConsentEvent records. History begins
+  // at MX10 — the export honestly contains nothing earlier,
+  // because nothing earlier was ever recorded.
+
+  async listConsentEvents(organizationId: string, take = 200) {
+    const table = (this.prisma as any).messageConsentEvent;
+    if (!table || typeof table.findMany !== "function") return { events: [], historyBeginsAt: "MX10" };
+    const events = await table.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: Math.min(take, 1000) }).catch(() => []);
+    return { events, historyBeginsAt: "MX10" };
+  }
+
+  async exportConsentEventsCsv(organizationId: string, actorId: string): Promise<string> {
+    const table = (this.prisma as any).messageConsentEvent;
+    const rows: any[] = table && typeof table.findMany === "function"
+      ? await table.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" }, take: 10000 }).catch(() => [])
+      : [];
+    await this.audit.log({ organizationId, userId: actorId, action: "messaging.consent_export", entityType: "MessageConsentEvent", entityId: organizationId, metadata: { rows: rows.length } });
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = ["createdAt,channel,address,recipientType,recipientId,fromStatus,toStatus,source,actor,note"];
+    for (const r of rows) lines.push([r.createdAt ? new Date(r.createdAt).toISOString() : "", r.channel, r.address, r.recipientType ?? "", r.recipientId ?? "", r.fromStatus ?? "", r.toStatus, r.source, r.actor, r.note ?? ""].map(esc).join(","));
+    return lines.join("\n");
   }
 
   // ---------- MS2: inbound STOP / START keywords ----------
@@ -3454,35 +9272,641 @@ export class MessagingService {
    * send path can address a Messenger PSID today, so a preference
    * keyed by PSID could never match a send — recording it would
    * be dead data (see the B1 acceptance).
+   * MX13: telegram IS hooked (from the same inbox dispatch) —
+   * unlike a Messenger PSID, a telegram chat id IS addressable
+   * by a broadcast send path (this package's), and telegram's
+   * native "/start" counts as START.
    */
   async handleInboundKeyword(organizationId: string, channel: string, senderAddress: string, text: string): Promise<{ matched: boolean; action?: "opted_out" | "opted_in" }> {
-    if (channel !== "whatsapp") return { matched: false };
+    // MX13: telegram joins whatsapp here — the SAME preference
+    // store, channel = the inbound channel, address = the
+    // sender's channel address (phone for whatsapp, chat id for
+    // telegram). Telegram's own "/start" command (the message
+    // every subscriber sends to open the bot) ALSO counts as
+    // START → opted_in: a user who (re)started the bot has
+    // signalled they want its messages. "/start" stays
+    // telegram-only — it is NOT added to the shared reserved
+    // set, so WhatsApp behaviour is unchanged.
+    if (channel !== "whatsapp" && channel !== "telegram") return { matched: false };
     const normalized = String(text ?? "").trim();
     if (!normalized || !senderAddress) return { matched: false };
     const upper = normalized.toUpperCase();
-    const STOP = ["STOP", "STOP ALL", "UNSUBSCRIBE", "বন্ধ করুন", "স্টপ"];
-    const START = ["START", "চালু করুন"];
-    const isStop = STOP.some((k) => upper === k.toUpperCase());
-    const isStart = !isStop && START.some((k) => upper === k.toUpperCase());
+    const isStop = KEYWORD_RESERVED_STOP.some((k) => upper === k.toUpperCase());
+    const isStart = !isStop && (KEYWORD_RESERVED_START.some((k) => upper === k.toUpperCase()) || (channel === "telegram" && upper === "/START"));
     if (!isStop && !isStart) return { matched: false };
     const status = isStop ? "opted_out" : "opted_in";
     await this.setPreference(organizationId, {
-      channel: "whatsapp", address: senderAddress, status, source: "inbound_keyword",
+      channel, address: senderAddress, status, source: "inbound_keyword", actor: "inbound",
     });
     return { matched: true, action: status };
   }
 
+  /**
+   * MX10 — WhatsApp opt-in keyword (growth): an inbound message
+   * equal to an ENABLED opt-in form's keyword for this org. This
+   * runs in the same inbound path as the MS2 hook (the inbox
+   * dispatch calls it only when STOP/START did not match —
+   * opt-out stays supreme): a pending signup for this phone is
+   * CONFIRMED (pending → opted_in, source keyword_optin);
+   * otherwise a fresh opted_in is recorded for the form's
+   * channels the phone can receive (whatsapp), because the
+   * sender initiated contact from their own handset. Returns
+   * false when no enabled form claims the keyword, so MX6
+   * campaign matching proceeds exactly as before.
+   */
+  async handleOptInKeyword(organizationId: string, senderAddress: string, text: string): Promise<boolean> {
+    const keyword = normalizeKeywordText(text);
+    if (!keyword || !senderAddress) return false;
+    const table = (this.prisma as any).messagingOptInForm;
+    if (!table || typeof table.findMany !== "function") return false;
+    const forms: any[] = await table.findMany({ where: { organizationId, enabled: true } }).catch(() => []);
+    const form = forms.find((f) => f.keyword && normalizeKeywordText(f.keyword) === keyword);
+    if (!form) return false;
+    const address = normalizePrefAddress("whatsapp", senderAddress);
+    const existing = await (this.prisma as any).messagePreference.findFirst({
+      where: { organizationId, channel: "whatsapp", address },
+    }).catch(() => null);
+    if (existing?.status === "opted_out") return true; // opt-out is supreme: claimed, but never flipped by a growth keyword
+    await this.setPreference(organizationId, {
+      channel: "whatsapp", address, status: "opted_in", source: "keyword_optin", actor: "inbound",
+      recipientType: existing?.recipientType ?? null, recipientId: existing?.recipientId ?? null,
+      note: `Opt-in form "${form.name}" keyword`,
+    });
+    return true;
+  }
+
+  // ---------- MX6: keyword campaigns (two-way & interactive) ----------
+  // Rules match an inbound WhatsApp reply AFTER the MS2 hook
+  // above has had its exclusive say: the inbox dispatch calls
+  // handleKeywordReply ONLY when handleInboundKeyword did NOT
+  // match, and handleKeywordReply re-checks the reserved set
+  // itself (defense in depth) — a STOP/START message can never
+  // produce a campaign hit or an auto-reply. Channel scope is
+  // WhatsApp ONLY, honestly: it is the only channel with an
+  // inbound path into messaging. There is NO SMS inbound path
+  // anywhere in this codebase and email replies are not hooked
+  // into messaging, so keyword campaigns on those channels are
+  // NOT BUILT; Messenger is not hooked either (a PSID matches no
+  // preference/send keying — a rule on it could never fire, the
+  // MS2 dead-data rationale).
+
+  private keywordRuleTable(): any | null {
+    const t = (this.prisma as any).messagingKeywordRule;
+    return t && typeof t.findMany === "function" ? t : null;
+  }
+
+  private keywordHitTable(): any | null {
+    const t = (this.prisma as any).messagingKeywordHit;
+    return t && typeof t.findMany === "function" ? t : null;
+  }
+
+  private requireKeywordTables() {
+    const rules = this.keywordRuleTable();
+    const hits = this.keywordHitTable();
+    if (!rules || !hits) {
+      throw new BadRequestException("Keyword campaigns are not available in this deployment (the MX6 tables are missing — the migration has not run).");
+    }
+    return { rules, hits };
+  }
+
+  /** Every normalized keyword a rule claims: its own keyword
+   * (keyword rules) or every option keyword (poll rules). */
+  private claimedKeywordsOf(rule: any): string[] {
+    const out: string[] = [];
+    if (rule?.kind === "poll") {
+      for (const opt of Array.isArray(rule.pollOptions) ? rule.pollOptions : []) {
+        for (const k of Array.isArray(opt?.keywords) ? opt.keywords : []) out.push(normalizeKeywordText(k));
+      }
+    } else if (rule?.keyword) {
+      out.push(normalizeKeywordText(rule.keyword));
+    }
+    return out.filter(Boolean);
+  }
+
+  /**
+   * MX6 — validate a keyword-rule shape (create, or the merged
+   * shape on update) and return the normalized row data. Rules:
+   *  - channel: "whatsapp" only — any other value is an honest
+   *    400 naming the reason (no inbound path on that channel);
+   *  - keyword rules: keyword required; RESERVED keywords
+   *    (the full STOP + START sets, same normalization) refused;
+   *    at least one action (a tag or an auto-reply text) — a
+   *    rule that does nothing is refused;
+   *  - tag shape: ONE tag string + applyTagTo naming where it
+   *    goes (customer | lead | conversation) — the two must
+   *    come together;
+   *  - autoReplyText: org-authored plain text, ≤ 1000 chars;
+   *  - poll rules: 2..6 options, each with a label and ≥ 1
+   *    keyword; keywords unique across the poll's options, not
+   *    reserved; polls carry no tag / auto-reply in v1 (they
+   *    only record votes);
+   *  - no keyword may already be claimed by ANOTHER enabled
+   *    rule of the org — including inside another poll's
+   *    options (a disabled rule claims nothing).
+   */
+  private async validateKeywordRule(organizationId: string, dto: any, excludeRuleId?: string) {
+    const { rules } = this.requireKeywordTables();
+    const name = String(dto?.name ?? "").trim();
+    if (!name) throw new BadRequestException("A keyword rule needs a name");
+    if (name.length > 120) throw new BadRequestException("Rule name is too long (max 120 characters)");
+    const kind = String(dto?.kind ?? "");
+    if (!["keyword", "poll"].includes(kind)) throw new BadRequestException('kind must be "keyword" or "poll"');
+    const channel = String(dto?.channel ?? "whatsapp").trim() || "whatsapp";
+    if (channel !== "whatsapp") {
+      throw new BadRequestException(
+        `Keyword campaigns are WhatsApp-only in this version: channel "${channel}" has no inbound message path into messaging ` +
+        (channel === "sms" ? "(there is no SMS inbound path anywhere in this system), " : channel === "email" ? "(email replies are not hooked into messaging), " : "")
+        + "so a rule on it could never fire.",
+      );
+    }
+
+    let keyword: string | null = null;
+    let tag: string | null = null;
+    let applyTagTo: string[] | null = null;
+    let autoReplyText: string | null = null;
+    let pollOptions: { key: string; label: string; keywords: string[] }[] | null = null;
+    const ownKeywords: string[] = [];
+
+    if (kind === "keyword") {
+      if (dto?.pollOptions !== undefined && dto?.pollOptions !== null) {
+        throw new BadRequestException("pollOptions belong to poll rules — a keyword rule matches its single keyword");
+      }
+      keyword = String(dto?.keyword ?? "").trim();
+      if (!keyword) throw new BadRequestException("keyword is required for a keyword rule");
+      if (keyword.length > 100) throw new BadRequestException("Keyword is too long (max 100 characters)");
+      const normalizedKeyword = normalizeKeywordText(keyword);
+      if (isReservedKeyword(normalizedKeyword)) {
+        throw new BadRequestException(
+          `"${keyword}" is a reserved keyword (STOP/START set) — opt-out/opt-in handling owns it exclusively and a campaign rule can never claim it.`,
+        );
+      }
+      ownKeywords.push(normalizedKeyword);
+
+      tag = String(dto?.tag ?? "").trim() || null;
+      if (tag && tag.length > 80) throw new BadRequestException("Tag is too long (max 80 characters)");
+      const targets: string[] = Array.isArray(dto?.applyTagTo) ? [...new Set<string>(dto.applyTagTo.map((t: unknown) => String(t)))] : [];
+      for (const t of targets) {
+        if (!["customer", "lead", "conversation"].includes(t)) {
+          throw new BadRequestException(`applyTagTo may only contain customer, lead or conversation — got "${t}"`);
+        }
+      }
+      if (tag && targets.length === 0) throw new BadRequestException("applyTagTo must name at least one of customer, lead, conversation when a tag is set");
+      if (!tag && targets.length > 0) throw new BadRequestException("A tag value is required when applyTagTo is set");
+      applyTagTo = tag ? targets : null;
+
+      autoReplyText = String(dto?.autoReplyText ?? "").trim() || null;
+      if (autoReplyText && autoReplyText.length > 1000) throw new BadRequestException("Auto-reply text is too long (max 1000 characters)");
+      if (!tag && !autoReplyText) {
+        throw new BadRequestException("A keyword rule needs at least one action — a tag or an auto-reply text. A rule that does nothing is not saved.");
+      }
+    } else {
+      if (dto?.keyword !== undefined && dto?.keyword !== null && String(dto.keyword).trim()) {
+        throw new BadRequestException("Poll rules match through their options' keywords — the rule-level keyword must be empty");
+      }
+      if (String(dto?.tag ?? "").trim() || (Array.isArray(dto?.applyTagTo) && dto.applyTagTo.length) || String(dto?.autoReplyText ?? "").trim()) {
+        throw new BadRequestException("Poll rules only record votes in this version — tags and auto-replies are not applied for polls");
+      }
+      const rawOptions: any[] = Array.isArray(dto?.pollOptions) ? dto.pollOptions : [];
+      if (rawOptions.length < 2 || rawOptions.length > 6) {
+        throw new BadRequestException("A poll needs 2 to 6 options");
+      }
+      const seenKeys = new Set<string>();
+      const seenKeywords = new Map<string, string>();
+      pollOptions = rawOptions.map((opt: any, i: number) => {
+        const key = String(opt?.key ?? "").trim() || `opt${i + 1}`;
+        if (seenKeys.has(key)) throw new BadRequestException(`Poll option keys must be unique — "${key}" appears twice`);
+        seenKeys.add(key);
+        const label = String(opt?.label ?? "").trim();
+        if (!label) throw new BadRequestException(`Poll option "${key}" needs a label`);
+        const keywords = (Array.isArray(opt?.keywords) ? opt.keywords : [])
+          .map((k: unknown) => String(k ?? "").trim()).filter(Boolean);
+        if (keywords.length === 0) throw new BadRequestException(`Poll option "${label}" needs at least one keyword`);
+        for (const k of keywords) {
+          if (k.length > 100) throw new BadRequestException(`Poll keyword "${k}" is too long (max 100 characters)`);
+          const nk = normalizeKeywordText(k);
+          if (isReservedKeyword(nk)) {
+            throw new BadRequestException(`"${k}" is a reserved keyword (STOP/START set) — opt-out/opt-in handling owns it exclusively and a poll option can never claim it.`);
+          }
+          const prior = seenKeywords.get(nk);
+          if (prior !== undefined) {
+            throw new BadRequestException(`Poll keyword "${k}" is claimed by more than one option ("${prior}" and "${label}") — a keyword can only vote for one option`);
+          }
+          seenKeywords.set(nk, label);
+          ownKeywords.push(nk);
+        }
+        return { key, label, keywords };
+      });
+    }
+
+    // Duplicate claim: no keyword may already be claimed by
+    // another ENABLED rule of this org (keyword rules and poll
+    // options alike).
+    const others: any[] = await rules.findMany({ where: { organizationId, enabled: true } });
+    for (const other of others ?? []) {
+      if (excludeRuleId && other.id === excludeRuleId) continue;
+      const claimed = new Set(this.claimedKeywordsOf(other));
+      for (const nk of ownKeywords) {
+        if (claimed.has(nk)) {
+          throw new BadRequestException(`Keyword "${nk}" is already claimed by the enabled rule "${other.name}" — disable or edit that rule first.`);
+        }
+      }
+    }
+
+    return {
+      name, kind, keyword, channel, tag, applyTagTo, autoReplyText, pollOptions,
+      enabled: dto?.enabled === undefined ? true : Boolean(dto.enabled),
+    };
+  }
+
+  async listKeywordRules(organizationId: string) {
+    const { rules, hits } = this.requireKeywordTables();
+    const rows: any[] = await rules.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" } });
+    const withCounts: any[] = [];
+    for (const row of rows ?? []) {
+      const hitCount = typeof hits.count === "function"
+        ? await hits.count({ where: { organizationId, ruleId: row.id } }).catch(() => 0)
+        : 0;
+      withCounts.push({ ...row, hitCount });
+    }
+    return withCounts;
+  }
+
+  private async getKeywordRuleOrThrow(organizationId: string, ruleId: string) {
+    const { rules } = this.requireKeywordTables();
+    const row = await rules.findFirst({ where: { id: ruleId, organizationId } });
+    if (!row) throw new NotFoundException("Keyword rule not found");
+    return row;
+  }
+
+  async createKeywordRule(organizationId: string, actorId: string, dto: any) {
+    const { rules } = this.requireKeywordTables();
+    const data = await this.validateKeywordRule(organizationId, dto);
+    const row = await rules.create({ data: { organizationId, ...data, createdById: actorId } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.keyword_rule_create",
+      entityType: "MessagingKeywordRule", entityId: row.id,
+      metadata: { kind: row.kind, keyword: row.keyword ?? undefined },
+    });
+    return row;
+  }
+
+  async updateKeywordRule(organizationId: string, actorId: string, ruleId: string, dto: any) {
+    const { rules } = this.requireKeywordTables();
+    const existing = await this.getKeywordRuleOrThrow(organizationId, ruleId);
+    // Validate the MERGED shape: a partial PATCH (e.g. only the
+    // enabled toggle) is checked as the rule it would become.
+    const merged = {
+      name: existing.name, kind: existing.kind, keyword: existing.keyword, channel: existing.channel,
+      tag: existing.tag, applyTagTo: existing.applyTagTo, autoReplyText: existing.autoReplyText,
+      pollOptions: existing.pollOptions, enabled: existing.enabled,
+      ...(dto ?? {}),
+    };
+    const data = await this.validateKeywordRule(organizationId, merged, ruleId);
+    const row = await rules.update({ where: { id: ruleId }, data });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.keyword_rule_update",
+      entityType: "MessagingKeywordRule", entityId: ruleId, metadata: { enabled: row.enabled },
+    });
+    return row;
+  }
+
+  async deleteKeywordRule(organizationId: string, actorId: string, ruleId: string) {
+    const { rules } = this.requireKeywordTables();
+    const existing = await this.getKeywordRuleOrThrow(organizationId, ruleId);
+    await rules.delete({ where: { id: existing.id } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.keyword_rule_delete",
+      entityType: "MessagingKeywordRule", entityId: ruleId, metadata: { name: existing.name },
+    });
+    return { deleted: true };
+  }
+
+  async listKeywordHits(organizationId: string, opts?: { ruleId?: string; take?: number }) {
+    const { rules, hits } = this.requireKeywordTables();
+    const take = Math.min(Math.max(Number(opts?.take ?? 50) || 50, 1), 200);
+    const rows: any[] = await hits.findMany({
+      where: { organizationId, ...(opts?.ruleId ? { ruleId: opts.ruleId } : {}) },
+      orderBy: { createdAt: "desc" }, take,
+    });
+    const ruleRows: any[] = await rules.findMany({ where: { organizationId } }).catch(() => []);
+    const byId = new Map((ruleRows ?? []).map((r: any) => [r.id, r]));
+    return (rows ?? []).map((h: any) => ({
+      ...h,
+      ruleName: byId.get(h.ruleId)?.name ?? null,
+      ruleKind: byId.get(h.ruleId)?.kind ?? null,
+    }));
+  }
+
+  /**
+   * MX6 — poll tally. Semantics (also in the acceptance doc):
+   * one voter = one conversation; a voter may CHANGE their vote
+   * by replying with another option's keyword — each
+   * conversation counts ONCE, under its LATEST hit. Earlier
+   * votes from the same conversation do not count.
+   */
+  async getKeywordPollTally(organizationId: string, ruleId: string) {
+    const { hits } = this.requireKeywordTables();
+    const rule = await this.getKeywordRuleOrThrow(organizationId, ruleId);
+    if (rule.kind !== "poll") throw new BadRequestException("Tally is only available for poll rules");
+    const rows: any[] = await hits.findMany({
+      where: { organizationId, ruleId, pollOptionKey: { not: null } },
+      orderBy: { createdAt: "asc" },
+    });
+    const latestByConversation = new Map<string, string>();
+    for (const h of rows ?? []) {
+      if (h.conversationId && h.pollOptionKey) latestByConversation.set(h.conversationId, h.pollOptionKey);
+    }
+    const counts = new Map<string, number>();
+    for (const key of latestByConversation.values()) counts.set(key, (counts.get(key) ?? 0) + 1);
+    const options = (Array.isArray(rule.pollOptions) ? rule.pollOptions : []).map((o: any) => ({
+      key: String(o.key), label: String(o.label), votes: counts.get(String(o.key)) ?? 0,
+    }));
+    return { ruleId: rule.id, options, totalVoters: latestByConversation.size };
+  }
+
+  /** MX6: append ONE tag to a Json string-array field (Customer
+   * .tags / Lead.tags), deduped, other tags preserved. Returns
+   * the per-action outcome recorded on the hit. */
+  private async appendJsonTag(table: any, organizationId: string, entityId: string, tag: string, entity: string, target: string) {
+    const row = await table.findFirst({ where: { id: entityId, organizationId } }).catch(() => null);
+    if (!row) return { action: "tag", target, entity, status: "failed", reason: `linked ${entity} not found` };
+    const current: string[] = Array.isArray(row.tags) ? row.tags.map((t: unknown) => String(t)) : [];
+    if (current.includes(tag)) {
+      return { action: "tag", target, entity, status: "skipped", reason: `tag already present on ${entity}` };
+    }
+    await table.update({ where: { id: row.id }, data: { tags: [...current, tag] } });
+    return { action: "tag", target, entity, status: "applied" };
+  }
+
+  /** MX6: one tag action of a keyword rule against ONE selected
+   * target. The "customer" target falls back to the linked lead
+   * when the conversation has no customer (the outcome records
+   * which entity was actually tagged); "conversation" tags the
+   * ChannelConversation row itself (String[] tags). */
+  private async applyKeywordTag(
+    organizationId: string,
+    conversation: { id: string; customerId?: string | null; leadId?: string | null },
+    target: string, tag: string,
+  ): Promise<Record<string, unknown>> {
+    const p = this.prisma as any;
+    if (target === "customer") {
+      if (conversation.customerId) return this.appendJsonTag(p.customer, organizationId, conversation.customerId, tag, "customer", target);
+      if (conversation.leadId) return this.appendJsonTag(p.lead, organizationId, conversation.leadId, tag, "lead", target);
+      return { action: "tag", target, status: "skipped", reason: "conversation is linked to neither a customer nor a lead" };
+    }
+    if (target === "lead") {
+      if (!conversation.leadId) return { action: "tag", target, status: "skipped", reason: "conversation has no linked lead" };
+      return this.appendJsonTag(p.lead, organizationId, conversation.leadId, tag, "lead", target);
+    }
+    if (target === "conversation") {
+      const conv = await p.channelConversation.findFirst({ where: { id: conversation.id, organizationId } }).catch(() => null);
+      if (!conv) return { action: "tag", target, entity: "conversation", status: "failed", reason: "conversation not found" };
+      const current: string[] = Array.isArray(conv.tags) ? conv.tags.map((t: unknown) => String(t)) : [];
+      if (current.includes(tag)) return { action: "tag", target, entity: "conversation", status: "skipped", reason: "tag already present on conversation" };
+      await p.channelConversation.update({ where: { id: conv.id }, data: { tags: [...current, tag] } });
+      return { action: "tag", target, entity: "conversation", status: "applied" };
+    }
+    return { action: "tag", target, status: "skipped", reason: `unknown tag target "${target}"` };
+  }
+
+  /** MX6: the auto-reply action. The sender's WhatsApp opt-out
+   * is checked FIRST through the SAME preference lookup the
+   * broadcast resolver uses — an opted-out sender gets NO reply
+   * (the tags above still apply: they record the customer's own
+   * explicit reply; only the send is blocked). The send itself
+   * goes through the registered inbox-reply port (the real
+   * inbox conversation send path — a keyword reply just arrived,
+   * so the WhatsApp 24h window is open by construction); without
+   * a registered port the action is recorded as skipped, never
+   * as sent. */
+  private async sendKeywordAutoReply(
+    organizationId: string,
+    conversation: { id: string; externalContactId?: string | null },
+    replyText: string,
+  ): Promise<Record<string, unknown>> {
+    const address = normalizePrefAddress("whatsapp", conversation.externalContactId ?? "");
+    const optOut = await this.findOptOut(organizationId, "whatsapp", address);
+    if (optOut) return { action: "auto_reply", status: "skipped", reason: "sender opted out" };
+    if (!this.inboxReplyPort) {
+      return { action: "auto_reply", status: "skipped", reason: "inbox reply path is not available in this deployment (no inbox module registered)" };
+    }
+    try {
+      const sent = await this.inboxReplyPort.sendConversationText(organizationId, conversation.id, replyText);
+      return { action: "auto_reply", status: "applied", providerMessageId: sent.providerMessageId };
+    } catch (e) {
+      return { action: "auto_reply", status: "failed", reason: e instanceof Error ? e.message : "Auto-reply send failed" };
+    }
+  }
+
+  /**
+   * MX6 — inbound campaign matching. Called best-effort from
+   * the inbox dispatch ONLY when the MS2 hook did not match
+   * (STOP/START never reaches campaign logic — and this method
+   * re-checks the reserved set itself, so no caller mistake can
+   * route a STOP into a campaign). WhatsApp only. No claim →
+   * { matched: false } and NO hit row (non-campaign chatter is
+   * not recorded). A claim → the rule's actions run (each
+   * outcome recorded), exactly ONE hit row is written, and a
+   * poll claim records a vote (pollOptionKey) with no actions.
+   */
+  async handleKeywordReply(
+    organizationId: string,
+    conversation: { id: string; externalContactId?: string | null; customerId?: string | null; leadId?: string | null },
+    text: string,
+  ): Promise<{ matched: boolean; ruleId?: string; pollOptionKey?: string; hitId?: string }> {
+    const rulesTable = this.keywordRuleTable();
+    const hitsTable = this.keywordHitTable();
+    if (!rulesTable || !hitsTable || !conversation?.id) return { matched: false };
+    const normalized = normalizeKeywordText(text);
+    if (!normalized) return { matched: false };
+    if (isReservedKeyword(normalized)) return { matched: false };
+    const rules: any[] = await rulesTable.findMany({ where: { organizationId, enabled: true, channel: "whatsapp" } }).catch(() => []);
+    let matchedRule: any = null;
+    let matchedKeyword = "";
+    let pollOptionKey: string | null = null;
+    for (const rule of rules ?? []) {
+      if (rule.kind === "poll") {
+        for (const opt of Array.isArray(rule.pollOptions) ? rule.pollOptions : []) {
+          const kw = (Array.isArray(opt?.keywords) ? opt.keywords : []).find((k: unknown) => normalizeKeywordText(k) === normalized);
+          if (kw) { matchedRule = rule; matchedKeyword = String(kw); pollOptionKey = String(opt.key); break; }
+        }
+      } else if (rule.keyword && normalizeKeywordText(rule.keyword) === normalized) {
+        matchedRule = rule; matchedKeyword = String(rule.keyword);
+      }
+      if (matchedRule) break;
+    }
+    if (!matchedRule) return { matched: false };
+
+    const actions: Record<string, unknown>[] = [];
+    if (matchedRule.kind !== "poll") {
+      const tag = String(matchedRule.tag ?? "").trim();
+      const targets: string[] = Array.isArray(matchedRule.applyTagTo) ? matchedRule.applyTagTo.map((t: unknown) => String(t)) : [];
+      if (tag) {
+        for (const target of targets) {
+          actions.push(await this.applyKeywordTag(organizationId, conversation, target, tag).catch((e) => ({
+            action: "tag", target, status: "failed", reason: e instanceof Error ? e.message : "Tag failed",
+          })));
+        }
+      }
+      const replyText = String(matchedRule.autoReplyText ?? "").trim();
+      if (replyText) actions.push(await this.sendKeywordAutoReply(organizationId, conversation, replyText));
+    }
+
+    const hit = await hitsTable.create({
+      data: {
+        organizationId, ruleId: matchedRule.id, conversationId: conversation.id,
+        customerId: conversation.customerId ?? null, leadId: conversation.leadId ?? null,
+        matchedText: String(text ?? ""), matchedKeyword, pollOptionKey,
+        actions: actions.length ? actions : null,
+      },
+    });
+    return { matched: true, ruleId: matchedRule.id, ...(pollOptionKey ? { pollOptionKey } : {}), hitId: hit?.id };
+  }
+
+  /** MX6: the labels an AI classification may suggest — exactly
+   * one of these four, nothing else is ever stored. */
+  static readonly KEYWORD_HIT_LABELS = ["interest", "complaint", "opt-out", "other"];
+
+  /**
+   * MX6 — AI classification of one hit's matched text:
+   * a SUGGESTION only. Runs through the SAME guard path as MS9
+   * (checkMessagingAiLimit: org kill switch 403 → daily cap
+   * 429, before any provider call; one usage record per
+   * completed call on the shared messaging_copy ledger). The
+   * dev-template provider is NOT a model and cannot classify —
+   * it gets an honest 502 instead of a fabricated label. On
+   * success only suggestedLabel + classifyStatus "suggested"
+   * are stored; NOTHING is applied at this stage.
+   */
+  async classifyKeywordHit(organizationId: string, actorId: string, hitId: string) {
+    const { hits } = this.requireKeywordTables();
+    const hit = await hits.findFirst({ where: { id: hitId, organizationId } });
+    if (!hit) throw new NotFoundException("Keyword hit not found");
+    await this.checkMessagingAiLimit(organizationId);
+    const provider = await this.messagingAiProvider(organizationId);
+    if (!provider.isRealLlm) {
+      throw new HttpException("আসল AI (LLM) কনফিগার করা হয়নি — Dev Template Adapter গ্রাহকের রিপ্লাই শ্রেণিবদ্ধ করতে পারে না।", 502);
+    }
+    const labels = MessagingService.KEYWORD_HIT_LABELS;
+    const systemPrompt = [
+      "You classify a single inbound WhatsApp reply a customer sent to an ecommerce business.",
+      `Reply with ONLY JSON {"label": "..."} where the label is exactly one of: ${labels.join(" | ")}.`,
+      '"interest" = the customer shows buying/product interest. "complaint" = a complaint or problem report.',
+      '"opt-out" = the customer asks not to receive marketing messages (in any language). "other" = anything else.',
+      "Use ONLY the message text given. Never invent context.",
+    ].join("\n");
+    let result: { text: string; model: string; inputTokens: number; outputTokens: number; tokensEstimated: boolean };
+    try {
+      result = await provider.complete(
+        [{ role: "system", content: systemPrompt }, { role: "user", content: String(hit.matchedText ?? "") }],
+        { jsonMode: true, maxTokens: 100 },
+      );
+    } catch (e: any) {
+      throw new HttpException(e?.message ?? String(e), 502);
+    }
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const label = typeof parsed?.label === "string" ? parsed.label.trim() : "";
+    if (!labels.includes(label)) {
+      // Unparseable / off-vocabulary answer: honest 502, no
+      // suggestion stored, no usage recorded (the MS9 rule).
+      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+    }
+    await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
+    const updated = await hits.update({
+      where: { id: hit.id },
+      data: { suggestedLabel: label, classifyStatus: "suggested" },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.keyword_hit_classify",
+      entityType: "MessagingKeywordHit", entityId: hit.id, metadata: { suggestedLabel: label },
+    });
+    return updated;
+  }
+
+  /**
+   * MX6 — a human decides on an AI suggestion. Confirm stores
+   * confirmedLabel; for interest/complaint the confirmed label
+   * is ALSO appended as a tag on the conversation (visible to
+   * agents, reversible like any tag). For "opt-out" the label
+   * is stored ONLY — confirming a suggestion NEVER writes a
+   * MessagePreference and NEVER suppresses anyone: suppression
+   * happens only through the real STOP path, which is instant
+   * and already supreme. Dismiss stores classifyStatus
+   * "dismissed" and applies nothing.
+   */
+  async applyKeywordHitLabel(organizationId: string, actorId: string, hitId: string, decision: string) {
+    const { hits } = this.requireKeywordTables();
+    if (!["confirm", "dismiss"].includes(decision)) {
+      throw new BadRequestException('decision must be "confirm" or "dismiss"');
+    }
+    const hit = await hits.findFirst({ where: { id: hitId, organizationId } });
+    if (!hit) throw new NotFoundException("Keyword hit not found");
+    if (hit.classifyStatus !== "suggested" || !hit.suggestedLabel) {
+      throw new BadRequestException("There is no pending AI suggestion on this hit — classify it first.");
+    }
+    if (decision === "dismiss") {
+      const updated = await hits.update({ where: { id: hit.id }, data: { classifyStatus: "dismissed" } });
+      await this.audit.log({
+        organizationId, userId: actorId, action: "messaging.keyword_hit_label_dismiss",
+        entityType: "MessagingKeywordHit", entityId: hit.id, metadata: { suggestedLabel: hit.suggestedLabel },
+      });
+      return updated;
+    }
+    const label = String(hit.suggestedLabel);
+    let conversationTagged = false;
+    if (label === "interest" || label === "complaint") {
+      const outcome = await this.applyKeywordTag(organizationId, { id: hit.conversationId }, "conversation", label).catch(() => null);
+      conversationTagged = outcome?.status === "applied" || outcome?.status === "skipped";
+    }
+    // label === "opt-out" / "other": the label is stored ONLY
+    // (see the rule above — never a preference write).
+    const updated = await hits.update({
+      where: { id: hit.id },
+      data: { classifyStatus: "confirmed", confirmedLabel: label },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.keyword_hit_label_confirm",
+      entityType: "MessagingKeywordHit", entityId: hit.id,
+      metadata: { confirmedLabel: label, conversationTagged },
+    });
+    return { ...updated, conversationTagged };
+  }
+
   // ---------- MS8: messaging journey presets ----------
 
-  /** The journey catalogue (messaging/journey-presets.ts) —
-   * every preset audited against the triggers/steps the
-   * workflow engine really executes; see that module for the
-   * audit, including why winback_sweep was dropped. */
+  /** The journey catalogue — MS8 v1 (journey-presets.ts) plus
+   * MX5 v2 (journey-presets-v2.ts: multi-template lifecycle
+   * presets on the MX4 journey structure). Every preset is
+   * audited against the triggers/steps the workflow engine
+   * really executes; see those modules for the audits. The
+   * `version` marker separates the catalogues; v2 entries carry
+   * their full template list instead of a single template. */
   listJourneyPresets() {
-    return JOURNEY_PRESETS.map((p) => ({
+    const v1 = JOURNEY_PRESETS.map((p) => ({
       key: p.key, name: p.name, descriptionBn: p.descriptionBn, flow: p.flow,
       trigger: p.trigger, channel: p.channel, templateName: p.template.name,
+      version: 1 as const, stepsCount: p.steps("template-id").length,
     }));
+    const v2 = JOURNEY_PRESETS_V2.map((p) => {
+      const dummyIds = Object.fromEntries(p.templates.map((t) => [t.slot, "template-id"]));
+      return {
+        key: p.key, name: p.name, descriptionBn: p.descriptionBn, flow: p.flow,
+        trigger: p.trigger, version: 2 as const, stepsCount: p.steps(dummyIds).length,
+        channels: [...new Set(p.templates.map((t) => t.channel))],
+        templates: p.templates.map((t) => ({ slot: t.slot, channel: t.channel, name: t.name })),
+        exitOnPurchase: p.exitOnPurchase === true,
+      };
+    });
+    return [...v1, ...v2];
+  }
+
+  /** MX5 — presets that are deliberately NOT built, with the
+   * honest reason (journey-presets-v2.ts carries the audit).
+   * The presets endpoint returns these alongside the catalogue
+   * so the UI can show them greyed instead of hiding them. */
+  listUnavailableJourneyPresets() {
+    return UNAVAILABLE_JOURNEY_PRESETS.map((p) => ({ ...p }));
   }
 
   /**
@@ -3504,19 +9928,30 @@ export class MessagingService {
    */
   async installJourneyPreset(organizationId: string, actorId: string, key: string, dto?: { name?: string }) {
     const preset = JOURNEY_PRESETS.find((p) => p.key === key);
-    if (!preset) throw new NotFoundException("Journey preset not found");
+    const presetV2 = preset ? undefined : JOURNEY_PRESETS_V2.find((p) => p.key === key);
+    if (!preset && !presetV2) throw new NotFoundException("Journey preset not found");
     if (!this.workflowCreator) {
       throw new BadRequestException("Workflow engine is not available in this deployment");
     }
+    if (presetV2) return this.installJourneyPresetV2(organizationId, actorId, presetV2, dto);
     const template = await this.createTemplate(organizationId, actorId, {
-      name: preset.template.name, channel: preset.channel,
-      ...(preset.template.subject ? { subject: preset.template.subject } : {}),
-      body: preset.template.body,
+      name: preset!.template.name, channel: preset!.channel,
+      ...(preset!.template.subject ? { subject: preset!.template.subject } : {}),
+      body: preset!.template.body,
     });
     const workflow = await this.workflowCreator.create(organizationId, actorId, {
-      name: dto?.name?.trim() || preset.name,
-      trigger: preset.trigger,
-      steps: preset.steps(template.id),
+      name: dto?.name?.trim() || preset!.name,
+      trigger: preset!.trigger,
+      steps: preset!.steps(template.id),
+      // MX5: MS8 installs now also carry the MX4 journey meta
+      // ({ origin, preset } — no exitOnPurchase key; the v1
+      // presets never opted into it). The ms8-bridge spec does
+      // NOT pin the port-create payload (it asserts trigger /
+      // enabled / steps / template only), so this is additive:
+      // name, trigger, conditions (none) and steps are exactly
+      // as before, and the installed workflows become visible
+      // in the MX4 Journeys list with per-step stats.
+      journey: { origin: "messaging", preset: key },
     });
     const disabled = await this.workflowCreator.update(organizationId, workflow.id, { enabled: false }, actorId);
     await this.audit.log({
@@ -3525,5 +9960,385 @@ export class MessagingService {
       metadata: { preset: key, templateId: template.id },
     });
     return { preset: key, workflow: disabled, template, enabled: false };
+  }
+
+  /**
+   * MX5 — install a v2 preset through the SAME discipline as
+   * MS8, extended for multiple templates:
+   *  1. EVERY template slot becomes a REAL MessageTemplate row
+   *     via createTemplate (editable afterwards);
+   *  2. ONE Workflow is created through the registered port
+   *     (the engine's validator included) with the preset's
+   *     steps built from the created template ids, its journey
+   *     conditions (win_back's inactiveDays) when it has any,
+   *     and MX4 journey meta { origin: "messaging", preset,
+   *     exitOnPurchase };
+   *  3. the workflow is set enabled: false — a human reviews
+   *     before it can act.
+   * The response keeps the MS8 shape ({ preset, workflow,
+   * template, enabled }) with `template` = the first created
+   * template, extended with the full `templates` list.
+   */
+  private async installJourneyPresetV2(
+    organizationId: string, actorId: string,
+    preset: (typeof JOURNEY_PRESETS_V2)[number], dto?: { name?: string },
+  ) {
+    const creator = this.workflowCreator!;
+    const templates: any[] = [];
+    const ids: Record<string, string> = {};
+    for (const t of preset.templates) {
+      const row = await this.createTemplate(organizationId, actorId, {
+        name: t.name, channel: t.channel,
+        ...(t.subject ? { subject: t.subject } : {}),
+        body: t.body,
+      });
+      templates.push(row);
+      ids[t.slot] = row.id;
+    }
+    const workflow = await creator.create(organizationId, actorId, {
+      name: dto?.name?.trim() || preset.name,
+      trigger: preset.trigger,
+      ...(preset.journeyConditions ? { conditions: preset.journeyConditions } : {}),
+      steps: preset.steps(ids),
+      journey: { origin: "messaging", preset: preset.key, exitOnPurchase: preset.exitOnPurchase === true },
+    });
+    const disabled = await creator.update(organizationId, workflow.id, { enabled: false }, actorId);
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.journey_preset_install",
+      entityType: "Workflow", entityId: workflow.id,
+      metadata: { preset: preset.key, version: 2, templateIds: templates.map((t) => t.id) },
+    });
+    return { preset: preset.key, workflow: disabled, template: templates[0], templates, enabled: false };
+  }
+
+  // ---------- MX4: messaging journeys (visual builder) ----------
+  // A journey IS a Workflow (Workflow.journey non-null) — the
+  // definitions created here are executed by the Workflows
+  // engine itself; there is no second engine. Messaging NEVER
+  // writes the Workflow table directly: every read/write goes
+  // through the registered MS8 port (the engine's own create /
+  // update / list / listRuns, validator included), exactly like
+  // installJourneyPreset. Per-step stats are the one exception
+  // to "reads via the port": they aggregate WorkflowRun /
+  // MessageDelivery / MessageLinkClick rows directly, because
+  // the port has no aggregation surface and inventing one in
+  // the engine for a read-only report would be a bigger change.
+
+  /** The registered engine, or the honest refusal every
+   * journey endpoint shares (installJourneyPreset precedent). */
+  private requireWorkflowCreator(): WorkflowCreatorPort {
+    if (!this.workflowCreator) {
+      throw new BadRequestException("Workflow engine is not available in this deployment");
+    }
+    return this.workflowCreator;
+  }
+
+  /** MX4: the builder's vocabulary — journey-usable triggers,
+   * condition fields and step types (the constants above carry
+   * the audit for each list). */
+  getJourneyMeta() {
+    return { triggers: JOURNEY_TRIGGERS, conditionFields: JOURNEY_CONDITION_FIELDS, stepTypes: JOURNEY_STEP_TYPES };
+  }
+
+  /** MX4: messaging-side step validation. It MIRRORS the
+   * engine's rules for the journey subset (allowlist, wait
+   * range, condition/branch shape, arm rules) so the API
+   * refuses what the engine would refuse — and the engine
+   * re-validates on create/update anyway. Send-step template
+   * CHANNEL is checked here (the engine checks template
+   * existence in its validator and channel match only at run
+   * time; a journey authored against the wrong channel should
+   * fail at save, not at 2am in a run). */
+  private async validateJourneySteps(organizationId: string, steps: unknown, inArm = false): Promise<void> {
+    if (!Array.isArray(steps)) throw new BadRequestException("Journey steps must be an array");
+    if (!inArm && steps.length === 0) throw new BadRequestException("A journey needs at least one step");
+    const allowed = inArm ? JOURNEY_ARM_STEP_TYPES : JOURNEY_STEP_TYPES.map((t) => t.type);
+    for (const step of steps as any[]) {
+      if (!step || typeof step !== "object") throw new BadRequestException("Each journey step must be an object");
+      if (!allowed.includes(step.type)) {
+        throw new BadRequestException(inArm
+          ? `Branch arms in a journey may only contain send_email, send_sms or add_tag steps — got ${String(step.type)}`
+          : `Journey steps may only use ${JOURNEY_STEP_TYPES.map((t) => t.type).join(", ")} — got ${String(step.type)}`);
+      }
+      if (step.type === "send_email" || step.type === "send_sms") {
+        if (!step.templateId) throw new BadRequestException(`${step.type} steps need a templateId`);
+        const template = await this.getTemplate(organizationId, step.templateId);
+        const want = step.type === "send_email" ? "email" : "sms";
+        if (template.channel !== want) {
+          throw new BadRequestException(`Template channel (${template.channel}) does not match step (${want})`);
+        }
+      }
+      if (step.type === "wait" && (!Number(step.minutes) || Number(step.minutes) < 1 || Number(step.minutes) > 43200)) {
+        throw new BadRequestException("wait steps need minutes between 1 and 43200 (30 days)");
+      }
+      if ((step.type === "condition" || step.type === "branch") && (!step.field || !step.op)) {
+        throw new BadRequestException(`${step.type} steps need a field and an operator`);
+      }
+      if (step.type === "add_tag") {
+        if (!step.tag) throw new BadRequestException("add_tag steps need a tag");
+        if (step.target !== undefined && !["lead", "conversation"].includes(step.target)) {
+          throw new BadRequestException("add_tag steps need a target (lead | conversation)");
+        }
+      }
+      if (step.type === "branch") {
+        const thenSteps = Array.isArray(step.then) ? step.then : [];
+        const elseSteps = Array.isArray(step.else) ? step.else : [];
+        if (thenSteps.length + elseSteps.length === 0) {
+          throw new BadRequestException("branch steps need at least one sub-step in an arm");
+        }
+        await this.validateJourneySteps(organizationId, thenSteps, true);
+        await this.validateJourneySteps(organizationId, elseSteps, true);
+      }
+    }
+  }
+
+  /** MX4: journey-level conditions are the engine's flat
+   * {field, op, value} list — shape-checked only; the engine
+   * evaluates them, and an unknown field simply never matches
+   * (evaluateConditions semantics), never a fabricated pass. */
+  private validateJourneyConditions(conditions: unknown): void {
+    if (conditions === undefined || conditions === null) return;
+    if (!Array.isArray(conditions)) throw new BadRequestException("conditions must be an array of {field, op, value}");
+    for (const c of conditions as any[]) {
+      if (!c || typeof c !== "object" || !c.field || !c.op) {
+        throw new BadRequestException("Each condition needs a field and an operator");
+      }
+    }
+  }
+
+  private static runSummary(runs: any[]): { total: number; waiting: number; completed: number; failed: number; skipped: number } {
+    const count = (s: string) => runs.filter((r) => r.status === s).length;
+    return {
+      total: runs.length,
+      waiting: count("waiting") + count("resuming"),
+      completed: count("completed"), failed: count("failed"), skipped: count("skipped"),
+    };
+  }
+
+  private journeyView(w: any) {
+    return {
+      id: w.id, name: w.name, trigger: w.trigger,
+      conditions: w.conditions ?? null, steps: Array.isArray(w.steps) ? w.steps : [],
+      enabled: w.enabled, journey: w.journey ?? null,
+      createdAt: w.createdAt ?? null, updatedAt: w.updatedAt ?? null,
+    };
+  }
+
+  /** List this org's journeys (workflows with journey != null),
+   * each with a run summary. Reads go through the port. */
+  async listJourneys(organizationId: string) {
+    const creator = this.requireWorkflowCreator();
+    if (typeof creator.list !== "function") {
+      throw new BadRequestException("Workflow engine is not available in this deployment");
+    }
+    const all = await creator.list(organizationId);
+    const journeys = (Array.isArray(all) ? all : []).filter((w: any) => w.journey != null);
+    const out: any[] = [];
+    for (const w of journeys) {
+      const runs = typeof creator.listRuns === "function"
+        ? await creator.listRuns(organizationId, { workflowId: w.id, take: 200 }).catch(() => [])
+        : [];
+      out.push({ ...this.journeyView(w), runSummary: MessagingService.runSummary(Array.isArray(runs) ? runs : []) });
+    }
+    return out;
+  }
+
+  /** Find one journey of this org through the port — a
+   * workflow that is missing, foreign, or not a journey is a
+   * 404 (never a leak of which case it was). */
+  private async findJourneyOrThrow(organizationId: string, workflowId: string) {
+    const creator = this.requireWorkflowCreator();
+    if (typeof creator.list !== "function") {
+      throw new BadRequestException("Workflow engine is not available in this deployment");
+    }
+    const all = await creator.list(organizationId);
+    const workflow = (Array.isArray(all) ? all : []).find((w: any) => w.id === workflowId);
+    if (!workflow || workflow.journey == null) throw new NotFoundException("Journey not found");
+    return { creator, workflow };
+  }
+
+  /**
+   * Create a journey: validated messaging-side, created
+   * through the REAL engine (its validator runs too), then set
+   * enabled:false — the preset discipline: a human reviews
+   * before it can act. The journey meta rides the create, so
+   * the row is a journey from its first moment.
+   */
+  async createJourney(organizationId: string, actorId: string, dto: {
+    name: string; trigger: string; conditions?: unknown; steps: any[]; exitOnPurchase?: boolean;
+  }) {
+    const creator = this.requireWorkflowCreator();
+    if (typeof creator.create !== "function" || typeof creator.update !== "function") {
+      throw new BadRequestException("Workflow engine is not available in this deployment");
+    }
+    const name = String(dto.name ?? "").trim();
+    if (!name) throw new BadRequestException("A journey needs a name");
+    if (!JOURNEY_TRIGGERS.some((t) => t.trigger === dto.trigger)) {
+      throw new BadRequestException(`Trigger ${String(dto.trigger)} cannot start a messaging journey — its context cannot resolve a recipient`);
+    }
+    this.validateJourneyConditions(dto.conditions);
+    await this.validateJourneySteps(organizationId, dto.steps);
+    const journey = { origin: "messaging", exitOnPurchase: dto.exitOnPurchase === true };
+    const workflow = await creator.create(organizationId, actorId, {
+      name, trigger: dto.trigger, conditions: dto.conditions ?? undefined, steps: dto.steps, journey,
+    });
+    const disabled = await creator.update(organizationId, workflow.id, { enabled: false }, actorId);
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.journey_create",
+      entityType: "Workflow", entityId: workflow.id,
+      metadata: { trigger: dto.trigger, steps: Array.isArray(dto.steps) ? dto.steps.length : 0, exitOnPurchase: journey.exitOnPurchase },
+    });
+    return {
+      workflow: disabled, enabled: false,
+      note: "Journey তৈরি হয়েছে কিন্তু বন্ধ (disabled) অবস্থায় আছে — পর্যালোচনা করে Enable না করলে এটি চলবে না।",
+    };
+  }
+
+  /**
+   * MX4 — per-step stats for one journey, computed from the
+   * real rows. Exact semantics (also in the acceptance doc):
+   *  - entered/ok/skipped/failed count stepsLog ENTRIES whose
+   *    idx equals the step's top-level index, across all of
+   *    this workflow's runs (read capped at 1000 runs). A
+   *    branch step's idx covers its own log line PLUS its arm
+   *    sub-steps' lines (they carry the same idx, with ref).
+   *  - waitingHere (wait steps only; null elsewhere): runs
+   *    currently waiting whose nextStepIndex - 1 === idx and
+   *    whose frozen position is this wait step.
+   *  - delivery (send steps, and branch steps via their arm
+   *    sub-steps' refs): MessageDelivery rows of this
+   *    workflow's runs whose stepRef is String(idx) — or, for
+   *    a branch, starts with `${idx}.` — counted by status,
+   *    with opened = openedAt non-null among them. Clicks are
+   *    NOT attributed per step: MessageLinkClick rows carry
+   *    no stepRef, so clicks are reported at journey level
+   *    only (totalClicks) — inventing an attribution would be
+   *    fabrication.
+   *  - legacyRunCount: runs whose stepsLog has entries but
+   *    NONE carries a numeric idx (pre-MX4 runs). They count
+   *    in the run summary totals only, never in per-step rows.
+   */
+  private async computeJourneyStats(organizationId: string, workflow: any) {
+    const p = this.prisma as any;
+    const runs: any[] = await p.workflowRun.findMany({
+      where: { organizationId, workflowId: workflow.id }, orderBy: { createdAt: "desc" }, take: 1000,
+    }).catch(() => []);
+    const runIds = runs.map((r) => r.id);
+    const deliveries: any[] = runIds.length
+      ? await p.messageDelivery.findMany({ where: { organizationId, workflowRunId: { in: runIds } }, take: 20000 }).catch(() => [])
+      : [];
+    const clicks: any[] = runIds.length
+      ? await p.messageLinkClick.findMany({ where: { organizationId, workflowRunId: { in: runIds } }, take: 20000 }).catch(() => [])
+      : [];
+    const steps: any[] = Array.isArray(workflow.steps) ? workflow.steps : [];
+    const legacyRunCount = runs.filter((r) => {
+      const log: any[] = Array.isArray(r.stepsLog) ? r.stepsLog : [];
+      return log.length > 0 && !log.some((e: any) => typeof e?.idx === "number");
+    }).length;
+    const perStep = steps.map((step, idx) => {
+      let entered = 0, ok = 0, skipped = 0, failed = 0;
+      for (const r of runs) {
+        const log: any[] = Array.isArray(r.stepsLog) ? r.stepsLog : [];
+        for (const e of log) {
+          if (e?.idx !== idx) continue;
+          entered++;
+          if (e.status === "ok") ok++;
+          else if (e.status === "skipped") skipped++;
+          else if (e.status === "failed") failed++;
+        }
+      }
+      const waitingHere = step.type === "wait"
+        ? runs.filter((r) => (r.status === "waiting" || r.status === "resuming") && (r.nextStepIndex ?? 0) - 1 === idx).length
+        : null;
+      let delivery: { sent: number; failed: number; skipped: number; opened: number } | null = null;
+      if (step.type === "send_email" || step.type === "send_sms" || step.type === "branch") {
+        const mine = deliveries.filter((d) => d.stepRef === String(idx)
+          || (step.type === "branch" && typeof d.stepRef === "string" && d.stepRef.startsWith(`${idx}.`)));
+        delivery = {
+          sent: mine.filter((d) => d.status === "sent").length,
+          failed: mine.filter((d) => d.status === "failed").length,
+          skipped: mine.filter((d) => d.status === "skipped").length,
+          opened: mine.filter((d) => d.openedAt).length,
+        };
+      }
+      return { idx, type: step.type, entered, ok, skipped, failed, waitingHere, delivery };
+    });
+    return {
+      perStep, legacyRunCount,
+      runSummary: MessagingService.runSummary(runs),
+      totalClicks: clicks.length,
+    };
+  }
+
+  /** One journey + per-step stats + recent runs (port, take 20). */
+  async getJourney(organizationId: string, workflowId: string) {
+    const { creator, workflow } = await this.findJourneyOrThrow(organizationId, workflowId);
+    const recentRuns = typeof creator.listRuns === "function"
+      ? await creator.listRuns(organizationId, { workflowId, take: 20 }).catch(() => [])
+      : [];
+    const stats = await this.computeJourneyStats(organizationId, workflow);
+    return {
+      workflow: this.journeyView(workflow),
+      runSummary: stats.runSummary,
+      stepStats: stats.perStep,
+      legacyRunCount: stats.legacyRunCount,
+      // Journey-level only — see computeJourneyStats for why
+      // clicks are never attributed to a step.
+      totalClicks: stats.totalClicks,
+      recentRuns: Array.isArray(recentRuns) ? recentRuns : [],
+    };
+  }
+
+  /**
+   * Update a journey through the port (the engine re-validates
+   * the resulting definition). NOTE — runs already in flight
+   * keep their frozen stepsSnapshot (Workflows W1): an edit
+   * affects NEW runs only, and the response says so.
+   */
+  async updateJourney(organizationId: string, actorId: string, workflowId: string, dto: {
+    name?: string; trigger?: string; conditions?: unknown; steps?: any[];
+    enabled?: boolean; exitOnPurchase?: boolean;
+  }) {
+    const { creator, workflow } = await this.findJourneyOrThrow(organizationId, workflowId);
+    if (typeof creator.update !== "function") {
+      throw new BadRequestException("Workflow engine is not available in this deployment");
+    }
+    const data: Record<string, unknown> = {};
+    if (dto.name !== undefined) {
+      const name = String(dto.name ?? "").trim();
+      if (!name) throw new BadRequestException("A journey needs a name");
+      data.name = name;
+    }
+    if (dto.trigger !== undefined) {
+      if (!JOURNEY_TRIGGERS.some((t) => t.trigger === dto.trigger)) {
+        throw new BadRequestException(`Trigger ${String(dto.trigger)} cannot start a messaging journey — its context cannot resolve a recipient`);
+      }
+      data.trigger = dto.trigger;
+    }
+    if (dto.conditions !== undefined) {
+      this.validateJourneyConditions(dto.conditions);
+      data.conditions = dto.conditions;
+    }
+    if (dto.steps !== undefined) {
+      await this.validateJourneySteps(organizationId, dto.steps);
+      data.steps = dto.steps;
+    }
+    if (dto.enabled !== undefined) {
+      if (typeof dto.enabled !== "boolean") throw new BadRequestException("enabled must be a boolean");
+      data.enabled = dto.enabled;
+    }
+    if (dto.exitOnPurchase !== undefined) {
+      data.journey = { ...(workflow.journey ?? {}), origin: "messaging", exitOnPurchase: dto.exitOnPurchase === true };
+    }
+    const updated = await creator.update(organizationId, workflowId, data, actorId);
+    await this.audit.log({
+      organizationId, userId: actorId, action: "messaging.journey_update",
+      entityType: "Workflow", entityId: workflowId,
+      metadata: { fields: Object.keys(data) },
+    });
+    return {
+      workflow: updated,
+      note: "চলমান (in-flight) রানগুলো তাদের শুরুর সময়ের ধাপ-স্ন্যাপশট (stepsSnapshot) দিয়েই শেষ হবে — এই বদল শুধু নতুন রানে প্রযোজ্য।",
+    };
   }
 }

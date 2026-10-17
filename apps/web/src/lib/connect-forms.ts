@@ -37,13 +37,19 @@ export function buildShopifyConnectBody(mode: ShopifyAuthMode, legacy: ShopifyLe
     : { storeId: legacy.storeId, accessToken: legacy.accessToken, apiSecret: legacy.apiSecret };
 }
 
-export type CourierProvider = "steadfast" | "pathao" | "redx" | "ecourier";
+export type CourierProvider = "steadfast" | "pathao" | "redx" | "ecourier" | "paperfly";
 
 export interface SteadfastForm { apiKey: string; secretKey: string }
 export interface PathaoForm { clientId: string; clientSecret: string; username: string; password: string; sandbox: boolean }
 export interface RedxForm { accessToken: string; baseUrl: string }
 /** GB5: eCourier's self-serve API credentials (API Key + Secret + User ID). */
 export interface EcourierForm { apiKey: string; apiSecret: string; userId: string; baseUrl: string }
+/** OU6: Paperfly DEVELOPMENT adapter form shape — the fields
+ * follow the existing per-org courier config pattern, but the
+ * API refuses the connect honestly (no evidenced Paperfly API
+ * contract exists) and saves nothing; the panel labels the
+ * card as not-live before the merchant ever submits. */
+export interface PaperflyForm { apiKey: string; apiSecret: string }
 
 export const PATHAO_SANDBOX_BASE = "https://courier-api-sandbox.pathao.com";
 
@@ -52,7 +58,7 @@ export const PATHAO_SANDBOX_BASE = "https://courier-api-sandbox.pathao.com";
  * CourierService.providerOf accepts it identically. Pathao's
  * sandbox checkbox maps to the sandbox base URL; RedX's optional
  * base URL is omitted when blank. */
-export function buildCourierConnectBody(provider: CourierProvider, forms: { steadfast: SteadfastForm; pathao: PathaoForm; redx: RedxForm; ecourier?: EcourierForm }) {
+export function buildCourierConnectBody(provider: CourierProvider, forms: { steadfast: SteadfastForm; pathao: PathaoForm; redx: RedxForm; ecourier?: EcourierForm; paperfly?: PaperflyForm }) {
   if (provider === "steadfast") {
     return { provider, apiKey: forms.steadfast.apiKey, secretKey: forms.steadfast.secretKey };
   }
@@ -70,6 +76,11 @@ export function buildCourierConnectBody(provider: CourierProvider, forms: { stea
       apiKey: forms.ecourier?.apiKey, apiSecret: forms.ecourier?.apiSecret,
       userId: forms.ecourier?.userId, baseUrl: forms.ecourier?.baseUrl || undefined,
     };
+  }
+  if (provider === "paperfly") {
+    // OU6: same shape discipline as the other couriers — the
+    // API's response is the honest development-adapter refusal.
+    return { provider, apiKey: forms.paperfly?.apiKey, apiSecret: forms.paperfly?.apiSecret };
   }
   return { provider, accessToken: forms.redx.accessToken, baseUrl: forms.redx.baseUrl || undefined };
 }
@@ -188,7 +199,7 @@ export function buildLlmConfigBody(form: LlmConfigForm) {
 
 // ---------- CC9: the tenant's OWN payment gateways ----------
 
-export type GatewayProviderId = "sslcommerz" | "bkash" | "nagad" | "shurjopay" | "aamarpay";
+export type GatewayProviderId = "sslcommerz" | "bkash" | "nagad" | "shurjopay" | "aamarpay" | "stripe";
 
 export interface GatewayForm {
   storeId: string;
@@ -201,6 +212,13 @@ export interface GatewayForm {
   privateKey: string;
   prefix: string;
   signatureKey: string;
+  /** OU5 — Stripe's own fields (secret key + webhook signing
+   * secret + the non-secret publishable key). Optional in the
+   * type so legacy form literals stay valid; the gateway panel
+   * always provides them and the API enforces both secrets. */
+  secretKey?: string;
+  webhookSecret?: string;
+  publishableKey?: string;
   sandbox: boolean;
   /** GC12: gateway fee inputs as DISPLAYED (percent string /
    * taka string), prefilled from the gateway view. Optional so
@@ -315,6 +333,14 @@ export function buildGatewayBody(provider: GatewayProviderId, form: GatewayForm)
     };
   } else if (provider === "aamarpay") {
     body = { storeId: form.storeId, signatureKey: form.signatureKey, sandbox: form.sandbox };
+  } else if (provider === "stripe") {
+    // OU5: publishable key omitted when blank (it is an
+    // optional non-secret identifier); the two secrets are
+    // always sent — the API refuses the save without both.
+    body = {
+      secretKey: form.secretKey ?? "", webhookSecret: form.webhookSecret ?? "",
+      publishableKey: form.publishableKey?.trim() || undefined, sandbox: form.sandbox,
+    };
   } else {
     body = { merchantId: form.merchantId, privateKey: form.privateKey };
   }

@@ -30,6 +30,10 @@ const ShopSocialProofLazy = dynamic(
   () => import("./ShopSocialProof").then((m) => m.ShopSocialProof),
   { ssr: false, loading: () => null },
 );
+const ShopPromotionsLazy = dynamic(
+  () => import("./ShopPromotions").then((m) => m.ShopPromotions),
+  { ssr: false, loading: () => null },
+);
 
 export function ShopPopupDeferred({
   orgSlug,
@@ -39,6 +43,14 @@ export function ShopPopupDeferred({
   locale?: ShopLocale | string;
 }) {
   return <ShopPopupLazy orgSlug={orgSlug} locale={locale} />;
+}
+
+/** NF6 (FB3): gamified promotions overlay — same deferred
+ * treatment as the popup (renders nothing until its own
+ * trigger fires; it requests the ED9 overlay-queue slot under
+ * the "promo" id so it never stacks over the shop popup). */
+export function ShopPromotionsDeferred({ orgSlug }: { orgSlug: string }) {
+  return <ShopPromotionsLazy orgSlug={orgSlug} />;
 }
 
 export function ShopSocialProofDeferred({

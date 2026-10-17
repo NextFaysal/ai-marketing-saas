@@ -1,6 +1,7 @@
 import type { LabelScanResultView, LabelMatchView } from "@/lib/cx8";
 import type { OrderAllocation } from "../on2-detail";
 import type { RiskReason } from "@/lib/orders-on4";
+import type { FraudNetworkSignal } from "@/lib/fraud-network-nf13";
 
 export interface OrderItem {
   id: string;
@@ -95,6 +96,9 @@ export interface Order {
   items?: OrderItem[];
   risk?: { band: string; score: number | null } | null;
   riskBand?: string | null;
+  // NF13: sibling network signal (opted-in orgs only) — never
+  // merged into this order's own risk fields.
+  networkSignal?: FraudNetworkSignal | null;
   riskScore?: number | null;
   duplicate?: { isDuplicate: boolean; count: number };
   assigneeId?: string | null;
@@ -112,7 +116,11 @@ export interface Order {
 // EC5: GET commerce/orders/:orderId/push-state
 export interface PushState {
   orderId: string;
-  store: { id: string; name: string; platform: string; syncMode: string; refundPushEnabled: boolean; courierTrackingMetaKey: string | null } | null;
+  store: { id: string; name: string; platform: string; syncMode: string; refundPushEnabled: boolean; refundToCreditEnabled?: boolean; courierTrackingMetaKey: string | null } | null;
+  /** NF7: server-computed refund-to-credit gate for this order
+   * (per-store setting, default OFF). The credit refund option
+   * renders ONLY when this is true. */
+  refundToCreditEnabled?: boolean;
   storeSyncStatus: string | null;
   storeSyncError: string | null;
   storeDraftId: string | null;
@@ -127,6 +135,8 @@ export interface RiskDetail {
   reasons: string[];
   suggestion: string | null;
   phone?: string | null;
+  // NF13: sibling network signal when the API returns one.
+  networkSignal?: FraudNetworkSignal | null;
 }
 
 export const RISK_LABEL: Record<string, { text: string; cls: string; borderCls: string; dotCls: string }> = {
@@ -324,6 +334,8 @@ export interface PanelOrder {
   conversationId?: string | null; codConversationId?: string | null;
   riskScore?: number | null;
   riskBand?: "low" | "medium" | "high" | null;
+  // NF13: sibling network signal (opted-in orgs only).
+  networkSignal?: FraudNetworkSignal | null;
   riskReasons?: RiskReason[] | null;
   riskAssessedAt?: string | null;
   reviewHold?: boolean;

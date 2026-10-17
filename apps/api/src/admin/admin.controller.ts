@@ -1,12 +1,12 @@
-import { Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, NotFoundException, Optional, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { PaymentsService } from "../payments/payments.service";
 import { Public } from "../common/decorators";
-import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Min, MinLength } from "class-validator";
 import { AdminService } from "./admin.service";
-import { WalletService, buildStatementCsv, buildStatementPdf, statementRange } from "../connections/wallet.service";
+import { WalletService, buildPayoutInstructionCsv, buildStatementCsv, buildStatementPdf, statementRange } from "../connections/wallet.service";
 import { SuperAdminGuard, AdminTier } from "../common/super-admin.guard";
 
 class StatusDto {
@@ -27,6 +27,18 @@ class OrgVerificationDto {
   @IsIn(["approve", "reject"]) decision!: string;
   @IsOptional() @IsString() @MinLength(1) note?: string;
 }
+/** CA26: platform blueprint definition (admin CRUD). */
+class AdminBlueprintDto {
+  @IsOptional() @IsString() key?: string;
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() objective?: string;
+  @IsOptional() @IsBoolean() advantagePlus?: boolean;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsObject() adSet?: Record<string, unknown>;
+  @IsOptional() @IsObject() ad?: Record<string, unknown>;
+  @IsOptional() @IsString() category?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
+}
 class SettingsDto {
   @IsOptional() @IsBoolean() maintenanceMode?: boolean;
   @IsOptional() @IsBoolean() signupOpen?: boolean;
@@ -37,6 +49,8 @@ class SettingsDto {
   @IsOptional() @IsObject() planLimits?: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number }>;
   @IsOptional() @IsObject() maintenanceWindow?: { startsAt: string; endsAt: string; message?: string; hardLockout?: boolean } | null;
   @IsOptional() @IsInt() auditRetentionDays?: number;
+  // ORG12: per-user owned-org cap; null clears it (unlimited).
+  @IsOptional() @IsInt() @Min(1) maxOrgsPerUser?: number | null;
 }
 class AnnouncementDto {
   @IsString() @MinLength(1) title!: string;
@@ -76,6 +90,12 @@ class LimitsDto {
   @IsOptional() seatLimit?: number | null;
   // AB8 (AX24): white-label toggle on the same org-update PATCH.
   @IsOptional() @IsBoolean() whiteLabel?: boolean;
+}
+/** ORG13: whole-list tag replacement. Length/count limits are
+ * enforced in the service (product-voice errors); the DTO only
+ * pins the shape so the whitelist pipe lets the field through. */
+class OrgTagsDto {
+  @IsArray() @IsString({ each: true }) tags!: string[];
 }
 class RetryDto { @IsIn(["scheduled_job", "sync_job"]) kind!: string; @IsString() id!: string; }
 class QueueActionDto {
@@ -152,6 +172,21 @@ class PayoutDecisionDto {
 class PayoutMarkPaidDto {
   @IsString() @MinLength(1) payoutRef!: string;
 }
+/** OU11: recording the wallet legal-review confirmation —
+ * reference is REQUIRED (reviewer / law firm / memo). */
+class PayoutLegalGateConfirmDto {
+  @IsString() @MinLength(1) reference!: string;
+  @IsOptional() @IsString() note?: string;
+}
+class PayoutAutomationDto {
+  @IsBoolean() enabled!: boolean;
+}
+class PayoutExecutionConfirmDto {
+  @IsString() @MinLength(1) bankReference!: string;
+}
+class PayoutExecutionFailDto {
+  @IsString() @MinLength(1) reason!: string;
+}
 class WalletAdjustDto {
   @IsString() @MinLength(1) amountMinor!: string;
   @IsString() @MinLength(1) note!: string;
@@ -164,6 +199,9 @@ class GoogleAppConfigDto {
   @IsOptional() @IsString() clientId?: string;
   @IsOptional() @IsString() clientSecret?: string;
   @IsOptional() @IsString() redirectUri?: string;
+  // OU9: operator declaration that Google approved this
+  // project's Business Profile API access (default false).
+  @IsOptional() @IsBoolean() gbpApiAccessApproved?: boolean;
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
@@ -180,6 +218,23 @@ class GoogleOAuthConfigDto {
   @IsOptional() @IsString() clientId?: string;
   @IsOptional() @IsString() clientSecret?: string;
   @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
+/** OU2: Cloudflare for SaaS (per-merchant HTTPS certificates).
+ * Blank apiToken = keep the stored sealed token. */
+class CloudflareSaasConfigDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsString() zoneId?: string;
+  @IsOptional() @IsString() fallbackOrigin?: string;
+  @IsOptional() @IsString() apiToken?: string;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
+class StripeConfigDto {
+  @IsOptional() @IsString() publishableKey?: string;
+  @IsOptional() @IsString() secretKey?: string;
+  @IsOptional() @IsString() webhookSecret?: string;
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
@@ -298,9 +353,12 @@ export class AdminController {
     return this.admin.forceReset(req.adminUser, id, req.ip);
   }
 
-  @Get("orgs") orgs(@Query("q") q?: string, @Query("page") page?: string, @Query("take") take?: string) {
-    return this.admin.listOrgs(q, Number(page ?? 1) || 1, Math.min(100, Number(take ?? 25) || 25));
+  @Get("orgs") orgs(@Query("q") q?: string, @Query("page") page?: string, @Query("take") take?: string, @Query("tag") tag?: string) {
+    return this.admin.listOrgs(q, Number(page ?? 1) || 1, Math.min(100, Number(take ?? 25) || 25), tag);
   }
+  // ORG13: SUPER-only tag replacement (whole-list semantics).
+  @Patch("orgs/:id/tags") @AdminTier("SUPER")
+  orgTags(@Req() req: any, @Param("id") id: string, @Body() dto: OrgTagsDto) { return this.admin.updateOrgTags(req.adminUser, id, dto.tags, req.ip); }
   @Get("orgs/:id") org(@Param("id") id: string) { return this.admin.orgDetail(id); }
   // GC21 (GB9): merchant verification review (approve/reject
   // with a merchant-visible note on reject).
@@ -323,6 +381,15 @@ export class AdminController {
 
   // ---- Milestone 33: dynamic platform config ----
   @Get("platform-config") platformConfig() { return this.admin.getPlatformConfig(); }
+  // CA26: platform blueprint definitions as data —
+  // SUPER-only writes; orgs clone, never edit, these.
+  @Get("blueprints") blueprints() { return this.admin.listPlatformBlueprints(); }
+  @Post("blueprints") @AdminTier("SUPER")
+  createBlueprint(@Req() req: any, @Body() dto: AdminBlueprintDto) { return this.admin.createPlatformBlueprint(req.adminUser, dto, req.ip); }
+  @Patch("blueprints/:id") @AdminTier("SUPER")
+  updateBlueprint(@Req() req: any, @Param("id") id: string, @Body() dto: AdminBlueprintDto) { return this.admin.updatePlatformBlueprint(req.adminUser, id, dto, req.ip); }
+  @Delete("blueprints/:id") @AdminTier("SUPER")
+  deleteBlueprint(@Req() req: any, @Param("id") id: string) { return this.admin.deletePlatformBlueprint(req.adminUser, id, req.ip); }
   @Patch("platform-config/llm") @AdminTier("SUPER")
   updateLlmConfig(@Req() req: any, @Body() dto: LlmConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "llm", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/meta") @AdminTier("SUPER")
@@ -347,6 +414,10 @@ export class AdminController {
   updateGoogleOAuthConfig(@Req() req: any, @Body() dto: GoogleOAuthConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "googleOAuth", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/wallet") @AdminTier("SUPER")
   updateWalletConfig(@Req() req: any, @Body() dto: WalletConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "wallet", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/cloudflare") @AdminTier("SUPER")
+  updateCloudflareConfig(@Req() req: any, @Body() dto: CloudflareSaasConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "cloudflare", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/stripe") @AdminTier("SUPER")
+  updateStripeConfig(@Req() req: any, @Body() dto: StripeConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "stripe", dto as unknown as Record<string, unknown>, req.ip); }
 
   // ---- CC10: tenant wallet payouts (platform payment) ----
   // Money-moving admin surface: SUPER or FINANCE tier. Every
@@ -362,6 +433,35 @@ export class AdminController {
   markPayoutPaid(@Req() req: any, @Param("id") id: string, @Body() dto: PayoutMarkPaidDto) { return this.walletSvc().adminMarkPaid(req.adminUser, id, dto.payoutRef); }
   @Post("wallets/:organizationId/adjust") @AdminTier("SUPER", "FINANCE")
   adjustWallet(@Req() req: any, @Param("organizationId") organizationId: string, @Body() dto: WalletAdjustDto) { return this.walletSvc().adminAdjustWallet(req.adminUser, organizationId, dto); }
+  // ---- OU11: the legal gate for payout AUTOMATION ----
+  // The gate RECORD is SUPER-only (recording a legal-review
+  // confirmation, revoking it, flipping the automation switch):
+  // these are platform-governance acts, not finance operations.
+  // Execution routes are SUPER/FINANCE like mark-paid, and every
+  // one of them re-checks the gate inside WalletService.
+  @Get("payout-legal-gate") @AdminTier("SUPER", "FINANCE")
+  payoutLegalGate() { return this.walletSvc().getPayoutLegalGate(); }
+  @Post("payout-legal-gate/confirm") @AdminTier("SUPER")
+  confirmPayoutLegalGate(@Req() req: any, @Body() dto: PayoutLegalGateConfirmDto) { return this.walletSvc().recordPayoutLegalConfirmation(req.adminUser, dto); }
+  @Post("payout-legal-gate/revoke") @AdminTier("SUPER")
+  revokePayoutLegalGate(@Req() req: any) { return this.walletSvc().revokePayoutLegalConfirmation(req.adminUser); }
+  @Post("payout-legal-gate/automation") @AdminTier("SUPER")
+  setPayoutAutomation(@Req() req: any, @Body() dto: PayoutAutomationDto) { return this.walletSvc().setPayoutAutomationEnabled(req.adminUser, dto.enabled); }
+  // ---- OU11: bank-instruction disbursement executions ----
+  @Get("payout-requests/:id/execution") @AdminTier("SUPER", "FINANCE")
+  payoutExecution(@Param("id") id: string) { return this.walletSvc().getPayoutExecutionForRequest(id); }
+  @Post("payout-requests/:id/execution/instruction") @AdminTier("SUPER", "FINANCE")
+  issuePayoutInstruction(@Req() req: any, @Param("id") id: string) { return this.walletSvc().issuePayoutInstruction(req.adminUser, id); }
+  @Get("payout-requests/:id/execution/instruction.csv") @AdminTier("SUPER", "FINANCE") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=payout-instruction.csv")
+  async payoutInstructionCsv(@Param("id") id: string) {
+    const { execution } = await this.walletSvc().getPayoutExecutionForRequest(id);
+    if (!execution) throw new NotFoundException("No payout instruction exists for this request");
+    return buildPayoutInstructionCsv(execution);
+  }
+  @Post("payout-requests/:id/execution/confirm") @AdminTier("SUPER", "FINANCE")
+  confirmPayoutExecution(@Req() req: any, @Param("id") id: string, @Body() dto: PayoutExecutionConfirmDto) { return this.walletSvc().confirmPayoutExecution(req.adminUser, id, dto.bankReference); }
+  @Post("payout-requests/:id/execution/fail") @AdminTier("SUPER", "FINANCE")
+  failPayoutExecution(@Req() req: any, @Param("id") id: string, @Body() dto: PayoutExecutionFailDto) { return this.walletSvc().failPayoutExecution(req.adminUser, id, dto.reason); }
   // CC19: per-org wallet statement export from the real ledger
   // (same builder as the tenant export; read-only, no credits).
   @Get("wallets/:organizationId/statement.csv") @AdminTier("SUPER", "FINANCE") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=wallet-statement.csv")
@@ -399,6 +499,10 @@ export class AdminController {
   testThreads() { return this.admin.testThreads(); }
   @Post("platform-config/test-google") @AdminTier("SUPER")
   testGoogle() { return this.admin.testGoogle(); }
+  @Post("platform-config/test-cloudflare") @AdminTier("SUPER")
+  testCloudflare() { return this.admin.testCloudflareSaas(); }
+  @Post("platform-config/test-stripe") @AdminTier("SUPER")
+  testStripe() { return this.admin.testStripe(); }
   @Patch("settings") @AdminTier("SUPER")
   updateSettings(@Req() req: any, @Body() dto: SettingsDto) { return this.admin.updateSettings(req.adminUser, dto as unknown as Record<string, unknown>, req.ip); }
 

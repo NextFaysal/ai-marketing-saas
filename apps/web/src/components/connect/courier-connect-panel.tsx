@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { buildCourierConnectBody, type CourierProvider, type EcourierForm, type PathaoForm, type RedxForm, type SteadfastForm } from "@/lib/connect-forms";
+import { buildCourierConnectBody, type CourierProvider, type EcourierForm, type PaperflyForm, type PathaoForm, type RedxForm, type SteadfastForm } from "@/lib/connect-forms";
 import type { ConnectionsOverview } from "@/lib/connections";
 
 /**
@@ -12,9 +12,12 @@ import type { ConnectionsOverview } from "@/lib/connections";
  * each provider's real API, exactly as the Orders page does;
  * DELETE courier/connection per provider). Steadfast / Pathao /
  * RedX / eCourier (GB5) coexist as separate Integration rows and
- * are listed separately here. Paperfly is NOT offered: GB5
+ * are listed separately here. Paperfly IS listed since OU6 —
+ * but only as a clearly labelled DEVELOPMENT adapter: GB5
  * research found its API partner-gated with no published
- * developer docs (docs/gb5-courier-research.md).
+ * developer docs (docs/gb5-courier-research.md), so its card
+ * is badged "লাইভ নয়", the API refuses the connect honestly
+ * and saves nothing, and no booking can ever go through it.
  *
  * CC29 — MULTIPLE accounts per provider: connections are keyed
  * by a credential fingerprint server-side, so connecting a
@@ -32,10 +35,16 @@ import type { ConnectionsOverview } from "@/lib/connections";
  * Live test: only where an existing real read endpoint exists —
  * Pathao stores and RedX areas are read with the STORED
  * credentials through the provider's own API (the primary
- * account). Steadfast exposes no balance/test read endpoint in
- * this API (its balance check happens inside connect), so NO
- * test button is offered for it — the card says so instead of
+ * account). Steadfast has no test-read endpoint, so NO test
+ * button is offered for it — the card says so instead of
  * inventing one.
+ *
+ * OU6 — balance visibility: every card also renders its
+ * provider's balance view from GET courier/balances. Only a
+ * state "ok" view shows a number (Steadfast's real /get_balance
+ * read); not_supported shows the honest no-API note and
+ * not_configured the connect-first note — never a placeholder
+ * figure.
  */
 
 interface CourierAccountView {
@@ -47,10 +56,25 @@ interface CourierAccountView {
   connectedAt?: string;
 }
 
-interface CourierConnection { provider: string; connected: boolean; status?: string; accounts?: CourierAccountView[] }
+interface CourierConnection { provider: string; connected: boolean; status?: string; accounts?: CourierAccountView[]; capabilities?: { balance: boolean; live: boolean }; live?: boolean; developmentAdapter?: boolean }
+
+/** OU6: one provider's balance view from GET courier/balances —
+ * state is the API's honest state; balanceMinor is non-null
+ * ONLY in state "ok" (a real provider read). */
+interface CourierBalanceView {
+  provider: string;
+  state: "ok" | "not_supported" | "not_configured" | "error";
+  balanceMinor: number | null;
+  currency: string | null;
+  supported: boolean;
+  live: boolean;
+  developmentAdapter: boolean;
+  message: string | null;
+}
 
 const PROVIDER_TITLES: Record<CourierProvider, string> = {
   steadfast: "Steadfast", pathao: "Pathao Courier", redx: "RedX", ecourier: "eCourier",
+  paperfly: "Paperfly (Development — লাইভ নয়)",
 };
 
 export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
@@ -59,6 +83,8 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
   const [pathao, setPathao] = useState<PathaoForm>({ clientId: "", clientSecret: "", username: "", password: "", sandbox: false });
   const [redx, setRedx] = useState<RedxForm>({ accessToken: "", baseUrl: "" });
   const [ecourier, setEcourier] = useState<EcourierForm>({ apiKey: "", apiSecret: "", userId: "", baseUrl: "" });
+  const [paperfly, setPaperfly] = useState<PaperflyForm>({ apiKey: "", apiSecret: "" });
+  const [balances, setBalances] = useState<Record<string, CourierBalanceView>>({});
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -71,6 +97,10 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
       const all = await apiFetch<CourierConnection[]>(`/organizations/${orgId}/courier/connections`);
       setConns(all);
     } catch { /* courier is optional — the forms still render */ }
+    try {
+      const views = await apiFetch<CourierBalanceView[]>(`/organizations/${orgId}/courier/balances`);
+      setBalances(Object.fromEntries(views.map((v) => [v.provider, v])));
+    } catch { /* balance is a read-only extra — absence shows nothing */ }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -88,7 +118,7 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiFetch(`/organizations/${orgId}/courier/connect`, {
         method: "POST",
-        body: JSON.stringify(buildCourierConnectBody(provider, { steadfast, pathao, redx, ecourier })),
+        body: JSON.stringify(buildCourierConnectBody(provider, { steadfast, pathao, redx, ecourier, paperfly })),
       });
       setNotice(provider === "steadfast"
         ? "Steadfast যুক্ত হয়েছে (আসল API দিয়ে Balance যাচাই করা)।"
@@ -153,6 +183,19 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
     } finally { setBusy(""); }
   }
 
+  /** OU6: re-read ONE provider's balance through its own API
+   * (only providers whose balance state can be "ok" get the
+   * button — rendered from the API's supported flag). */
+  async function refreshBalance(provider: CourierProvider) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`bal-${provider}`);
+    try {
+      const view = await apiFetch<CourierBalanceView>(`/organizations/${orgId}/courier/balance?provider=${provider}`);
+      setBalances((b) => ({ ...b, [provider]: view }));
+    } catch { /* the previous view (or its absence) stands */ }
+    finally { setBusy(""); }
+  }
+
   const inputCls = "input mt-1 w-full";
 
   function accountName(account: CourierAccountView): string {
@@ -193,12 +236,33 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
             ))}
           </ul>
         ) : null}
+        {balances[provider] ? (
+          <div className="rounded-lg bg-white px-2.5 py-1.5 text-xs text-slate-600">
+            {balances[provider].state === "ok" && balances[provider].balanceMinor != null ? (
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span className="font-medium text-slate-700">
+                  ব্যালেন্স: ৳{(balances[provider].balanceMinor! / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-slate-400">(কুরিয়ারের আসল API থেকে পড়া)</span>
+                <button type="button" className="btn-ghost btn-sm" disabled={busy !== ""} onClick={() => void refreshBalance(provider)}>{busy === `bal-${provider}` ? "পড়া হচ্ছে..." : "রিফ্রেশ"}</button>
+              </span>
+            ) : balances[provider].state === "error" ? (
+              <span>ব্যালেন্স পড়া যায়নি: {balances[provider].message ?? "কুরিয়ার API সাড়া দেয়নি"}</span>
+            ) : balances[provider].developmentAdapter ? (
+              <span>ব্যালেন্স: Development Adapter — লাইভ নয়; Paperfly ব্যালেন্স পড়ার কোনো API দেয় না, তাই কোনো সংখ্যা দেখানো হয় না।</span>
+            ) : balances[provider].state === "not_supported" ? (
+              <span>ব্যালেন্স: এই কুরিয়ার ব্যালেন্স দেখার API দেয় না — কোনো সংখ্যা দেখানো হয় না।</span>
+            ) : (
+              <span>ব্যালেন্স: যুক্ত করলে কুরিয়ারের আসল ব্যালেন্স এখানে দেখা যাবে।</span>
+            )}
+          </div>
+        ) : null}
         {anyConnected ? (
           <div className="space-y-2">
             {provider !== "steadfast" ? (
               <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void test(provider)}>{busy === `test-${provider}` ? "যাচাই হচ্ছে..." : "লাইভ টেস্ট (ডিফল্ট অ্যাকাউন্ট)"}</button>
             ) : (
-              <p className="text-xs text-slate-400">Steadfast-এর জন্য আলাদা টেস্ট/ব্যালেন্স পড়ার endpoint এই API-তে নেই — যাচাই কানেক্টের সময়ই আসল Balance কল দিয়ে হয়।</p>
+              <p className="text-xs text-slate-400">Steadfast-এর জন্য আলাদা লাইভ-টেস্ট বোতাম নেই — যাচাই কানেক্টের সময়ই আসল Balance কল দিয়ে হয়; ব্যালেন্স উপরে Steadfast-এর আসল API থেকে পড়ে দেখানো হয় (OU6)।</p>
             )}
             {testResult[provider] ? <p className="text-xs text-slate-600">{testResult[provider]}</p> : null}
           </div>
@@ -251,6 +315,17 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
             <input className={inputCls} placeholder="Base URL (ঐচ্ছিক — Partner অ্যাকাউন্টের জন্য)" value={ecourier.baseUrl} onChange={(e) => setEcourier({ ...ecourier, baseUrl: e.target.value })} />
           </>
         ), "তিনটি তথ্য eCourier আপনার মার্চেন্ট অ্যাকাউন্টের জন্য ইস্যু করে দেয় — তাদের কাছ থেকে সংগ্রহ করুন (ডকুমেন্টে নিজে-নিজে তৈরির পদ্ধতি বলা নেই)। যুক্ত করার আগে আসল API থেকে নির্ধারিত Package তালিকা এনে যাচাই করা হয়।")}
+        <div className="lg:col-span-2 xl:col-span-4">
+          {providerCard("paperfly", (
+            <>
+              <p className="rounded-lg bg-amber-50 p-2.5 text-xs font-medium text-amber-800">
+                ⚠️ Development Adapter — Paperfly লাইভ নয়। Paperfly তাদের API-র কোনো developer documentation প্রকাশ করেনি (API partner-gated), তাই এই কার্ড দিয়ে কোনো আসল বুকিং, যাচাই বা ট্র্যাকিং হয় না — "যুক্ত করুন" চাপলে সার্ভার সৎভাবে অস্বীকার করবে এবং কোনো credential সংরক্ষণ হবে না।
+              </p>
+              <input className={inputCls} placeholder="Paperfly API Key (ভবিষ্যতের partner access-এর জন্য ফর্মের আকার)" value={paperfly.apiKey} onChange={(e) => setPaperfly({ ...paperfly, apiKey: e.target.value })} />
+              <input className={inputCls} placeholder="Paperfly API Secret" value={paperfly.apiSecret} onChange={(e) => setPaperfly({ ...paperfly, apiSecret: e.target.value })} />
+            </>
+          ), "Paperfly partner API documentation/access পাওয়া গেলে এই adapter আসল client দিয়ে বদলানো হবে। ততদিন Paperfly পার্সেলের জন্য GC14 manual tracking update-ই সৎ পথ।")}
+        </div>
       </div>
     </div>
   );

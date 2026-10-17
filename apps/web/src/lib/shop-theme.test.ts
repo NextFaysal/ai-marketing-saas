@@ -20,7 +20,10 @@ describe("shop theme", () => {
   });
 
   it("supports all prebuilt themes including fashion, electronics, grocery, beauty, furniture, books, kids, automotive, sports, and jewelry", () => {
-    expect(THEME_ID_LIST).toHaveLength(21);
+    // UNION regeneration (2026-10-17): OU8's theme gallery added the
+    // "warm" and "ocean" themes on top of main's 21 — the union list
+    // is 23 and both additions are real SHOP_THEMES entries.
+    expect(THEME_ID_LIST).toHaveLength(23);
     const expected = [
       "classic",
       "bold",
@@ -43,6 +46,8 @@ describe("shop theme", () => {
       "sports",
       "jewelry",
       "v2",
+      "warm",
+      "ocean",
     ];
     expect(THEME_ID_LIST).toEqual(expected);
 

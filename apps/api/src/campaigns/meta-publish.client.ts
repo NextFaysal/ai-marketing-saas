@@ -61,7 +61,7 @@ export class MetaPublishClient {
     return `/${id}/${edge}`;
   }
 
-  async createCampaign(adAccountExternalId: string, input: { name: string; objective: string; dailyBudgetMinor?: string; lifetimeBudgetMinor?: string }): Promise<{ id: string }> {
+  async createCampaign(adAccountExternalId: string, input: { name: string; objective: string; dailyBudgetMinor?: string; lifetimeBudgetMinor?: string; bidStrategy?: string; bidAmountMinor?: string; bidConstraints?: Record<string, unknown>; isAdsetBudgetSharingEnabled?: boolean }): Promise<{ id: string }> {
     const res = await this.post<any>(this.accountPath(adAccountExternalId, "campaigns"), {
       name: input.name, objective: input.objective,
       status: "PAUSED", special_ad_categories: "[]",
@@ -69,9 +69,46 @@ export class MetaPublishClient {
       // ad sets in this campaign must NOT carry their own budgets.
       ...(input.dailyBudgetMinor ? { daily_budget: input.dailyBudgetMinor } : {}),
       ...(input.lifetimeBudgetMinor ? { lifetime_budget: input.lifetimeBudgetMinor } : {}),
+      // CA23: the Advantage+ budget lever. Meta's unified
+      // Advantage+ guide requires the campaign budget to ride
+      // a SUPPORTED bid_strategy at campaign level; the bid
+      // amount / ROAS constraints move up with it. Sent only
+      // when the caller derived them (Advantage+ plans).
+      ...(input.bidStrategy ? { bid_strategy: input.bidStrategy } : {}),
+      ...(input.bidAmountMinor ? { bid_amount: input.bidAmountMinor } : {}),
+      ...(input.bidConstraints ? { bid_constraints: JSON.stringify(input.bidConstraints) } : {}),
+      ...(input.isAdsetBudgetSharingEnabled !== undefined ? { is_adset_budget_sharing_enabled: input.isAdsetBudgetSharingEnabled ? "true" : "false" } : {}),
     });
     if (!res?.id) throw new MetaPublishError(200, "Meta returned no campaign id; creation is NOT confirmed");
     return { id: String(res.id) };
+  }
+
+  /** CA23: Meta's own verdict on whether a campaign IS an
+   * Advantage+ campaign — GET /{campaign}?fields=
+   * advantage_state_info,smart_promotion_type. There is no
+   * settable "make it Advantage+" field in the current API:
+   * the state follows from the budget/audience/placement
+   * levers, and this read-back is the only confirmation.
+   * A failed read returns null (unconfirmed), never a guess. */
+  async getCampaignAdvantageState(campaignId: string): Promise<{
+    advantageState?: string; budgetState?: string; audienceState?: string; placementState?: string;
+    smartPromotionType?: string; raw: unknown;
+  } | null> {
+    try {
+      const body: any = await this.get(`/${campaignId}`, { fields: "advantage_state_info,smart_promotion_type" });
+      const info = body?.advantage_state_info ?? null;
+      if (!info && !body?.smart_promotion_type) return null;
+      return {
+        advantageState: info?.advantage_state ? String(info.advantage_state) : undefined,
+        budgetState: info?.advantage_budget_state ? String(info.advantage_budget_state) : undefined,
+        audienceState: info?.advantage_audience_state ? String(info.advantage_audience_state) : undefined,
+        placementState: info?.advantage_placement_state ? String(info.advantage_placement_state) : undefined,
+        smartPromotionType: body?.smart_promotion_type ? String(body.smart_promotion_type) : undefined,
+        raw: info ?? body,
+      };
+    } catch {
+      return null;
+    }
   }
 
   async createAdSet(adAccountExternalId: string, input: {
@@ -249,6 +286,11 @@ export class MetaPublishClient {
     // template_data with product template tags; Meta fills
     // name/link/image from the product set's items.
     catalogTemplate?: boolean;
+    // CA17 (CB4): Meta url_tags — the plan's UTM params,
+    // sent on the AD (Meta appends them to the destination
+    // URL at click time). Optional: absent = the pre-CA17
+    // payload, byte-identical.
+    urlTags?: string;
     // NB3 (CN5): multiple text options, per-placement media
     // (already resolved to Meta ids) and Advantage creative
     // enhancement toggles. Asset-feed carries the first two;
@@ -354,6 +396,7 @@ export class MetaPublishClient {
     const res = await this.post<any>(this.accountPath(adAccountExternalId, "ads"), {
       name: input.name, adset_id: input.adSetId, status: "PAUSED",
       creative: JSON.stringify(creative),
+      ...(input.urlTags ? { url_tags: input.urlTags } : {}),
     });
     if (!res?.id) throw new MetaPublishError(200, "Meta returned no ad id; creation is NOT confirmed");
     return { id: String(res.id) };
@@ -372,6 +415,43 @@ export class MetaPublishClient {
       status: body?.status ? String(body.status) : undefined,
       effectiveStatus: body?.effective_status ? String(body.effective_status) : undefined,
       issuesInfo: body?.issues_info ?? undefined,
+    };
+  }
+
+  /** CA24: live ad-account state for pre-flight — Meta's
+   * own account_status code + disable_reason, read fresh
+   * (the stored platformStatusBucket can be stale). Throws
+   * MetaPublishError when Meta cannot be read; callers turn
+   * that into a not_checked result, never an "ok". */
+  async getAdAccountState(adAccountExternalId: string): Promise<{ accountStatus?: number; disableReason?: string | null; name?: string }> {
+    const id = adAccountExternalId.startsWith("act_") ? adAccountExternalId : `act_${adAccountExternalId}`;
+    const body: any = await this.get(`/${id}`, { fields: "name,account_status,disable_reason" });
+    return {
+      accountStatus: body?.account_status !== undefined ? Number(body.account_status) : undefined,
+      disableReason: body?.disable_reason ? String(body.disable_reason) : null,
+      name: body?.name ? String(body.name) : undefined,
+    };
+  }
+
+  /** CA24: is this Page still fetchable by the token?
+   * Returns Meta's own id/name; throws when Meta refuses
+   * (deleted page, lost access) — the error is the evidence. */
+  async getPageNode(pageId: string): Promise<{ id?: string; name?: string }> {
+    const body: any = await this.get(`/${pageId}`, { fields: "id,name" });
+    return { id: body?.id ? String(body.id) : undefined, name: body?.name ? String(body.name) : undefined };
+  }
+
+  /** CA24: pixel/dataset health — Meta's last_fired_time
+   * on the AdsPixel node (the platform's own record of the
+   * last event it received). Absent/null means Meta
+   * reports no fire time; the caller states exactly that
+   * instead of inventing a health verdict. */
+  async getPixelNode(pixelId: string): Promise<{ id?: string; name?: string; lastFiredTime?: string | null }> {
+    const body: any = await this.get(`/${pixelId}`, { fields: "id,name,last_fired_time" });
+    return {
+      id: body?.id ? String(body.id) : undefined,
+      name: body?.name ? String(body.name) : undefined,
+      lastFiredTime: body?.last_fired_time ? String(body.last_fired_time) : null,
     };
   }
 

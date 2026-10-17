@@ -123,6 +123,24 @@ export function validateForPlatform(
     return null;
   }
 
+  if (platform === "google_business_profile") {
+    // OU9: a GBP LocalPost is a text post with at most ONE
+    // photo (the documented MediaItem shape for a post is a
+    // single PHOTO by sourceUrl in this v1; video and
+    // multi-media local posts are not built). An empty post
+    // can never succeed — Google requires a summary.
+    if (!caption.trim() && refs.length === 0) {
+      return "Google Business Profile পোস্টে লেখা (Caption) প্রয়োজন — খালি পোস্ট Google-এ প্রকাশ করা যায় না।";
+    }
+    if (refs.some((r) => r?.kind === "video")) {
+      return "Google Business Profile-এ এই সংস্করণে ভিডিও পোস্ট হয় না — শুধু লেখা ও সর্বোচ্চ একটি ছবি। ভিডিওটি সরিয়ে আবার চেষ্টা করুন।";
+    }
+    if (refs.length > 1) {
+      return "Google Business Profile পোস্টে সর্বোচ্চ একটি ছবি রাখা যায় — ছবির সংখ্যা কমিয়ে আবার চেষ্টা করুন।";
+    }
+    return null;
+  }
+
   if (platform === "telegram") {
     // SN6: Telegram takes text alone, ONE photo/video, or a
     // media group of 2–10 photo/video (Bot API sendMediaGroup's

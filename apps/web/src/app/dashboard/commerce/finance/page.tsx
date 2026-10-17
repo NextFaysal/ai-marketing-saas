@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
+import AccountingLite from "./AccountingLite";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { ResponsiveTable } from "@repo/ui";
@@ -51,8 +52,9 @@ const labelCls = "mb-1 block text-xs font-semibold text-slate-700";
 const thCls = "py-2 pr-2 font-semibold";
 const tdCls = "py-2 pr-2";
 
-type Tab = "sales" | "cod" | "gateway" | "courier" | "refunds" | "expenses";
+type Tab = "sales" | "cod" | "gateway" | "courier" | "refunds" | "expenses" | "accounting";
 const TABS: { key: Tab; label: string }[] = [
+  { key: "accounting", label: "📒 হিসাব (জার্নাল)" },
   { key: "sales", label: "বিক্রি লেজার" },
   { key: "cod", label: "COD বকেয়া" },
   { key: "gateway", label: "গেটওয়ে সেটেলমেন্ট" },
@@ -112,6 +114,7 @@ export default function FinancePage() {
 
   const loadTab = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (tab === "accounting") return; // OU7 section loads itself
     if (tab === "sales") { await loadSales(salesPage); return; }
     if (tab === "expenses") return; // expenses load via their own effects
     setBusy(true); setError("");
@@ -238,7 +241,7 @@ export default function FinancePage() {
       <div>
         <h1 className="page-title">💰 ফাইন্যান্স ও লেজার</h1>
         <p className="text-sm text-slate-500">বিক্রি লেজার, COD বকেয়া, গেটওয়ে ও কুরিয়ার সেটেলমেন্ট, রিফান্ড লেজার, খরচ — আর হিসাবরক্ষকের জন্য GL এক্সপোর্ট।</p>
-        <p className="mt-1 text-xs text-slate-400"><Link href="/dashboard/commerce/reports" className="font-semibold text-indigo-600 hover:underline">📑 সব রিপোর্ট দেখুন</Link></p>
+        <p className="mt-1 text-xs text-slate-400"><Link href="/dashboard/commerce/reports" className="font-semibold text-indigo-600 hover:underline">📑 সব রিপোর্ট দেখুন</Link> · <Link href="/dashboard/commerce/ledger" className="font-semibold text-indigo-600 hover:underline">📒 হিসাব ও জার্নাল (ডাবল-এন্ট্রি)</Link></p>
       </div>
 
       <div className="card space-y-4 p-5">
@@ -253,7 +256,9 @@ export default function FinancePage() {
           ))}
         </div>
         {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-        {busy && tab !== "expenses" ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+        {busy && tab !== "expenses" && tab !== "accounting" ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+
+        {tab === "accounting" ? <AccountingLite from={from} to={to} /> : null}
 
         {tab === "sales" && sales ? (
           <div className="space-y-3">

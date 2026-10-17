@@ -14,7 +14,7 @@ export interface ExpressCheckoutInput {
   cartToken: string;
   addressId?: string;
   paymentMethod?: "cod" | "bkash" | "nagad";
-  onlinePayment?: { provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay"; source: "own" | "platform" };
+  onlinePayment?: { provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe"; source: "own" | "platform" };
   fieldAnswers?: FieldAnswers;
   termsAccepted?: boolean;
   idempotencyKey?: string;

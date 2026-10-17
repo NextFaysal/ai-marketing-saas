@@ -1,5 +1,5 @@
 import { ensurePlatformConfig, getPlatformConfigSync, resolveMessagingAppSecret } from "../common/platform-config";
-import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { isConnectionDenied, isMemberConnectionDenied } from "../common/permission-catalog";
 import { createHmac, timingSafeEqual } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -16,7 +16,7 @@ import { EventsService } from "../common/events.service";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { RealtimeService } from "./realtime.service";
 import { isValidTimezone, isValidWindows, isWithinSchedule } from "./working-hours";
-import { contactFactLines, deliveryFactLines, hoursFactLines, matchKnowledge, paymentFactLines } from "./business-brain";
+import { deliveryFactLines, extractGuardNumbers, paymentFactLines } from "./business-brain";
 import { MediaStore, mediaKeyFor } from "./media-store";
 import { detectMediaKind, defaultMediaFileName, type MediaKind } from "./media-sniff";
 import { composeProductCardText } from "./product-card";
@@ -35,14 +35,19 @@ import { LeadAssignmentService } from "../crm/lead-assignment.service";
 import { aiScheduleBlocks, isAiActive, parseAiSchedule } from "./ai-schedule";
 import { InventoryService } from "../inventory/inventory.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { buildCarouselComponent, CarouselValidationError, type CarouselCardInput } from "../messaging/whatsapp-rich";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
+import { OrgBrainService } from "../ai/org-brain.service";
+import { AnswerStoreService } from "../ai/answer-store.service";
+import { EmbeddingsService } from "../ai/embeddings.service";
+import { buildReplyQualityBlock, resolveReplyLanguage } from "../ai/reply-quality";
 import { computeIntakeWarnings } from "../orders/intake-warnings";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
 import { applyReaction, nextDeliveryPatch, reactionEmoji } from "./message-lifecycle";
 import { clampConversationPageLimit, conversationCursorWhere, decodeConversationCursor, encodeConversationCursor, oldestCursorRow } from "./conversation-cursor";
-import { HANDOVER_SUMMARY_LABEL, detectReplyLanguage, detectedLanguageInstruction, parseNextActionProposal, type NextActionProposal } from "./in7-ai";
+import { HANDOVER_SUMMARY_LABEL, detectReplyLanguage, parseNextActionProposal, type NextActionProposal } from "./in7-ai";
 
 /** Inbox Next-Gen P1: decoded-size cap for browser-uploaded media.
  * 2MB of bytes is ~2.7MB of base64, inside the 3MB JSON body limit. */
@@ -333,7 +338,7 @@ export function buildSlaBreachWhere(settings: any, vipIds: string[] | null, now:
 }
 
 @Injectable()
-export class InboxService {
+export class InboxService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -374,7 +379,109 @@ export class InboxService {
     // Appended LAST + @Optional (FraudModule imported by
     // InboxModule); absent leaves warnings without that check.
     @Optional() private readonly blockedPhones?: BlockedPhoneService,
+    // SA-B1 (P1): the fact pack's profile + knowledge parts are
+    // read through OrgBrainService (customer audience). Appended
+    // after blockedPhones + @Optional so every existing positional
+    // construction keeps its slots; absent (unit specs) falls back
+    // to a lazily built instance over the same prisma.
+    @Optional() private readonly orgBrain?: OrgBrainService,
+    // SA-B3 (P4): the Answer Store — consulted before the LLM
+    // tier composes, written after a guard-passed autopilot send
+    // and on staff-edited autopilot-draft sends. Appended LAST +
+    // @Optional (the orgBrain discipline); absent (unit specs)
+    // falls back to a lazily built instance over the same
+    // prisma, whose exact-match path works standalone and whose
+    // vector path resolves through a same-prisma
+    // EmbeddingsService. OrgBrainModule provides the real one.
+    @Optional() private readonly answerStore?: AnswerStoreService,
   ) {}
+
+  /**
+   * MX6: register as messaging's inbox-reply port so keyword
+   * campaign auto-replies send through THIS service's real
+   * conversation send path, without Messaging ever importing
+   * Inbox (the MS8 registerWorkflowCreator pattern). Defensive
+   * typeof check: unit specs build this service against
+   * messaging stubs that may not carry the registration method.
+   */
+  onModuleInit() {
+    const register = (this.messagingPrefs as any)?.registerInboxReplyPort;
+    if (typeof register === "function") {
+      register.call(this.messagingPrefs, {
+        sendConversationText: (organizationId: string, conversationId: string, text: string) =>
+          this.sendKeywordAutoReply(organizationId, conversationId, text),
+      });
+    }
+  }
+
+  /**
+   * MX6 — the port's send: an org-authored keyword-campaign
+   * auto-reply into an EXISTING conversation, through the same
+   * delivery choke point as agent replies and the autopilot
+   * (deliverText → the channel client). The ChannelMessage row
+   * is created "queued" and becomes "sent" ONLY with the real
+   * platform message id; a delivery failure marks it "failed"
+   * with the platform's error and THROWS, so the caller
+   * (MessagingService) records the reply as failed with the
+   * real reason — never as sent. A keyword reply by definition
+   * just arrived inbound, so the WhatsApp 24h window is open;
+   * deliverText enforces whatever the channel enforces and its
+   * result is surfaced verbatim. Marked autoReply with `via:
+   * "keyword_campaign"` evidence so the thread shows it as a
+   * system reply, and the autopilot's 10-minute rate limit sees
+   * it like any other auto-reply.
+   */
+  async sendKeywordAutoReply(organizationId: string, conversationId: string, text: string): Promise<{ providerMessageId: string }> {
+    const conv = await (this.prisma as any).channelConversation.findFirst({ where: { id: conversationId, organizationId } });
+    if (!conv) throw new BadRequestException("Conversation not found for keyword auto-reply");
+    const content = String(text ?? "");
+    const message = await (this.prisma as any).channelMessage.create({
+      data: {
+        conversationId, direction: "out", type: "text", content, status: "queued",
+        autoReply: true, autoReplyEvidence: JSON.stringify({ via: "keyword_campaign" }),
+      },
+    });
+    try {
+      const messageId = await this.deliverText(conv, content);
+      const status = InboxService.statusForDelivery(messageId);
+      await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status, externalId: messageId } });
+      this.rtMessage(organizationId, conversationId, { ...message, status, externalId: messageId });
+      await (this.prisma as any).channelConversation.update({
+        where: { id: conversationId },
+        data: {
+          lastMessageAt: new Date(), lastMessagePreview: content.slice(0, 120),
+          ...(conv.firstResponseAt ? {} : { firstResponseAt: new Date() }),
+        },
+      });
+      await this.audit.log({
+        organizationId, userId: "system", action: "inbox.keyword_auto_reply.sent",
+        entityType: "ChannelConversation", entityId: conversationId,
+        metadata: { providerMessageId: messageId },
+      });
+      return { providerMessageId: messageId };
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "Keyword auto-reply send failed";
+      await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed", error } }).catch(() => undefined);
+      await this.audit.log({
+        organizationId, userId: "system", action: "inbox.keyword_auto_reply.failed",
+        entityType: "ChannelConversation", entityId: conversationId, metadata: { error },
+      }).catch(() => undefined);
+      throw e instanceof Error ? e : new Error(error);
+    }
+  }
+
+  private brainFallback?: OrgBrainService;
+  private brainSvc(): OrgBrainService {
+    return this.orgBrain ?? (this.brainFallback ??= new OrgBrainService(this.prisma as any));
+  }
+
+  private answerStoreFallback?: AnswerStoreService;
+  private answerStoreSvc(): AnswerStoreService {
+    return (
+      this.answerStore ??
+      (this.answerStoreFallback ??= new AnswerStoreService(this.prisma as any, new EmbeddingsService(this.prisma as any)))
+    );
+  }
 
   // ----- Realtime fan-out (Unified Inbox U1) -----
   private rtMessage(organizationId: string, conversationId: string, message: unknown) {
@@ -411,10 +518,10 @@ export class InboxService {
    * busy inbox silently disable drafting for the whole day.
    */
   private async checkAiAllowed(organizationId: string, feature: string) {
-    const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
+    const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
-    if (ks.aiDisabledOrgIds.includes(organizationId)) {
-      throw new HttpException("AI features are temporarily disabled for this organization by the platform team.", 403);
+    if (isAiDisabledForOrg(ks, organizationId)) {
+      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -848,8 +955,15 @@ export class InboxService {
     const formId = String(data?.form_id ?? lg.formId ?? "");
     let mapping: Record<string, string> = {};
     let customFields: Record<string, string> | null = null;
+    // CA20: when the form resolves to one of the org's
+    // modelled LeadForms, its record id is stamped on the
+    // lead (Lead.leadFormId) so per-form quality can join
+    // on a real column. Unresolved = the lead stays
+    // unattributed; the notes text is never parsed back.
+    let resolvedLeadFormId: string | null = null;
     if (formId && (this.prisma as any).leadForm?.findFirst) {
       const form = await (this.prisma as any).leadForm.findFirst({ where: { organizationId, externalFormId: formId } }).catch(() => null);
+      if (form?.id) resolvedLeadFormId = String(form.id);
       if (form?.fieldMapping && typeof form.fieldMapping === "object") {
         mapping = form.fieldMapping as Record<string, string>;
         const customKeys = [...new Set(Object.values(mapping).filter((v) => typeof v === "string" && v.startsWith("custom:")).map((v) => (v as string).slice("custom:".length)))];
@@ -882,6 +996,7 @@ export class InboxService {
         phone: mappedAnswer("phone") ?? fields.get("phone_number") ?? fields.get("phone") ?? null,
         source: "facebook_lead_ads", externalId: lg.leadgenId, stage: "new",
         notes: `Lead Ads form ${data?.form_id ?? lg.formId ?? ""}${notesAnswer ? ` — ${notesAnswer}` : ""}`.trim(),
+        ...(resolvedLeadFormId ? { leadFormId: resolvedLeadFormId } : {}),
         ...(customFields ? { customFields } : {}),
       },
     });
@@ -1855,7 +1970,41 @@ export class InboxService {
     // externalContactId is the phone every send path addresses
     // (Messenger PSIDs match no send path — see MessagingService).
     if (text && conversation.channel === "whatsapp" && this.messagingPrefs) {
-      await this.messagingPrefs.handleInboundKeyword(organizationId, "whatsapp", conversation.externalContactId ?? "", text).catch(() => undefined);
+      const prefResult = await this.messagingPrefs.handleInboundKeyword(organizationId, "whatsapp", conversation.externalContactId ?? "", text).catch(() => undefined);
+      // MX6: keyword campaigns run ONLY when the MS2 hook did
+      // NOT match — opt-out/opt-in bookkeeping is exclusive, and
+      // an auto-reply after STOP would be a violation. Same
+      // best-effort discipline: a campaign failure (or a missing
+      // handleKeywordReply on an older messaging build) must
+      // never affect ingest.
+      // MX10: an opt-in form's keyword confirms a pending signup
+      // / records a fresh WhatsApp opt-in — also exclusive of
+      // campaign matching (it is consent bookkeeping, not a
+      // campaign), and also best-effort.
+      let optInClaimed = false;
+      if (!prefResult?.matched && typeof this.messagingPrefs.handleOptInKeyword === "function") {
+        optInClaimed = await this.messagingPrefs.handleOptInKeyword(organizationId, conversation.externalContactId ?? "", text).catch(() => false);
+      }
+      if (!prefResult?.matched && !optInClaimed && typeof this.messagingPrefs.handleKeywordReply === "function") {
+        await this.messagingPrefs.handleKeywordReply(organizationId, conversation, text).catch(() => undefined);
+      }
+    }
+    // MX13: a Telegram STOP/START keyword records the sender's
+    // messaging preference in the SAME MS2 store (channel
+    // "telegram", address = the chat id — the conversation's
+    // externalContactId), and Telegram's own "/start" command
+    // counts as START (MessagingService.handleInboundKeyword).
+    // Same best-effort discipline as the WhatsApp hook: it never
+    // changes the message flow, never sends a reply, and a
+    // failure here must not affect ingest. Unlike WhatsApp, a
+    // match here does NOT suppress the order bot / auto-reply
+    // below: on Telegram, "/start" is the message that OPENS a
+    // bot conversation, so consuming it would break the order
+    // bot's first contact — the preference write is the whole
+    // effect (MX6 keyword campaigns are WhatsApp-only, so there
+    // is no campaign matching on telegram to exclude either).
+    if (text && conversation.channel === "telegram" && this.messagingPrefs) {
+      await this.messagingPrefs.handleInboundKeyword(organizationId, "telegram", conversation.externalContactId ?? "", text).catch(() => undefined);
     }
     let classification: Classification = { intent: "other", confidence: 0, sentiment: null };
     if (text) {
@@ -1919,7 +2068,11 @@ export class InboxService {
       ? await this.handleOrderBot(organizationId, conversation, text, classification).catch(() => false)
       : false;
     if (!codHandled && !csatHandled && !reviewHandled && !spam && !botHandled && text) {
-      await this.maybeAutoReply(organizationId, conversation, classification, text).catch(() => undefined);
+      // SA-B8 (R2): pass the persisted message's own timestamp so
+      // the CX3 defer can stamp the batch start AT the triggering
+      // message (see the defer point in maybeAutoReply) — the
+      // verified CX3 production-bug fix, applied here.
+      await this.maybeAutoReply(organizationId, conversation, classification, text, { messageAt: (message as any)?.createdAt ?? null }).catch(() => undefined);
     }
   }
 
@@ -2065,6 +2218,45 @@ export class InboxService {
     return ok || true;
   }
 
+  /**
+   * SA-B7 (R1): a mid-order QUESTION the state machine cannot
+   * parse as step input gets ONE Brain-grounded answer attempt
+   * through the autopilot's own compose (fact pack + Answer
+   * Store + the deterministic number guard — the identical
+   * grounding discipline, usage labelled "order_bot"). The
+   * session state is NEVER touched here: the answer is sent
+   * with the current step's re-ask line appended, and the
+   * customer continues the flow. Any failure (no real LLM, no
+   * verified facts, guard rejection, provider error) returns
+   * false and the caller sends its pre-SA-B7 message verbatim.
+   *
+   * Customer memory reaches this compose ONLY the way it
+   * reaches the autopilot — as context in the fact pack
+   * (language/products/history facts). It is never written
+   * into the bot's collected order data: name/phone/address
+   * still come solely from the customer's own answers at
+   * their steps and the confirmation summary is built from
+   * those alone (spec-proven in sa-b7-inbox-v2.spec).
+   */
+  private async botAnswerQuestion(
+    organizationId: string,
+    conversation: any,
+    session: any,
+    text: string,
+    reask: string,
+  ): Promise<boolean> {
+    try {
+      const classification = classifyIntent(text);
+      const composed = await this.composeLlmGroundedReply(
+        organizationId, conversation, classification.intent, text, { usageFeature: "order_bot" },
+      ).catch(() => null);
+      if (!composed?.content) return false;
+      return this.botSend(organizationId, conversation, session, `${composed.content}\n\n${reask}`);
+    } catch {
+      return false;
+    }
+  }
+
   private async botStep(organizationId: string, conversation: any, session: any, text: string, settings: any): Promise<boolean> {
     const prisma = this.prisma as any;
     const data: Record<string, any> = { ...(session.data ?? {}) };
@@ -2075,6 +2267,10 @@ export class InboxService {
       const num = Number(this.bnToEnDigits(text).replace(/[^0-9]/g, ""));
       let product = num >= 1 && num <= products.length ? products[num - 1] : matchProduct(text, products);
       if (!product) {
+        // SA-B7 (R1): not a product choice — it may be a
+        // question ABOUT a product/policy. One Brain-grounded
+        // answer attempt; the state does not move either way.
+        if (await this.botAnswerQuestion(organizationId, conversation, session, text, "অর্ডার চালিয়ে যেতে তালিকা থেকে পণ্যের নম্বরটি লিখুন (যেমন: 1)।")) return true;
         await this.botSend(organizationId, conversation, session, "দুঃখিত, কোন পণ্য বোঝা যায়নি। তালিকার নম্বরটি লিখুন (যেমন: 1)।");
         return true;
       }
@@ -2087,6 +2283,11 @@ export class InboxService {
     if (session.state === "ask_quantity") {
       const qty = Number(this.bnToEnDigits(text).replace(/[^0-9]/g, ""));
       if (!qty || qty < 1 || qty > 50) {
+        // SA-B7 (R1): a question about the product being
+        // ordered (not a quantity) gets the same one grounded
+        // answer attempt before the re-ask.
+        const pendingName = data.pendingProductName ?? data.productName ?? "পণ্যটি";
+        if (await this.botAnswerQuestion(organizationId, conversation, session, text, `"${pendingName}" — কয়টি নিতে চান? সংখ্যা লিখুন।`)) return true;
         await this.botSend(organizationId, conversation, session, "সঠিক সংখ্যা লিখুন (১ থেকে ৫০)।");
         return true;
       }
@@ -2121,6 +2322,8 @@ export class InboxService {
       const num = Number(this.bnToEnDigits(text).replace(/[^0-9]/g, ""));
       const product = num >= 1 && num <= products.length ? products[num - 1] : matchProduct(text, products);
       if (!product) {
+        // SA-B7 (R1): same question branch as ask_product.
+        if (await this.botAnswerQuestion(organizationId, conversation, session, text, "আরো পণ্য নিতে চাইলে নম্বর লিখুন, শেষ করতে \"শেষ\" লিখুন।")) return true;
         await this.botSend(organizationId, conversation, session, "বোঝা যায়নি — আরো পণ্যের নম্বর লিখুন, অথবা শেষ করতে \"শেষ\" লিখুন।");
         return true;
       }
@@ -2231,6 +2434,20 @@ export class InboxService {
         },
       }).catch(() => undefined);
       await prisma.botSession.update({ where: { id: session.id }, data: { status: "completed", data } });
+      // SA-B11 (W2) Trigger A: a completed bot order is the one
+      // real "this conversation is resolved" signal the existing
+      // flows produce (the thread itself stays open — the team
+      // still calls to confirm). Proposing the close goes
+      // through the Action Engine (close_conversation) so
+      // autonomy + approval + audit govern it; the proposer
+      // subscribes to this event. Isolated like every other
+      // emit in this flow — it can never affect the order.
+      try {
+        this.events?.emit("conversation.bot_order_completed", {
+          organizationId,
+          context: { conversationId: conversation.id, orderId: order.id },
+        });
+      } catch { /* event emission never affects the bot flow */ }
       await this.botSend(organizationId, conversation, session,
         `ধন্যবাদ ${data.name}! আপনার অর্ডার ${order.externalNumber} তৈরি হয়েছে (মোট ${formatMinor(BigInt(order.totalMinor), order.currency)})।${order.storeSyncStatus === "synced" ? " অর্ডারটি স্টোরেও পাঠানো হয়েছে।" : ""} আমাদের টিম শীঘ্রই কল করে কনফার্ম করবে।`);
       return true;
@@ -2304,9 +2521,25 @@ export class InboxService {
       reason = "প্রথম বার্তাতেই প্রমোশনাল লিংক";
     }
     if (!reason) return false;
-    await (this.prisma as any).channelConversation.update({
+    const flagged = await (this.prisma as any).channelConversation.update({
       where: { id: conversation.id }, data: { spamFlag: true, spamReason: reason },
-    }).catch(() => undefined);
+    }).catch(() => null);
+    // SA-B11 (W2) Trigger B: the detector has now FLAGGED the
+    // conversation (its own act, above — unchanged), but it does
+    // not BLOCK the sender. That stronger step is proposed
+    // through the Action Engine (block_sender) so autonomy +
+    // approval + audit govern it; the proposer subscribes to
+    // this event (no DI cycle — the bus is global). Emission is
+    // isolated exactly like the neighbouring workflow events:
+    // it can never affect spam handling.
+    if (flagged) {
+      try {
+        this.events?.emit("conversation.spam_flagged", {
+          organizationId,
+          context: { conversationId: conversation.id, reason },
+        });
+      } catch { /* event emission never affects spam handling */ }
+    }
     return true;
   }
 
@@ -2455,7 +2688,7 @@ export class InboxService {
     return { denied, actorId };
   }
 
-  private async maybeAutoReply(organizationId: string, conversation: any, classification: Classification, text: string, opts?: { firedFromDebounce?: boolean }) {
+  private async maybeAutoReply(organizationId: string, conversation: any, classification: Classification, text: string, opts?: { firedFromDebounce?: boolean; messageAt?: Date | string | null }) {
     const settings = await this.getSettings(organizationId);
     const perIntent = (settings.perIntent ?? {}) as Record<string, string>;
     const perChannel = (settings.perChannelModes ?? {}) as Record<string, string>;
@@ -2545,7 +2778,24 @@ export class InboxService {
           where: { id: current.id },
           data: {
             autoReplyDueAt: new Date(Date.now() + delay * 1000),
-            autoReplyBatchSince: current.autoReplyBatchSince ?? new Date(),
+            // SA-B8 (R2) — the CX3 production-bug fix (root cause
+            // proven 2026-10-12, fix verified then but unapplied
+            // until now): the batch starts at the TRIGGERING
+            // message, not at this stamp. The message row was
+            // persisted BEFORE the intelligence dispatch reached
+            // this defer point (often many ms earlier), so
+            // stamping `new Date()` here made the sweep's
+            // `createdAt >= batchSince` query exclude the very
+            // message that opened the batch — a single-message
+            // batch then fired with an empty batch text and was
+            // silently discharged (a lone delayed reply NEVER
+            // fired), and multi-message bursts lost their first
+            // message. It also made cx3-debounce.spec flaky: the
+            // fake DB usually lands both stamps in the same
+            // millisecond, masking the slip. Fall back to the
+            // conversation's lastMessageAt (stamped at ingest
+            // from the message) and only then to now.
+            autoReplyBatchSince: current.autoReplyBatchSince ?? (opts?.messageAt ? new Date(opts.messageAt) : null) ?? current.lastMessageAt ?? new Date(),
           },
         }).catch(() => undefined);
         return;
@@ -2598,6 +2848,21 @@ export class InboxService {
         organizationId, userId: "system", action: "inbox.auto_reply.sent", entityType: "ChannelConversation",
         entityId: conversation.id, metadata: { intent: classification.intent, confidence: classification.confidence, evidence: composed.evidence },
       });
+      // SA-B3 (P4): a guard-passed LLM-tier answer that was
+      // actually SENT becomes a stored answer, so the next
+      // identical or paraphrased question can be served without
+      // an LLM call. Fire-and-forget and fully failure-isolated
+      // (captureAutopilotAnswer never throws); the store itself
+      // screens eligibility + PII — order_status is flagged
+      // customer-own below and refused there, so a customer's
+      // own order details can never enter the store. The
+      // deterministic tier is never stored: it is recomputed
+      // from live data on every message already. Draft-mode
+      // compositions return before this point (never sent), so
+      // they are never stored either.
+      if ((composed.evidence as any)?.tier === "llm") {
+        void this.captureAutopilotAnswer(organizationId, classification.intent, text, composed).catch(() => undefined);
+      }
     } catch (e) {
       const error = e instanceof Error ? e.message : "Auto-reply send failed";
       await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed", error } });
@@ -3277,7 +3542,30 @@ export class InboxService {
     const p = this.prisma as any;
     const facts: string[] = [];
     const sources: any[] = [];
-    const profile = (await p.businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null)) ?? null;
+    // SA-B1 (P1): the profile facts and knowledge matches now come
+    // from the single OrgBrainService with a CUSTOMER audience —
+    // the pack is built only from public fact lines and
+    // public-visibility documents, so an internal note or an
+    // internal profile field can no longer reach a customer reply
+    // (Master Plan law L3; this is the one intended behaviour
+    // change in this migration). Product / policy-by-type /
+    // order-status logic below is unchanged and stays local.
+    // SA-B5 (P8b): when the conversation carries a real customer
+    // identity, the Brain is asked for the "own_customer"
+    // audience — identical customer-class filtering PLUS this
+    // customer's own memory (CUSTOMER-OWN class, law L3). No
+    // resolvable key (or a practice thread) keeps the plain
+    // "customer" audience and today's behaviour exactly.
+    const customerKey =
+      conversation && !conversation.isPractice && conversation.externalContactId
+        ? `${String(conversation.channel ?? "")}:${String(conversation.externalContactId)}`
+        : null;
+    const brain = await this.brainSvc().getContext(organizationId, {
+      audience: customerKey ? "own_customer" : "customer",
+      query: text,
+      policyType: intent === "delivery" ? "shipping" : intent === "payment" ? "payment" : undefined,
+      ...(customerKey ? { customerKey } : {}),
+    });
     if (intent === "price" || intent === "stock") {
       const products = await p.product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 });
       const product = matchProduct(text, products);
@@ -3289,10 +3577,10 @@ export class InboxService {
       }
     }
     if (intent === "delivery" || intent === "payment") {
-      const lines = intent === "delivery" ? deliveryFactLines(profile) : paymentFactLines(profile);
+      const lines = intent === "delivery" ? brain.deliveryFacts : brain.paymentFacts;
       facts.push(...lines);
       if (lines.length) sources.push({ type: "business_profile", area: intent });
-      const policy = await p.businessPolicy.findFirst({ where: { organizationId, type: intent === "delivery" ? "shipping" : "payment" } });
+      const policy = brain.typedPolicy;
       if (policy?.content) {
         facts.push(`${intent === "delivery" ? "ডেলিভারি" : "পেমেন্ট"} নীতি: ${String(policy.content).replace(/\s+/g, " ").slice(0, 500)}`);
         sources.push({ type: "business_policy", policyId: policy.id });
@@ -3311,22 +3599,39 @@ export class InboxService {
     // classifier calls them "other"; the brain answers them
     // from the profile, and FAQ matching runs for EVERY intent.
     if (intent === "other" || intent === "greeting") {
-      const lines = [...contactFactLines(profile), ...hoursFactLines(profile)];
+      const lines = [...brain.contactFacts, ...brain.hoursFacts];
       facts.push(...lines);
       if (lines.length) sources.push({ type: "business_profile", area: "contact_hours" });
     }
-    // Defensive `?.()` chain: older spec fakes (and any partial
-    // prisma double) may lack these tables entirely — a missing
-    // table must mean "no facts", never a synchronous throw
-    // before .catch can attach.
-    const docs = (await p.knowledgeDocument?.findMany?.({ where: { organizationId }, take: 100 })?.catch?.(() => [])) ?? [];
-    for (const m of matchKnowledge(text, docs as any[])) {
-      facts.push(`জ্ঞানভান্ডার (${m.doc.title}): ${String(m.doc.content).replace(/\s+/g, " ").slice(0, 400)}`);
-      sources.push({ type: "knowledge", docId: m.doc.id, kind: m.doc.kind });
+    // Knowledge matches arrive audience-filtered from OrgBrain —
+    // a customer pack only ever contains public documents.
+    for (const m of brain.knowledgeMatches) {
+      facts.push(`জ্ঞানভান্ডার (${m.title}): ${String(m.content).replace(/\s+/g, " ").slice(0, 400)}`);
+      sources.push({ type: "knowledge", docId: m.docId, kind: m.kind });
+    }
+    // SA-B7 (R1): semantic product knowledge — the indexed
+    // qualitative catalog text (description / category / tags /
+    // attributes; NEVER price or stock, which arrive only from
+    // the live product row in the price/stock block above). The
+    // Brain admitted each match through the product's live row,
+    // so the name heading the line is the current one.
+    for (const pm of brain.productMatches ?? []) {
+      facts.push(`পণ্যের তথ্য (${pm.name}): ${String(pm.content).replace(/\s+/g, " ").slice(0, 400)}`);
+      sources.push({ type: "product_knowledge", productId: pm.productId });
+    }
+    // SA-B5 (P8b): this customer's own memory facts join the
+    // pack (their language, products asked/bought, order
+    // history) — present only when the Brain admitted a memory
+    // for THIS conversation's customer. The number guard treats
+    // them like any other pack fact: they are verified, sourced
+    // from the org's own rows, and quotable only to this
+    // customer in this conversation.
+    if (brain.customerMemoryFacts?.length) {
+      facts.push(...brain.customerMemoryFacts);
+      sources.push({ type: "customer_memory", customerKey });
     }
     if (!facts.length) return null;
-    const org = (await p.organization?.findUnique?.({ where: { id: organizationId }, select: { name: true } })?.catch?.(() => null)) ?? null;
-    if (org?.name) facts.unshift(`ব্যবসার নাম: ${org.name}`);
+    if (brain.orgName) facts.unshift(`ব্যবসার নাম: ${brain.orgName}`);
     return {
       factsText: facts.join("\n"), sources,
       // Milestone 77: owner behaviour rides along; the number
@@ -3334,16 +3639,33 @@ export class InboxService {
       // override (the Instructions Desk test path) replaces the
       // published instructions/language for THIS compose only —
       // the stored profile is never touched by a test.
-      ownerInstructions: override ? (override.instructions ?? null) : (profile?.aiInstructions ?? null),
-      replyLanguage: override ? (override.replyLanguage ?? null) : (profile?.aiReplyLanguage ?? null),
+      ownerInstructions: override ? (override.instructions ?? null) : brain.ownerInstructions,
+      replyLanguage: override ? (override.replyLanguage ?? null) : brain.replyLanguage,
+      // SA-B9 (R3): the shared reply-quality resolver reads the
+      // profile's OWN language value (the pack's replyLanguage
+      // above conflates it with a Desk override — the override
+      // is passed separately) and this customer's remembered
+      // language preference, admitted only under own_customer.
+      brainReplyLanguage: brain.replyLanguage ?? null,
+      memoryLanguagePref: brain.customerMemory?.languagePref ?? null,
+      // SA-B5 (P8a): the learned brand voice as style guidance
+      // (null unless an ACTIVE learned profile exists — the
+      // prompt then composes exactly as before SA-B5).
+      styleInstructions: brain.styleInstructions ?? null,
+      // SA-B22 (T1): platform guidance (Admin Training Console
+      // teaching) rides the same guidance channel — never the
+      // fact pack this builder assembles.
+      platformGuidance: brain.platformGuidance ?? null,
     };
   }
 
   /** Numbers in a text, normalized (Bengali digits -> Latin,
-   * separators stripped) for the hallucination guard. */
+   * separators stripped) for the hallucination guard. SA-B3: the
+   * logic lives in business-brain.ts as extractGuardNumbers so
+   * the Answer Store's live re-verification applies the identical
+   * extraction; this delegate keeps every existing call site. */
   private static extractNumbers(input: string): string[] {
-    const normalized = input.replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString()).replace(/,/g, "");
-    return (normalized.match(/\d+(?:\.\d+)?/g) ?? []).map((n) => String(Number(n)));
+    return extractGuardNumbers(input);
   }
 
   /**
@@ -3413,6 +3735,60 @@ export class InboxService {
     let provider: any;
     try { provider = await providerForOrg(this.llm, organizationId); } catch { return null; }
     if (!provider?.isRealLlm) return null; // dev templates never autopilot
+    // SA-B3 (P4): the Answer Store gets its chance BEFORE the
+    // model is called. A stored answer is served only after the
+    // store has re-verified it against LIVE sources (inside
+    // lookup) AND it passes the SAME number guard as a fresh
+    // composition, run here against THIS fresh fact pack —
+    // belt and braces: if the pack no longer supports the
+    // stored numbers, the entry is retired and the LLM tier
+    // proceeds exactly as before. The Instructions Desk test
+    // path (override) never consults the store: a test shows
+    // what the AI would compose under the given instructions.
+    // A hit records a zero-token usage row (feature
+    // "answer_store_hit") so the saving stays visible in the
+    // same ledger the LLM rows land in.
+    if (!opts?.override) {
+      const hit = await this.answerStoreSvc()
+        .lookup(organizationId, text, { channel: "inbox", language: detectReplyLanguage(text) })
+        .catch(() => null);
+      if (hit?.hit) {
+        const packNumbers = new Set(InboxService.extractNumbers(pack.factsText));
+        const invented = InboxService.extractNumbers(hit.answer).filter((n) => !packNumbers.has(n));
+        if (!invented.length) {
+          await (this.prisma as any).aIUsageRecord.create({
+            data: { organizationId, userId: "system", feature: "answer_store_hit", provider: "answer_store", model: null, inputTokens: 0, outputTokens: 0, estimated: false },
+          }).catch(() => undefined);
+          return {
+            content: hit.answer.slice(0, 1500),
+            evidence: { tier: "answer_store", answerStoreHit: true, answerStoreId: hit.entryId, sources: pack.sources },
+          };
+        }
+        await this.answerStoreSvc().invalidate(organizationId, hit.entryId, "number_guard_failed").catch(() => undefined);
+      }
+    }
+    // SA-B9 (R3): language, natural-writing quality and the
+    // learned brand voice now come from the ONE shared
+    // reply-quality layer (ai/reply-quality.ts) — the resolver
+    // (per-call override -> explicit org language -> detected
+    // -> remembered preference -> Bengali default) replaces
+    // this prompt's three ad-hoc spreads (the SA-B5 style
+    // spread, the bn/en forced lines, the IN7d detected line),
+    // and the styleInstructions ride inside the shared block
+    // under their established label. The order bot's grounded
+    // branch composes HERE (usageFeature "order_bot"), so it
+    // inherits the same block — R3's one rule, by construction.
+    const qualityBlock = buildReplyQualityBlock({
+      language: resolveReplyLanguage({
+        override: opts?.override?.replyLanguage ?? null,
+        orgReplyLanguage: (pack as any).brainReplyLanguage ?? null,
+        detected: detectReplyLanguage(text),
+        memoryLanguagePref: (pack as any).memoryLanguagePref ?? null,
+      }),
+      styleInstructions: (pack as any).styleInstructions ?? null,
+      platformGuidance: (pack as any).platformGuidance ?? null,
+      channel: opts?.usageFeature === "order_bot" ? "order_bot" : "inbox",
+    });
     const result = await provider.complete([
       {
         role: "system",
@@ -3424,13 +3800,8 @@ export class InboxService {
           // Milestone 77: owner behaviour from the Command
           // Center — conduct only; the facts rule stands.
           ...((pack as any).ownerInstructions ? ["", `Owner's standing instructions for tone and conduct (never override the verified facts): ${String((pack as any).ownerInstructions).slice(0, 1000)}`] : []),
-          ...((pack as any).replyLanguage === "bn" ? ["Always reply in Bengali."] : (pack as any).replyLanguage === "en" ? ["Always reply in English."] : []),
-          // IN7d: no owner override -> match the customer's own
-          // language, detected deterministically from THIS
-          // message's script ratio. An override above always
-          // wins: this line is only reached when replyLanguage
-          // is neither "bn" nor "en".
-          ...(!(pack as any).replyLanguage ? [detectedLanguageInstruction(detectReplyLanguage(text))].filter(Boolean) as string[] : []),
+          "",
+          ...qualityBlock,
           "",
           "VERIFIED FACTS:",
           pack.factsText,
@@ -3459,6 +3830,97 @@ export class InboxService {
       return null;
     }
     return { content: reply.slice(0, 1500), evidence: { tier: "llm", provider: provider.name, sources: pack.sources } };
+  }
+
+  /**
+   * SA-B3 (P4): capture a guard-passed, actually-sent autopilot
+   * answer into the Answer Store (fire-and-forget from
+   * maybeAutoReply). Source refs are the fact pack's own source
+   * list, normalized into the store's shape; the pack's
+   * business_profile entries carry the intent area, which is
+   * exactly the store's closed profile-area vocabulary (plus
+   * "contact_hours"). order_status is flagged customer-own —
+   * the store refuses it, so a customer's own order facts can
+   * never be re-served to anyone. Never throws.
+   */
+  private async captureAutopilotAnswer(
+    organizationId: string,
+    intent: string,
+    questionText: string,
+    composed: { content: string; evidence: any },
+  ): Promise<void> {
+    try {
+      const sources: any[] = Array.isArray(composed.evidence?.sources) ? composed.evidence.sources : [];
+      await this.answerStoreSvc().store(organizationId, {
+        question: questionText,
+        answer: composed.content,
+        channel: "inbox",
+        language: detectReplyLanguage(questionText),
+        sourceRefs: {
+          docIds: sources.filter((s) => s?.type === "knowledge" && s.docId).map((s) => String(s.docId)),
+          // SA-B7: an answer grounded on semantic product
+          // knowledge records the product as a source too, so
+          // the store's live re-verification value-checks it
+          // (existence / ACTIVE / name / price numbers) exactly
+          // like a price-intent answer.
+          productIds: sources.filter((s) => (s?.type === "product" || s?.type === "product_knowledge") && s.productId).map((s) => String(s.productId)),
+          policyIds: sources.filter((s) => s?.type === "business_policy" && s.policyId).map((s) => String(s.policyId)),
+          profileAreas: [...new Set(sources.filter((s) => s?.type === "business_profile" && s.area).map((s) => String(s.area)))],
+        },
+        origin: "autopilot_grounded",
+        flags: { audience: "customer", customerOwn: intent === "order_status", personalized: false },
+      });
+    } catch { /* capture never affects the sent reply */ }
+  }
+
+  /**
+   * SA-B3 (P4): capture a staff-EDITED autopilot draft's sent
+   * text into the Answer Store (origin "staff_edited", from
+   * sendDraft). The correction replaces any stored entry for
+   * the same question inside store(). The question is the
+   * conversation's latest inbound message (the text the draft
+   * was composed for); an order_status thread is flagged
+   * customer-own and refused by the store. Sources are
+   * harvested with the same helpers the fact pack uses: the
+   * Brain's customer context for the question (knowledge
+   * matches + policy sources; when the profile contributed any
+   * facts, all three profile areas are recorded — the
+   * correction may rest on any of them, and recording more
+   * areas only makes later verification stricter) and a live
+   * product match. Never throws.
+   */
+  private async captureStaffEditedAnswer(organizationId: string, conversationId: string, answerText: string): Promise<void> {
+    try {
+      const p = this.prisma as any;
+      const lastInbound = await p.channelMessage
+        ?.findFirst?.({ where: { conversationId, direction: "in" }, orderBy: { createdAt: "desc" } })
+        .catch(() => null);
+      const question = String(lastInbound?.content ?? "").trim();
+      if (!question) return;
+      const intent = String(lastInbound?.intent ?? "");
+      const brain = await this.brainSvc()
+        .getContext(organizationId, { audience: "customer", query: question })
+        .catch(() => null);
+      const brainSources: any[] = brain?.sources ?? [];
+      const products = await p.product
+        ?.findMany?.({ where: { organizationId, status: "ACTIVE" }, take: 100 })
+        .catch(() => []);
+      const matched = matchProduct(question, products ?? []);
+      await this.answerStoreSvc().store(organizationId, {
+        question,
+        answer: answerText,
+        channel: "inbox",
+        language: detectReplyLanguage(question),
+        sourceRefs: {
+          docIds: (brain?.knowledgeMatches ?? []).map((m: any) => m.docId),
+          productIds: matched ? [matched.id] : [],
+          policyIds: brainSources.filter((s) => s?.type === "business_policy" && s.policyId).map((s) => String(s.policyId)),
+          profileAreas: (brain?.facts?.length ?? 0) > 0 ? ["delivery", "payment", "contact_hours"] : [],
+        },
+        origin: "staff_edited",
+        flags: { audience: "customer", customerOwn: intent === "order_status", personalized: false },
+      });
+    } catch { /* capture never affects the sent reply */ }
   }
 
   /**
@@ -4711,14 +5173,21 @@ export class InboxService {
   /**
    * IN7b + IN7c: the AI's suggested NEXT STEP for this thread,
    * plus tag / pipeline-stage proposals — ALL of it
-   * suggestion-only. This method NEVER sends a message, NEVER
-   * updates the conversation, and persists nothing: the agent
-   * sees { action, label, reason, tags, pipelineStage } and
-   * either clicks through to the EXISTING action (shareTracking /
+   * suggestion-only. This method NEVER sends a message and
+   * NEVER updates the conversation: the agent sees
+   * { action, label, reason, tags, pipelineStage } and either
+   * clicks through to the EXISTING action (shareTracking /
    * COD / chat-order panel / composer / close) or accepts the
    * tag/stage proposal, which the UI applies through the normal
-   * updateConversation path. Rejecting changes nothing because
-   * nothing was written.
+   * updateConversation path. The RESPONSE contract is unchanged
+   * since IN7. One SA-B11 (W2) addition, recorded honestly: a
+   * validated proposal is also announced on the event bus
+   * (Trigger C), and the Action Engine proposer records the
+   * catalogued recommendations ("resolve", tags) as engine
+   * proposals — so they wait in the same approval/audit
+   * pipeline as every other AI action (at autonomy L2 an org
+   * has explicitly opted into auto-executing low-risk ones).
+   * The suggestion itself still executes nothing here.
    *
    * Grounding: the model only sees the thread, the linked
    * order's REAL status/COD state (when a customer is linked) and
@@ -4775,6 +5244,19 @@ export class InboxService {
     if (proposal.pipelineStage && proposal.pipelineStage === (conv.pipelineStage ?? "new")) proposal.pipelineStage = null;
     // Tags the thread already has are not proposals.
     proposal.tags = proposal.tags.filter((t) => !(conv.tags ?? []).includes(t));
+    // SA-B11 (W2) Trigger C: announce the validated suggestion
+    // so the Action Engine proposer can record its catalogued
+    // parts (action "resolve" → close_conversation, tags →
+    // tag_conversation) as engine proposals. The returned value
+    // above is untouched — this is an additional record, in the
+    // same approval pipeline, never an execution. Isolated:
+    // emission can never affect the suggestion response.
+    try {
+      this.events?.emit("conversation.next_action_suggested", {
+        organizationId,
+        context: { conversationId, action: proposal.action, tags: proposal.tags, reason: proposal.reason },
+      });
+    } catch { /* event emission never affects the suggestion */ }
     return { proposal, provider: provider.name };
   }
 
@@ -6377,6 +6859,10 @@ export class InboxService {
     exampleValues?: string[];
     headerType?: "none" | "text" | "image"; headerText?: string; headerExample?: string; headerHandle?: string;
     buttons?: { type: "url" | "quick_reply"; text: string; url?: string }[];
+    // MX9: optional carousel cards — when present, a CAROUSEL
+    // component (built + validated by messaging/whatsapp-rich)
+    // joins the template's BODY in Meta's create format.
+    carouselCards?: CarouselCardInput[];
   }) {
     const name = String(dto.name ?? "");
     // Meta rule: lowercase alphanumerics + underscores, ≤512 chars.
@@ -6430,6 +6916,23 @@ export class InboxService {
       type: "BODY", text: bodyText,
       ...(maxParam > 0 ? { example: { body_text: [exampleValues] } } : {}),
     });
+    // MX9: carousel templates are MARKETING/UTILITY templates
+    // whose components add a CAROUSEL component next to the BODY
+    // (Meta template components docs). The component is built by
+    // the pure builder — every validation error is a Bengali 400
+    // BEFORE any Meta call, and a Meta rejection still stores
+    // nothing. A carousel template cannot also carry a media/text
+    // header of its own (the cards carry the media headers).
+    if (dto.carouselCards != null) {
+      if (headerType !== "none") {
+        throw new BadRequestException("Carousel টেমপ্লেটে আলাদা Header থাকে না — প্রতিটি কার্ডের নিজের ছবি/ভিডিও Header থাকে। headerType 'none' রাখুন।");
+      }
+      try {
+        components.push(buildCarouselComponent(dto.carouselCards) as any);
+      } catch (e) {
+        throw new BadRequestException(e instanceof CarouselValidationError ? e.message : "Invalid carousel cards");
+      }
+    }
     if (buttons.length) {
       components.push({
         type: "BUTTONS",
@@ -6892,30 +7395,108 @@ export class InboxService {
     const history = [...recent].reverse();
     const lastInbound = [...history].reverse().find((m: any) => m.direction === "in");
     const provider = await providerForOrg(this.llm, organizationId);
+    const question = String(lastInbound?.content ?? "");
 
-    const [profile, policies, products] = await Promise.all([
-      (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }),
-      (this.prisma as any).businessPolicy.findMany({ where: { organizationId }, take: 10 }),
-      (this.prisma as any).product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 }),
-    ]);
-    const matchedProduct = matchProduct(lastInbound?.content ?? "", products);
+    // SA-B7 (R1): the Answer Store is the FIRST suggestion
+    // source. A verified answer to this customer's latest
+    // message — already re-verified against live sources inside
+    // lookup (SA-B3) — becomes the suggested draft verbatim,
+    // labelled by its provider ("answer_store") so the surface
+    // and the usage ledger can tell it apart from a fresh
+    // composition. Nothing auto-sends: staff still review and
+    // send, exactly as with an LLM draft. Recorded guard note:
+    // this path has NEVER carried the autopilot number guard
+    // (human review before send is its control) and SA-B7 adds
+    // none — the store's own live re-verification is the
+    // grounding check a stored answer arrives with.
+    if (question) {
+      const hit = await this.answerStoreSvc()
+        .lookup(organizationId, question, { channel: "inbox", language: detectReplyLanguage(question) })
+        .catch(() => null);
+      if (hit?.hit) {
+        const draft = await (this.prisma as any).messageDraft.create({
+          data: { organizationId, conversationId, content: hit.answer, provider: "answer_store", createdByUserId: actorId, status: "suggested" },
+        });
+        await (this.prisma as any).aIUsageRecord.create({
+          data: { organizationId, userId: actorId, feature: "draft", provider: "answer_store", inputTokens: 0, outputTokens: 0, estimated: false },
+        });
+        return draft;
+      }
+    }
+
+    // SA-B7 (R1): the drafting context now comes from the
+    // OrgBrainService — the same audience-filtered read the
+    // autopilot's fact pack uses (hybrid semantic knowledge +
+    // product matches; "own_customer" admits THIS customer's
+    // memory + the learned style when identity resolves) —
+    // replacing this path's hand-picked profile/policy reads.
+    // The output contract is unchanged: one MessageDraft row,
+    // one "draft" usage row, the dev-template fallback below.
+    const customerKey =
+      conv && !(conv as any).isPractice && conv.externalContactId
+        ? `${String(conv.channel ?? "")}:${String(conv.externalContactId)}`
+        : null;
+    const brain = await this.brainSvc().getContext(organizationId, {
+      audience: customerKey ? "own_customer" : "customer",
+      query: question || undefined,
+      matchLimit: 3,
+      ...(customerKey ? { customerKey } : {}),
+    });
+    const products = await (this.prisma as any).product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 });
+    const matchedProduct = matchProduct(question, products);
 
     let content: string;
     let usage = { inputTokens: 0, outputTokens: 0, estimated: true };
     if (provider.isRealLlm) {
       const knowledge = JSON.stringify({
-        business: profile ? { industry: profile.industry, description: profile.description, brandVoice: profile.brandVoice } : null,
-        policies: policies.map((p: any) => ({ type: p.type, title: p.title, content: String(p.content).slice(0, 400) })),
+        business: brain.publicProfile ? { industry: brain.publicProfile.industry, description: brain.publicProfile.description, brandVoice: brain.publicProfile.brandVoice } : null,
+        policies: brain.policies.slice(0, 10).map((p: any) => ({ type: p.type, title: p.title, content: String(p.content).slice(0, 400) })),
         matchedProduct: matchedProduct ? { name: matchedProduct.name, price: formatMinor(BigInt(matchedProduct.priceMinor), matchedProduct.currency), stock: matchedProduct.stockQuantity } : null,
+        // SA-B7: new Brain surfaces join the SAME knowledge
+        // object — hybrid-matched documents and semantically
+        // matched product text (no prices/stock in either; the
+        // matched product's live numbers ride matchedProduct).
+        knowledge: brain.knowledgeMatches.map((m) => ({ title: m.title, content: String(m.content).replace(/\s+/g, " ").slice(0, 400) })),
+        productInfo: (brain.productMatches ?? []).map((m) => ({ name: m.name, content: String(m.content).replace(/\s+/g, " ").slice(0, 400) })),
+        customerMemory: brain.customerMemoryFacts ?? [],
       });
       const result = await provider.complete([
-        { role: "system", content: "You draft customer-support replies for approval by a human. Use ONLY the business knowledge provided: never invent prices, stock, discounts, delivery charges or policies. If the knowledge does not cover the question, draft a polite reply that asks a clarifying question or says the team will confirm - do not guess. Reply in the customer's language. Return ONLY the draft text." },
+        {
+          role: "system",
+          content: [
+            "You draft customer-support replies for approval by a human. Use ONLY the business knowledge provided: never invent prices, stock, discounts, delivery charges or policies. If the knowledge does not cover the question, draft a polite reply that asks a clarifying question or says the team will confirm - do not guess. Reply in the customer's language. Return ONLY the draft text.",
+            // Behaviour lines mirror the autopilot prompt's
+            // discipline (facts rule stands; style shapes
+            // wording only) and are absent when unset, exactly
+            // as the fact pack composes without them.
+            ...(brain.ownerInstructions ? [`Owner's standing instructions for tone and conduct (never override the business knowledge): ${String(brain.ownerInstructions).slice(0, 1000)}`] : []),
+            // SA-B9 (R3): the shared reply-quality block — one
+            // language rule (explicit org language -> detected
+            // from the customer's latest message -> remembered
+            // preference -> Bengali default), the natural-
+            // writing rules and the learned brand voice under
+            // its established label. Before R3 this prompt had
+            // ONLY the org-language rung: a draft ignored the
+            // customer's own language unless the owner had
+            // pinned one.
+            ...buildReplyQualityBlock({
+              language: resolveReplyLanguage({
+                orgReplyLanguage: brain.replyLanguage ?? null,
+                detected: detectReplyLanguage(question),
+                memoryLanguagePref: brain.customerMemory?.languagePref ?? null,
+              }),
+              styleInstructions: brain.styleInstructions ?? null,
+              platformGuidance: brain.platformGuidance ?? null,
+              channel: "draft",
+            }),
+          ].join("\n"),
+        },
         { role: "user", content: `Business knowledge:\n${knowledge}\n\nConversation (oldest first):\n${history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n")}\n\nDraft the next reply.` },
       ], { maxTokens: 500 });
       content = result.text.trim();
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated };
     } else {
-      content = templateDraft(lastInbound?.content ?? "", matchedProduct, profile);
+      content = templateDraft(question, matchedProduct, brain.publicProfile ? { industry: brain.publicProfile.industry } : null);
     }
 
     const draft = await (this.prisma as any).messageDraft.create({
@@ -7288,7 +7869,21 @@ export class InboxService {
     // from a draft); edited = the final content differs from the
     // draft's own trimmed text.
     const edited = content !== String(draft.content ?? "").trim();
-    return this.sendReply(organizationId, actorId, conversationId, content, { viaDraftId: draftId, signature: true, aiAssisted: true, draftEdited: edited });
+    const sent = await this.sendReply(organizationId, actorId, conversationId, content, { viaDraftId: draftId, signature: true, aiAssisted: true, draftEdited: edited });
+    // SA-B3 (P4): a staff-EDITED autopilot draft that was
+    // actually sent teaches the Answer Store the corrected
+    // answer (origin "staff_edited"; store() replaces any entry
+    // for the same question). Two deliberate exclusions:
+    // unedited sends teach nothing the autopilot's own capture
+    // does not already record, and drafts from the staff
+    // compose-suggest path carry the LLM provider's name as
+    // their provider — only provider "auto-reply" rows are
+    // autopilot drafts grounded by the compose pipeline.
+    // Fire-and-forget: capture never affects the send.
+    if (edited && draft.provider === "auto-reply") {
+      void this.captureStaffEditedAnswer(organizationId, conversationId, content).catch(() => undefined);
+    }
+    return sent;
   }
 }
 

@@ -65,6 +65,19 @@ interface TrackResult {
     remainingMinor: string;
   } | null;
   steps: { key: "placed" | "confirmed" | "packed" | "shipped" | "delivered"; reached: boolean }[];
+  // NF9 (FB4): the own-rider's latest fix — present ONLY while
+  // the order is out for delivery AND the rider is sharing
+  // (server-decided); null/absent renders nothing at all.
+  riderLocation?: {
+    riderName: string | null;
+    lat: number;
+    lng: number;
+    accuracy: number | null;
+    recordedAt: string;
+    ageMs: number | null;
+    stale: boolean;
+    mapsUrl: string;
+  } | null;
   // EC24b: digital items summary — names + availability, never URLs.
   digitalItems?: { name: string; available: boolean }[];
   digitalNote?: string | null;
@@ -473,6 +486,26 @@ export default function TrackOrderPage() {
                 <div className="flex justify-between font-bold text-slate-700"><span>{t.track.codDue}:</span><span>{money(result.codDueMinor)}</span></div>
               </div>
             </section>
+
+            {/* NF9: rider live location — rendered ONLY when the
+                API carried one (out-for-delivery + rider sharing);
+                no placeholder when absent. */}
+            {result.riderLocation ? (
+              <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-900">🛵 রাইডারের অবস্থান</h3>
+                <p className="text-sm text-slate-700">
+                  {result.riderLocation.riderName ? <>রাইডার <b>{result.riderLocation.riderName}</b> · </> : null}
+                  <span className="font-mono font-semibold">{result.riderLocation.lat}, {result.riderLocation.lng}</span>
+                  {result.riderLocation.stale ? (
+                    <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">পুরনো অবস্থান</span>
+                  ) : null}
+                </p>
+                <p className="text-xs text-slate-500">
+                  অবস্থানের সময়: {new Date(result.riderLocation.recordedAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")} ·{" "}
+                  <a href={result.riderLocation.mapsUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">মানচিত্রে দেখুন</a>
+                </p>
+              </section>
+            ) : null}
 
             {result.installmentSummary ? (
               <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">

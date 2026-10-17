@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
 import { ReferralRewardSettingsCard } from "@/components/loyalty-referral-settings";
+import { SHOP_SECTION_KEYS, normalizeSectionOrder, type ShopSectionKey } from "@/lib/shop-sections";
 import { PushPanel } from "@/components/push-panel";
 import { SocialProofSettingsCard } from "@/components/social-proof-settings";
 import { EmptyState } from "@repo/ui";
@@ -19,7 +20,9 @@ import { useConfirm, useToast } from "@repo/ui/client";
 //   zones[] { id, name, kind, districts, chargeMinor, deliveryDays,
 //             freeAboveMinor, active, position }   (money = minor strings)
 //   organization { id, slug, customDomain }
-//   domain { customDomain, verifiedAt, verifyHost }
+//   domain { customDomain, verifiedAt, verifyHost,
+//            httpsStatus, httpsStatusDetail, httpsUpdatedAt,
+//            customHostnameId }   (OU2: persisted CfS state)
 //   districts (64, BD_DISTRICTS)
 
 interface Setting {
@@ -30,6 +33,13 @@ interface Setting {
   showFeatured: boolean;
   showCategories: boolean;
   showSearch: boolean;
+  // OU8: section customizer.
+  showHero?: boolean;
+  showBrands?: boolean;
+  showBundles?: boolean;
+  showFlashSale?: boolean;
+  showRecentlyViewed?: boolean;
+  sectionOrder?: string[] | null;
   metaDescription: string | null;
   featuredProductIds: string[];
   domainVerifiedAt: string | null;
@@ -85,6 +95,13 @@ interface StorefrontPopup {
   showOn: string;
   impressions: number;
   clicks: number;
+  // OU8: lead-capture mode.
+  mode?: string;
+  captureName?: boolean;
+  capturePhone?: boolean;
+  captureEmail?: boolean;
+  successMessage?: string | null;
+  captures?: number;
 }
 interface ShopPageSummary {
   id: string;
@@ -116,7 +133,13 @@ interface StaffState {
   zones: Zone[];
   slots?: Slot[];
   organization: { id: string; slug: string; customDomain: string | null };
-  domain: { customDomain: string | null; verifiedAt: string | null; verifyHost: string | null };
+  domain: {
+    customDomain: string | null; verifiedAt: string | null; verifyHost: string | null;
+    // OU2: Cloudflare-for-SaaS HTTPS state persisted by the API
+    // (null status = provisioning never attempted for this domain).
+    httpsStatus?: string | null; httpsStatusDetail?: string | null;
+    httpsUpdatedAt?: string | null; customHostnameId?: string | null;
+  };
   districts: string[];
 }
 interface RateRule {
@@ -140,8 +163,20 @@ interface PickupPointRow {
 interface ProductOpt { id: string; name: string }
 interface VerifyTokenOut { domain: string; recordHost: string; recordType: string; recordValue: string; token: string }
 interface RoutingOut { routingActive: boolean; checkedUrl: string | null; status?: number; evidence?: string; reason?: string }
+// OU2: POST /storefront/domain/https-refresh contract.
+interface HttpsRefreshOut { domain: string; httpsStatus: string; httpsStatusDetail: string; customHostnameId: string | null; httpsUpdatedAt: string }
 // TD9: POST /storefront/domain/set contract (API worker, parallel build).
 interface SetDomainOut { domain: string | null; previousDomain: string | null; verificationReset: boolean }
+
+const SECTION_LABELS: Record<ShopSectionKey, string> = {
+  hero: "হিরো (দোকানের নাম + সার্চ)",
+  categories: "ক্যাটাগরি",
+  brands: "ব্র্যান্ড ফিল্টার",
+  bundles: "বান্ডল",
+  flash: "ফ্ল্যাশ সেল",
+  featured: "ফিচার্ড সেকশন",
+  recently: "সম্প্রতি দেখা",
+};
 
 const THEME_OPTIONS = [
   { id: "fashion", label: "👗 ফ্যাশন ও ক্লদিং (Aarong / Yellow)", desc: "৩:৪ পোর্ট্রেট কার্ড, সাইজ সিলেক্টর ও সাইজ চার্ট গাইড" },
@@ -165,6 +200,8 @@ const THEME_OPTIONS = [
   { id: "nordic", label: "৯. নর্ডিক ওয়ার্ম", desc: "স্ক্যান্ডিনেভিয়ান কাঠ — হোম ডেকর ও লাইফস্টাইল" },
   { id: "midnight", label: "১০. মিডনাইট নিয়ন", desc: "ট্রু ডার্ক মোড ও নিয়ন — স্ট্রিটওয়্যার ও ইউথ" },
   { id: "v2", label: "১১. আধুনিক ডিজাইন v2", desc: "আধুনিক ডিজাইন — মোবাইল অ্যাপের মতো নেভিগেশন, ব্র্যান্ড রঙে সব বোতাম" },
+  { id: "warm", label: "১২. ওয়ার্ম (OU8)", desc: "নরম আম্বর আভা, গোলগাল কোণ — ফ্যাশন ও লাইফস্টাইল দোকানের জন্য" },
+  { id: "ocean", label: "১৩. ওশান (OU8)", desc: "গাঢ় টিল হিরো, টাইট গ্রিড — গ্যাজেট ও ইলেকট্রনিক্স দোকানের জন্য" },
 ] as const;
 
 /** GC1: pure-div mini shop mock used as a theme preview (no images). */
@@ -296,6 +333,18 @@ function ThemePreview({ theme }: { theme: string }) {
       hero: "mx-2 mt-2 h-9 rounded-xl bg-indigo-100",
       tile: "h-7 rounded-xl bg-slate-200",
     },
+    warm: {
+      wrap: "rounded-2xl border border-amber-200 bg-amber-50",
+      header: "h-3 rounded-t-2xl bg-amber-500",
+      hero: "mx-2 mt-2 h-9 rounded-2xl bg-amber-100",
+      tile: "h-7 rounded-2xl bg-amber-200",
+    },
+    ocean: {
+      wrap: "rounded-lg border border-cyan-200 bg-white",
+      header: "h-3 rounded-t-lg bg-cyan-950",
+      hero: "mx-2 mt-2 h-9 rounded-lg bg-cyan-900",
+      tile: "h-7 rounded-lg bg-cyan-100",
+    },
   };
   const s = styles[theme] ?? styles.classic;
   return (
@@ -369,6 +418,13 @@ export default function StorefrontStaffPage() {
   const [showFeatured, setShowFeatured] = useState(true);
   const [showCategories, setShowCategories] = useState(true);
   const [showSearch, setShowSearch] = useState(true);
+  // OU8: section customizer state.
+  const [showHero, setShowHero] = useState(true);
+  const [showBrands, setShowBrands] = useState(true);
+  const [showBundles, setShowBundles] = useState(true);
+  const [showFlashSale, setShowFlashSale] = useState(true);
+  const [showRecentlyViewed, setShowRecentlyViewed] = useState(true);
+  const [sectionOrder, setSectionOrder] = useState<ShopSectionKey[]>([...SHOP_SECTION_KEYS]);
   const [featuredIds, setFeaturedIds] = useState<string[]>([]);
   // EC18/EC19 (B8) settings
   const [featuredMode, setFeaturedMode] = useState("merchant_picks");
@@ -419,6 +475,11 @@ export default function StorefrontStaffPage() {
   const [popupShowOn, setPopupShowOn] = useState("home");
   const [popupStartsAt, setPopupStartsAt] = useState("");
   const [popupEndsAt, setPopupEndsAt] = useState("");
+  const [popupMode, setPopupMode] = useState("promo");
+  const [popupCaptureName, setPopupCaptureName] = useState(true);
+  const [popupCapturePhone, setPopupCapturePhone] = useState(true);
+  const [popupCaptureEmail, setPopupCaptureEmail] = useState(false);
+  const [popupSuccessMessage, setPopupSuccessMessage] = useState("");
   const [popupError, setPopupError] = useState("");
   const [popupLoadError, setPopupLoadError] = useState("");
   // GC3: content pages summary for the card (full manager is its own page)
@@ -515,6 +576,12 @@ export default function StorefrontStaffPage() {
       setShowFeatured(st.showFeatured);
       setShowCategories(st.showCategories);
       setShowSearch(st.showSearch);
+      setShowHero(st.showHero ?? true);
+      setShowBrands(st.showBrands ?? true);
+      setShowBundles(st.showBundles ?? true);
+      setShowFlashSale(st.showFlashSale ?? true);
+      setShowRecentlyViewed(st.showRecentlyViewed ?? true);
+      setSectionOrder(normalizeSectionOrder(st.sectionOrder ?? null));
       setFeaturedIds(st.featuredProductIds ?? []);
       setFeaturedMode(st.featuredMode ?? "merchant_picks");
       setShopLocale(st.locale ?? "bn");
@@ -588,6 +655,11 @@ export default function StorefrontStaffPage() {
         setPopupShowOn(p.showOn ?? "home");
         setPopupStartsAt(isoToDatetimeLocal(p.startsAt));
         setPopupEndsAt(isoToDatetimeLocal(p.endsAt));
+        setPopupMode(p.mode ?? "promo");
+        setPopupCaptureName(p.captureName ?? true);
+        setPopupCapturePhone(p.capturePhone ?? true);
+        setPopupCaptureEmail(p.captureEmail ?? false);
+        setPopupSuccessMessage(p.successMessage ?? "");
       }
       setPopupLoadError("");
     } catch { setPopupLoadError("লোড ব্যর্থ হয়েছে"); }
@@ -696,6 +768,11 @@ export default function StorefrontStaffPage() {
           showOn: popupShowOn,
           startsAt: datetimeLocalToIso(popupStartsAt),
           endsAt: datetimeLocalToIso(popupEndsAt),
+          mode: popupMode,
+          captureName: popupCaptureName,
+          capturePhone: popupCapturePhone,
+          captureEmail: popupCaptureEmail,
+          successMessage: popupSuccessMessage.trim() || null,
         }),
       });
       if (out.popup) setPopup(out.popup);
@@ -734,6 +811,12 @@ export default function StorefrontStaffPage() {
           showFeatured,
           showCategories,
           showSearch,
+          showHero,
+          showBrands,
+          showBundles,
+          showFlashSale,
+          showRecentlyViewed,
+          sectionOrder,
           featuredProductIds: featuredIds,
           featuredMode,
           locale: shopLocale,
@@ -1063,6 +1146,20 @@ export default function StorefrontStaffPage() {
     finally { setBusy(""); }
   }
 
+  // OU2: manual HTTPS (Cloudflare for SaaS) status refresh — the
+  // persisted state moves only on this call or on (re-)verification;
+  // the result is the API's real adapter outcome, shown verbatim.
+  async function refreshHttps() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("https-refresh"); setDomainError("");
+    try {
+      const out = await apiFetch<HttpsRefreshOut>(`/organizations/${orgId}/storefront/domain/https-refresh`, { method: "POST" });
+      toast({ title: `HTTPS অবস্থা: ${out.httpsStatus}`, description: out.httpsStatusDetail, tone: out.httpsStatus === "active" ? "success" : "info" });
+      await load();
+    } catch (e) { setDomainError(e instanceof Error ? e.message : "HTTPS অবস্থা refresh ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
   async function checkRouting() {
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy("routing"); setDomainError("");
@@ -1233,6 +1330,44 @@ export default function StorefrontStaffPage() {
           <label className="flex items-center gap-2"><input type="checkbox" checked={showFeatured} onChange={(e) => setShowFeatured(e.target.checked)} /> ফিচার্ড সেকশন</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={showCategories} onChange={(e) => setShowCategories(e.target.checked)} /> ক্যাটাগরি</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={showSearch} onChange={(e) => setShowSearch(e.target.checked)} /> সার্চ</label>
+        </div>
+        {/* OU8: section customizer — hide/show + reorder the shop
+            home sections. The product grid is not listed: it is
+            the shop itself and always renders last. Up/down
+            buttons (no drag-drop builder, by design). */}
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">হোমপেজের সেকশন সাজান (OU8)</div>
+          <p className="text-xs text-slate-500">যে সেকশন বন্ধ করবেন সেটি দোকানের হোমপেজে দেখাবে না; ↑ ↓ দিয়ে ক্রম বদলান। পণ্যের গ্রিড সবসময় শেষে থাকবে — এটি লুকানো যায় না।</p>
+          <div className="space-y-1.5">
+            {sectionOrder.map((key, idx) => {
+              const vis: Record<ShopSectionKey, boolean> = {
+                hero: showHero, categories: showCategories, brands: showBrands, bundles: showBundles,
+                flash: showFlashSale, featured: showFeatured, recently: showRecentlyViewed,
+              };
+              const setters: Record<ShopSectionKey, (v: boolean) => void> = {
+                hero: setShowHero, categories: setShowCategories, brands: setShowBrands, bundles: setShowBundles,
+                flash: setShowFlashSale, featured: setShowFeatured, recently: setShowRecentlyViewed,
+              };
+              const move = (dir: -1 | 1) => {
+                const j = idx + dir;
+                if (j < 0 || j >= sectionOrder.length) return;
+                const next = [...sectionOrder];
+                [next[idx], next[j]] = [next[j], next[idx]];
+                setSectionOrder(next);
+              };
+              return (
+                <div key={key} className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                  <span className="w-6 text-xs font-bold text-slate-400">{idx + 1}.</span>
+                  <label className="flex flex-1 items-center gap-2">
+                    <input type="checkbox" checked={vis[key]} onChange={(e) => setters[key](e.target.checked)} />
+                    {SECTION_LABELS[key]}
+                  </label>
+                  <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={idx === 0} onClick={() => move(-1)}>↑ উপরে</button>
+                  <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={idx === sectionOrder.length - 1} onClick={() => move(1)}>↓ নিচে</button>
+                </div>
+              );
+            })}
+          </div>
         </div>
         <div className="grid gap-3 border-t pt-4 md:grid-cols-2">
           <label className="block text-sm">ফিচার্ড পণ্যের ধরন (featuredMode)
@@ -1540,7 +1675,7 @@ export default function StorefrontStaffPage() {
         <div className="font-semibold">প্রমোশনাল পপআপ</div>
         <p className="text-sm text-slate-600">
           অবস্থা: <b>{popupEnabled ? "চালু" : "বন্ধ"}</b>
-          {popup ? <> · ইমপ্রেশন: <b>{popup.impressions ?? 0}</b> · ক্লিক: <b>{popup.clicks ?? 0}</b></> : null}
+          {popup ? <> · ইমপ্রেশন: <b>{popup.impressions ?? 0}</b> · ক্লিক: <b>{popup.clicks ?? 0}</b>{popup.mode === "lead" ? <> · লিড সংগ্রহ: <b>{popup.captures ?? 0}</b></> : null}</> : null}
         </p>
         {popupLoadError ? (
           <p className="flex flex-wrap items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
@@ -1555,6 +1690,26 @@ export default function StorefrontStaffPage() {
               <input type="checkbox" checked={popupEnabled} onChange={(e) => setPopupEnabled(e.target.checked)} />
               পপআপ চালু করুন
             </label>
+            {/* OU8: popup kind — promo (link button) or lead capture
+                (a real form; submissions become CRM Leads). */}
+            <label className="block text-sm">পপআপের ধরন
+              <select className="input mt-1" value={popupMode} onChange={(e) => setPopupMode(e.target.value)}>
+                <option value="promo">প্রমোশন (বাটন/লিংক)</option>
+                <option value="lead">লিড সংগ্রহ (ফর্ম — জমা দিলে CRM-এ লিড তৈরি হবে)</option>
+              </select>
+            </label>
+            {popupMode === "lead" ? (
+              <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+                <div className="text-sm font-semibold">কোন তথ্য নেবেন</div>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCaptureName} onChange={(e) => setPopupCaptureName(e.target.checked)} /> নাম</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCapturePhone} onChange={(e) => setPopupCapturePhone(e.target.checked)} /> ফোন নম্বর</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCaptureEmail} onChange={(e) => setPopupCaptureEmail(e.target.checked)} /> ইমেইল</label>
+                <label className="block text-sm">সফল বার্তা (ঐচ্ছিক)
+                  <input className="input mt-1" value={popupSuccessMessage} onChange={(e) => setPopupSuccessMessage(e.target.value)} placeholder="যেমন: ধন্যবাদ! আমরা কল করব।" />
+                </label>
+                <p className="text-xs text-slate-500">লিড মোডে বাটনের লিংক (CTA URL) ব্যবহৃত হয় না — বাটনের লেখাটি ফর্মের জমা বাটনে দেখাবে। অন্তত একটি তথ্য চালু রাখতে হবে।</p>
+              </div>
+            ) : null}
             <label className="block text-sm">শিরোনাম
               <input className="input mt-1" value={popupTitle} onChange={(e) => setPopupTitle(e.target.value)} placeholder="যেমন: ঈদ অফার — ২০% ছাড়!" />
             </label>
@@ -2256,11 +2411,36 @@ export default function StorefrontStaffPage() {
                     {busy === "routing" ? "পরীক্ষা হচ্ছে…" : "Routing Check now"}
                   </button>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={statusMark(false)}>…</span>
-                  <span className="font-semibold">SSL</span>
-                  <span className="text-slate-500">স্বয়ংক্রিয় SSL-এর পথ বেছে নেওয়া হয়েছে: Cloudflare for SaaS (TD10 spike রায়) — তবে প্ল্যাটফর্ম-মালিকের প্যানেল ধাপ (SaaS enable + লাইভ টেস্ট) বাকি থাকায় এই মুহূর্তে HTTPS নিশ্চিত নয়; routing ঠিক থাকলেও ব্রাউজারে সার্টিফিকেট সতর্কতা দেখাতে পারে</span>
+                {/* OU2: HTTPS সার্টিফিকেট (Cloudflare for SaaS) — the
+                    persisted state from the API, never an assumption.
+                    null = provisioning never attempted for this
+                    domain; not_configured = the platform operator
+                    has not enabled CfS yet; active only when
+                    Cloudflare itself said both legs are active. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={statusMark(domain.httpsStatus === "active")}>{domain.httpsStatus === "active" ? "✓" : "…"}</span>
+                  <span className="font-semibold">HTTPS সার্টিফিকেট (SSL)</span>
+                  {domain.httpsStatus === "active" ? (
+                    <span className="text-emerald-700">সক্রিয় — Cloudflare সার্টিফিকেট চালু আছে</span>
+                  ) : domain.httpsStatus === "pending" ? (
+                    <span className="text-amber-700">চলমান — সার্টিফিকেট ইস্যু/যাচাই হচ্ছে</span>
+                  ) : domain.httpsStatus === "failed" ? (
+                    <span className="text-red-700">ব্যর্থ হয়েছে</span>
+                  ) : domain.httpsStatus === "not_configured" ? (
+                    <span className="text-slate-500">প্ল্যাটফর্মে Cloudflare for SaaS এখনো configure করা হয়নি — প্ল্যাটফর্ম অপারেটরের সেটআপ বাকি</span>
+                  ) : (
+                    <span className="text-slate-500">এখনো চেষ্টা করা হয়নি — ডোমেইন যাচাই সফল হলে provisioning শুরু হয়</span>
+                  )}
+                  <button type="button" onClick={refreshHttps} disabled={busy === "https-refresh" || !verified} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
+                    {busy === "https-refresh" ? "Refresh হচ্ছে…" : "HTTPS অবস্থা Refresh"}
+                  </button>
                 </div>
+                {domain.httpsStatusDetail ? (
+                  <p className="pl-8 text-xs leading-relaxed text-slate-500">
+                    {domain.httpsStatusDetail}
+                    {domain.httpsUpdatedAt ? <> · সর্বশেষ আপডেট: {new Date(domain.httpsUpdatedAt).toLocaleString("bn-BD")}</> : null}
+                  </p>
+                ) : null}
               </div>
 
               {/* ধাপ ৫ — বদলানো/সরানো */}

@@ -14,7 +14,7 @@ import { ConnectionAnalyticsService } from "./connection-analytics.service";
 import { ConnectionUsageService } from "./connection-usage.service";
 import { ConnectionTimelineService } from "./connection-timeline.service";
 import { ProviderHealthService } from "./provider-health.service";
-import { AccountMetaDto, CreatePaymentLinkDto, CreatePayoutDestinationDto, CreatePayoutRequestDto, CreateSettlementImportDto, DismissAssistantFindingDto, GoogleSelectDto, InitiateOrderPaymentDto, InitiateRefundDto, PublicInitiatePaymentDto, PutAlertPreferencesDto, PutAppConfigDto, PutLlmConfigDto, PutPaymentGatewayDto, PutPayoutScheduleDto, SetAutoHealDto, SetGatewayEnabledDto, SetMemberDeniedConnectionsDto, SetPlatformEnabledDto, SetSyncIntervalDto, SetSyncPausedDto, SnoozeTargetDto, TestInitiatePaymentDto, UpdatePayoutDestinationDto } from "./connections.dto";
+import { AccountMetaDto, CreatePaymentLinkDto, CreatePayoutDestinationDto, CreatePayoutRequestDto, CreateSettlementImportDto, DismissAssistantFindingDto, GoogleSelectDto, InitiateOrderPaymentDto, CreateManualRefundDto, InitiateRefundDto, PublicInitiatePaymentDto, RecordManualRefundDto, PutAlertPreferencesDto, PutAppConfigDto, PutLlmConfigDto, PutPaymentGatewayDto, PutPayoutScheduleDto, SetAutoHealDto, SetGatewayEnabledDto, SetMemberDeniedConnectionsDto, SetPlatformEnabledDto, SetSyncIntervalDto, SetSyncPausedDto, SnoozeTargetDto, TestInitiatePaymentDto, UpdatePayoutDestinationDto } from "./connections.dto";
 import { PaymentOpsService } from "./payment-ops.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -329,6 +329,29 @@ export class ConnectionsController {
     return this.refunds.refreshRefund(orgId, user.userId, refundId);
   }
 
+  // OU5 — Refund Center: manual tracking for refunds that can
+  // only happen in the provider's own dashboard (ShurjoPay /
+  // aamarPay / Nagad have no refund API here; sslcommerz/bkash
+  // may also be recorded manually). Same OWNER/ADMIN role floor
+  // as the gateway refund actions above. Completion runs the
+  // SAME verified-refund bookkeeping as the gateway path; the
+  // record itself states plainly that the refund was done by
+  // hand in the provider dashboard and is only tracked here.
+  @Post("payment-transactions/:txnId/refunds/manual") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createManualRefund(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("txnId") txnId: string, @Body() dto: CreateManualRefundDto) {
+    return this.refunds.createManualRefundRequest(orgId, user.userId, txnId, dto);
+  }
+
+  @Post("refunds/:refundId/manual/record") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  recordManualRefund(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("refundId") refundId: string, @Body() dto: RecordManualRefundDto) {
+    return this.refunds.recordManualRefundAction(orgId, user.userId, refundId, dto);
+  }
+
+  @Post("refunds/:refundId/manual/complete") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  completeManualRefund(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("refundId") refundId: string) {
+    return this.refunds.completeManualRefund(orgId, user.userId, refundId);
+  }
+
   // CC25 — settlement reconciliation (CSV import + verdicts).
   @Post("settlement-imports") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   importSettlement(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateSettlementImportDto) {
@@ -631,6 +654,30 @@ export class TenantPaymentsPublicController {
   @Public() @Post("aamarpay/ipn")
   aamarIpn(@Body() body: Record<string, any>) {
     return this.tenantPayments.handleAamarIpn(body ?? {});
+  }
+
+  // OU5 — Stripe webhook for a tenant's OWN Stripe account.
+  // The signature is computed over the RAW body (main.ts runs
+  // with rawBody: true for exactly this class of verification);
+  // a parsed-and-reserialized body would never verify. Stripe's
+  // documented failure response is a non-2xx — the service's
+  // ok flag decides 200 vs 400 here.
+  @Public() @Post("stripe/webhook")
+  async stripeWebhook(@Req() req: Request, @Res() res: Response) {
+    const rawBody = (req as any).rawBody?.toString("utf8") ?? "";
+    const signature = req.headers["stripe-signature"];
+    const out = await this.tenantPayments.handleStripeWebhook(rawBody, typeof signature === "string" ? signature : undefined);
+    return res.status(out?.ok ? 200 : 400).json(out);
+  }
+
+  // OU5 — Stripe browser return (success + cancel). Redirect
+  // only: it NEVER marks anything paid — the webhook above is
+  // the only activation path, and the shop success page polls
+  // the verified state.
+  @Public() @Get("stripe/return")
+  async stripeReturn(@Req() req: Request, @Res() res: Response) {
+    const url = await this.tenantPayments.stripeReturnRedirect((req.query ?? {}) as Record<string, any>);
+    return res.redirect(302, url);
   }
 }
 

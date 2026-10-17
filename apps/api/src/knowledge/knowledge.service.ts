@@ -1,12 +1,53 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
+import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, UpdateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
 import { baseTitleFromFilename, chunkKnowledgeText, extractKnowledgeText } from "./extract";
+import { KnowledgeIndexingService } from "../ai/knowledge-indexing.service";
+
+/**
+ * SA-B1 (Smart AI Phase 0, P3): the visibility a new knowledge
+ * document gets. An explicit value always wins (the DTOs validate
+ * the closed set public|internal, anything else is a 400 before it
+ * reaches here). When omitted, kind "note" defaults to "internal" —
+ * notes are the owner's working material, not customer copy — and
+ * every other kind defaults to "public", the schema default and
+ * the behaviour documents had before this field existed.
+ */
+export function resolveKnowledgeVisibility(kind: string | undefined, visibility: string | undefined): string {
+  if (visibility === "public" || visibility === "internal") return visibility;
+  return kind === "note" ? "internal" : "public";
+}
 
 @Injectable()
 export class KnowledgeService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  private indexingFallback?: KnowledgeIndexingService;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    @Optional() private readonly indexing?: KnowledgeIndexingService,
+  ) {}
+
+  /**
+   * SA-B2 (P2): embedding indexing runs FIRE-AND-FORGET behind
+   * every document mutation — an embeddings outage must never
+   * fail or block a save (the indexing service itself never
+   * throws; the knowledge_index_sweep reconciles any miss).
+   * Specs that construct this service positionally get the lazy
+   * same-prisma fallback, the SA-B1 brainSvc() pattern.
+   */
+  private indexingSvc(): KnowledgeIndexingService {
+    return this.indexing ?? (this.indexingFallback ??= new KnowledgeIndexingService(this.prisma as any));
+  }
+
+  private indexDoc(doc: any): void {
+    void this.indexingSvc().indexDocument(doc).catch(() => undefined);
+  }
+
+  private unindexDoc(organizationId: string, docId: string): void {
+    void this.indexingSvc().removeDocument(organizationId, docId).catch(() => undefined);
+  }
 
   async listPolicies(organizationId: string) {
     return (this.prisma as any).businessPolicy.findMany({ where: { organizationId }, orderBy: [{ type: "asc" }, { createdAt: "asc" }] });
@@ -37,9 +78,33 @@ export class KnowledgeService {
     });
   }
   async createDoc(organizationId: string, actorId: string, dto: CreateKnowledgeDocDto) {
-    const doc = await (this.prisma as any).knowledgeDocument.create({ data: { organizationId, kind: dto.kind ?? "faq", title: dto.title, content: dto.content } });
+    const kind = dto.kind ?? "faq";
+    const doc = await (this.prisma as any).knowledgeDocument.create({
+      data: { organizationId, kind, title: dto.title, content: dto.content, visibility: resolveKnowledgeVisibility(kind, dto.visibility) },
+    });
     await this.audit.log({ organizationId, userId: actorId, action: "knowledge.create", entityType: "KnowledgeDocument", entityId: doc.id });
+    this.indexDoc(doc);
     return doc;
+  }
+  /**
+   * SA-B1 (P3): partial update of a knowledge document — this route
+   * did not exist before (documents could only be created and
+   * deleted); it exists now so the owner can reclassify a document's
+   * visibility without recreating it. Visibility changes ONLY when
+   * explicitly provided (no kind-based defaulting on update).
+   */
+  async updateDoc(organizationId: string, actorId: string, docId: string, dto: UpdateKnowledgeDocDto) {
+    const existing = await (this.prisma as any).knowledgeDocument.findFirst({ where: { id: docId, organizationId } });
+    if (!existing) throw new NotFoundException("Document not found in this organization");
+    const data: Record<string, unknown> = {};
+    if (dto.title !== undefined) data.title = dto.title;
+    if (dto.content !== undefined) data.content = dto.content;
+    if (dto.kind !== undefined) data.kind = dto.kind;
+    if (dto.visibility !== undefined) data.visibility = dto.visibility;
+    const updated = await (this.prisma as any).knowledgeDocument.update({ where: { id: docId }, data });
+    await this.audit.log({ organizationId, userId: actorId, action: "knowledge.update", entityType: "KnowledgeDocument", entityId: docId });
+    this.indexDoc(updated);
+    return updated;
   }
   /**
    * CX9: ingest an uploaded file (.pdf/.docx/.txt/.md) as knowledge.
@@ -67,9 +132,14 @@ export class KnowledgeService {
     for (let i = 0; i < total; i++) {
       const title = total > 1 ? `${baseTitle} (অংশ ${i + 1})` : baseTitle;
       const doc = await (this.prisma as any).knowledgeDocument.create({
-        data: { organizationId, kind: "note", title, content: chunks[i], source: `file:${filename}` },
+        // SA-B1 (P3): uploads are kind "note" with no explicit
+        // visibility, so the service rule makes them internal —
+        // uploaded reference material is not customer copy until
+        // the owner reclassifies it.
+        data: { organizationId, kind: "note", title, content: chunks[i], source: `file:${filename}`, visibility: resolveKnowledgeVisibility("note", undefined) },
       });
       created.push(doc);
+      this.indexDoc(doc);
     }
     await this.audit.log({
       organizationId, userId: actorId, action: "knowledge.upload",
@@ -83,6 +153,7 @@ export class KnowledgeService {
     if (!existing) throw new NotFoundException("Document not found in this organization");
     await (this.prisma as any).knowledgeDocument.delete({ where: { id: docId } });
     await this.audit.log({ organizationId, userId: actorId, action: "knowledge.delete", entityType: "KnowledgeDocument", entityId: docId });
+    this.unindexDoc(organizationId, docId);
     return { deleted: true };
   }
 
@@ -117,12 +188,15 @@ export class KnowledgeService {
           title,
           content: chunks[i],
           kind,
+          // SA-B1 (P3): same visibility rule as every other path.
+          visibility: resolveKnowledgeVisibility(kind, dto.visibility),
           sourceFile: dto.filename,
           chunkIndex: i,
           totalChunks: total,
         },
       });
       created.push(doc);
+      this.indexDoc(doc);
     }
 
     await this.audit.log({

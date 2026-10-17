@@ -9,6 +9,7 @@
  */
 import { cache } from "react";
 import type { ShopTracking } from "@/lib/shop-tracking";
+import type { PublicShopOffer } from "@/lib/app-offers-nf14";
 
 export function apiInternalBase(): string {
   return process.env.API_INTERNAL_URL ?? "http://localhost:4000";
@@ -55,6 +56,10 @@ export interface ShopProduct {
     maxAmountMinor?: number | null;
   } | null;
   bump: { title: string; priceMinor: string; imageUrl: string | null } | null;
+  // NF5 (FB3): DISPLAY-ONLY converted prices from human-entered
+  // rates (empty/absent when no rate is configured). The label is
+  // the server's honest wording — approximate, checkout in base.
+  displayPrices?: { currency: string; amount: string; label: string; sourceNote: string; rateUpdatedAt: string | null }[];
   variants: ShopProductVariant[];
   // GC: product video (null when none).
   video?:
@@ -149,6 +154,13 @@ export interface ShopHome {
     showFeatured: boolean;
     showCategories: boolean;
     showSearch: boolean;
+    // OU8: section customizer (optional — older API payloads omit).
+    showHero?: boolean;
+    showBrands?: boolean;
+    showBundles?: boolean;
+    showFlashSale?: boolean;
+    showRecentlyViewed?: boolean;
+    sectionOrder?: string[] | null;
     metaDescription: string | null;
     // EC19/B8: shop-surface locale + featured mode.
     locale?: "bn" | "en" | string;
@@ -347,11 +359,16 @@ export const fetchShopHome = cache(
     // AB6 (AX14): resolve specific product ids (in the ids'
     // order, ACTIVE only) — used for live recently-viewed cards.
     ids?: string[] | string,
+    // NF5 (FB3): shopper locale choice (bn | en | hi) — forwarded
+    // to the API's ?locale= on the same :orgSlug route; absent =
+    // the org's StorefrontSetting.locale applies.
+    locale?: string,
   ): Promise<ShopHome | null> => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (category) params.set("category", category);
     if (brand) params.set("brand", brand);
+    if (locale) params.set("locale", locale);
     params.set("page", page);
     params.set("pageSize", pageSize);
     if (sort) params.set("sort", sort);
@@ -360,6 +377,18 @@ export const fetchShopHome = cache(
     // ED5: public — catalogue/home payload (incl. q/category/brand/sort/page/ids variants); identical for every visitor.
     return serverGet<ShopHome>(`/public/shop/${encodeURIComponent(orgSlug)}?${params.toString()}`, "public");
   },
+);
+
+/** NF14 (FB5): the shop's active public offers (display data
+ * only — the standalone/app-only filtering happens client-side
+ * in ShopOffers via lib/app-offers-nf14). */
+export const fetchShopOffers = cache(
+  async (orgSlug: string): Promise<{ offers: PublicShopOffer[] } | null> =>
+    // ED5: public — active offers are identical for every visitor.
+    serverGet<{ offers: PublicShopOffer[] }>(
+      `/public/shop/${encodeURIComponent(orgSlug)}/offers`,
+      "public",
+    ),
 );
 
 export const fetchShopBrand = cache(

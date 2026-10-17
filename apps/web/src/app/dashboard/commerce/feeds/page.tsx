@@ -41,6 +41,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   meta: "Meta (Facebook/Instagram Catalog)",
   google: "Google Merchant Center",
   tiktok: "TikTok (সাধারণ CSV — ইন্টিগ্রেশন নয়)",
+  daraz: "Daraz (CSV এক্সপোর্ট — API ইন্টিগ্রেশন নয়, টেমপ্লেট যাচাইকৃত নয়)",
 };
 
 export default function FeedsPage() {
@@ -163,9 +164,13 @@ export default function FeedsPage() {
       </div>
 
       <p className="rounded-lg bg-amber-50 p-3 text-sm leading-relaxed text-amber-800">
-        <b>সৎ অবস্থা (গবেষণা: ১৩ অক্টোবর ২০২৬):</b> Meta ও Google ফিড scheduled fetch দিয়ে যুক্ত করা যায়।{" "}
+        <b>সৎ অবস্থা (গবেষণা: ১৩ অক্টোবর ২০২৬; Daraz হালনাগাদ: ১৬ অক্টোবর ২০২৬):</b> Meta ও Google ফিড scheduled fetch দিয়ে যুক্ত করা যায়।{" "}
         <b>TikTok Shop বাংলাদেশে seller-দের জন্য চালু নয় ও কোনো পাবলিক ফিড স্পেসিফিকেশন নেই — TikTok CSVটি
-        Google-কলামের সাধারণ এক্সপোর্ট, ইন্টিগ্রেশন নয়।</b> Daraz-এর পাবলিক seller API না থাকায় Daraz চ্যানেল নেই।
+        Google-কলামের সাধারণ এক্সপোর্ট, ইন্টিগ্রেশন নয়।</b>{" "}
+        <b>Daraz CSVটি আপনার আসল ক্যাটালগ থেকে তৈরি এক্সপোর্ট — Daraz API ইন্টিগ্রেশন নয়</b> (API অ্যাডাপ্টারটি
+        Development অবস্থায় আছে: open.daraz.com-এ merchant app-এর অনুমোদন ছাড়া লাইভ সিঙ্ক সম্ভব নয়) এবং
+        Seller Center-এর বর্তমান bulk-upload টেমপ্লেটের সঙ্গে এর কলাম অফিসিয়ালভাবে যাচাই করা যায়নি —
+        আপলোডের আগে টেমপ্লেট মিলিয়ে নিন।
       </p>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
@@ -175,7 +180,7 @@ export default function FeedsPage() {
         <div className="font-semibold">নতুন ফিড</div>
         <div className="grid gap-3 md:grid-cols-3">
           <label className="block text-sm">চ্যানেল
-            <select className="input mt-1" value={channel} onChange={(e) => setChannel(e.target.value)}>
+            <select className="input mt-1" value={channel} onChange={(e) => { setChannel(e.target.value); if (e.target.value === "daraz" || e.target.value === "tiktok") setFormat("csv"); }}>
               {Object.entries(CHANNEL_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </label>

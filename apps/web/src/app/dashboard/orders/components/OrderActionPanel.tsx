@@ -6,7 +6,9 @@ import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { ResponsiveTable } from "@repo/ui";
 import { FRAUD_BAND_LABEL, codCallOutcomeLabel } from "@/lib/orders-on4";
-import { minorToTaka } from "@/lib/orders-on1";
+import { minorToTaka, takaToMinor } from "@/lib/orders-on1";
+import { refundToCreditOffered } from "@/lib/membership";
+import { networkSignalBody, networkSignalHeading } from "@/lib/fraud-network-nf13";
 import { surgeryAvailability, surgeryMoneySummary, type DraftLine, type PreviewResult } from "@/lib/orders-on3";
 import { deliveryCoverageCaption, marginTone, overpaidMinorOf, type OrderProfit } from "@/lib/orders-on7";
 import { OrderAllocationsSection, OrderDetailOn2, type MemberRow } from "../on2-detail";
@@ -128,6 +130,35 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
   const o = actOrder;
   const refunded = BigInt(o.refundedMinor ?? "0");
   const totalAmt = BigInt(o.totalMinor);
+  // NF7 (FB3): refund-to-store-credit — local panel state. The
+  // whole block below renders ONLY when pushState says the
+  // per-store setting is ON (default OFF — then the option
+  // does not exist in this UI at all, and the API refuses it
+  // too). The refundKey is minted once per panel open so a
+  // retried submit replays the SAME refund server-side.
+  const [creditTaka, setCreditTaka] = React.useState("");
+  const [creditBusy, setCreditBusy] = React.useState(false);
+  const [creditNotice, setCreditNotice] = React.useState("");
+  const [creditError, setCreditError] = React.useState("");
+  const [creditKey] = React.useState(() => `ui-${o.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  async function refundToCredit() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const minor = (() => { try { return takaToMinor(creditTaka.trim()); } catch { return null; } })();
+    if (!minor) { setCreditError("সঠিক পরিমাণ (টাকায়) দিন।"); return; }
+    setCreditBusy(true); setCreditError(""); setCreditNotice("");
+    try {
+      const out = await apiFetch<{ balanceMinor: string; replayed: boolean }>(`/organizations/${orgId}/orders/${o.id}/refund-to-credit`, {
+        method: "POST",
+        body: JSON.stringify({ amountMinor: minor, refundKey: creditKey, note: actRefundReason.trim() || undefined }),
+      });
+      setCreditNotice(out.replayed
+        ? "এই রিফান্ডটি আগেই ক্রেডিটে দেওয়া হয়েছে — দ্বিতীয়বার যোগ হয়নি।"
+        : `ক্রেডিটে রিফান্ড সম্পন্ন — কাস্টমারের ক্রেডিট ব্যালেন্স এখন ${formatMinor(BigInt(out.balanceMinor))}।`);
+      setCreditTaka("");
+    } catch (e) {
+      setCreditError(e instanceof Error ? e.message : "ক্রেডিটে রিফান্ড ব্যর্থ");
+    } finally { setCreditBusy(false); }
+  }
   // EB6/ED15: the installment collect cell is shared verbatim by the
   // desktop table and the ResponsiveTable mobile card — same handlers,
   // same order (products-page row-action discipline).
@@ -195,7 +226,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                     ) : null}
                     {/* ON4: fraud summary + COD call recording for
                         COD orders still awaiting confirmation. */}
-                    {(o.riskBand || (o.codCallAttempts ?? 0) > 0 || (o.isCod && o.codConfirmationStatus === "awaiting")) ? (
+                    {(o.riskBand || (o.codCallAttempts ?? 0) > 0 || (o.isCod && o.codConfirmationStatus === "awaiting") || (o.networkSignal && networkSignalBody(o.networkSignal))) ? (
                       <div className="space-y-2 rounded-xl border bg-white p-3">
                         <h4 className="text-sm font-semibold">🛡️ জালিয়াতি ও COD নিশ্চিতকরণ</h4>
                         {o.riskBand ? (
@@ -207,6 +238,16 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                             <span className="text-xs text-slate-500">চিপে ক্লিক করলে কারণসহ বিস্তারিত ও আটকানো/ছাড়ের অ্যাকশন পাবেন।</span>
                           </p>
                         ) : <p className="text-xs text-slate-500">এই অর্ডারের জালিয়াতি ঝুঁকি এখনো যাচাই হয়নি।</p>}
+                        {/* NF13: network sibling signal — only when
+                            present (opted-in orgs), labelled as
+                            combined multi-shop data. */}
+                        {o.networkSignal && networkSignalBody(o.networkSignal) ? (
+                          <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-2.5 py-2">
+                            <p className="text-xs font-semibold text-indigo-900">{networkSignalHeading(o.networkSignal)}</p>
+                            <p className="text-xs text-slate-700">{networkSignalBody(o.networkSignal)}</p>
+                            <p className="text-[11px] text-slate-500">এটি এই দোকানের নিজের স্কোর নয় — সব দোকানের সম্মিলিত তথ্য।</p>
+                          </div>
+                        ) : null}
                         {o.isCod && o.codConfirmationStatus === "awaiting" ? (
                           <CodCallChips order={o} busy={codBusy === o.id} onCall={(ord, outcome) => void recordCodCall(ord, outcome)} />
                         ) : (o.codCallAttempts ?? 0) > 0 ? (
@@ -297,6 +338,23 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                         <button className="btn-primary btn-sm" disabled={actBusy !== "" || actRefundTaka.trim() === ""} onClick={saveRefund}>Refund রেকর্ড করুন</button>
                         <p className="text-xs text-slate-500">মোট ফেরত: {formatMinor(refunded)} / {formatMinor(totalAmt)} · আরও ফেরতযোগ্য: {formatMinor(totalAmt - refunded)}</p>
                         <p className="text-xs text-slate-500">Refund শুধু টাকার হিসাব রাখে — স্টক ফেরত চাইলে স্ট্যাটাস Cancelled/Returned করুন। পুরো টাকা ফেরত হলে খোলা অর্ডার নিজে থেকেই refunded হয়ে যায়।</p>
+                        {/* NF7 (FB3): refund-to-credit — rendered
+                            ONLY when the per-store setting is ON
+                            (pushState.refundToCreditEnabled,
+                            computed server-side; default OFF ⇒
+                            this block does not exist in the UI). */}
+                        {refundToCreditOffered(pushState) ? (
+                          <div className="space-y-2 border-t pt-2">
+                            <label className="text-sm font-medium">স্টোর ক্রেডিটে Refund (টাকায়)</label>
+                            <input className="input" placeholder="পরিমাণ (টাকা)" value={creditTaka} onChange={(e) => setCreditTaka(e.target.value)} />
+                            <button className="btn-primary btn-sm" disabled={creditBusy || creditTaka.trim() === ""} onClick={() => void refundToCredit()}>
+                              {creditBusy ? "হচ্ছে…" : "ক্রেডিটে রিফান্ড করুন"}
+                            </button>
+                            <p className="text-xs text-slate-500">টাকাটা নগদ ফেরত না গিয়ে কাস্টমারের স্টোর ক্রেডিট লেজারে জমা হবে — পরের অর্ডারে তিনি এটি খরচ করতে পারবেন। একই চেষ্টা আবার পাঠালে দ্বিতীয়বার যোগ হবে না।</p>
+                            {creditNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{creditNotice}</p> : null}
+                            {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">অভ্যন্তরীণ নোট (শুধু টিমের জন্য)</label>

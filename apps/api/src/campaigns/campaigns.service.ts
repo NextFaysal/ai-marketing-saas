@@ -9,13 +9,18 @@ import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
 import { MetaPublishClient } from "./meta-publish.client";
 import { computeCreativeLeaderboard } from "../ads/creative-fatigue";
+import { metaStatusBucket, bucketLabelBn } from "../ads/platform-status";
+import { isSoldOrder } from "../storefront/ec27-discovery";
 import { policyFindingsForText } from "./policy-check";
 import { LlmFactory } from "../ai/llm/llm.factory";
+import { VisionService } from "../ai/vision.service";
 import { PublicMediaService } from "../storage/public-media.service";
+import { CreativesService } from "../creatives/creatives.service";
+import { LandingsService } from "../landings/landings.service";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
 
-export const OBJECTIVES = ["OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_LEADS", "OUTCOME_ENGAGEMENT", "OUTCOME_AWARENESS"] as const;
-export const OPTIMIZATION_GOALS = ["LINK_CLICKS", "OFFSITE_CONVERSIONS", "LEAD_GENERATION", "REACH", "LANDING_PAGE_VIEWS", "VALUE", "CONVERSATIONS"] as const;
+export const OBJECTIVES = ["OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_LEADS", "OUTCOME_ENGAGEMENT", "OUTCOME_AWARENESS", "OUTCOME_APP_PROMOTION"] as const;
+export const OPTIMIZATION_GOALS = ["LINK_CLICKS", "OFFSITE_CONVERSIONS", "LEAD_GENERATION", "REACH", "LANDING_PAGE_VIEWS", "VALUE", "CONVERSATIONS", "APP_INSTALLS"] as const;
 const EDITABLE = ["draft", "rejected"];
 
 export const BLUEPRINTS = [
@@ -51,6 +56,58 @@ export const BLUEPRINTS = [
   },
 ] as const;
 
+/** CA13: the naming-template tokens. A template is literal
+ * text plus any of these in {braces}; values come only from
+ * real records (the plan's objective, a referenced saved
+ * audience, a linked product) — a token without a value
+ * renders EMPTY, never invented. */
+export const NAMING_TOKENS = ["product", "audience", "objective", "date", "platform"] as const;
+
+/** CA13: render a naming template. Empty tokens vanish
+ * WITH their neighbouring separator, so a missing audience
+ * never leaves "Panjabi -  - 2026-10-17" or a dangling
+ * trailing dash: separators (space, -, _, ., /, |) are
+ * held pending and only emitted between two non-empty
+ * parts, and edge separators are stripped. */
+export function renderNamingTemplate(template: string, values: Record<string, string | null | undefined>): string {
+  if (!template) return "";
+  const parts: { lit?: string; tok?: string }[] = [];
+  const re = /\{([a-zA-Z]+)\}/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(template))) {
+    if (m.index > last) parts.push({ lit: template.slice(last, m.index) });
+    parts.push({ tok: m[1].toLowerCase() });
+    last = m.index + m[0].length;
+  }
+  if (last < template.length) parts.push({ lit: template.slice(last) });
+  const isSep = (s: string) => /^[\s\-_./|]+$/.test(s);
+  let out = "";
+  let pendingSep = "";
+  for (const p of parts) {
+    if (p.lit !== undefined) {
+      if (isSep(p.lit)) { pendingSep = p.lit; continue; }
+      // A text literal's own leading/trailing separators
+      // join the pending-separator flow instead of baking
+      // in — otherwise "Sale {empty} {product}" would keep
+      // both spaces around the vanished token.
+      const lead = p.lit.match(/^[\s\-_./|]+/)?.[0] ?? "";
+      const trail = p.lit.match(/[\s\-_./|]+$/)?.[0] ?? "";
+      const core = p.lit.slice(lead.length, p.lit.length - trail.length);
+      if (out && (pendingSep || lead)) out += pendingSep || lead;
+      out += core;
+      pendingSep = trail;
+      continue;
+    }
+    const v = (values[p.tok!] ?? "").toString().trim();
+    if (!v) continue; // empty token: it and its pending separator vanish
+    if (out && pendingSep) out += pendingSep;
+    pendingSep = "";
+    out += v;
+  }
+  return out.replace(/^[\s\-_./|]+/, "").replace(/[\s\-_./|]+$/, "").trim().slice(0, 200);
+}
+
 @Injectable()
 export class CampaignsService implements OnModuleInit {
   constructor(
@@ -66,6 +123,22 @@ export class CampaignsService implements OnModuleInit {
     // RB4/RM8: CDN URL preference for library-asset variants.
     // LAST param + Optional, same discipline as audiences.
     @Optional() private readonly publicMedia?: PublicMediaService,
+    // CA1: AI image generation delegates to CreativesService
+    // (it owns the storage/registry/Meta-ingest path). Optional
+    // + LAST so existing spec constructions keep working; the
+    // generate-image path refuses honestly when it is absent.
+    @Optional() private readonly creatives?: CreativesService,
+    // CA5: creative-health's vision estimates ride the
+    // existing VisionService. Optional + LAST (same
+    // discipline); absent = the vision items are reported
+    // not_checked, never silently passed.
+    @Optional() private readonly vision?: VisionService,
+    // CA28: landing-page creation delegates to the EC13
+    // LandingsService (it owns slugs, sections and the
+    // publish-state rules). Optional + LAST (same
+    // discipline); absent = the builder landing path
+    // refuses honestly.
+    @Optional() private readonly landings?: LandingsService,
   ) {}
 
   /** CB5: scheduled-launch scan tick (leader-claimed,
@@ -167,14 +240,20 @@ export class CampaignsService implements OnModuleInit {
     return v;
   }
 
-  async createPlan(organizationId: string, actorId: string, dto: { name: string; objective: string; adAccountId: string; budgetMode?: string; campaignDailyBudget?: string; campaignLifetimeBudget?: string }) {
+  async createPlan(organizationId: string, actorId: string, dto: { name: string; objective: string; adAccountId: string; budgetMode?: string; campaignDailyBudget?: string; campaignLifetimeBudget?: string; useNamingTemplate?: boolean }) {
     if (!(OBJECTIVES as readonly string[]).includes(dto.objective)) throw new BadRequestException("Invalid objective");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.adAccountId, organizationId } });
     if (!account) throw new BadRequestException("Ad account not found in this organization");
     if (account.platform !== "meta") throw new BadRequestException("Milestone 9 publishing supports Meta ad accounts only");
+    // CA13: naming convention — only for a blank name or an
+    // explicit opt-in; a typed name is never overwritten.
+    const name = await this.nameAtCreate(organizationId, dto.name, {
+      useTemplate: dto.useNamingTemplate,
+      values: { objective: dto.objective, platform: "Meta", date: await this.orgToday(organizationId) },
+    });
     const plan = await (this.prisma as any).campaignPlan.create({
       data: {
-        organizationId, adAccountId: dto.adAccountId, name: dto.name, objective: dto.objective, status: "draft", createdById: actorId,
+        organizationId, adAccountId: dto.adAccountId, name, objective: dto.objective, status: "draft", createdById: actorId,
         budgetMode: this.parseBudgetMode(dto.budgetMode),
         campaignDailyBudgetMinor: dto.campaignDailyBudget ? parseMoneyToMinor(dto.campaignDailyBudget) : null,
         campaignLifetimeBudgetMinor: dto.campaignLifetimeBudget ? parseMoneyToMinor(dto.campaignLifetimeBudget) : null,
@@ -447,6 +526,63 @@ export class CampaignsService implements OnModuleInit {
     }
   }
 
+  /** CA23: what Meta does and does not let the merchant
+   * control on a TRUE Advantage+ campaign — stated verbatim
+   * in readiness and the builder, so the trade is never a
+   * surprise after publish. Grounded in Meta's unified
+   * Advantage+ guide (developers.facebook.com/docs/
+   * marketing-api/advantage-campaigns, verified 2026-10-17):
+   * the Advantage+ state follows from three levers —
+   * campaign-level budget on a supported bid strategy, NO
+   * placement targeting/exclusions on any ad set, and
+   * Advantage+ audience on at least one ad set. */
+  static readonly ADVANTAGE_PLUS_EXPLAINER =
+    "আসল Advantage+: বাজেট বণ্টন, Audience সম্প্রসারণ ও সব Placement Meta-র AI ঠিক করে। বিনিময়ে যা ছাড়তে হয়: Ad Set-ভিত্তিক আলাদা বাজেট, নিজে Placement বাছাই/বাদ দেওয়া, আর Placement-level নিয়ন্ত্রণ। Publish-এর পর Meta-র advantage_state_info পড়ে এই Plan-এ আসল অবস্থা দেখানো হবে — শুধু Toggle দেখে Advantage+ ধরে নেওয়া হবে না।";
+
+  /** CA23: the campaign-level bid an Advantage+ publish
+   * sends (the budget lever). Derived from the ad sets'
+   * stored bids via the SAME CN2 mapping ad sets use:
+   * every set lowest_cost → LOWEST_COST_WITHOUT_CAP with
+   * no amount; a uniform non-default strategy → that
+   * strategy with its amount/constraints (all sets must
+   * agree exactly). Mixed strategies or amounts → null:
+   * there is no honest single campaign bid, and
+   * validatePlan names the conflict instead of picking
+   * one silently. */
+  private advantageCampaignBid(full: any): { bidStrategy: string; bidAmountMinor?: string; bidConstraints?: Record<string, unknown> } | null {
+    const derived = (full.adSets ?? []).map((s: any) => {
+      const g = this.bidGraphFields(s);
+      return {
+        strategy: g.bidStrategy ?? "LOWEST_COST_WITHOUT_CAP",
+        amount: g.bidAmountMinor ?? null,
+        constraints: g.bidConstraints ? JSON.stringify(g.bidConstraints) : null,
+      };
+    });
+    if (!derived.length) return null;
+    const first = derived[0];
+    if (!derived.every((d: any) => d.strategy === first.strategy && d.amount === first.amount && d.constraints === first.constraints)) return null;
+    return {
+      bidStrategy: first.strategy,
+      ...(first.amount ? { bidAmountMinor: first.amount } : {}),
+      ...(first.constraints ? { bidConstraints: JSON.parse(first.constraints) } : {}),
+    };
+  }
+
+  /** CA23: the placement fields an ad set's stored
+   * targeting carries (the placement lever's blockers).
+   * Returns the field names present, e.g. ["platforms",
+   * "positions"] — used by validation/readiness to NAME
+   * the conflict, and mirrored by toGraphTargeting's
+   * Advantage+ suppression (defence in depth). */
+  private static placementRestrictionsOf(targeting: any): string[] {
+    const t = targeting ?? {};
+    const out: string[] = [];
+    if (Array.isArray(t.platforms) && t.platforms.length) out.push("platforms");
+    if (Array.isArray(t.positions) && t.positions.length) out.push("positions");
+    if (Array.isArray(t.devices) && t.devices.length) out.push("devices");
+    return out;
+  }
+
   // ---------- Campaign Builder Next CN3/CN4 (NB2) ----------
 
   /** CN3: standard Meta events a pixel ad set may optimize
@@ -689,6 +825,25 @@ export class CampaignsService implements OnModuleInit {
     if (structural.valid) push("structure", "ok", "গঠন (Structure)", "সব Ad Set/Ad এর আবশ্যিক তথ্য ঠিক আছে");
     else for (const e of structural.errors) push("structure", "error", "গঠন (Structure)", e);
 
+    // CA23: Advantage+ truth. The toggle is only intent —
+    // readiness states the trade in plain words, and after
+    // publish it reports META's read-back state (stored on
+    // the plan), never the toggle, as the confirmed state.
+    if ((full as any).advantagePlus) {
+      const state = (full as any).advantageState as string | null;
+      if (state) {
+        push("advantage", state === "DISABLED" ? "error" : "ok", "Advantage+ (Meta-নিশ্চিত)",
+          state === "DISABLED"
+            ? "Meta-র advantage_state_info বলছে DISABLED — Campaign চলছে কিন্তু Advantage+ নয়। Leverগুলো যাচাই করুন (Campaign Budget + Bid Strategy, সব Placement খোলা, Advantage Audience)।"
+            : `Meta-র advantage_state_info নিশ্চিত করেছে: ${state} — এটি আসল Advantage+ Campaign।`);
+      } else {
+        push("advantage", "warn", "Advantage+ (আসল পথ)", `${CampaignsService.ADVANTAGE_PLUS_EXPLAINER} বর্তমান অবস্থা: এখনো Publish হয়নি বা Read-back হয়নি — অনিশ্চিত।`);
+      }
+    }
+    if (full.objective === "OUTCOME_APP_PROMOTION") {
+      push("app_promotion", "ok", "App Promotion", "Publish-এ প্রতিটি Ad Set থেকে promoted_object { application_id, object_store_url } যাবে; Optimization Goal APP_INSTALLS। Ad-এর Link URL-এ Store-এর Link-ই বসান।");
+    }
+
     const policy = await this.preflight(organizationId, planId).catch(() => null);
     if (policy) {
       if (!policy.findings.length) push("policy", "ok", "Policy Pre-flight", `${policy.checkedAds}টি Ad যাচাই হয়েছে — কোনো সতর্কতা নেই`);
@@ -889,6 +1044,31 @@ export class CampaignsService implements OnModuleInit {
       }
     }
 
+    // CA6: deterministic audience-conflict findings —
+    // computed ONLY from the plan's stored targeting (no
+    // platform call, no member data). The include∩exclude
+    // contradiction itself is a validatePlan structural
+    // error (already surfaced above); here are the two
+    // warning classes: one audience stretched across
+    // several ad sets of the same plan (the sets compete
+    // for the same people and cannibalise delivery), and a
+    // prospecting set carrying no purchaser/customer
+    // exclusion at all. Names resolve against OUR
+    // AudienceRecords when the id is one of ours; a foreign
+    // id is shown as the id, never given an invented name.
+    {
+      const records = (this.prisma as any).audienceRecord?.findMany
+        ? await (this.prisma as any).audienceRecord.findMany({ where: { organizationId, adAccountId: full.adAccountId }, take: 200 }).catch(() => [])
+        : [];
+      const nameOf = new Map<string, string>((records ?? []).filter((r: any) => r.externalAudienceId).map((r: any) => [String(r.externalAudienceId), String(r.name)]));
+      const kindOf = new Map<string, string>((records ?? []).filter((r: any) => r.externalAudienceId).map((r: any) => [String(r.externalAudienceId), String(r.kind)]));
+      const findings = CampaignsService.audiencePlanFindings(full, nameOf, kindOf);
+      if (!findings.length && (full.adSets ?? []).length) {
+        push("audience", "ok", "Audience যাচাই", "কোনো Audience Conflict বা ঝুঁকি পাওয়া যায়নি");
+      }
+      for (const f of findings) push("audience", "warn", "Audience যাচাই", f.message);
+    }
+
     // CN1: a delivery estimate attempt for EVERY ad set
     // (CB2 estimated only the first). `estimate` stays as
     // the first set's result for older consumers.
@@ -1022,6 +1202,148 @@ export class CampaignsService implements OnModuleInit {
     const form = await (this.prisma as any).leadForm.findFirst({ where: { id: formId, organizationId } });
     if (!form) throw new NotFoundException("Lead form not found in this organization");
     return form;
+  }
+
+  // ---------- CA20 (CB5): per-form lead quality ----------
+  /** CA20 minimums — stated, not hidden: a form's rates
+   *  are shown only from at least 10 form-attributed
+   *  leads; below that the payload says "পর্যাপ্ত তথ্য
+   *  নেই" and the rates are null. A form is linked to
+   *  cost only through REAL structure: ad sets carrying
+   *  leadFormId → their plans → the plans' published
+   *  campaigns' stored DailyAdMetric spend. */
+  static readonly LEAD_FORM_MIN_LEADS = 10;
+  static readonly LEAD_QUALIFIED_STAGES = ["qualified", "proposal", "won"] as const;
+
+  /** CA20: per-form lead quality from REAL rows only.
+   *  Attribution rides Lead.leadFormId (stamped at
+   *  leadgen ingest when Meta's form_id resolves to a
+   *  modelled form — CA20). Leads without the stamp
+   *  (every historical lead, leads from unmodelled
+   *  forms) are counted as unattributed COVERAGE, never
+   *  guessed into a form. Converted-to-order rides the
+   *  real Lead.customerId → Order.customerId chain.
+   *  Feedback status rides the CN14 OfflineConversionLog
+   *  rows (eventId lead-feedback-{leadId}-{stage}). */
+  async leadFormQuality(organizationId: string) {
+    const p = this.prisma as any;
+    const minLeads = CampaignsService.LEAD_FORM_MIN_LEADS;
+    const base = {
+      minLeads,
+      qualifiedStages: [...CampaignsService.LEAD_QUALIFIED_STAGES],
+      linkage: "Lead.leadFormId (leadgen ingest-এ stamp) → stage pipeline; order conversion: Lead.customerId → Order.customerId",
+    };
+    const forms = p.leadForm?.findMany ? await p.leadForm.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 100 }).catch(() => []) : [];
+    const stamped = p.lead?.findMany ? await p.lead.findMany({ where: { organizationId, leadFormId: { not: null } }, take: 20000 }).catch(() => []) : [];
+    const unattributed = p.lead?.count ? await p.lead.count({ where: { organizationId, source: "facebook_lead_ads", leadFormId: null } }).catch(() => 0) : 0;
+    const byForm = new Map<string, any[]>();
+    for (const l of stamped as any[]) {
+      const arr = byForm.get(l.leadFormId) ?? [];
+      arr.push(l);
+      byForm.set(l.leadFormId, arr);
+    }
+    // customers who actually ordered (the conversion leg)
+    const customerIds = [...new Set((stamped as any[]).map((l) => l.customerId).filter(Boolean))];
+    const orderedCustomers = new Set<string>();
+    if (customerIds.length && p.order?.findMany) {
+      const orders = await p.order.findMany({ where: { organizationId, customerId: { in: customerIds } }, take: 20000 }).catch(() => []);
+      for (const o of orders as any[]) if (o.customerId) orderedCustomers.add(String(o.customerId));
+    }
+    // CN14 feedback logs for these leads
+    const leadIds = new Set((stamped as any[]).map((l) => String(l.id)));
+    const feedbackByLead = new Map<string, { sent: number; failed: number; lastAt: string | null }>();
+    if (leadIds.size && p.offlineConversionLog?.findMany) {
+      const logs = await p.offlineConversionLog.findMany({ where: { organizationId, platform: "meta" }, orderBy: { createdAt: "desc" }, take: 10000 }).catch(() => []);
+      for (const log of logs as any[]) {
+        const m = /^lead-feedback-(.+)-(qualified|won)$/.exec(String(log.eventId ?? ""));
+        if (!m || !leadIds.has(m[1])) continue;
+        const cur = feedbackByLead.get(m[1]) ?? { sent: 0, failed: 0, lastAt: null };
+        if (log.status === "sent") cur.sent++;
+        else if (log.status === "failed") cur.failed++;
+        if (!cur.lastAt) cur.lastAt = log.createdAt ? new Date(log.createdAt).toISOString() : null;
+        feedbackByLead.set(m[1], cur);
+      }
+    }
+    // form → plans (via ad sets) → stored campaign spend
+    const spendByForm = new Map<string, { spendMinor: bigint; campaigns: number }>();
+    if (p.campaignAdSet?.findMany && p.campaignPlan?.findMany) {
+      const sets = await p.campaignAdSet.findMany({ where: { leadFormId: { not: null } }, take: 5000 }).catch(() => []);
+      const planIds = [...new Set((sets as any[]).map((s) => s.planId))];
+      const plans = planIds.length ? await p.campaignPlan.findMany({ where: { organizationId, id: { in: planIds } } }).catch(() => []) : [];
+      const planById = new Map((plans as any[]).map((pl) => [pl.id, pl]));
+      const extByForm = new Map<string, Set<string>>();
+      for (const s of sets as any[]) {
+        const plan = planById.get(s.planId);
+        if (!plan?.externalCampaignId) continue;
+        const set = extByForm.get(s.leadFormId) ?? new Set<string>();
+        set.add(String(plan.externalCampaignId));
+        extByForm.set(s.leadFormId, set);
+      }
+      for (const [formId, exts] of extByForm) {
+        let spend = 0n;
+        if (p.dailyAdMetric?.findMany) {
+          const rows = await p.dailyAdMetric.findMany({ where: { organizationId, campaignExternalId: { in: [...exts] } }, take: 20000 }).catch(() => []);
+          for (const r of rows as any[]) {
+            if ((r.adSetExternalId ?? "") !== "" || (r.adExternalId ?? "") !== "") continue;
+            try { spend += BigInt(r.spendMinor ?? 0); } catch { /* malformed row never poisons totals */ }
+          }
+        }
+        spendByForm.set(formId, { spendMinor: spend, campaigns: exts.size });
+      }
+    }
+    const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
+    const out = (forms as any[]).map((f) => {
+      const leads = byForm.get(f.id) ?? [];
+      const total = leads.length;
+      const stages: Record<string, number> = {};
+      let qualified = 0;
+      let won = 0;
+      let converted = 0;
+      let fbSent = 0;
+      let fbFailed = 0;
+      let fbLastAt: string | null = null;
+      for (const l of leads) {
+        stages[l.stage] = (stages[l.stage] ?? 0) + 1;
+        if ((CampaignsService.LEAD_QUALIFIED_STAGES as readonly string[]).includes(l.stage)) qualified++;
+        if (l.stage === "won") won++;
+        if (l.customerId && orderedCustomers.has(String(l.customerId))) converted++;
+        const fb = feedbackByLead.get(String(l.id));
+        if (fb) {
+          fbSent += fb.sent; fbFailed += fb.failed;
+          if (fb.lastAt && (!fbLastAt || fb.lastAt > fbLastAt)) fbLastAt = fb.lastAt;
+        }
+      }
+      const enough = total >= minLeads;
+      const spendInfo = spendByForm.get(f.id);
+      let costPerQualifiedMinor: string | null = null;
+      let costNote: string | null = null;
+      if (!spendInfo || spendInfo.campaigns === 0) costNote = "খরচের তথ্য নেই — এই Form কোনো Published Campaign-এর Ad Set-এ যুক্ত নয়";
+      else if (qualified === 0) costNote = "যোগ্য (qualified) লিড নেই — Cost Per Qualified হিসাব হয় না";
+      else costPerQualifiedMinor = (spendInfo.spendMinor / BigInt(qualified)).toString();
+      return {
+        formId: f.id, name: f.name, status: f.status, externalFormId: f.externalFormId ?? null,
+        totalLeads: total,
+        belowThreshold: !enough,
+        thresholdNote: enough ? null : `পর্যাপ্ত তথ্য নেই — Rate দেখাতে অন্তত ${minLeads}টি Form-যুক্ত লিড লাগে, আছে ${total}টি`,
+        stages,
+        qualified, won, convertedToOrder: converted,
+        qualifiedRate: enough ? pct(qualified, total) : null,
+        orderRate: enough ? pct(converted, total) : null,
+        spendMinor: spendInfo ? spendInfo.spendMinor.toString() : null,
+        linkedCampaigns: spendInfo?.campaigns ?? 0,
+        costPerQualifiedMinor, costNote,
+        feedback: { sent: fbSent, failed: fbFailed, lastSentAt: fbLastAt },
+      };
+    });
+    return {
+      ...base,
+      forms: out,
+      coverage: {
+        attributedLeads: (stamped as any[]).length,
+        unattributedLeadAdsLeads: unattributed,
+        note: "Form-যুক্ত লিড শুধু তারাই যাদের LeadGen Ingest-এর সময় Form মিলেছে (CA20 stamp) — আগের লিড ও মডেল-না-করা Form-এর লিড Unattributed হিসেবে গোনা হয়েছে, আন্দাজে কোনো Form-এ দেওয়া হয়নি",
+      },
+    };
   }
 
   /** CN4: edit a modelled form. A form already created on
@@ -1164,9 +1486,21 @@ export class CampaignsService implements OnModuleInit {
       return { available: false, reason: "AudiencesService এই Deployment-এ যুক্ত নেই", sources: [], records: [], presets };
     }
     const sources = await this.audiences.sourceCatalog(organizationId);
-    const records = (this.prisma as any).audienceRecord?.findMany
+    const rawRecords = (this.prisma as any).audienceRecord?.findMany
       ? await (this.prisma as any).audienceRecord.findMany({ where: { organizationId, adAccountId: plan.adAccountId }, orderBy: { createdAt: "desc" }, take: 100 }).catch(() => [])
       : [];
+    // CA7: each record carries its stored performance
+    // rollup (AudiencesService.rollupView shape) or null —
+    // null is the honest "তথ্য নেই" state: no refresh has
+    // attributed any ad set to this audience yet.
+    const rollups = (this.prisma as any).audiencePerformanceRollup?.findMany
+      ? await (this.prisma as any).audiencePerformanceRollup.findMany({ where: { organizationId } }).catch(() => [])
+      : [];
+    const perfByKey = new Map<string, any>((rollups ?? []).map((r: any) => [String(r.audienceKey), r]));
+    const records = (rawRecords ?? []).map((r: any) => {
+      const rollup = perfByKey.get(`record:${r.id}`);
+      return { ...r, performance: rollup ? AudiencesService.rollupView(rollup) : null };
+    });
     return { available: true, sources, records, presets };
   }
 
@@ -1184,7 +1518,14 @@ export class CampaignsService implements OnModuleInit {
       return { available: false, reason: "AudiencesService এই Deployment-এ যুক্ত নেই", sources: [] as Awaited<ReturnType<AudiencesService["sourceCatalog"]>> };
     }
     const sources = await this.audiences.sourceCatalog(organizationId);
-    return { available: true, sources };
+    // CA7 (additive): the org's per-audience performance
+    // block — stored rollups + the coverage note — rides
+    // along so plan-less consumers (the CN16 wizard) see
+    // the same history the studio shows.
+    const performance = typeof (this.audiences as any).listPerformance === "function"
+      ? await (this.audiences as any).listPerformance(organizationId).catch(() => null)
+      : null;
+    return { available: true, sources, performance };
   }
 
   /** Attach a Meta audience id to an ad set's targeting
@@ -1299,6 +1640,63 @@ export class CampaignsService implements OnModuleInit {
     return { status: "applied", preset: dto.preset, label: def.label, created, record, adSet: { ...this.adSetJson(updated), targeting: updated.targeting } };
   }
 
+  /** CA6: deterministic audience findings for a whole
+   *  plan, computed ONLY from stored targeting — no
+   *  platform call, no member data (hashes are never
+   *  stored, so true overlap stays uncomputable; see
+   *  audienceInsights). Two warning classes:
+   *  (1) the same included audience stretched across 2+
+   *  ad sets of the plan — those sets bid against each
+   *  other for the same people;
+   *  (2) a prospecting ad set with NO exclusion at all —
+   *  people who already bought keep seeing the ad.
+   *  "Prospecting" is judged conservatively: a funnel
+   *  retargeting/retention layer is never prospecting, and
+   *  a set including a non-lookalike custom audience is
+   *  warm by construction; a set whose includes are ALL
+   *  lookalikes is still cold (lookalikes are prospecting
+   *  by design). Sets whose include ids cannot be resolved
+   *  to our records are treated as warm — fewer false
+   *  warnings, never invented ones. */
+  static audiencePlanFindings(full: any, nameOf: Map<string, string>, kindOf: Map<string, string>): { code: string; message: string }[] {
+    const out: { code: string; message: string }[] = [];
+    const label = (id: string) => (nameOf.has(id) ? `"${nameOf.get(id)}" (${id})` : id);
+    const usage = new Map<string, string[]>();
+    for (const s of full.adSets ?? []) {
+      const ids: string[] = Array.isArray(s.targeting?.customAudienceIds) ? [...new Set<string>(s.targeting.customAudienceIds.map(String))] : [];
+      for (const id of ids) {
+        const sets = usage.get(id) ?? [];
+        sets.push(String(s.name));
+        usage.set(id, sets);
+      }
+    }
+    for (const [id, sets] of usage.entries()) {
+      if (sets.length >= 2) {
+        out.push({
+          code: "audience_shared_across_ad_sets",
+          message: `Audience ${label(id)} এই Plan-এর ${sets.length}টি Ad Set-এ ব্যবহৃত হয়েছে (${sets.join(", ")}) — একই মানুষের জন্য Ad Set গুলো নিজেদের সঙ্গেই প্রতিযোগিতা করবে; সম্ভব হলে Audience ভাগ করুন বা একটি Set-এ রাখুন`,
+        });
+      }
+    }
+    for (const s of full.adSets ?? []) {
+      const t = s.targeting ?? {};
+      const layer = String((s as any).funnelLayer ?? "");
+      if (layer === "retargeting" || layer === "retention") continue;
+      const included: string[] = Array.isArray(t.customAudienceIds) ? t.customAudienceIds.map(String) : [];
+      const hasWarmInclude = included.some((id) => kindOf.get(id) !== "lookalike");
+      if (hasWarmInclude) continue;
+      const hasExclusion = (Array.isArray(t.excludedAudienceIds) && t.excludedAudienceIds.length > 0)
+        || (Array.isArray(t.exclusionPresets) && t.exclusionPresets.length > 0);
+      if (!hasExclusion) {
+        out.push({
+          code: "prospecting_without_exclusion",
+          message: `Ad Set "${s.name}": Prospecting Ad Set, কিন্তু কোনো ক্রেতা/Customer Exclusion নেই — যারা ইতিমধ্যে কিনেছেন তারাও এই বিজ্ঞাপন দেখবেন; Audience Studio-র Exclusion Preset (যেমন: শেষ ৩০ দিনের ক্রেতা বাদ) প্রয়োগ ভাবুন`,
+        });
+      }
+    }
+    return out;
+  }
+
   /** Per-ad-set audience picture: each selected audience
    *  resolved against OUR AudienceRecords — size is Meta's
    *  approximate_count, else the last membership-sync
@@ -1344,9 +1742,18 @@ export class CampaignsService implements OnModuleInit {
       estimate = { available: false, reason: e instanceof Error ? e.message.slice(0, 160) : "Meta Estimate পাওয়া যায়নি" };
     }
     const distinctIncluded = new Set(included.map((i: any) => i.externalId));
+    // CA6 spike verdict (2026-10-17, checked against Meta's
+    // official documentation): the Graph API exposes NO
+    // audience-overlap endpoint — the Custom Audience node's
+    // documented edges are adaccounts / ads / health /
+    // sessions / shared_account_info, and the legacy
+    // /audienceoverlap reach-estimation path is not a current
+    // documented API. Overlap exists only inside the Ads
+    // Manager UI tool. So overlap stays not_computable —
+    // now with the platform reason, not just the local one.
     const overlap = distinctIncluded.size <= 1
       ? { status: "not_applicable", reason: "একটির বেশি Included Audience নেই — Overlap-এর প্রশ্নই ওঠে না" }
-      : { status: "not_computable", reason: "সদস্যদের Hash তালিকা সংরক্ষণ করা হয় না, তাই দুটি Audience-এর Overlap এখান থেকে হিসাব করা যায় না — Meta Ads Manager-এর Audience Overlap টুলে দেখা যাবে" };
+      : { status: "not_computable", reason: "Meta Graph API-তে Audience Overlap-এর কোনো Endpoint নেই (Custom Audience Node-এর নথিভুক্ত Edge: adaccounts/ads/health/sessions/shared_account_info — যাচাই 2026-10-17); Overlap শুধু Meta Ads Manager-এর Audience Overlap টুলে দেখা যায়। সদস্যদের Hash তালিকাও সংরক্ষণ করা হয় না, তাই এখান থেকে হিসাব করা যায় না" };
     return { adSetId, included, excluded, estimate, overlap, warnings };
   }
 
@@ -1531,6 +1938,7 @@ export class CampaignsService implements OnModuleInit {
     cities?: any[]; postcodes?: string[]; locationTypes?: string[]; locales?: number[];
     behaviors?: any[]; demographics?: Record<string, unknown> | null;
     narrowInterests?: any[]; narrowBehaviors?: any[]; targetingExpansion?: boolean;
+    regions?: any[];
   }, base?: any) {
     const t: any = { ...(base ?? {}) };
     if (dto.countries !== undefined) t.countries = dto.countries;
@@ -1562,6 +1970,17 @@ export class CampaignsService implements OnModuleInit {
         }));
       } else delete t.cities;
     }
+    // CA9: regions are { key, name } pairs (Meta region key
+    // resolved from targeting search — never a typed-in
+    // guess). Same set/delete discipline as cities.
+    if (dto.regions !== undefined) {
+      if (dto.regions?.length) {
+        t.regions = dto.regions
+          .map((r: any) => ({ key: String(r?.key ?? "").trim(), ...(r?.name ? { name: String(r.name) } : {}) }))
+          .filter((r: any) => r.key);
+        if (!t.regions.length) delete t.regions;
+      } else delete t.regions;
+    }
     if (dto.demographics !== undefined) {
       const d = dto.demographics;
       const has = d && typeof d === "object" && Object.values(d as any).some((v: any) => (Array.isArray(v) ? v.length : v != null));
@@ -1589,10 +2008,13 @@ export class CampaignsService implements OnModuleInit {
     cities?: any[]; postcodes?: string[]; locationTypes?: string[]; locales?: number[];
     behaviors?: any[]; demographics?: Record<string, unknown> | null;
     narrowInterests?: any[]; narrowBehaviors?: any[]; targetingExpansion?: boolean;
+    regions?: any[];
     bidStrategy?: string; bidAmount?: string; costPerResultGoal?: string; roasGoal?: string;
     conversionEvent?: string; catalogRecordId?: string; productSetId?: string; leadFormId?: string;
     destinationType?: string; whatsappIntegrationId?: string;
+    appId?: string; appStoreUrl?: string;
     startTime?: string; endTime?: string;
+    useNamingTemplate?: boolean;
   }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
@@ -1642,9 +2064,24 @@ export class CampaignsService implements OnModuleInit {
     const waRef = dto.destinationType === "WHATSAPP"
       ? await this.resolveWhatsAppRef(organizationId, dto.whatsappIntegrationId!)
       : null;
+    // CA13: naming convention (blank name or explicit
+    // opt-in only; a referenced saved audience names the
+    // {audience} token when the stored targeting has one).
+    const adSetName = await this.nameAtCreate(organizationId, dto.name, {
+      useTemplate: dto.useNamingTemplate,
+      values: {
+        objective: plan.objective, platform: "Meta", date: await this.orgToday(organizationId),
+        audience: await (async () => {
+          const savedId = (targeting as any)?.savedAudienceId;
+          if (!savedId || !(this.prisma as any).savedAudience?.findFirst) return null;
+          const saved = await (this.prisma as any).savedAudience.findFirst({ where: { id: String(savedId), organizationId } }).catch(() => null);
+          return saved?.name ?? null;
+        })(),
+      },
+    });
     const adSet = await (this.prisma as any).campaignAdSet.create({
       data: {
-        planId, name: dto.name,
+        planId, name: adSetName,
         dailyBudgetMinor: dto.dailyBudget ? parseMoneyToMinor(dto.dailyBudget) : null,
         lifetimeBudgetMinor: dto.lifetimeBudget ? parseMoneyToMinor(dto.lifetimeBudget) : null,
         optimizationGoal: dto.optimizationGoal, pageId: dto.pageId ?? null, pixelId: dto.pixelId ?? null,
@@ -1652,6 +2089,9 @@ export class CampaignsService implements OnModuleInit {
         bidStrategy: bid.bidStrategy, bidAmountMinor: bid.bidAmountMinor, costGoalMinor: bid.costGoalMinor, roasAverageFloor: bid.roasAverageFloor,
         conversionEvent: dto.conversionEvent ?? null,
         catalogRecordId: dto.catalogRecordId ?? null, productSetId: dto.productSetId ?? null, leadFormId: dto.leadFormId ?? null,
+        // CA23: app-promotion pair (stored verbatim; the
+        // structural requirement is validatePlan's).
+        appId: dto.appId?.trim() || null, appStoreUrl: dto.appStoreUrl?.trim() || null,
         destinationType: waRef ? "WHATSAPP" : null,
         whatsappIntegrationId: waRef ? dto.whatsappIntegrationId! : null,
         whatsappPhoneNumberId: waRef?.phoneNumberId ?? null,
@@ -1675,9 +2115,11 @@ export class CampaignsService implements OnModuleInit {
     cities?: any[]; postcodes?: string[]; locationTypes?: string[]; locales?: number[];
     behaviors?: any[]; demographics?: Record<string, unknown> | null;
     narrowInterests?: any[]; narrowBehaviors?: any[]; targetingExpansion?: boolean;
+    regions?: any[];
     bidStrategy?: string; bidAmount?: string; costPerResultGoal?: string; roasGoal?: string;
     conversionEvent?: string; catalogRecordId?: string; productSetId?: string; leadFormId?: string;
     destinationType?: string; whatsappIntegrationId?: string;
+    appId?: string; appStoreUrl?: string;
     startTime?: string; endTime?: string;
   }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
@@ -1702,6 +2144,9 @@ export class CampaignsService implements OnModuleInit {
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.optimizationGoal !== undefined) data.optimizationGoal = dto.optimizationGoal;
     if (dto.pageId !== undefined) data.pageId = dto.pageId || null;
+    // CA23: app-promotion pair ("" clears).
+    if (dto.appId !== undefined) data.appId = dto.appId?.trim() || null;
+    if (dto.appStoreUrl !== undefined) data.appStoreUrl = dto.appStoreUrl?.trim() || null;
     if (dto.pixelId !== undefined) data.pixelId = dto.pixelId || null;
     if (dto.dailyBudget !== undefined || dto.lifetimeBudget !== undefined) {
       if (!dto.dailyBudget && !dto.lifetimeBudget) throw new BadRequestException("Either a daily or a lifetime budget is required");
@@ -1709,7 +2154,7 @@ export class CampaignsService implements OnModuleInit {
       data.lifetimeBudgetMinor = dto.lifetimeBudget ? parseMoneyToMinor(dto.lifetimeBudget) : null;
     }
     const targetingTouched = ["countries", "ageMin", "ageMax", "genders", "interests", "customAudienceIds", "excludedAudienceIds", "platforms", "positions", "devices",
-      "cities", "postcodes", "locationTypes", "locales", "behaviors", "demographics", "narrowInterests", "narrowBehaviors", "targetingExpansion"]
+      "cities", "postcodes", "locationTypes", "locales", "behaviors", "demographics", "narrowInterests", "narrowBehaviors", "targetingExpansion", "regions"]
       .some((k) => (dto as any)[k] !== undefined);
     if (targetingTouched) data.targeting = this.buildTargeting(dto, adSet.targeting);
     // CN2: bidding — validated against the FINAL merged
@@ -1961,7 +2406,11 @@ export class CampaignsService implements OnModuleInit {
     if (headlines.length > caps.headlines) throw new BadRequestException(`At most ${caps.headlines} headline options`);
     if (descriptions.length > caps.descriptions) throw new BadRequestException(`At most ${caps.descriptions} description options`);
     if (!primaryTexts.length) return null;
-    return { primaryTexts, headlines, descriptions };
+    // CA4: locale-labelled translations live under
+    // `locales` inside the same JSON — a client round-trip
+    // of the stored object must not silently drop them.
+    const locales = (input as any).locales;
+    return locales && typeof locales === "object" ? ({ primaryTexts, headlines, descriptions, locales } as any) : { primaryTexts, headlines, descriptions };
   }
 
   /** PATCH re-sync: a legacy field edit on an ad that
@@ -1970,11 +2419,13 @@ export class CampaignsService implements OnModuleInit {
    *  ordinary edits. */
   private resyncTextOptions(existing: any, patch: { primaryText?: string; headline?: string | null; description?: string | null }): any {
     if (!existing || typeof existing !== "object") return existing ?? null;
-    const out = {
+    const out: any = {
       primaryTexts: [...(existing.primaryTexts ?? [])],
       headlines: [...(existing.headlines ?? [])],
       descriptions: [...(existing.descriptions ?? [])],
     };
+    // CA4: keep locale-labelled translations across edits.
+    if ((existing as any).locales) out.locales = (existing as any).locales;
     const set0 = (list: string[], v: string | null | undefined) => {
       if (v === undefined) return list;
       if (!v) return list.slice(1);
@@ -2065,6 +2516,7 @@ export class CampaignsService implements OnModuleInit {
     name: string; primaryText: string; headline?: string; description?: string;
     linkUrl: string; callToAction?: string; imageUrl?: string; productId?: string; createdByAi?: boolean;
     format?: string; imageAssetId?: string; videoAssetId?: string;
+    useNamingTemplate?: boolean;
     carouselCards?: { title: string; description?: string; linkUrl: string; imageUrl?: string; imageAssetId?: string }[];
     textOptions?: { primaryTexts?: string[]; headlines?: string[]; descriptions?: string[] };
     placementAssets?: Record<string, { imageAssetId?: string; videoAssetId?: string; imageUrl?: string }>;
@@ -2086,9 +2538,21 @@ export class CampaignsService implements OnModuleInit {
     const textOptions = this.normalizeTextOptions(dto.textOptions, dto, { primaryText: true, headline: dto.headline !== undefined, description: dto.description !== undefined });
     const placementAssets = this.normalizePlacementAssets(dto.placementAssets, format);
     const creativeEnhancements = this.normalizeEnhancements(dto.creativeEnhancements);
+    // CA13: naming convention (blank name or explicit
+    // opt-in only; {product} resolves from the ad's linked
+    // product when it has one).
+    const adName = await this.nameAtCreate(organizationId, dto.name, {
+      useTemplate: dto.useNamingTemplate,
+      values: {
+        objective: plan.objective, platform: "Meta", date: await this.orgToday(organizationId),
+        product: dto.productId
+          ? ((await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } }).catch(() => null))?.name ?? null)
+          : null,
+      },
+    });
     const ad = await (this.prisma as any).campaignAd.create({
       data: {
-        adSetId, name: dto.name,
+        adSetId, name: adName,
         primaryText: textOptions ? textOptions.primaryTexts[0] : dto.primaryText,
         headline: textOptions ? (textOptions.headlines[0] ?? null) : (dto.headline ?? null),
         description: textOptions ? (textOptions.descriptions[0] ?? null) : (dto.description ?? null),
@@ -2182,9 +2646,268 @@ export class CampaignsService implements OnModuleInit {
     if (dto.whatsappWelcome !== undefined) {
       data.whatsappWelcome = dto.whatsappWelcome === null ? null : this.normalizeWhatsAppWelcome(dto.whatsappWelcome);
     }
+    // CA27: snapshot the BEFORE image when this edit
+    // actually changes content — a version list full of
+    // no-op entries would be noise, not history. The
+    // snapshot is best-effort bookkeeping (like the audit
+    // log): a missing table (pre-migration env) never
+    // blocks the edit itself.
+    const before = CampaignsService.adContentOf(ad);
+    const afterPreview: Record<string, unknown> = { ...before };
+    for (const k of Object.keys(data)) {
+      if ((CampaignsService.AD_CONTENT_FIELDS as readonly string[]).includes(k)) afterPreview[k] = (data as any)[k] ?? null;
+    }
+    if (JSON.stringify(before) !== JSON.stringify(afterPreview)) {
+      await this.snapshotAdVersion(organizationId, ad, actorId, "edit").catch(() => undefined);
+    }
     const updated = await (this.prisma as any).campaignAd.update({ where: { id: adId }, data });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.ad_updated", entityType: "CampaignAd", entityId: adId, metadata: { fields: Object.keys(data) } }).catch(() => undefined);
     return updated;
+  }
+
+  /** CA27: the content fields a version snapshot covers.
+   * External ids, the ad-set binding and timestamps are
+   * NOT content: restoring a snapshot never touches the
+   * ad's Meta binding. */
+  static readonly AD_CONTENT_FIELDS = [
+    "name", "primaryText", "headline", "description", "linkUrl", "callToAction",
+    "imageUrl", "productId", "format", "imageAssetId", "videoAssetId", "carouselCards",
+    "textOptions", "placementAssets", "creativeEnhancements", "whatsappWelcome",
+  ] as const;
+
+  static adContentOf(ad: any): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const f of CampaignsService.AD_CONTENT_FIELDS) out[f] = ad?.[f] ?? null;
+    return out;
+  }
+
+  /** CA27: append a before-image version for an ad.
+   * Returns null when the version table is unavailable —
+   * versioning then degrades honestly (endpoints say so)
+   * instead of breaking ad edits. */
+  private async snapshotAdVersion(organizationId: string, ad: any, actorId: string, source: "edit" | "restore") {
+    const table = (this.prisma as any).campaignAdVersion;
+    if (!table?.create) return null;
+    const existing = table.findMany ? await table.findMany({ where: { adId: ad.id } }).catch(() => []) : [];
+    const version = (existing?.length ?? 0) + 1;
+    return table.create({
+      data: { adId: ad.id, organizationId, version, snapshot: CampaignsService.adContentOf(ad), source, createdById: actorId },
+    });
+  }
+
+  private async adForVersions(organizationId: string, planId: string, adId: string) {
+    await this.getPlanOrThrow(organizationId, planId);
+    const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, adSet: { planId } } });
+    if (!ad) throw new NotFoundException("Ad not found in this plan");
+    return ad;
+  }
+
+  /** CA27: an ad's version list (metadata only — the
+   * snapshot bodies ride the diff endpoint). */
+  async adVersions(organizationId: string, planId: string, adId: string) {
+    await this.adForVersions(organizationId, planId, adId);
+    const table = (this.prisma as any).campaignAdVersion;
+    if (!table?.findMany) return { adId, versions: [], note: "Version table পাওয়া যাচ্ছে না — Migration বাকি থাকতে পারে।" };
+    const rows = await table.findMany({ where: { adId }, orderBy: { version: "desc" } }).catch(() => []);
+    return {
+      adId,
+      versions: rows.map((r: any) => ({ id: r.id, version: r.version, source: r.source, createdById: r.createdById ?? null, createdAt: r.createdAt })),
+      note: "প্রতিটি সংস্করণ হলো বদলের আগের রূপ (Before-image) — Restore করলে বর্তমান রূপটিও নতুন সংস্করণ হিসেবে থেকে যায়, ইতিহাস কখনো মোছা বা বদলানো হয় না।",
+    };
+  }
+
+  /** CA27: field-by-field diff of one version's snapshot
+   * against the ad's CURRENT content. */
+  async adVersionDiff(organizationId: string, planId: string, adId: string, versionId: string) {
+    const ad = await this.adForVersions(organizationId, planId, adId);
+    const table = (this.prisma as any).campaignAdVersion;
+    if (!table?.findFirst) throw new BadRequestException("Version table পাওয়া যাচ্ছে না — Migration বাকি থাকতে পারে।");
+    const row = await table.findFirst({ where: { id: versionId, adId } });
+    if (!row) throw new NotFoundException("Ad version not found");
+    const current = CampaignsService.adContentOf(ad);
+    const snap = (row.snapshot ?? {}) as Record<string, unknown>;
+    const changes = CampaignsService.AD_CONTENT_FIELDS
+      .filter((f) => JSON.stringify(snap[f] ?? null) !== JSON.stringify(current[f] ?? null))
+      .map((f) => ({ field: f, versionValue: snap[f] ?? null, currentValue: current[f] ?? null }));
+    return { adId, version: row.version, source: row.source, createdAt: row.createdAt, changes, identical: changes.length === 0 };
+  }
+
+  /** CA27: restore one version's content into the ad.
+   * The pre-restore state is snapshotted FIRST (source
+   * "restore"), so a restore is itself reversible and
+   * history is append-only. Only content fields are
+   * written — the Meta binding (externalAdId) and the
+   * ad-set placement never move. */
+  async restoreAdVersion(organizationId: string, planId: string, adId: string, actorId: string, versionId: string) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    this.assertEditable(plan);
+    const ad = await this.adForVersions(organizationId, planId, adId);
+    const table = (this.prisma as any).campaignAdVersion;
+    if (!table?.findFirst) throw new BadRequestException("Version table পাওয়া যাচ্ছে না — Migration বাকি থাকতে পারে।");
+    const row = await table.findFirst({ where: { id: versionId, adId } });
+    if (!row) throw new NotFoundException("Ad version not found");
+    await this.snapshotAdVersion(organizationId, ad, actorId, "restore");
+    const snap = (row.snapshot ?? {}) as Record<string, unknown>;
+    const data: Record<string, unknown> = {};
+    for (const f of CampaignsService.AD_CONTENT_FIELDS) data[f] = snap[f] ?? null;
+    const updated = await (this.prisma as any).campaignAd.update({ where: { id: adId }, data });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.ad_version_restored", entityType: "CampaignAd", entityId: adId, metadata: { restoredVersion: row.version } }).catch(() => undefined);
+    return updated;
+  }
+
+  /** CA27: assemble carousel cards from a product set's
+   * REAL products. The set's stored criteria (category,
+   * maxPriceMinor, inStockOnly) select org Product rows;
+   * each card is the product's own name, formatted real
+   * price and image, linked at the AD's destination URL
+   * (cards inherit the ad's link — no invented product
+   * URLs). Manual-card preservation: when the ad already
+   * has cards and replace is not explicitly set, NOTHING
+   * is written — the would-be cards return as a preview.
+   * Applying goes through updateAd, so the previous
+   * cards are snapshotted as an ad version first
+   * (CA27 restore can bring them back). */
+  async assembleCatalogCarousel(organizationId: string, actorId: string, planId: string, adId: string, dto: { productSetId?: string; replace?: boolean; limit?: number }) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    this.assertEditable(plan);
+    const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, adSet: { planId } } });
+    if (!ad) throw new NotFoundException("Ad not found in this plan");
+    const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: ad.adSetId, planId } });
+    const setId = dto.productSetId ?? adSet?.productSetId;
+    if (!setId) throw new BadRequestException("এই Ad Set-এ কোনো Product Set যুক্ত নেই — আগে Ad Set-এ Catalog Product Set বাছাই করুন, অথবা productSetId পাঠান।");
+    const set = await (this.prisma as any).productSet?.findFirst?.({ where: { id: setId, organizationId } }).catch(() => null) ?? null;
+    if (!set) throw new NotFoundException("Product set not found in this organization");
+    const where: any = { organizationId, status: "ACTIVE" };
+    if (set.category) where.category = set.category;
+    if (set.maxPriceMinor != null) where.priceMinor = { lte: set.maxPriceMinor };
+    const rows = await (this.prisma as any).product.findMany({ where, orderBy: { createdAt: "desc" }, take: 50 }).catch(() => []);
+    const inStock = (p: any) => !set.inStockOnly || p.stockQuantity == null || Number(p.stockQuantity) > 0;
+    const limit = Math.min(Math.max(dto.limit ?? 10, 2), 10);
+    const products = (rows as any[]).filter(inStock).slice(0, limit);
+    if (products.length < 2) {
+      throw new BadRequestException(`এই Product Set-এর শর্তে যথেষ্ট Product পাওয়া যায়নি (পাওয়া গেছে ${products.length}টি, Carousel-এ কমপক্ষে ২টি লাগে) — Set-এর শর্ত শিথিল করুন বা Product যোগ করুন।`);
+    }
+    const cards = products.map((p: any) => ({
+      title: String(p.name).slice(0, 120),
+      description: `দাম ${formatMinor(BigInt(p.priceMinor), p.currency ?? "BDT")}`,
+      linkUrl: ad.linkUrl,
+      ...(p.imageUrl ? { imageUrl: p.imageUrl } : {}),
+    }));
+    const criteria = { category: set.category ?? null, maxPriceMinor: set.maxPriceMinor != null ? String(set.maxPriceMinor) : null, inStockOnly: !!set.inStockOnly };
+    if (Array.isArray(ad.carouselCards) && ad.carouselCards.length > 0 && !dto.replace) {
+      return {
+        applied: false,
+        reason: "এই Ad-তে আগেই হাতে বসানো কার্ড আছে — Assembly সেগুলো চাপা দেয়নি। কার্ডগুলো বদলাতে চাইলে replace: true পাঠান (আগের কার্ড Ad Version হিসেবে থেকে যাবে, Restore করা যাবে)।",
+        productSet: { id: set.id, name: set.name, status: set.status },
+        criteria,
+        previewCards: cards,
+        existingCards: ad.carouselCards,
+      };
+    }
+    const updated = await this.updateAd(organizationId, planId, adId, actorId, { format: "carousel", carouselCards: cards });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.carousel_assembled", entityType: "CampaignAd", entityId: adId, metadata: { productSetId: set.id, cards: cards.length } }).catch(() => undefined);
+    return {
+      applied: true,
+      productSet: { id: set.id, name: set.name, status: set.status },
+      criteria,
+      cards,
+      ad: updated,
+      note: "কার্ডগুলো আসল Product ডেটা থেকে — নাম, দাম ও ছবি Product Row-এর; লিংক Ad-এর Destination URL।",
+    };
+  }
+
+  /** CA28: the public URL of a landing slug. The path is
+   * always known; the absolute URL rides the SAME env
+   * precedent the feeds module uses (WEB_PUBLIC_URL ??
+   * APP_PUBLIC_URL) and is null — stated, not guessed —
+   * when neither is configured. */
+  private landingUrlFor(slug: string) {
+    const base = (process.env.WEB_PUBLIC_URL ?? process.env.APP_PUBLIC_URL ?? "").replace(/\/+$/, "");
+    return { path: `/l/${slug}`, url: base ? `${base}/l/${slug}` : null };
+  }
+
+  /** CA28: create a landing page for a plan (or one of
+   * its ads) from the plan's REAL product, through the
+   * EXISTING EC13 LandingsService — its slug, sections
+   * and publish-state rules are unchanged (the page is
+   * a normal LandingPage row whose public rendering
+   * composes the Product row's own name/price/images).
+   * Product resolution: explicit productId, else the
+   * chosen ad's productId, else the first ad in the plan
+   * carrying one; no product anywhere = an honest
+   * refusal (a landing without a product is not a page
+   * this machinery serves). The landing is created as a
+   * DRAFT unless publish is explicitly requested — the
+   * machinery's own status vocabulary either way. */
+  async createPlanLanding(organizationId: string, actorId: string, planId: string, dto: { adId?: string; productId?: string; publish?: boolean }) {
+    if (!this.landings) {
+      throw new BadRequestException("Landing Service এই Build-এ যুক্ত নয় — Builder থেকে Landing তৈরি করা যাচ্ছে না (Landings পেজ থেকে তৈরি করা যাবে)।");
+    }
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    this.assertEditable(plan);
+    const full = await this.getPlanFull(organizationId, planId);
+    let productId = dto.productId ?? null;
+    if (!productId && dto.adId) {
+      for (const s of full.adSets ?? []) {
+        const ad = (s.ads ?? []).find((a: any) => a.id === dto.adId);
+        if (ad) { productId = (ad as any).productId ?? null; break; }
+      }
+      if (!productId) throw new BadRequestException("বেছে নেওয়া Ad-টিতে কোনো Product যুক্ত নেই — Landing Page Product ছাড়া তৈরি হয় না। Ad-তে Product বাছাই করুন, অথবা Product-সহ অন্য Ad বেছে নিন।");
+    }
+    if (!productId) {
+      for (const s of full.adSets ?? []) {
+        const ad = (s.ads ?? []).find((a: any) => a.productId);
+        if (ad) { productId = (ad as any).productId; break; }
+      }
+    }
+    if (!productId) throw new BadRequestException("এই Plan-এর কোনো Ad-তেই Product যুক্ত নেই — Landing Page Product ছাড়া তৈরি হয় না।");
+    const product = await (this.prisma as any).product.findFirst({ where: { id: productId, organizationId } });
+    if (!product) throw new NotFoundException("Product not found in this organization");
+    const landing = await this.landings.create(organizationId, actorId, {
+      productId, title: String(product.name).slice(0, 200),
+      status: dto.publish ? "published" : "draft",
+    } as any);
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.landing_created", entityType: "LandingPage", entityId: landing.id, metadata: { planId, productId, slug: landing.slug, status: landing.status } }).catch(() => undefined);
+    // Existing landings for the same product ride along
+    // so the builder can offer one instead of duplicating.
+    const existing = await this.landings.list(organizationId).catch(() => []);
+    const existingForProduct = (existing as any[])
+      .filter((l) => l.productId === productId && l.id !== landing.id)
+      .map((l) => ({ id: l.id, slug: l.slug, status: l.status, title: l.title, ...this.landingUrlFor(l.slug) }));
+    return {
+      landing: { id: landing.id, slug: landing.slug, status: landing.status, title: landing.title, productId: landing.productId },
+      ...this.landingUrlFor(landing.slug),
+      product: { id: product.id, name: product.name },
+      existingForProduct,
+      note: landing.status === "published"
+        ? "Landing তৈরি ও Publish হয়েছে — Public পেজটি Product Row-এর আসল নাম/দাম/ছবি দেখাবে। Ad-এ বসাতে চাইলে আলাদাভাবে নিশ্চিত করুন (নিচের Apply ধাপ)।"
+        : "Landing Draft হিসেবে তৈরি হয়েছে — Publish না করা পর্যন্ত Public পেজ খুলবে না এবং Ad-এ বসানো যাবে না (Landings পেজ থেকে Publish করুন)।",
+    };
+  }
+
+  /** CA28: offer a landing's URL into an ad's linkUrl —
+   * a separate, explicit step (the builder confirms;
+   * creation NEVER touches the ad). Only a PUBLISHED
+   * landing may be applied: the public machinery serves
+   * nothing else (getPublishedLanding), so pointing an
+   * ad at a draft would send buyers to a dead page. The
+   * write rides updateAd, so the previous link is
+   * snapshotted as an ad version (CA27) first. */
+  async applyLandingToAd(organizationId: string, actorId: string, planId: string, adId: string, landingId: string) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    this.assertEditable(plan);
+    const landing = await (this.prisma as any).landingPage?.findFirst?.({ where: { id: landingId, organizationId } }).catch(() => null) ?? null;
+    if (!landing) throw new NotFoundException("Landing page not found in this organization");
+    if (landing.status !== "published") {
+      throw new BadRequestException(`এই Landing টি এখন "${landing.status}" অবস্থায় আছে — Publish করা Landing ছাড়া Ad-এ বসানো যায় না, কারণ Public পেজ শুধু Published Landing-ই দেখায়। আগে Landings পেজ থেকে Publish করুন।`);
+    }
+    const { url, path } = this.landingUrlFor(landing.slug);
+    if (!url) {
+      throw new BadRequestException("সার্ভারে WEB_PUBLIC_URL/APP_PUBLIC_URL সেট নেই — Landing-এর পূর্ণ URL জানা যাচ্ছে না, তাই Ad-এ বসানো হয়নি (আপেক্ষিক Path Meta-র কাছে পৌঁছাবে না)।");
+    }
+    const updated = await this.updateAd(organizationId, planId, adId, actorId, { linkUrl: url });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.landing_applied_to_ad", entityType: "CampaignAd", entityId: adId, metadata: { landingId, slug: landing.slug, path } }).catch(() => undefined);
+    return { ad: updated, landing: { id: landing.id, slug: landing.slug, status: landing.status }, url, path };
   }
 
   /** CB1: duplicate one ad inside its ad set. */
@@ -2293,8 +3016,39 @@ export class CampaignsService implements OnModuleInit {
   validatePlan(fullPlan: any): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
     if (!fullPlan.adSets?.length) errors.push("At least one ad set is required");
-    if (fullPlan.advantagePlus && fullPlan.objective !== "OUTCOME_SALES") {
-      errors.push("Advantage+ is a Sales format: the plan objective must be OUTCOME_SALES");
+    if (fullPlan.advantagePlus && !["OUTCOME_SALES", "OUTCOME_APP_PROMOTION"].includes(fullPlan.objective)) {
+      errors.push("Advantage+ runs on the Sales or App Promotion objectives: the plan objective must be OUTCOME_SALES or OUTCOME_APP_PROMOTION");
+    }
+    // CA23: a TRUE Advantage+ campaign (Meta's unified
+    // Advantage+ guide, verified 2026-10-17) additionally
+    // requires (a) NO placement targeting on ANY ad set —
+    // one restricted set turns the whole campaign's
+    // advantage_state to DISABLED — and (b) ONE campaign
+    // bid strategy, because the budget (and its bid) lives
+    // at campaign level. Both conflicts are named here so
+    // publish never silently drops the merchant's settings.
+    if (fullPlan.advantagePlus) {
+      for (const s of fullPlan.adSets ?? []) {
+        const restricted = CampaignsService.placementRestrictionsOf(s.targeting);
+        if (restricted.length) {
+          errors.push(`Ad set "${s.name}": placement restrictions (${restricted.join(", ")}) conflict with Advantage+ — Meta requires every placement open on every ad set. Remove the placement restrictions or turn Advantage+ off`);
+        }
+      }
+      if ((fullPlan.adSets ?? []).length && !this.advantageCampaignBid(fullPlan)) {
+        errors.push("Advantage+ needs ONE campaign bid strategy: the ad sets disagree on bid strategy or amounts — make every ad set use the same bid strategy (and amount) or turn Advantage+ off");
+      }
+    }
+    // CA23: app promotion structure (any app plan, with or
+    // without Advantage+). Publish sends promoted_object
+    // { application_id, object_store_url } per ad set and
+    // optimizes on APP_INSTALLS (Meta's app-ads contract);
+    // a missing piece is named, never invented.
+    if (fullPlan.objective === "OUTCOME_APP_PROMOTION") {
+      for (const s of fullPlan.adSets ?? []) {
+        if (!s.appId) errors.push(`Ad set "${s.name}": App ID is required for app promotion (Meta application_id)`);
+        if (!s.appStoreUrl) errors.push(`Ad set "${s.name}": App Store / Play Store URL is required for app promotion (Meta object_store_url)`);
+        if (s.optimizationGoal !== "APP_INSTALLS") errors.push(`Ad set "${s.name}": app promotion optimizes on APP_INSTALLS — set the ad set's optimization goal to APP_INSTALLS`);
+      }
     }
     // CN2: a CBO plan must carry its budget at campaign
     // level (Advantage+ keeps its first-ad-set fallback).
@@ -2314,6 +3068,23 @@ export class CampaignsService implements OnModuleInit {
       if (bidError) errors.push(`Ad set "${adSet.name}": ${bidError}`);
       const countries = (adSet.targeting as any)?.countries ?? [];
       if (!countries.length) errors.push(`Ad set "${adSet.name}": no target countries`);
+      // CA6: an audience that is BOTH included and excluded
+      // (directly, or via an applied exclusion preset) is a
+      // contradiction — Meta would silently honour one side.
+      // It is named here, at structure level, never published
+      // as-is. Preset entries carry their own external id, so
+      // a preset-only exclusion conflicts the same way.
+      {
+        const t = (adSet.targeting as any) ?? {};
+        const includedIds: string[] = Array.isArray(t.customAudienceIds) ? t.customAudienceIds.map(String) : [];
+        const excludedIds = new Set<string>([
+          ...(Array.isArray(t.excludedAudienceIds) ? t.excludedAudienceIds.map(String) : []),
+          ...(Array.isArray(t.exclusionPresets) ? t.exclusionPresets.map((p: any) => String(p?.externalAudienceId ?? "")).filter(Boolean) : []),
+        ]);
+        for (const id of includedIds) {
+          if (excludedIds.has(id)) errors.push(`Ad set "${adSet.name}": audience ${id} is both included and excluded — remove it from one side`);
+        }
+      }
       if (!adSet.pageId) errors.push(`Ad set "${adSet.name}": Facebook Page ID is required to run ads`);
       // CN3: a catalog ad set optimizes on its product set
       // (Meta uses the catalog's connected pixel), so the
@@ -2431,6 +3202,14 @@ export class CampaignsService implements OnModuleInit {
         whatsappIntegrationId: s.whatsappIntegrationId ?? null,
         whatsappPhoneNumberId: s.whatsappPhoneNumberId ?? null,
         whatsappPhoneNumber: s.whatsappPhoneNumber ?? null,
+        // CA23: the app-promotion pair freezes too — but
+        // ONLY on app plans, so existing plans' snapshots
+        // stay byte-stable (an app field on a sales plan
+        // is meaningless and must not fake a "change").
+        ...(full.objective === "OUTCOME_APP_PROMOTION" ? {
+          appId: s.appId ?? null,
+          appStoreUrl: s.appStoreUrl ?? null,
+        } : {}),
         targeting: s.targeting ?? {},
         ads: (s.ads ?? []).map((a: any) => ({
           name: a.name, primaryText: a.primaryText, headline: a.headline ?? null,
@@ -2739,6 +3518,253 @@ export class CampaignsService implements OnModuleInit {
     return { twoStepApproval };
   }
 
+  /** CA14: a fixed-amount (±) live budget adjustment
+   * across a plan's live ad sets — the fixed-BDT sibling
+   * of scalePlanBudgets. Parity rules: same live-set
+   * selection (externalAdSetId + daily budget), same
+   * updateAdSetBudget path (Meta-confirmed, per-set
+   * audit). Fixed-specific guard: the delta is pre-checked
+   * against EVERY set first — if any set would land at
+   * <= 0 the whole plan is refused with NO set changed
+   * (a percent scale can never cross zero; a fixed cut
+   * can). */
+  async adjustPlanBudgetsFixed(organizationId: string, actorId: string, planId: string, deltaMinor: bigint) {
+    const plan = await this.getPlanFull(organizationId, planId);
+    const live = (plan.adSets ?? []).filter((s: any) => s.externalAdSetId && s.dailyBudgetMinor != null);
+    if (!live.length) return [];
+    for (const s of live) {
+      if (BigInt(s.dailyBudgetMinor) + deltaMinor <= 0n) {
+        throw new BadRequestException(`Fixed adjust ${deltaMinor} would take ad set "${s.name}" to <= 0 — refused, nothing changed`);
+      }
+    }
+    const out: { adSetId: string; beforeMinor: string; afterMinor: string; metaWriteOk: boolean }[] = [];
+    for (const s of live) {
+      const before = BigInt(s.dailyBudgetMinor);
+      const after = before + deltaMinor;
+      // updateAdSetBudget throws when Meta refuses, so
+      // reaching the push means the Meta write succeeded
+      // (it performs no read-back — metaWriteOk states
+      // exactly that, nothing more).
+      await this.updateAdSetBudget(organizationId, actorId, planId, s.id, { dailyBudget: CampaignsService.minorToMajorString(after) });
+      out.push({ adSetId: s.id, beforeMinor: before.toString(), afterMinor: after.toString(), metaWriteOk: true });
+    }
+    return out;
+  }
+
+  /** CA14: server-side bulk operations over the existing
+   * single-item services (setMetaStatus / scalePlanBudgets
+   * / adjustPlanBudgetsFixed / duplicatePlan) — the
+   * client-side per-plan loop is replaced by ONE call
+   * whose response carries a per-item result for every
+   * plan: partial failure is reported as partial, never
+   * dressed up as full success. Every item is org-scoped
+   * (a foreign id is a per-item plan_not_found, not a
+   * leak and not a batch failure); per-item audits come
+   * from the underlying operations, plus one summary
+   * audit row here. Sequential by design (Meta calls). */
+  async bulkPlanAction(organizationId: string, actorId: string, dto: { planIds?: string[]; action?: string; percent?: number; fixedMinor?: string }) {
+    const action = String(dto.action ?? "");
+    if (!["pause", "activate", "budget_percent", "budget_fixed", "duplicate"].includes(action)) {
+      throw new BadRequestException("action must be pause, activate, budget_percent, budget_fixed or duplicate");
+    }
+    const planIds = [...new Set((dto.planIds ?? []).map((x) => String(x)).filter(Boolean))];
+    if (!planIds.length) throw new BadRequestException("planIds is required");
+    if (planIds.length > 50) throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি Plan");
+    let percent = 0;
+    let delta = 0n;
+    if (action === "budget_percent") {
+      percent = Math.trunc(Number(dto.percent));
+      if (!Number.isFinite(percent) || percent === 0) throw new BadRequestException("percent must be a non-zero number");
+      if (percent < -90 || percent > 900) throw new BadRequestException("percent must be between -90 and +900");
+    }
+    if (action === "budget_fixed") {
+      try { delta = BigInt(String(dto.fixedMinor ?? "")); } catch { throw new BadRequestException("fixedMinor must be an integer minor-unit amount"); }
+      if (delta === 0n) throw new BadRequestException("fixedMinor must be non-zero");
+    }
+    const results: { planId: string; ok: boolean; result?: any; error?: string }[] = [];
+    for (const planId of planIds) {
+      try {
+        const plan = await (this.prisma as any).campaignPlan.findFirst({ where: { id: planId, organizationId } });
+        if (!plan) { results.push({ planId, ok: false, error: "plan_not_found" }); continue; }
+        if (action === "pause" || action === "activate") {
+          if (plan.status !== "published") { results.push({ planId, ok: false, error: "not_published" }); continue; }
+          const r: any = await this.setMetaStatus(organizationId, actorId, planId, action === "pause" ? "PAUSED" : "ACTIVE");
+          results.push({ planId, ok: true, result: { metaStatus: r?.metaStatus ?? (action === "pause" ? "PAUSED" : "ACTIVE") } });
+        } else if (action === "budget_percent") {
+          const rows = await this.scalePlanBudgets(organizationId, actorId, planId, percent, {});
+          if (!rows.length) { results.push({ planId, ok: false, error: "no_live_budget_path" }); continue; }
+          results.push({ planId, ok: true, result: { changed: rows } });
+        } else if (action === "budget_fixed") {
+          const rows = await this.adjustPlanBudgetsFixed(organizationId, actorId, planId, delta);
+          if (!rows.length) { results.push({ planId, ok: false, error: "no_live_budget_path" }); continue; }
+          results.push({ planId, ok: true, result: { changed: rows } });
+        } else {
+          const copy: any = await this.duplicatePlan(organizationId, actorId, planId);
+          results.push({ planId, ok: true, result: { newPlanId: copy.id, status: copy.status } });
+        }
+      } catch (e) {
+        results.push({ planId, ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    const succeeded = results.filter((r) => r.ok).length;
+    await this.audit.log({
+      organizationId, userId: actorId, action: "campaign.bulk_action",
+      entityType: "campaignPlan", entityId: planIds[0],
+      metadata: { bulkAction: action, requested: planIds.length, succeeded, failed: planIds.length - succeeded },
+    }).catch(() => undefined);
+    return { action, results, succeeded, failed: planIds.length - succeeded };
+  }
+
+  // ---------- CA13: naming conventions ----------
+
+  /** The org's naming template, stored on BusinessProfile
+   * (the Organization Settings record). Absent profile or
+   * null column = no convention — names stay as typed. */
+  private async namingTemplate(organizationId: string): Promise<string | null> {
+    const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } }).catch(() => null);
+    const t = profile?.campaignNamingTemplate;
+    return typeof t === "string" && t.trim() ? t : null;
+  }
+
+  async getNamingTemplate(organizationId: string) {
+    const template = await this.namingTemplate(organizationId);
+    return {
+      template,
+      tokens: [...NAMING_TOKENS],
+      sample: template ? renderNamingTemplate(template, { product: "Panjabi", audience: "Dhaka Men", objective: "OUTCOME_SALES", date: "2026-10-17", platform: "Meta" }) : null,
+    };
+  }
+
+  async setNamingTemplate(organizationId: string, actorId: string, dto: { template?: string | null }) {
+    const table = (this.prisma as any).businessProfile;
+    if (!table?.findUnique) throw new BadRequestException("Naming settings are not available in this context (BusinessProfile table missing)");
+    const raw = dto?.template == null ? null : String(dto.template).trim();
+    if (raw !== null) {
+      if (raw.length > 200) throw new BadRequestException("Template সর্বোচ্চ ২০০ অক্ষরের হতে পারে");
+      const used = [...raw.matchAll(/\{([a-zA-Z]+)\}/g)].map((m) => m[1].toLowerCase());
+      const unknown = used.filter((t) => !(NAMING_TOKENS as readonly string[]).includes(t));
+      if (unknown.length) throw new BadRequestException(`অজানা token: ${unknown.map((t) => `{${t}}`).join(", ")} — ব্যবহারযোগ্য token: ${NAMING_TOKENS.map((t) => `{${t}}`).join(" ")}`);
+      if (!used.length) throw new BadRequestException("Template-এ অন্তত একটি token থাকতে হবে — নইলে সব নাম একই হয়ে যাবে");
+    }
+    const template = raw === "" ? null : raw;
+    const existing = await table.findUnique({ where: { organizationId } }).catch(() => null);
+    if (existing) await table.update({ where: { organizationId }, data: { campaignNamingTemplate: template } });
+    else await table.create({ data: { organizationId, campaignNamingTemplate: template } });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.naming_template_updated", entityType: "BusinessProfile", entityId: organizationId, metadata: { template } }).catch(() => undefined);
+    return this.getNamingTemplate(organizationId);
+  }
+
+  /** YYYY-MM-DD in the ORG's timezone (en-CA formats ISO
+   * order); falls back to the UTC date if the tz is bad. */
+  private async orgToday(organizationId: string): Promise<string> {
+    const tz = await this.orgTimezone(organizationId);
+    try {
+      return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  /** Create-time naming: the template applies ONLY when
+   * the name is blank or the caller explicitly opted in
+   * (useNamingTemplate) — a typed name is NEVER silently
+   * overwritten. A blank render (no template, or every
+   * token empty) keeps the original name. */
+  private async nameAtCreate(organizationId: string, currentName: string, opts: { useTemplate?: boolean; values: Record<string, string | null | undefined> }): Promise<string> {
+    const typed = (currentName ?? "").trim();
+    if (typed && !opts.useTemplate) return currentName;
+    const template = await this.namingTemplate(organizationId);
+    if (!template) return currentName;
+    const rendered = renderNamingTemplate(template, opts.values);
+    return rendered || currentName;
+  }
+
+  /** The token values one plan tree genuinely has: the
+   * plan's objective/platform/date at every level, the
+   * saved-audience name on ad sets that reference one,
+   * the product name on ads linked to a product. Missing
+   * values render empty — never invented. */
+  private async namingItemsForPlan(organizationId: string, full: any): Promise<any[]> {
+    const date = await this.orgToday(organizationId);
+    const base = { objective: full.objective, platform: "Meta", date };
+    const items: any[] = [{ level: "plan", id: full.id, currentName: full.name, values: base }];
+    for (const s of full.adSets ?? []) {
+      let audience: string | null = null;
+      const savedId = (s.targeting as any)?.savedAudienceId;
+      if (savedId && (this.prisma as any).savedAudience?.findFirst) {
+        const saved = await (this.prisma as any).savedAudience.findFirst({ where: { id: String(savedId), organizationId } }).catch(() => null);
+        audience = saved?.name ?? null;
+      }
+      items.push({ level: "ad_set", id: s.id, currentName: s.name, values: { ...base, audience } });
+      for (const ad of s.ads ?? []) {
+        let product: string | null = null;
+        if (ad.productId && (this.prisma as any).product?.findFirst) {
+          const prod = await (this.prisma as any).product.findFirst({ where: { id: ad.productId, organizationId } }).catch(() => null);
+          product = prod?.name ?? null;
+        }
+        items.push({ level: "ad", id: ad.id, currentName: ad.name, values: { ...base, audience, product } });
+      }
+    }
+    return items;
+  }
+
+  /** CA13: the rename PREVIEW — what the template would
+   * make of this plan's tree. Nothing is renamed here. */
+  async previewNamingApply(organizationId: string, planId: string) {
+    const template = await this.namingTemplate(organizationId);
+    if (!template) throw new BadRequestException("কোনো Naming Template সেট করা নেই — আগে Organization Settings / Campaign Settings-এ Template বসান");
+    const full = await this.getPlanFull(organizationId, planId);
+    const raw = await this.namingItemsForPlan(organizationId, full);
+    const items = raw.map((it) => {
+      const newName = renderNamingTemplate(template, it.values);
+      return { level: it.level, id: it.id, currentName: it.currentName, newName: newName || null, changed: !!newName && newName !== it.currentName };
+    });
+    return {
+      template, items,
+      note: "এটি শুধু Preview — Apply নিশ্চিত না করলে কোনো নাম বদলাবে না। Apply শুধু এই সিস্টেমের রেকর্ডের নাম বদলায়; Meta-তে থাকা Campaign/Ad Set/Ad-এর নাম বদলায় না।",
+    };
+  }
+
+  /** CA13: apply a CONFIRMED rename preview. The server
+   * re-renders and each item's newName must match the
+   * fresh render exactly — a stale or hand-edited preview
+   * is refused per item, never applied. Local records
+   * only: Meta object names are NOT touched (stated in
+   * the response, not hidden). */
+  async applyNaming(organizationId: string, actorId: string, planId: string, dto: { items: { level: string; id: string; newName: string }[] }) {
+    const preview = await this.previewNamingApply(organizationId, planId);
+    const fresh = new Map(preview.items.map((i: any) => [`${i.level}:${i.id}`, i]));
+    const requested = (dto.items ?? []).filter((i) => i?.id && i?.level).slice(0, 200);
+    if (!requested.length) throw new BadRequestException("প্রয়োগের জন্য অন্তত একটি নাম পাঠাতে হবে");
+    const results: any[] = [];
+    const appliedDiffs: any[] = [];
+    for (const item of requested) {
+      const f = fresh.get(`${item.level}:${item.id}`);
+      if (!f) { results.push({ level: item.level, id: item.id, ok: false, error: "item_not_in_plan" }); continue; }
+      if (!f.newName || f.newName !== item.newName) { results.push({ level: item.level, id: item.id, ok: false, error: "stale_preview", freshNewName: f.newName }); continue; }
+      try {
+        if (item.level === "plan") await (this.prisma as any).campaignPlan.update({ where: { id: item.id }, data: { name: item.newName } });
+        else if (item.level === "ad_set") await (this.prisma as any).campaignAdSet.update({ where: { id: item.id }, data: { name: item.newName } });
+        else if (item.level === "ad") await (this.prisma as any).campaignAd.update({ where: { id: item.id }, data: { name: item.newName } });
+        else { results.push({ level: item.level, id: item.id, ok: false, error: "unknown_level" }); continue; }
+        results.push({ level: item.level, id: item.id, ok: true, from: f.currentName, to: item.newName });
+        appliedDiffs.push({ level: item.level, id: item.id, from: f.currentName, to: item.newName });
+      } catch (e) {
+        results.push({ level: item.level, id: item.id, ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (appliedDiffs.length) {
+      await this.audit.log({ organizationId, userId: actorId, action: "campaign.naming_applied", entityType: "CampaignPlan", entityId: planId, metadata: { template: preview.template, diffs: appliedDiffs } }).catch(() => undefined);
+    }
+    return {
+      results,
+      appliedCount: results.filter((r) => r.ok).length,
+      failedCount: results.filter((r) => !r.ok).length,
+      note: "নাম বদলেছে শুধু এই সিস্টেমের রেকর্ডে — Meta-তে থাকা Campaign/Ad Set/Ad-এর নাম বদলায়নি।",
+      plan: await this.getPlanFull(organizationId, planId),
+    };
+  }
+
   // ---------- CN11: last recorded activity ----------
   /**
    * The plan's LAST RECORDED ACTIVITY: the newest audit
@@ -2938,6 +3964,16 @@ export class CampaignsService implements OnModuleInit {
     if (Array.isArray(targeting.postcodes) && targeting.postcodes.length) {
       geo.zips = targeting.postcodes.map((k: string) => ({ key: k }));
     }
+    // CA9: stored regions are { key, name } pairs whose key
+    // was RESOLVED from Meta's own targeting search at
+    // draft-creation time — an unresolved region never
+    // reaches this list (it is reported as notCarried by
+    // the draft endpoint instead of being guessed here).
+    if (Array.isArray(targeting.regions) && targeting.regions.length) {
+      geo.regions = targeting.regions
+        .map((r: any) => ({ key: String(r?.key ?? "") }))
+        .filter((r: any) => r.key);
+    }
     if (Array.isArray(targeting.locationTypes) && targeting.locationTypes.length) {
       geo.location_types = targeting.locationTypes;
     }
@@ -2993,10 +4029,17 @@ export class CampaignsService implements OnModuleInit {
     // vocabulary maps onto each platform's own enum;
     // a platform with no mapped position is simply not
     // position-restricted (its field is omitted).
-    if (Array.isArray(targeting.platforms) && targeting.platforms.length) {
+    // CA23: on an Advantage+ plan NO placement field is
+    // sent at all — Meta's placement lever requires every
+    // placement eligible, and a single restricted ad set
+    // disables the campaign's Advantage+ state.
+    // validatePlan already refuses such plans (naming the
+    // stored restrictions), so this suppression is defence
+    // in depth for paths that build targeting directly.
+    if (!advantagePlus && Array.isArray(targeting.platforms) && targeting.platforms.length) {
       out.publisher_platforms = targeting.platforms;
     }
-    if (Array.isArray(targeting.positions) && targeting.positions.length) {
+    if (!advantagePlus && Array.isArray(targeting.positions) && targeting.positions.length) {
       const FB: Record<string, string> = { feed: "feed", story: "story", reels: "facebook_reels", search: "search" };
       const IG: Record<string, string> = { feed: "stream", story: "story", reels: "reels", search: "ig_search" };
       const platforms: string[] = Array.isArray(targeting.platforms) && targeting.platforms.length ? targeting.platforms : ["facebook", "instagram"];
@@ -3005,7 +4048,7 @@ export class CampaignsService implements OnModuleInit {
       if (platforms.includes("facebook") && fb.length) out.facebook_positions = fb;
       if (platforms.includes("instagram") && ig.length) out.instagram_positions = ig;
     }
-    if (Array.isArray(targeting.devices) && targeting.devices.length) {
+    if (!advantagePlus && Array.isArray(targeting.devices) && targeting.devices.length) {
       out.device_platforms = targeting.devices;
     }
     return out;
@@ -3118,16 +4161,136 @@ export class CampaignsService implements OnModuleInit {
     });
   }
 
-  listBlueprints() {
-    return BLUEPRINTS;
+  /** CA26: the shape every blueprint source (DB row or
+   * the pre-migration const fallback) is normalized to. */
+  private blueprintShape(row: any) {
+    return {
+      id: row.id ?? null,
+      key: row.key,
+      name: row.name,
+      objective: row.objective,
+      advantagePlus: !!row.advantagePlus,
+      description: row.description,
+      adSet: row.adSet,
+      ad: row.ad,
+      scope: row.organizationId ? "org" : "platform",
+      editable: !!row.organizationId,
+      version: row.version ?? 1,
+      category: row.category ?? null,
+      tags: row.tags ?? [],
+    };
+  }
+
+  /** CA26: blueprints are DATA now (CampaignBlueprint
+   * rows, seeded by migration 20261030900000 with the
+   * exact former constants). Platform rows
+   * (organizationId null) are read-only for orgs; an
+   * org's own clones ride along and win key collisions
+   * at instantiate time. The BLUEPRINTS consts remain
+   * ONLY as the seed source + a pre-migration fallback
+   * for environments whose DB predates the table. */
+  async listBlueprints(organizationId?: string) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findMany) return BLUEPRINTS.map((b) => this.blueprintShape(b));
+    const rows = await table.findMany({
+      where: organizationId ? { OR: [{ organizationId: null }, { organizationId }] } : { organizationId: null },
+      orderBy: [{ organizationId: "asc" }, { createdAt: "asc" }],
+    }).catch(() => null);
+    if (!rows) return BLUEPRINTS.map((b) => this.blueprintShape(b));
+    return rows.map((r: any) => this.blueprintShape(r));
+  }
+
+  /** CA26: resolve the blueprint a caller may use — by
+   * row id when given (must be platform or the org's
+   * own), else by key with the org's copy winning over
+   * the platform original. Null when nothing matches. */
+  private async blueprintFor(organizationId: string, key?: string, rowId?: string) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findFirst) {
+      const bp = BLUEPRINTS.find((b) => b.key === key);
+      return bp ? this.blueprintShape(bp) : null;
+    }
+    if (rowId) {
+      const row = await table.findFirst({ where: { id: rowId } }).catch(() => null);
+      if (row && (row.organizationId === null || row.organizationId === organizationId)) return this.blueprintShape(row);
+      return null;
+    }
+    const own = await table.findFirst({ where: { key, organizationId } }).catch(() => null);
+    if (own) return this.blueprintShape(own);
+    const platform = await table.findFirst({ where: { key, organizationId: null } }).catch(() => null);
+    return platform ? this.blueprintShape(platform) : null;
+  }
+
+  /** CA26: clone a platform blueprint into an editable
+   * org-owned copy. Idempotent — a second clone returns
+   * the existing copy. The platform original is never
+   * modified by orgs. */
+  async cloneBlueprint(organizationId: string, actorId: string, key: string) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findFirst) throw new BadRequestException("Blueprint data এখনো পাওয়া যাচ্ছে না (Migration বাকি)।");
+    const platform = await table.findFirst({ where: { key, organizationId: null } });
+    if (!platform) throw new NotFoundException("Platform blueprint not found");
+    const existing = await table.findFirst({ where: { key, organizationId } });
+    if (existing) return this.blueprintShape(existing);
+    const copy = await table.create({
+      data: {
+        key: platform.key, name: `${platform.name} (নিজের কপি)`, objective: platform.objective,
+        advantagePlus: platform.advantagePlus, description: platform.description,
+        adSet: platform.adSet, ad: platform.ad, organizationId,
+        version: 1, category: platform.category ?? null, tags: platform.tags ?? [],
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.blueprint_cloned", entityType: "CampaignBlueprint", entityId: copy.id, metadata: { key, sourceId: platform.id } });
+    return this.blueprintShape(copy);
+  }
+
+  /** CA26: edit an ORG-OWNED blueprint copy. Platform
+   * rows refuse here — clone first. Version increments
+   * on every edit; history is the version counter plus
+   * the audit trail (no silent rewrites). */
+  async updateOrgBlueprint(organizationId: string, actorId: string, rowId: string, dto: { name?: string; description?: string; objective?: string; advantagePlus?: boolean; adSet?: any; ad?: any; category?: string | null; tags?: string[] }) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findFirst) throw new BadRequestException("Blueprint data এখনো পাওয়া যাচ্ছে না (Migration বাকি)।");
+    const row = await table.findFirst({ where: { id: rowId } });
+    if (!row) throw new NotFoundException("Blueprint not found");
+    if (row.organizationId !== organizationId) {
+      throw new ForbiddenException("এটি Platform Blueprint — বদলাতে হলে আগে নিজের কপি বানান (Clone)।");
+    }
+    const data: any = { version: (row.version ?? 1) + 1 };
+    if (dto.name !== undefined) data.name = String(dto.name).slice(0, 200);
+    if (dto.description !== undefined) data.description = String(dto.description).slice(0, 2000);
+    if (dto.objective !== undefined) data.objective = String(dto.objective);
+    if (dto.advantagePlus !== undefined) data.advantagePlus = !!dto.advantagePlus;
+    if (dto.adSet !== undefined) data.adSet = dto.adSet;
+    if (dto.ad !== undefined) data.ad = dto.ad;
+    if (dto.category !== undefined) data.category = dto.category;
+    if (dto.tags !== undefined) data.tags = dto.tags;
+    const updated = await table.update({ where: { id: rowId }, data });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.blueprint_updated", entityType: "CampaignBlueprint", entityId: rowId, metadata: { key: row.key, version: data.version } });
+    return this.blueprintShape(updated);
+  }
+
+  /** CA26: delete an ORG-OWNED blueprint copy (platform
+   * rows refuse — they are the platform team's data). */
+  async deleteOrgBlueprint(organizationId: string, actorId: string, rowId: string) {
+    const table = (this.prisma as any).campaignBlueprint;
+    if (!table?.findFirst) throw new BadRequestException("Blueprint data এখনো পাওয়া যাচ্ছে না (Migration বাকি)।");
+    const row = await table.findFirst({ where: { id: rowId } });
+    if (!row) throw new NotFoundException("Blueprint not found");
+    if (row.organizationId !== organizationId) {
+      throw new ForbiddenException("Platform Blueprint মুছা যায় না — এটি Platform-এর সম্পত্তি।");
+    }
+    await table.delete({ where: { id: rowId } });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.blueprint_deleted", entityType: "CampaignBlueprint", entityId: rowId, metadata: { key: row.key } });
+    return { deleted: true, id: rowId };
   }
 
   /** Instantiate a blueprint into an editable draft. Budget values are
    * editable starting points chosen by the owner, NOT recommendations
    * based on any performance data. A product, when chosen, grounds the
    * ad copy in its real catalog name and price. */
-  async instantiateBlueprint(organizationId: string, actorId: string, dto: { blueprintKey: string; adAccountId: string; productId?: string }) {
-    const bp = BLUEPRINTS.find((b) => b.key === dto.blueprintKey);
+  async instantiateBlueprint(organizationId: string, actorId: string, dto: { blueprintKey: string; adAccountId: string; productId?: string; blueprintId?: string }) {
+    const bp = await this.blueprintFor(organizationId, dto.blueprintKey, dto.blueprintId);
     if (!bp) throw new BadRequestException("Unknown blueprint");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.adAccountId, organizationId } });
     if (!account) throw new NotFoundException("Ad account not found");
@@ -3234,7 +4397,23 @@ export class CampaignsService implements OnModuleInit {
    *  - LEAD_GENERATION with pixel + LEAD event →
    *    { pixel_id, custom_event_type: "LEAD" }.
    *  - LEAD_GENERATION as before → { page_id }. */
-  private async publishPromotedObject(organizationId: string, planId: string, actorId: string, client: MetaPublishClient, adSet: any): Promise<{ promotedObject?: Record<string, unknown>; destinationType?: string; leadFormExternalId?: string; catalogTemplate?: boolean; whatsApp?: boolean }> {
+  private async publishPromotedObject(organizationId: string, planId: string, actorId: string, client: MetaPublishClient, adSet: any, planObjective?: string): Promise<{ promotedObject?: Record<string, unknown>; destinationType?: string; leadFormExternalId?: string; catalogTemplate?: boolean; whatsApp?: boolean }> {
+    // CA23: an app-promotion set — promoted_object is the
+    // app itself (Meta's app-ads contract: application_id +
+    // object_store_url; a catalog set on an app plan adds
+    // its product_set_id, the documented combination).
+    // validatePlan has already named any missing field.
+    if (planObjective === "OUTCOME_APP_PROMOTION") {
+      const refs = (adSet.catalogRecordId || adSet.productSetId) ? await this.resolveCatalogRefs(organizationId, adSet) : null;
+      return {
+        promotedObject: {
+          application_id: adSet.appId,
+          object_store_url: adSet.appStoreUrl,
+          ...(refs ? { product_set_id: refs!.set.externalSetId } : {}),
+        },
+        catalogTemplate: refs ? true : undefined,
+      };
+    }
     // CN13: a WhatsApp destination set — promoted_object
     // is the Page plus the connected number's digits when
     // Meta's read-back resolved them at save time (the
@@ -3347,14 +4526,22 @@ export class CampaignsService implements OnModuleInit {
         if (cbo && cb.dailyMinor == null && cb.lifetimeMinor == null) {
           throw new BadRequestException("Campaign budget (CBO) needs a campaign daily or lifetime budget on the plan (Advantage+ without one needs an ad set with a daily budget)");
         }
+        // CA23: an Advantage+ plan sends the budget lever
+        // explicitly — campaign budget + the ONE derived
+        // campaign bid strategy (validatePlan guaranteed
+        // uniformity) + budget sharing off (ad sets carry
+        // no budgets under CBO). Non-Advantage plans send
+        // exactly what they sent before.
+        const advBid = plan.advantagePlus ? this.advantageCampaignBid(full) : null;
         const created = await client.createCampaign(account.externalId, {
           name: plan.name, objective: plan.objective,
           dailyBudgetMinor: cbo ? (cb.dailyMinor?.toString() ?? undefined) : undefined,
           lifetimeBudgetMinor: cbo ? (cb.lifetimeMinor?.toString() ?? undefined) : undefined,
+          ...(advBid ? { bidStrategy: advBid.bidStrategy, bidAmountMinor: advBid.bidAmountMinor, bidConstraints: advBid.bidConstraints, isAdsetBudgetSharingEnabled: false } : {}),
         });
         if (plan.advantagePlus) {
           await this.logStep(planId, actorId, "advantage_plus", "success", { externalId: cb.dailyMinor?.toString() }).catch(() => undefined);
-          await this.audit.log({ organizationId, userId: actorId, action: "campaign.advantage_plus_publish", entityType: "CampaignPlan", entityId: planId, metadata: { campaignBudgetMinor: cb.dailyMinor?.toString(), note: "Budget moved to campaign level; ad sets created without budgets; targeting_automation.advantage_audience = 1" } }).catch(() => undefined);
+          await this.audit.log({ organizationId, userId: actorId, action: "campaign.advantage_plus_publish", entityType: "CampaignPlan", entityId: planId, metadata: { campaignBudgetMinor: cb.dailyMinor?.toString(), bidStrategy: advBid?.bidStrategy ?? null, note: "TRUE Advantage+ path (CA23): campaign-level budget + campaign bid_strategy; ad sets created without budgets or bid fields; placements suppressed in targeting; targeting_automation.advantage_audience = 1; Meta's advantage_state_info is read back and stored on the plan" } }).catch(() => undefined);
         } else if (cbo) {
           await this.logStep(planId, actorId, "campaign_budget", "success", { externalId: cb.dailyMinor?.toString() ?? cb.lifetimeMinor?.toString() }).catch(() => undefined);
           await this.audit.log({ organizationId, userId: actorId, action: "campaign.cbo_publish", entityType: "CampaignPlan", entityId: planId, metadata: { campaignDailyMinor: cb.dailyMinor?.toString() ?? null, campaignLifetimeMinor: cb.lifetimeMinor?.toString() ?? null, note: "Budget at campaign level (CBO); ad sets created without budgets" } }).catch(() => undefined);
@@ -3363,12 +4550,46 @@ export class CampaignsService implements OnModuleInit {
         await (this.prisma as any).campaignPlan.update({ where: { id: planId }, data: { externalCampaignId: campaignExternalId, metaStatus: "PAUSED" } });
         await this.logStep(planId, actorId, "campaign", "success", { externalId: campaignExternalId });
       }
+      // CA23: the Advantage+ read-back. Meta alone decides
+      // whether the created campaign IS Advantage+ — the
+      // state follows from the levers, and the only honest
+      // confirmation is GET advantage_state_info. The
+      // verdict is stored verbatim on the plan + logged;
+      // a DISABLED verdict does NOT fail the publish (the
+      // campaign exists, PAUSED, and is a valid manual
+      // campaign) but it is recorded loudly, and the UI
+      // shows Meta's state, never the toggle. Runs on
+      // create and on a resume where no verdict exists yet.
+      if (plan.advantagePlus && campaignExternalId && !(plan as any).advantageState) {
+        const verdict = typeof (client as any).getCampaignAdvantageState === "function"
+          ? await (client as any).getCampaignAdvantageState(campaignExternalId).catch(() => null)
+          : null;
+        if (verdict?.advantageState) {
+          await (this.prisma as any).campaignPlan.update({
+            where: { id: planId },
+            data: { advantageState: verdict.advantageState, advantageStateInfo: verdict.raw as any, advantageStateCheckedAt: new Date() },
+          }).catch(() => undefined);
+          (plan as any).advantageState = verdict.advantageState;
+          await this.logStep(planId, actorId, "advantage_state", "success", {
+            externalId: campaignExternalId,
+            error: verdict.advantageState === "DISABLED"
+              ? `Meta advantage_state_info পড়ে দেখা হয়েছে: advantage_state = DISABLED (budget ${verdict.budgetState ?? "?"}, audience ${verdict.audienceState ?? "?"}, placement ${verdict.placementState ?? "?"}) — Campaign তৈরি হয়েছে (PAUSED) কিন্তু Meta এটিকে Advantage+ হিসেবে নিশ্চিত করেনি`
+              : `Meta advantage_state_info নিশ্চিত করেছে: advantage_state = ${verdict.advantageState} (smart_promotion_type ${verdict.smartPromotionType ?? "GUIDED_CREATION"})`,
+          }).catch(() => undefined);
+          await this.audit.log({ organizationId, userId: actorId, action: "campaign.advantage_state_readback", entityType: "CampaignPlan", entityId: planId, metadata: { advantageState: verdict.advantageState, budgetState: verdict.budgetState ?? null, audienceState: verdict.audienceState ?? null, placementState: verdict.placementState ?? null, smartPromotionType: verdict.smartPromotionType ?? null } }).catch(() => undefined);
+        } else {
+          await this.logStep(planId, actorId, "advantage_state", "success", {
+            externalId: campaignExternalId,
+            error: "Meta থেকে advantage_state_info পড়া যায়নি — Advantage+ অবস্থা অনিশ্চিত (Unconfirmed); Plan-এ কোনো নিশ্চিত অবস্থা দেখানো হবে না",
+          }).catch(() => undefined);
+        }
+      }
       for (const adSet of full.adSets) {
         // NB2: what this ad set promotes (CN3 event/catalog,
         // CN4 lead form) — computed per set, before creation;
         // on a resume it recomputes read-only state (a form
         // that already exists on Meta is not re-created).
-        const po = await this.publishPromotedObject(organizationId, planId, actorId, client, adSet);
+        const po = await this.publishPromotedObject(organizationId, planId, actorId, client, adSet, plan.objective);
         let adSetExternalId = adSet.externalAdSetId as string | null;
         if (!adSetExternalId) {
           const created = await client.createAdSet(account.externalId, {
@@ -3381,8 +4602,10 @@ export class CampaignsService implements OnModuleInit {
             promotedObject: po.promotedObject,
             destinationType: po.destinationType,
             // CN2: bidding fields (empty for lowest_cost —
-            // Meta's default needs no fields sent).
-            ...this.bidGraphFields(adSet),
+            // Meta's default needs no fields sent). CA23: on
+            // an Advantage+ plan the bid lives on the
+            // CAMPAIGN (created above) — ad sets send none.
+            ...(plan.advantagePlus ? {} : this.bidGraphFields(adSet)),
             startTime: adSet.startTime ? new Date(adSet.startTime).toISOString() : undefined,
             endTime: adSet.endTime ? new Date(adSet.endTime).toISOString() : undefined,
           });
@@ -3405,8 +4628,16 @@ export class CampaignsService implements OnModuleInit {
           if (ad.externalAdId) continue;
           const resolved = await this.resolveAdMedia(organizationId, ad);
           const full = await this.getPlanOrThrow(organizationId, planId);
-          const tagged = this.tagUtm(ad.linkUrl, full.name);
-          const taggedCards = resolved.carouselCards?.map((card) => ({ ...card, linkUrl: this.tagUtm(card.linkUrl, full.name).url }));
+          // CA17: plan-level UTM — the per-ad params
+          // (template or defaults, now incl. utm_content
+          // = ad set, utm_term = ad) ride BOTH the tagged
+          // destination link and Meta's url_tags on the ad,
+          // so the tagging is identical whichever the
+          // click path. The owner's own utm_* on a link
+          // still win (applyUtmParams never overwrites).
+          const utmParams = this.utmParamsFor(full, { platform: "meta", adSetName: adSet.name, adName: ad.name });
+          const tagged = this.applyUtmParams(ad.linkUrl, utmParams);
+          const taggedCards = resolved.carouselCards?.map((card) => ({ ...card, linkUrl: this.applyUtmParams(card.linkUrl, utmParams).url }));
           if (tagged.changed) {
             await this.logStep(planId, actorId, "utm_tagged", "success", { entityRef: ad.id }).catch(() => undefined);
           }
@@ -3450,6 +4681,10 @@ export class CampaignsService implements OnModuleInit {
             textOptions: cn5Options ?? undefined,
             placementMedia,
             enhancements: cn5Enhancements ?? undefined,
+            // CA17: the same UTM params as the tagged
+            // link, as Meta url_tags (Meta appends them
+            // to the destination URL at click time).
+            urlTags: this.utmQueryString(utmParams) || undefined,
           });
           await (this.prisma as any).campaignAd.update({ where: { id: ad.id }, data: { externalAdId: created.id } });
           await this.logStep(planId, actorId, "ad", "success", { entityRef: ad.id, externalId: created.id });
@@ -3680,7 +4915,7 @@ export class CampaignsService implements OnModuleInit {
    * ad's copy in the plan. Findings quote the offending snippet and
    * explain the rule in plain language. Passing pre-flight does
    * NOT guarantee Meta approval — it removes preventable causes. */
-  async preflight(organizationId: string, planId: string) {
+  async preflight(organizationId: string, planId: string, opts?: { includePlatform?: boolean }) {
     const full = await this.getPlanFull(organizationId, planId);
     const findings: any[] = [];
     let checkedAds = 0;
@@ -3701,7 +4936,105 @@ export class CampaignsService implements OnModuleInit {
       medium: findings.filter((f) => f.severity === "medium").length,
       low: findings.filter((f) => f.severity === "low").length,
     };
-    return { planId, checkedAds, findings, summary, disclaimer: "Pre-flight পাস করা মানে Meta অনুমোদনের নিশ্চয়তা নয় — এটি প্রতিরোধযোগ্য Reject এর কারণগুলো সরায়।" };
+    // CA24: the LIVE platform checks ride the same
+    // response, additively, only when asked (readiness
+    // calls preflight for policy findings and keeps its
+    // old cost profile). platformPreflight never throws —
+    // an unreadable platform is a not_checked result.
+    const platformChecks = opts?.includePlatform
+      ? (await this.platformPreflight(organizationId, planId).catch(() => null))?.checks ?? []
+      : undefined;
+    return { planId, checkedAds, findings, summary, ...(platformChecks ? { platformChecks } : {}), disclaimer: "Pre-flight পাস করা মানে Meta অনুমোদনের নিশ্চয়তা নয় — এটি প্রতিরোধযোগ্য Reject এর কারণগুলো সরায়।" };
+  }
+
+  /** CA24: pre-flight completion — LIVE platform reads
+   * through the plan account's existing Meta client:
+   * (1) ad account status + disable_reason, (2) each
+   * plan Page still fetchable, (3) each plan Pixel's
+   * last_fired_time. Honesty rules, pinned by spec:
+   * a check that could not be performed is
+   * status "not_checked" WITH the reason (NEVER ok);
+   * a platform-CONFIRMED hard failure (account_status
+   * DISABLED/CLOSED) is level "error"; everything else
+   * adverse is "warn". Read-only: nothing here writes to
+   * Meta or moves money. */
+  async platformPreflight(organizationId: string, planId: string) {
+    const full = await this.getPlanFull(organizationId, planId);
+    type Check = { key: string; subject: string; status: "ok" | "warn" | "error" | "not_checked"; label: string; detail: string };
+    const checks: Check[] = [];
+    let client: MetaPublishClient | null = null;
+    let account: any = null;
+    let clientError: string | null = null;
+    try {
+      ({ client, account } = await this.publishClient(organizationId, full));
+    } catch (e) {
+      clientError = e instanceof Error ? e.message.slice(0, 200) : "Meta connection unavailable";
+    }
+    const notChecked = (key: string, subject: string, label: string, reason: string): Check => ({ key, subject, status: "not_checked", label, detail: `যাচাই করা যায়নি (not_checked) — ${reason}` });
+
+    // (1) Ad account status — fresh from Meta.
+    if (!client || !account) {
+      checks.push(notChecked("account_status", String((full as any).adAccountId ?? ""), "Ad Account অবস্থা (Live)", clientError ?? "Meta Client তৈরি করা যায়নি"));
+    } else {
+      try {
+        const st = await client.getAdAccountState(account.externalId);
+        if (st.accountStatus === undefined) {
+          checks.push(notChecked("account_status", account.externalId, "Ad Account অবস্থা (Live)", "Meta account_status পাঠায়নি"));
+        } else {
+          const bucket = metaStatusBucket(st.accountStatus);
+          const reason = st.disableReason ? ` · disable_reason: ${st.disableReason}` : "";
+          checks.push({
+            key: "account_status", subject: account.externalId,
+            status: bucket === "disabled" ? "error" : bucket === "active" ? "ok" : "warn",
+            label: "Ad Account অবস্থা (Live)",
+            detail: `Meta সরাসরি পড়েছে: account_status ${st.accountStatus} (${bucketLabelBn(bucket)})${reason}`,
+          });
+        }
+      } catch (e) {
+        checks.push(notChecked("account_status", account.externalId, "Ad Account অবস্থা (Live)", e instanceof Error ? e.message.slice(0, 200) : "Meta read failed"));
+      }
+    }
+
+    // (2) Pages — each distinct Page on the plan's ad sets.
+    const pageIds = [...new Set((full.adSets ?? []).map((s: any) => s.pageId).filter(Boolean))] as string[];
+    if (!pageIds.length) {
+      checks.push(notChecked("page_access", "", "Page প্রবেশাধিকার (Live)", "কোনো Ad Set-এ Page ID নেই — যাচাই করার মতো Page নেই"));
+    }
+    for (const pageId of pageIds.slice(0, 5)) {
+      if (!client) { checks.push(notChecked("page_access", pageId, "Page প্রবেশাধিকার (Live)", clientError ?? "Meta Client তৈরি করা যায়নি")); continue; }
+      try {
+        const page = await client.getPageNode(pageId);
+        checks.push({ key: "page_access", subject: pageId, status: "ok", label: "Page প্রবেশাধিকার (Live)", detail: `Meta Page টি পড়তে পেরেছে: ${page.name ?? pageId} (id ${page.id ?? pageId})` });
+      } catch (e) {
+        checks.push({ key: "page_access", subject: pageId, status: "warn", label: "Page প্রবেশাধিকার (Live)", detail: `Meta Page ${pageId} পড়তে পারেনি — ${e instanceof Error ? e.message.slice(0, 200) : "read failed"}। Page মুছে গেছে বা Token-এর Access নেই হতে পারে; Publish-এর আগে যাচাই করুন।` });
+      }
+    }
+
+    // (3) Pixels — last event Meta received (last_fired_time).
+    const pixelIds = [...new Set((full.adSets ?? []).map((s: any) => s.pixelId).filter(Boolean))] as string[];
+    if (!pixelIds.length) {
+      checks.push(notChecked("pixel_health", "", "Pixel/Dataset স্বাস্থ্য (Live)", "কোনো Ad Set-এ Pixel ID নেই — যাচাই করার মতো Pixel নেই"));
+    }
+    for (const pixelId of pixelIds.slice(0, 5)) {
+      if (!client) { checks.push(notChecked("pixel_health", pixelId, "Pixel/Dataset স্বাস্থ্য (Live)", clientError ?? "Meta Client তৈরি করা যায়নি")); continue; }
+      try {
+        const px = await client.getPixelNode(pixelId);
+        if (px.lastFiredTime) {
+          checks.push({ key: "pixel_health", subject: pixelId, status: "ok", label: "Pixel/Dataset স্বাস্থ্য (Live)", detail: `Meta-র রেকর্ড অনুযায়ী Pixel ${pixelId} সর্বশেষ Event পেয়েছে: ${px.lastFiredTime}` });
+        } else {
+          checks.push({ key: "pixel_health", subject: pixelId, status: "warn", label: "Pixel/Dataset স্বাস্থ্য (Live)", detail: `Meta Pixel ${pixelId}-এর last_fired_time জানায়নি — Pixel টি কখনো Event পেয়েছে কিনা Meta থেকে নিশ্চিত হওয়া যাচ্ছে না` });
+        }
+      } catch (e) {
+        checks.push(notChecked("pixel_health", pixelId, "Pixel/Dataset স্বাস্থ্য (Live)", e instanceof Error ? e.message.slice(0, 200) : "Meta read failed"));
+      }
+    }
+
+    return {
+      planId,
+      checkedAt: new Date().toISOString(),
+      checks,
+      note: "এই যাচাইগুলো Meta থেকে সরাসরি পড়া (Live Read) — সংরক্ষিত অবস্থা নয়। not_checked মানে যাচাই হয়নি; তা কখনো 'ঠিক আছে' নয়।",
+    };
   }
 
   /** A/B test board: variants of each group with platform +
@@ -3825,8 +5158,27 @@ export class CampaignsService implements OnModuleInit {
         clicks: g?.clicks ?? 0, conversions: g ? Number(g.conversions) : 0,
       };
     });
+    // CA17: attribution windows AS STORED. The first-
+    // party window is the org's own setting
+    // (Organization.attributionWindowDays — the very
+    // value the attribution engine reads). Platform
+    // windows are stored NOWHERE in this system (no
+    // attribution_spec is ever sent to Meta or saved
+    // for any platform), so they are reported as not
+    // configured — never a plausible-sounding default
+    // (e.g. "7-day click") dressed up as the account's.
+    const orgRow = await (this.prisma as any).organization?.findUnique?.({ where: { id: organizationId } }).catch(() => null);
+    const attribution = {
+      firstParty: { windowDays: typeof orgRow?.attributionWindowDays === "number" ? orgRow.attributionWindowDays : null, source: "organization_setting" },
+      platforms: [
+        { platform: "meta", configured: false, windowDays: null, display: "সেট করা নেই" },
+        { platform: "google", configured: false, windowDays: null, display: "সেট করা নেই" },
+        { platform: "tiktok", configured: false, windowDays: null, display: "সেট করা নেই" },
+      ],
+    };
     return {
       published: true,
+      attribution,
       totals: {
         spendMinor: spend.toString(), impressions, clicks, conversions: Number(conversions), reach,
         ctrPercent: impressions > 0 ? Math.round((clicks / impressions) * 10000) / 100 : null,
@@ -3917,7 +5269,217 @@ export class CampaignsService implements OnModuleInit {
       endDate: end ? end.toISOString() : null,
       daysElapsed, daysTotal,
       metricRows: campaignRows.length,
+      // CA18: the runway projection rides the pacing
+      // payload (same rows, same instant) — see
+      // computeRunway for the honesty rules.
+      runway: CampaignsService.computeRunway(campaignRows, spent, lifetimeBudget, now),
     };
+  }
+
+  // ---------- CA18 (CB5): pacing alerts + runway ----------
+  /** CA18 thresholds — named constants, stated in every
+   *  payload and in the automation template copy, never
+   *  hidden: the runway burn rate comes from the trailing
+   *  7 days of REAL DailyAdMetric rows and needs at least
+   *  3 distinct metric days; an early-exhaustion alert
+   *  fires when the projected exhaustion lands at least
+   *  2 days BEFORE the plan end date; an overspend alert
+   *  fires when spend-to-date exceeds expected-to-date by
+   *  more than 20%; a persistent alert re-notifies at most
+   *  once per 24h. Alerts NEVER pause a campaign or move a
+   *  budget — they notify, a human decides. */
+  static readonly PACING_TRAILING_DAYS = 7;
+  static readonly PACING_MIN_TRAILING_DAYS = 3;
+  static readonly PACING_EXHAUSTION_MARGIN_DAYS = 2;
+  static readonly PACING_OVERSPEND_PERCENT = 20;
+  static readonly PACING_ALERT_COOLDOWN_HOURS = 24;
+  static readonly PACING_RUNWAY_LABEL = "আনুমানিক projection — শেষ ৭ দিনের আসল Metric Row-এর গড় দৈনিক খরচের গতিতে হিসাব; ভবিষ্যতে গতি বদলালে তারিখও বদলাবে";
+
+  /** CA18: runway from campaign-level metric rows: days
+   *  of budget left at the trailing burn rate. Only a
+   *  LIFETIME budget can run out — a daily budget refills,
+   *  so daily-budget plans get an honest not-applicable,
+   *  and thin data gets "তথ্য নেই", never an invented
+   *  number. The burn rate divides trailing spend by the
+   *  number of DISTINCT metric days inside the window (a
+   *  day with no row is unknown, not zero). */
+  static computeRunway(rows: any[], spent: bigint, lifetimeBudget: bigint | null, now: Date) {
+    const label = CampaignsService.PACING_RUNWAY_LABEL;
+    if (lifetimeBudget == null) {
+      return { available: false, label, reason: "Runway শুধু Lifetime Budget-এর Plan-এ হিসাব হয় — Daily Budget প্রতিদিন নতুন করে আসে, ফুরিয়ে যাওয়ার কোনো তারিখ নেই" };
+    }
+    const dayMs = 86_400_000;
+    const windowStart = now.getTime() - CampaignsService.PACING_TRAILING_DAYS * dayMs;
+    const perDay = new Map<string, bigint>();
+    for (const r of rows ?? []) {
+      const t = new Date(r?.date).getTime();
+      if (Number.isNaN(t) || t < windowStart || t > now.getTime()) continue;
+      let v = 0n;
+      try { v = BigInt(r.spendMinor ?? 0); } catch { v = 0n; }
+      const key = new Date(r.date).toISOString().slice(0, 10);
+      perDay.set(key, (perDay.get(key) ?? 0n) + v);
+    }
+    const metricDays = perDay.size;
+    if (metricDays < CampaignsService.PACING_MIN_TRAILING_DAYS) {
+      return { available: false, label, metricDays, reason: `শেষ ${CampaignsService.PACING_TRAILING_DAYS} দিনে মাত্র ${metricDays} দিনের Metric Row আছে — Runway-এর জন্য অন্তত ${CampaignsService.PACING_MIN_TRAILING_DAYS} দিনের আসল খরচ লাগে (তথ্য নেই)` };
+    }
+    let trailing = 0n;
+    for (const v of perDay.values()) trailing += v;
+    const burnPerDay = Number(trailing) / metricDays;
+    if (!(burnPerDay > 0)) {
+      return { available: false, label, metricDays, reason: "শেষ ৭ দিনের Row-তে কোনো খরচ নেই — Burn Rate শূন্য হলে Runway হিসাব হয় না (তথ্য নেই)" };
+    }
+    const remaining = lifetimeBudget - spent;
+    const runwayDays = remaining <= 0n ? 0 : Math.round((Number(remaining) / burnPerDay) * 10) / 10;
+    return {
+      available: true, label, metricDays, trailingDays: CampaignsService.PACING_TRAILING_DAYS,
+      burnMinorPerDay: String(Math.round(burnPerDay)),
+      remainingMinor: remaining.toString(),
+      runwayDays,
+      projectedExhaustionDate: new Date(now.getTime() + runwayDays * dayMs).toISOString(),
+      exhausted: remaining <= 0n,
+    };
+  }
+
+  /** CA18: the plan's runway on its own (the builder's
+   *  pacing panel reads it from planPacing; this endpoint
+   *  shape exists for callers that need only the runway). */
+  async planRunway(organizationId: string, planId: string, now = new Date()) {
+    const pacing: any = await this.planPacing(organizationId, planId, now);
+    return {
+      planId, published: !!pacing.published,
+      endDate: pacing.endDate ?? null, currency: pacing.currency ?? null,
+      runway: pacing.runway ?? { available: false, label: CampaignsService.PACING_RUNWAY_LABEL, reason: "তথ্য নেই" },
+    };
+  }
+
+  private pacingAlertJson(row: any) {
+    return {
+      id: row.id, planId: row.planId, kind: row.kind, status: row.status,
+      message: row.message, detail: row.detail ?? null,
+      raisedAt: row.raisedAt ? new Date(row.raisedAt).toISOString() : null,
+      clearedAt: row.clearedAt ? new Date(row.clearedAt).toISOString() : null,
+      lastNotifiedAt: row.lastNotifiedAt ? new Date(row.lastNotifiedAt).toISOString() : null,
+    };
+  }
+
+  /** CA18: the plan's pacing alerts (active first, then
+   *  recent history) + the stated thresholds, so the
+   *  builder panel can show WHY an alert exists. */
+  async listPlanPacingAlerts(organizationId: string, planId: string) {
+    await this.getPlanOrThrow(organizationId, planId);
+    const p = this.prisma as any;
+    const thresholds = {
+      trailingDays: CampaignsService.PACING_TRAILING_DAYS,
+      minTrailingDays: CampaignsService.PACING_MIN_TRAILING_DAYS,
+      exhaustionMarginDays: CampaignsService.PACING_EXHAUSTION_MARGIN_DAYS,
+      overspendPercent: CampaignsService.PACING_OVERSPEND_PERCENT,
+      cooldownHours: CampaignsService.PACING_ALERT_COOLDOWN_HOURS,
+    };
+    if (!p.planPacingAlert?.findMany) return { planId, thresholds, active: [] as any[], recent: [] as any[] };
+    const rows = await p.planPacingAlert.findMany({ where: { organizationId, planId }, orderBy: { raisedAt: "desc" }, take: 50 }).catch(() => []);
+    const all = (rows as any[]).map((r) => this.pacingAlertJson(r));
+    return { planId, thresholds, active: all.filter((a) => a.status === "active"), recent: all.filter((a) => a.status !== "active").slice(0, 10) };
+  }
+
+  /** CA18: the pacing alert sweep (per-org via the
+   *  pacing_alert_sweep automation job — default OFF: no
+   *  job row, no runs). For every live plan whose pacing
+   *  computes cleanly it derives the firing conditions
+   *  from REAL stored rows and reconciles them against
+   *  PlanPacingAlert: a new condition creates ONE active
+   *  alert + notification + audit; a persistent condition
+   *  refreshes its numbers and re-notifies at most once
+   *  per cooldown; a condition that stopped firing CLEARS
+   *  its alert (the row stays as history). A plan whose
+   *  pacing cannot be computed (no rows / no budget
+   *  basis) is skipped WITHOUT touching its alerts — a
+   *  sync gap must never silently clear a real warning. */
+  async scanPacingAlerts(organizationId?: string, now = new Date()) {
+    const p = this.prisma as any;
+    const counts = { evaluated: 0, raised: 0, cleared: 0, renotified: 0 };
+    if (!p.campaignPlan?.findMany || !p.planPacingAlert?.findMany) return counts;
+    const plans = await p.campaignPlan.findMany({
+      where: { ...(organizationId ? { organizationId } : {}), status: "published", externalCampaignId: { not: null } },
+      take: 100,
+    }).catch(() => []);
+    const dayMs = 86_400_000;
+    for (const plan of plans as any[]) {
+      const orgId = plan.organizationId;
+      const pacing: any = await this.planPacing(orgId, plan.id, now).catch(() => null);
+      if (!pacing || !pacing.published || pacing.status !== "ok") continue;
+      counts.evaluated++;
+      const firing = new Map<string, { message: string; detail: any }>();
+      const runway = pacing.runway;
+      if (runway?.available && pacing.endDate) {
+        const endMs = new Date(pacing.endDate).getTime();
+        const projMs = new Date(runway.projectedExhaustionDate).getTime();
+        if (projMs < endMs - CampaignsService.PACING_EXHAUSTION_MARGIN_DAYS * dayMs) {
+          firing.set("early_exhaustion", {
+            message: `"${plan.name}": এই গতিতে খরচ চললে Lifetime Budget ফুরিয়ে যাবে ${String(runway.projectedExhaustionDate).slice(0, 10)} নাগাদ — Plan-এর শেষ তারিখের (${String(pacing.endDate).slice(0, 10)}) অন্তত ${CampaignsService.PACING_EXHAUSTION_MARGIN_DAYS} দিন আগেই (${CampaignsService.PACING_RUNWAY_LABEL})`,
+            detail: {
+              projectedExhaustionDate: runway.projectedExhaustionDate, endDate: pacing.endDate,
+              runwayDays: runway.runwayDays, burnMinorPerDay: runway.burnMinorPerDay,
+              remainingMinor: runway.remainingMinor, metricDays: runway.metricDays,
+              marginDays: CampaignsService.PACING_EXHAUSTION_MARGIN_DAYS,
+            },
+          });
+        }
+      }
+      let expected: bigint | null = null;
+      try { expected = pacing.expectedMinor != null ? BigInt(pacing.expectedMinor) : null; } catch { expected = null; }
+      let spent = 0n;
+      try { spent = BigInt(pacing.spentMinor ?? 0); } catch { spent = 0n; }
+      if (expected != null && expected > 0n) {
+        const overBy = spent - expected;
+        if (overBy > 0n && overBy * 100n > expected * BigInt(CampaignsService.PACING_OVERSPEND_PERCENT)) {
+          const overPercent = Math.round((Number(overBy) / Number(expected)) * 1000) / 10;
+          firing.set("overspend_pace", {
+            message: `"${plan.name}": আজ পর্যন্ত প্রত্যাশিত খরচের চেয়ে ${overPercent}% বেশি খরচ হয়েছে — এই গতি চললে মোট Budget ছাড়িয়ে যাওয়ার ঝুঁকি আছে`,
+            detail: {
+              spentMinor: spent.toString(), expectedMinor: expected.toString(),
+              overPercent, thresholdPercent: CampaignsService.PACING_OVERSPEND_PERCENT,
+              daysElapsed: pacing.daysElapsed, daysTotal: pacing.daysTotal,
+            },
+          });
+        }
+      }
+      const activeRows = await p.planPacingAlert.findMany({ where: { organizationId: orgId, planId: plan.id, status: "active" } }).catch(() => []);
+      const activeByKind = new Map<string, any>((activeRows as any[]).map((r) => [r.kind, r]));
+      for (const [kind, f] of firing) {
+        const existing = activeByKind.get(kind);
+        if (!existing) {
+          await p.planPacingAlert.create({
+            data: { organizationId: orgId, planId: plan.id, kind, status: "active", message: f.message, detail: f.detail, raisedAt: now, lastNotifiedAt: now },
+          }).catch(() => undefined);
+          counts.raised++;
+          await this.audit.log({ organizationId: orgId, userId: plan.createdById, action: "campaign.pacing_alert_raised", entityType: "CampaignPlan", entityId: plan.id, metadata: { kind, detail: f.detail } }).catch(() => undefined);
+          if (plan.createdById) {
+            await this.notifyUsers(orgId, [plan.createdById], "campaign_pacing_alert", "⏱ Pacing Alert", f.message).catch(() => undefined);
+          }
+        } else {
+          const lastMs = existing.lastNotifiedAt ? new Date(existing.lastNotifiedAt).getTime() : 0;
+          const due = now.getTime() - lastMs >= CampaignsService.PACING_ALERT_COOLDOWN_HOURS * 3_600_000;
+          await p.planPacingAlert.update({
+            where: { id: existing.id },
+            data: { message: f.message, detail: f.detail, ...(due ? { lastNotifiedAt: now } : {}) },
+          }).catch(() => undefined);
+          if (due) {
+            counts.renotified++;
+            if (plan.createdById) {
+              await this.notifyUsers(orgId, [plan.createdById], "campaign_pacing_alert", "⏱ Pacing Alert (এখনো সক্রিয়)", f.message).catch(() => undefined);
+            }
+          }
+        }
+        activeByKind.delete(kind);
+      }
+      for (const leftover of activeByKind.values()) {
+        await p.planPacingAlert.update({ where: { id: leftover.id }, data: { status: "cleared", clearedAt: now } }).catch(() => undefined);
+        counts.cleared++;
+        await this.audit.log({ organizationId: orgId, userId: plan.createdById, action: "campaign.pacing_alert_cleared", entityType: "CampaignPlan", entityId: plan.id, metadata: { kind: leftover.kind } }).catch(() => undefined);
+      }
+    }
+    return counts;
   }
 
   // ---------- Frontier NB8 / CN18: insights & sharing ----------
@@ -4180,6 +5742,132 @@ export class CampaignsService implements OnModuleInit {
     return { launched, failed, skipped };
   }
 
+  /** CA12: the org's timezone (Organization.timezone —
+   * the row every org carries; Asia/Dhaka is both the
+   * schema default and the fallback when the table is
+   * unreachable in a spec fake). */
+  private async orgTimezone(organizationId: string): Promise<string> {
+    const org = await (this.prisma as any).organization?.findFirst?.({ where: { id: organizationId } }).catch(() => null);
+    return org?.timezone || "Asia/Dhaka";
+  }
+
+  /** CA12: the plan's scheduled pause/resume window as the
+   * builder shows it — stored UTC instants, displayed in
+   * the ORG's timezone (returned alongside). */
+  async getPlanSchedule(organizationId: string, planId: string) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    return {
+      planId, status: plan.status, metaStatus: plan.metaStatus ?? null,
+      timezone: await this.orgTimezone(organizationId),
+      pauseAt: plan.pauseAt ?? null, resumeAt: plan.resumeAt ?? null,
+      pauseExecutedAt: plan.pauseExecutedAt ?? null, resumeExecutedAt: plan.resumeExecutedAt ?? null,
+    };
+  }
+
+  /** CA12: set (or clear) the pause window of a PUBLISHED
+   * plan. Pause applies to the plan's LIVE campaign, so a
+   * window can only be set on a published plan; clearing is
+   * always allowed. Setting a window resets the execution
+   * stamps — a re-set window is a new instruction. Times
+   * are instants (the client converts from the org
+   * timezone it displays); resume must follow pause. */
+  async setPlanSchedule(organizationId: string, actorId: string, planId: string, dto: { pauseAt?: string | null; resumeAt?: string | null }) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    const pauseAt = dto.pauseAt ? new Date(dto.pauseAt) : null;
+    const resumeAt = dto.resumeAt ? new Date(dto.resumeAt) : null;
+    if (pauseAt && Number.isNaN(pauseAt.getTime())) throw new BadRequestException("pauseAt সঠিক সময় নয়");
+    if (resumeAt && Number.isNaN(resumeAt.getTime())) throw new BadRequestException("resumeAt সঠিক সময় নয়");
+    if (pauseAt || resumeAt) {
+      if (plan.status !== "published") throw new BadRequestException("শুধু Published Plan-এ Pause Window বসানো যায় — Pause Live Campaign-এর জন্যই অর্থবহ");
+      if (pauseAt && resumeAt && resumeAt.getTime() <= pauseAt.getTime()) throw new BadRequestException("Resume-এর সময় Pause-এর পরে হতে হবে");
+    }
+    await (this.prisma as any).campaignPlan.update({
+      where: { id: planId },
+      data: { pauseAt, resumeAt, pauseExecutedAt: null, resumeExecutedAt: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId,
+      action: pauseAt || resumeAt ? "campaign.pause_window_set" : "campaign.pause_window_cleared",
+      entityType: "CampaignPlan", entityId: planId,
+      metadata: { pauseAt: pauseAt?.toISOString() ?? null, resumeAt: resumeAt?.toISOString() ?? null },
+    }).catch(() => undefined);
+    return this.getPlanSchedule(organizationId, planId);
+  }
+
+  /** CA12: the plan-schedule sweep (per-org via the
+   * plan_schedule_sweep automation job — default OFF: no
+   * job row, no runs). Mirrors scanScheduledLaunches'
+   * exactly-once discipline: a due leg is CLAIMED by
+   * stamping its *ExecutedAt first (updateMany on the
+   * unstamped row), so re-runs and racing replicas are
+   * no-ops, and the outcome — executed, skipped_not_live,
+   * skipped_not_paused, or failed — is audited either
+   * way. Exactly one attempt per window: a failed attempt
+   * does not retry silently; the owner clears/re-sets the
+   * window to instruct again. Execution goes through
+   * setMetaStatus, the same Meta-confirmed path as a
+   * manual pause/resume. */
+  async scanPlanSchedules(organizationId?: string, now = new Date()) {
+    const p = this.prisma as any;
+    if (!p.campaignPlan?.findMany) return { paused: 0, resumed: 0, skipped: 0, failed: 0 };
+    const counts = { paused: 0, resumed: 0, skipped: 0, failed: 0 };
+    const orgWhere = organizationId ? { organizationId } : {};
+    // --- pause leg ---
+    const duePauses = await p.campaignPlan.findMany({
+      where: { ...orgWhere, pauseAt: { lte: now, not: null }, pauseExecutedAt: null }, take: 50,
+    }).catch(() => []);
+    for (const plan of duePauses as any[]) {
+      const claimed = await p.campaignPlan.updateMany({
+        where: { id: plan.id, pauseAt: { lte: now, not: null }, pauseExecutedAt: null }, data: { pauseExecutedAt: now },
+      }).catch(() => ({ count: 0 }));
+      if (!claimed || claimed.count === 0) continue;
+      if (plan.status !== "published" || !plan.externalCampaignId) {
+        counts.skipped++;
+        await this.audit.log({ organizationId: plan.organizationId, userId: plan.createdById, action: "campaign.scheduled_pause_skipped", entityType: "CampaignPlan", entityId: plan.id, metadata: { reason: "not_live", pauseAt: plan.pauseAt } }).catch(() => undefined);
+        continue;
+      }
+      try {
+        await this.setMetaStatus(plan.organizationId, plan.createdById, plan.id, "PAUSED");
+        counts.paused++;
+        await this.notifyUsers(plan.organizationId, [plan.createdById], "campaign_paused_scheduled", "⏸ নির্ধারিত Pause কার্যকর হয়েছে", `"${plan.name}" নির্ধারিত সময়ে Pause হয়েছে (Plan Schedule)।`).catch(() => undefined);
+      } catch (e) {
+        counts.failed++;
+        await this.audit.log({ organizationId: plan.organizationId, userId: plan.createdById, action: "campaign.scheduled_pause_failed", entityType: "CampaignPlan", entityId: plan.id, metadata: { error: e instanceof Error ? e.message.slice(0, 200) : "error" } }).catch(() => undefined);
+        await this.notifyUsers(plan.organizationId, [plan.createdById], "campaign_pause_failed", "⚠️ নির্ধারিত Pause ব্যর্থ", `"${plan.name}" Pause করা যায়নি — Builder থেকে হাতে Pause করুন বা Window আবার বসান।`).catch(() => undefined);
+      }
+    }
+    // --- resume leg ---
+    const dueResumes = await p.campaignPlan.findMany({
+      where: { ...orgWhere, resumeAt: { lte: now, not: null }, resumeExecutedAt: null }, take: 50,
+    }).catch(() => []);
+    for (const plan of dueResumes as any[]) {
+      const claimed = await p.campaignPlan.updateMany({
+        where: { id: plan.id, resumeAt: { lte: now, not: null }, resumeExecutedAt: null }, data: { resumeExecutedAt: now },
+      }).catch(() => ({ count: 0 }));
+      if (!claimed || claimed.count === 0) continue;
+      if (plan.status !== "published" || !plan.externalCampaignId) {
+        counts.skipped++;
+        await this.audit.log({ organizationId: plan.organizationId, userId: plan.createdById, action: "campaign.scheduled_resume_skipped", entityType: "CampaignPlan", entityId: plan.id, metadata: { reason: "not_live", resumeAt: plan.resumeAt } }).catch(() => undefined);
+        continue;
+      }
+      if (plan.metaStatus !== "PAUSED") {
+        counts.skipped++;
+        await this.audit.log({ organizationId: plan.organizationId, userId: plan.createdById, action: "campaign.scheduled_resume_skipped", entityType: "CampaignPlan", entityId: plan.id, metadata: { reason: "not_paused", resumeAt: plan.resumeAt } }).catch(() => undefined);
+        continue;
+      }
+      try {
+        await this.setMetaStatus(plan.organizationId, plan.createdById, plan.id, "ACTIVE");
+        counts.resumed++;
+        await this.notifyUsers(plan.organizationId, [plan.createdById], "campaign_resumed_scheduled", "▶️ নির্ধারিত Resume কার্যকর হয়েছে", `"${plan.name}" নির্ধারিত সময়ে আবার Active হয়েছে (Plan Schedule)।`).catch(() => undefined);
+      } catch (e) {
+        counts.failed++;
+        await this.audit.log({ organizationId: plan.organizationId, userId: plan.createdById, action: "campaign.scheduled_resume_failed", entityType: "CampaignPlan", entityId: plan.id, metadata: { error: e instanceof Error ? e.message.slice(0, 200) : "error" } }).catch(() => undefined);
+        await this.notifyUsers(plan.organizationId, [plan.createdById], "campaign_resume_failed", "⚠️ নির্ধারিত Resume ব্যর্থ", `"${plan.name}" Active করা যায়নি — Builder থেকে হাতে চেষ্টা করুন।`).catch(() => undefined);
+      }
+    }
+    return counts;
+  }
+
   // ---------- NB4 / CN7: the optimisation loop, in the builder ----------
 
   /** CN7 thresholds — named constants, stated wherever the
@@ -4279,6 +5967,719 @@ export class CampaignsService implements OnModuleInit {
     return { published: true, days, rule, ads };
   }
 
+  // ---------- CA9: geo intelligence ----------
+  /** The minimum stored-row count before a region's totals
+   *  are shown at all — a single day's row is an anecdote,
+   *  and the threshold is stated in every payload. */
+  static readonly REGION_MIN_ROWS = 2;
+  /** Bangladesh division mapping for the region NAME
+   *  strings Meta returns for BD (ads.service stores
+   *  String(region) verbatim from the breakdown). Both the
+   *  old and new spellings are listed because Meta has
+   *  used both ("Chittagong"/"Chattogram",
+   *  "Barisal"/"Barishal"). Matching is exact after
+   *  case/space normalisation — an unmapped region keeps
+   *  its raw name with division null; nothing is guessed. */
+  static readonly BD_DIVISIONS: { division: string; label: string; names: string[] }[] = [
+    { division: "dhaka", label: "ঢাকা বিভাগ", names: ["dhaka", "dhaka division"] },
+    { division: "chattogram", label: "চট্টগ্রাম বিভাগ", names: ["chittagong", "chittagong division", "chattogram", "chattogram division"] },
+    { division: "khulna", label: "খুলনা বিভাগ", names: ["khulna", "khulna division"] },
+    { division: "rajshahi", label: "রাজশাহী বিভাগ", names: ["rajshahi", "rajshahi division"] },
+    { division: "barishal", label: "বরিশাল বিভাগ", names: ["barisal", "barisal division", "barishal", "barishal division"] },
+    { division: "sylhet", label: "সিলেট বিভাগ", names: ["sylhet", "sylhet division"] },
+    { division: "rangpur", label: "রংপুর বিভাগ", names: ["rangpur", "rangpur division"] },
+    { division: "mymensingh", label: "ময়মনসিংহ বিভাগ", names: ["mymensingh", "mymensingh division"] },
+  ];
+  static bdDivisionOf(regionName: string): { division: string; label: string } | null {
+    const norm = String(regionName ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    for (const d of CampaignsService.BD_DIVISIONS) if (d.names.includes(norm)) return { division: d.division, label: d.label };
+    return null;
+  }
+  /** Aggregate stored region-breakdown rows per region
+   *  name (REAL rows only — spend/impressions/clicks/
+   *  conversions summed, CPA derived, row count kept so
+   *  callers can apply REGION_MIN_ROWS). Sorted by
+   *  conversions, then spend. */
+  static aggregateRegionRows(rows: any[]) {
+    const byKey = new Map<string, { region: string; spendMinor: bigint; impressions: number; clicks: number; conversions: number; rows: number }>();
+    for (const r of rows ?? []) {
+      const region = String(r.key ?? "").trim();
+      if (!region) continue;
+      const cur = byKey.get(region) ?? { region, spendMinor: 0n, impressions: 0, clicks: 0, conversions: 0, rows: 0 };
+      try { cur.spendMinor += BigInt(r.spendMinor ?? 0); } catch { /* malformed row never poisons the totals */ }
+      cur.impressions += Number(r.impressions ?? 0) || 0;
+      cur.clicks += Number(r.clicks ?? 0) || 0;
+      cur.conversions += Number(r.platformConversions ?? 0) || 0;
+      cur.rows += 1;
+      byKey.set(region, cur);
+    }
+    return [...byKey.values()].map((v) => {
+      const div = CampaignsService.bdDivisionOf(v.region);
+      const spend = Number(v.spendMinor) / 100;
+      return {
+        region: v.region, division: div?.division ?? null, divisionLabel: div?.label ?? null,
+        spend, spendMinor: v.spendMinor.toString(), impressions: v.impressions, clicks: v.clicks,
+        conversions: v.conversions, cpa: v.conversions > 0 ? Math.round((spend / v.conversions) * 100) / 100 : null,
+        rows: v.rows,
+      };
+    }).sort((a, b) => b.conversions - a.conversions || b.spend - a.spend);
+  }
+
+  /** CA9(a): per-plan region performance from the plan's
+   *  stored region breakdown rows. HONEST SHAPE: breakdown
+   *  rows are CAMPAIGN-level (DailyAdBreakdown carries no
+   *  ad-set id), so this is the plan's campaign broken down
+   *  by region — never a per-ad-set geo claim. Regions
+   *  under REGION_MIN_ROWS stored rows are withheld and
+   *  counted, not silently merged into an "other". */
+  async planRegionPerformance(organizationId: string, planId: string) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    const minRows = CampaignsService.REGION_MIN_ROWS;
+    const base = { campaignExternalId: plan.externalCampaignId ?? null, minRows, totalRows: 0, rowsBelowThreshold: 0, regions: [] as any[] };
+    if (!plan.externalCampaignId) {
+      return { ...base, available: false, reason: "Plan এখনো Publish হয়নি — Region Performance শুধু Publish হওয়া Campaign-এর সংরক্ষিত Breakdown Row থেকে আসে" };
+    }
+    const p = this.prisma as any;
+    if (!p.dailyAdBreakdown?.findMany) return { ...base, available: false, reason: "Breakdown Store পাওয়া যাচ্ছে না" };
+    const rows = await p.dailyAdBreakdown.findMany({ where: { organizationId, campaignExternalId: plan.externalCampaignId, dimension: "region" } }).catch(() => []);
+    if (!rows?.length) {
+      return { ...base, available: false, reason: "এই Campaign-এর কোনো Region Breakdown Row এখনো নেই — Ads Sync চললে এখানে আসবে" };
+    }
+    const all = CampaignsService.aggregateRegionRows(rows);
+    const kept = all.filter((r) => r.rows >= minRows);
+    const rowsBelowThreshold = all.filter((r) => r.rows < minRows).reduce((a, r) => a + r.rows, 0);
+    return {
+      available: true, campaignExternalId: plan.externalCampaignId, minRows,
+      totalRows: rows.length, rowsBelowThreshold, regions: kept,
+      note: "Breakdown Row Campaign-Level — কোন Ad Set কোন Region-এ কত খরচ করেছে তা আলাদা করে জানা যায় না; এটি পুরো Campaign-এর Region ভাগ",
+    };
+  }
+
+  /** CA9(b): one-click DRAFT ad set targeting the plan's
+   *  top regions by conversions. The draft copies the
+   *  source ad set's settings wholesale and adds
+   *  targeting.regions — each region's Meta key RESOLVED
+   *  through Meta's own targeting search (exact name
+   *  match, region-type preferred). A region whose key
+   *  cannot be resolved is reported in notCarried and
+   *  left out — a key is never guessed. Nothing is
+   *  published: the result is an ordinary draft ad set
+   *  the owner reviews like any other. */
+  async createRegionAdSetDraft(organizationId: string, actorId: string, planId: string, dto: { sourceAdSetId: string; topN?: number }) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    // Editability: the usual draft/rejected rule, PLUS a
+    // published plan with a live campaign — the only state
+    // region data can exist in. The created set is a LOCAL
+    // draft (no Meta id, nothing is sent to Meta), so the
+    // live campaign is untouched; launching it stays a
+    // human decision through the normal plan flows.
+    if (!["draft", "rejected"].includes(plan.status) && !(plan.status === "published" && plan.externalCampaignId)) {
+      throw new BadRequestException(`Plan is "${plan.status}" — Region Draft শুধু Draft/Rejected অথবা Live Campaign-ওয়ালা Published Plan-এ বানানো যায়`);
+    }
+    const source = await this.getAdSetOrThrow(planId, dto.sourceAdSetId);
+    const perf = await this.planRegionPerformance(organizationId, planId);
+    if (!perf.available) throw new BadRequestException((perf as any).reason ?? "Region Performance পাওয়া যাচ্ছে না");
+    const topN = Math.min(5, Math.max(1, Math.floor(Number(dto.topN ?? 3)) || 3));
+    const top = perf.regions.filter((r) => r.conversions > 0).slice(0, topN);
+    if (!top.length) throw new BadRequestException("কোনো Region-এই কনভার্সন নেই — শীর্ষ Region দিয়ে Draft বানানো যাচ্ছে না");
+    let client: { client: MetaPublishClient; account: any } | null = null;
+    try { client = await this.publishClient(organizationId, plan); } catch { client = null; }
+    const resolved: { key: string; name: string }[] = [];
+    const notCarried: string[] = [];
+    for (const r of top) {
+      let key: string | null = null;
+      if (client) {
+        const type = CampaignsService.TARGETING_SEARCH_TYPES["geo"];
+        const found = await client.client.targetingSearch(client.account.externalId, { type, query: r.region }).catch(() => [] as any[]);
+        const exact = (found ?? []).filter((f: any) => String(f.name ?? "").trim().toLowerCase() === r.region.trim().toLowerCase());
+        const hit = exact.find((f: any) => String(f.type ?? "").toLowerCase().includes("region")) ?? exact[0];
+        if (hit?.id) key = String(hit.id);
+      }
+      if (key) resolved.push({ key, name: r.region });
+      else notCarried.push(`${r.region}: Meta Region Key resolve হয়নি — এই Region-টি Draft-এ যোগ হয়নি (আন্দাজে Key বসানো হয় না)`);
+    }
+    if (!resolved.length) {
+      throw new BadRequestException(`কোনো Region-এরই Meta Key resolve হয়নি — Draft বানানো যাচ্ছে না। ${notCarried.join("; ")}`);
+    }
+    const targeting = { ...(source.targeting ?? {}), regions: resolved };
+    const created = await (this.prisma as any).campaignAdSet.create({
+      data: {
+        planId, name: `${source.name} — শীর্ষ Region`.slice(0, 120),
+        dailyBudgetMinor: source.dailyBudgetMinor ?? null,
+        lifetimeBudgetMinor: source.lifetimeBudgetMinor ?? null,
+        optimizationGoal: source.optimizationGoal,
+        pageId: source.pageId ?? null, pixelId: source.pixelId ?? null,
+        targeting: targeting as any,
+        bidStrategy: source.bidStrategy ?? null, bidAmountMinor: source.bidAmountMinor ?? null,
+        costGoalMinor: source.costGoalMinor ?? null, roasAverageFloor: source.roasAverageFloor ?? null,
+        conversionEvent: source.conversionEvent ?? null,
+        catalogRecordId: source.catalogRecordId ?? null, productSetId: source.productSetId ?? null, leadFormId: source.leadFormId ?? null,
+        destinationType: source.destinationType ?? null,
+        whatsappIntegrationId: source.whatsappIntegrationId ?? null,
+        whatsappPhoneNumberId: source.whatsappPhoneNumberId ?? null,
+        whatsappPhoneNumber: source.whatsappPhoneNumber ?? null,
+        funnelLayer: (source as any).funnelLayer ?? null,
+        funnelIncomplete: (source as any).funnelIncomplete ?? null,
+        startTime: source.startTime ?? null, endTime: source.endTime ?? null,
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.region_adset_draft_created", entityType: "CampaignAdSet", entityId: created.id, metadata: { planId, sourceAdSetId: source.id, regions: resolved.map((r) => r.name), notCarried: notCarried.length } }).catch(() => undefined);
+    return {
+      adSet: this.adSetJson(created),
+      regions: resolved,
+      notCarried,
+      basedOn: { campaignExternalId: perf.campaignExternalId, minRows: perf.minRows, totalRows: perf.totalRows, topN },
+      note: "এটি একটি স্থানীয় খসড়া Ad Set — Meta-তে কিছুই পাঠানো হয়নি, Live Campaign অপরিবর্তিত। চালু করার আগে Targeting ও Budget যাচাই করুন",
+    };
+  }
+
+  // ---------- CA19 (CB5): geo holdout — spike-first ----------
+  /** CA19 SPIKE VERDICT (official Meta docs, verified
+   *  2026-10-17): a Meta Ad Study CANNOT split by
+   *  geography, so a geo holdout can NOT be created
+   *  through the CN15 path. Evidence: (1) the documented
+   *  create contract CN15 builds on — POST
+   *  /{business_id}/ad_studies, type SPLIT_TEST — takes
+   *  cells of { name, treatment_percentage, campaigns }:
+   *  the split is a share of the audience assigned across
+   *  the cells' campaigns, and there is NO region/geo
+   *  field on the study or the cell; (2) Meta's own
+   *  Experiments overview describes every test type as a
+   *  USER split (A/B: "your audience is randomized and
+   *  split into separate groups"; Brand/Conversion Lift
+   *  divide the audience into test/control groups). Geo
+   *  experimentation in Meta's ecosystem is the external
+   *  GeoLift methodology over separately geo-targeted
+   *  campaigns — an analysis method, not an Ad Study
+   *  type. What ships below is therefore the honest
+   *  fallback: a holdout DEFINITION on the plan plus an
+   *  OBSERVATIONAL comparison over stored region
+   *  breakdown rows. The definition changes NO delivery
+   *  by itself, and the comparison is labelled as
+   *  observation, never as an experiment or a lift %. */
+  static readonly HOLDOUT_MAX_WINDOW_DAYS = 92;
+  static readonly HOLDOUT_METHOD = "এটি Meta Experiment নয় — Ad Study-তে Geo Split নেই (CA19 spike, Meta-র অফিসিয়াল ডকুমেন্টেশন)। এটি সংরক্ষিত Region Breakdown Row-এর পর্যবেক্ষণমূলক (observational) তুলনা: Test ও Holdout Region-এর জনসংখ্যা, চাহিদা ও প্রতিযোগিতা আলাদা, তাই দুই পাশের পার্থক্য মানেই বিজ্ঞাপনের কারণে হওয়া প্রভাব (lift) নয়";
+  static readonly HOLDOUT_DELIVERY_NOTE = "এই Definition নিজে থেকে Delivery বদলায় না — Holdout Region-এ বিজ্ঞাপন বন্ধ রাখতে চাইলে Plan-এর Targeting থেকে ওই Region বাদ দিতে হবে; Definition শুধু কোন Region কোন দলে তা মনে রাখে আর Window জুড়ে আসল Breakdown Row তুলনা করে";
+
+  private geoHoldoutJson(row: any) {
+    const names = (v: any) => (Array.isArray(v) ? v.map((r: any) => String(r?.name ?? "")).filter(Boolean) : []);
+    return {
+      id: row.id, planId: row.planId, status: row.status,
+      testRegions: names(row.testRegions), holdoutRegions: names(row.holdoutRegions),
+      startsAt: row.startsAt ? new Date(row.startsAt).toISOString() : null,
+      endsAt: row.endsAt ? new Date(row.endsAt).toISOString() : null,
+      note: row.note ?? null, createdById: row.createdById,
+      createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
+    };
+  }
+
+  private normalizeRegionNames(input: unknown): string[] {
+    const raw = Array.isArray(input) ? input : typeof input === "string" ? input.split(/[\n,]+/) : [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const v of raw) {
+      const name = String(typeof v === "string" ? v : (v as any)?.name ?? "").trim().replace(/\s+/g, " ");
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
+  }
+
+  /** CA19: save a geo holdout DEFINITION on a plan. One
+   *  ACTIVE definition per plan; the two region sets
+   *  must be non-empty and disjoint; the window is at
+   *  most 92 days. Nothing is sent to Meta and no
+   *  targeting changes — see the spike verdict above. */
+  async createGeoHoldout(organizationId: string, actorId: string, planId: string, dto: {
+    testRegions?: unknown; holdoutRegions?: unknown; startsAt?: string; endsAt?: string; note?: string;
+  }) {
+    await this.getPlanOrThrow(organizationId, planId);
+    const p = this.prisma as any;
+    if (!p.planGeoHoldout?.create) throw new BadRequestException("Geo Holdout Store পাওয়া যাচ্ছে না");
+    const test = this.normalizeRegionNames(dto.testRegions);
+    const holdout = this.normalizeRegionNames(dto.holdoutRegions);
+    if (!test.length) throw new BadRequestException("অন্তত একটি Test Region দিতে হবে");
+    if (!holdout.length) throw new BadRequestException("অন্তত একটি Holdout Region দিতে হবে");
+    const holdoutKeys = new Set(holdout.map((n) => n.toLowerCase()));
+    const overlap = test.filter((n) => holdoutKeys.has(n.toLowerCase()));
+    if (overlap.length) throw new BadRequestException(`একই Region দুই দলেই আছে: ${overlap.join(", ")} — একটি Region হয় Test, নয় Holdout`);
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : null;
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
+    if (!startsAt || Number.isNaN(startsAt.getTime())) throw new BadRequestException("startsAt সঠিক তারিখ নয়");
+    if (!endsAt || Number.isNaN(endsAt.getTime())) throw new BadRequestException("endsAt সঠিক তারিখ নয়");
+    if (endsAt.getTime() <= startsAt.getTime()) throw new BadRequestException("Window-এর শেষ শুরুর পরে হতে হবে");
+    if (endsAt.getTime() - startsAt.getTime() > CampaignsService.HOLDOUT_MAX_WINDOW_DAYS * 86_400_000) {
+      throw new BadRequestException(`Holdout Window সর্বোচ্চ ${CampaignsService.HOLDOUT_MAX_WINDOW_DAYS} দিন হতে পারে`);
+    }
+    const existing = await p.planGeoHoldout.findFirst({ where: { organizationId, planId, status: "active" } }).catch(() => null);
+    if (existing) throw new BadRequestException("এই Plan-এ ইতিমধ্যে একটি Active Holdout Definition আছে — নতুন বানাতে চাইলে আগেরটি শেষ (End) করুন");
+    const row = await p.planGeoHoldout.create({
+      data: {
+        organizationId, planId, status: "active",
+        testRegions: test.map((name) => ({ name })), holdoutRegions: holdout.map((name) => ({ name })),
+        startsAt, endsAt, note: dto.note ? String(dto.note).slice(0, 500) : null, createdById: actorId,
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.geo_holdout_created", entityType: "CampaignPlan", entityId: planId, metadata: { holdoutId: row.id, test, holdout } }).catch(() => undefined);
+    return this.getGeoHoldout(organizationId, planId);
+  }
+
+  /** CA19: end the plan's active holdout definition
+   *  (history stays; the measurement remains readable). */
+  async endGeoHoldout(organizationId: string, actorId: string, planId: string, holdoutId: string) {
+    await this.getPlanOrThrow(organizationId, planId);
+    const p = this.prisma as any;
+    const row = p.planGeoHoldout?.findFirst ? await p.planGeoHoldout.findFirst({ where: { id: holdoutId, organizationId, planId } }).catch(() => null) : null;
+    if (!row) throw new NotFoundException("Holdout definition not found in this organization");
+    if (row.status !== "active") throw new BadRequestException("এই Holdout Definition আগেই শেষ করা হয়েছে");
+    await p.planGeoHoldout.update({ where: { id: row.id }, data: { status: "ended" } });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.geo_holdout_ended", entityType: "CampaignPlan", entityId: planId, metadata: { holdoutId: row.id } }).catch(() => undefined);
+    return this.getGeoHoldout(organizationId, planId);
+  }
+
+  /** CA19: the plan's latest holdout definition + its
+   *  observational measurement. Region rows are the
+   *  plan campaign's stored DailyAdBreakdown (dimension
+   *  "region") inside the window, aggregated with the
+   *  CA9 aggregator and bucketed by the definition's
+   *  name sets (exact match after normalisation — the
+   *  same discipline as the BD division mapping).
+   *  Regions in NEITHER set are reported as "other",
+   *  never silently merged into a side. Spend observed
+   *  in holdout regions is flagged, not hidden: the
+   *  definition does not stop delivery. */
+  async getGeoHoldout(organizationId: string, planId: string) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    const p = this.prisma as any;
+    const base = {
+      method: CampaignsService.HOLDOUT_METHOD,
+      deliveryNote: CampaignsService.HOLDOUT_DELIVERY_NOTE,
+      spikeVerdict: "not_creatable_via_ad_study",
+    };
+    if (!p.planGeoHoldout?.findMany) return { ...base, available: false, reason: "Geo Holdout Store পাওয়া যাচ্ছে না", holdout: null, measurement: null };
+    const rows = await p.planGeoHoldout.findMany({ where: { organizationId, planId }, orderBy: { createdAt: "desc" }, take: 5 }).catch(() => []);
+    const latest = (rows as any[])[0];
+    if (!latest) return { ...base, available: false, reason: "এই Plan-এ কোনো Geo Holdout Definition নেই", holdout: null, measurement: null };
+    const holdout = this.geoHoldoutJson(latest);
+    if (!plan.externalCampaignId) {
+      return { ...base, available: true, holdout, measurement: { available: false, reason: "Plan এখনো Publish হয়নি — Measurement শুধু Publish হওয়া Campaign-এর সংরক্ষিত Breakdown Row থেকে আসে" } };
+    }
+    if (!p.dailyAdBreakdown?.findMany) {
+      return { ...base, available: true, holdout, measurement: { available: false, reason: "Breakdown Store পাওয়া যাচ্ছে না" } };
+    }
+    const allRows = await p.dailyAdBreakdown.findMany({ where: { organizationId, campaignExternalId: plan.externalCampaignId, dimension: "region" } }).catch(() => []);
+    const startMs = new Date(latest.startsAt).getTime();
+    const endMs = new Date(latest.endsAt).getTime();
+    const inWindow = (allRows as any[]).filter((r) => {
+      const t = new Date(r.date).getTime();
+      return !Number.isNaN(t) && t >= startMs && t <= endMs;
+    });
+    const norm = (s: string) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    const testKeys = new Set(holdout.testRegions.map(norm));
+    const holdoutKeys = new Set(holdout.holdoutRegions.map(norm));
+    const aggregated = CampaignsService.aggregateRegionRows(inWindow);
+    const groups = {
+      test: { regions: [] as any[], spend: 0, spendMinor: "0", impressions: 0, clicks: 0, conversions: 0, cpa: null as number | null, conversionsPer1000Spend: null as number | null },
+      holdout: { regions: [] as any[], spend: 0, spendMinor: "0", impressions: 0, clicks: 0, conversions: 0, cpa: null as number | null, conversionsPer1000Spend: null as number | null },
+      other: { regions: [] as any[], spend: 0, spendMinor: "0", impressions: 0, clicks: 0, conversions: 0, cpa: null as number | null, conversionsPer1000Spend: null as number | null },
+    };
+    const addTo = (g: any, r: any) => {
+      g.regions.push(r);
+      g.spend += r.spend; g.impressions += r.impressions; g.clicks += r.clicks; g.conversions += r.conversions;
+    };
+    for (const r of aggregated) {
+      if (testKeys.has(norm(r.region))) addTo(groups.test, r);
+      else if (holdoutKeys.has(norm(r.region))) addTo(groups.holdout, r);
+      else addTo(groups.other, r);
+    }
+    for (const g of Object.values(groups)) {
+      g.spendMinor = String(Math.round(g.spend * 100));
+      g.spend = Math.round(g.spend * 100) / 100;
+      g.cpa = g.conversions > 0 ? Math.round((g.spend / g.conversions) * 100) / 100 : null;
+      g.conversionsPer1000Spend = g.spend > 0 ? Math.round((g.conversions / g.spend) * 1000 * 100) / 100 : null;
+    }
+    const observedDifferencePer1000 = groups.test.conversionsPer1000Spend != null && groups.holdout.conversionsPer1000Spend != null
+      ? Math.round((groups.test.conversionsPer1000Spend - groups.holdout.conversionsPer1000Spend) * 100) / 100
+      : null;
+    return {
+      ...base, available: true, holdout,
+      measurement: {
+        available: true, campaignExternalId: plan.externalCampaignId,
+        windowRows: inWindow.length,
+        groups, observedDifferencePer1000,
+        observedDifferenceLabel: "প্রতি ৳১,০০০ খরচে Conversion-এর পার্থক্য (Test − Holdout) — শুধু পর্যবেক্ষণমূলক পাটিগণিত, Lift নয়",
+        holdoutSpendDetected: groups.holdout.spend > 0,
+        holdoutSpendNote: groups.holdout.spend > 0
+          ? "সতর্কতা: Window-তে Holdout Region-এও খরচ হয়েছে — Definition Delivery থামায় না; Targeting থেকে Region বাদ না দিলে বিজ্ঞাপন চলবেই"
+          : "Window-তে Holdout Region-এ কোনো খরচের Row নেই",
+        note: "Breakdown Row Campaign-Level — কোন Ad Set কোন Region-এ কত খরচ করেছে তা আলাদা করে জানা যায় না (CA9-এর একই সীমা)",
+      },
+    };
+  }
+
+  // ---------- CA22 (CB5): builder inbox + counter-drafts ----------
+  static readonly BUILDER_SIGNAL_MAX_CHARS = 500;
+  static readonly BUILDER_SIGNAL_MIN_CHARS = 3;
+  static readonly BUILDER_AD_MIN_AGE_DAYS = 14;
+  static readonly BUILDER_INBOX_NOTE = "সিগন্যাল মানে একটি পর্যবেক্ষণ — Manual এন্ট্রি অথবা আগে থেকে সংরক্ষিত Competitor রেকর্ড থেকে Merchant-এর এক ক্লিকে Import। প্রতিটি সিগন্যাল থেকে suggestPlan দিয়ে শুধু একটি DRAFT তৈরি হয় — কখনো Publish হয় না। স্বয়ংক্রিয় Competitor Feed এই Inbox-এ আসে না: Competitor Monitoring তার পরিকল্পিত Smart AI ধারায় (C1–C2) আছে — এই Batch-এ তা NOT BUILT";
+  static readonly BUILDER_AD_IMPORT_NOTE = "Creative-এর টেক্সট/ছবি এখানে কপি করা হয় না (CN18 Leak-proof নিয়ম) — শুধু Metadata (কতদিন ধরে Active, Link)";
+
+  /** Product match by NAME TOKENS (deterministic):
+   *  tokens are >=3-char words of the query text; a
+   *  product scores how many of its name tokens the text
+   *  mentions (case-insensitive substring both ways);
+   *  highest score wins, ties break by name — no match
+   *  returns null and the draft is built without one. */
+  async matchProductByName(organizationId: string, text: string) {
+    const p = this.prisma as any;
+    const products = p.product?.findMany ? await p.product.findMany({ where: { organizationId }, take: 500 }).catch(() => []) : [];
+    const lower = String(text ?? "").toLowerCase();
+    const textTokens = [...new Set(lower.split(/[^a-z0-9\u0980-\u09FF]+/i).map((t) => t.trim()).filter((t) => t.length >= 3))];
+    let best: any = null;
+    let bestScore = 0;
+    for (const prod of products as any[]) {
+      const nameTokens = String(prod.name ?? "").toLowerCase().split(/[^a-z0-9\u0980-\u09FF]+/i).map((t) => t.trim()).filter((t) => t.length >= 3);
+      let score = 0;
+      for (const nt of nameTokens) {
+        if (textTokens.includes(nt) || lower.includes(nt)) score++;
+      }
+      if (score > bestScore || (score === bestScore && score > 0 && best && String(prod.name).localeCompare(String(best.name)) < 0)) {
+        best = prod; bestScore = score;
+      }
+    }
+    return bestScore > 0 ? best : null;
+  }
+
+  async builderSignalOrThrow(organizationId: string, signalId: string) {
+    const row = await (this.prisma as any).builderInboxSignal.findFirst({ where: { id: signalId, organizationId } });
+    if (!row) throw new NotFoundException("Builder inbox signal not found");
+    return row;
+  }
+
+  async listBuilderInbox(organizationId: string) {
+    const p = this.prisma as any;
+    const signals = await p.builderInboxSignal.findMany({ where: { organizationId }, take: 100 }).catch(() => []);
+    const sorted = [...(signals as any[])].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const importedKeys = new Set(sorted.filter((s) => s.status !== "dismissed" && s.sourceRefId).map((s) => `${s.source}:${s.sourceRefId}`));
+    const competitors = p.competitor?.findMany ? await p.competitor.findMany({ where: { organizationId }, take: 200 }).catch(() => []) : [];
+    const compName = new Map((competitors as any[]).map((c) => [c.id, c.name]));
+    const orgCompIds = new Set((competitors as any[]).map((c) => c.id));
+    const fresh = <T,>(rows: T[], n = 10) => [...(rows as any[])].sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()).slice(0, n);
+    const insights = p.competitorInsight?.findMany ? fresh(await p.competitorInsight.findMany({ where: { organizationId }, take: 100 }).catch(() => [])) : [];
+    const prices = p.competitorPriceObservation?.findMany ? fresh(await p.competitorPriceObservation.findMany({ where: { organizationId }, take: 100 }).catch(() => [])) : [];
+    const allAds = p.competitorAd?.findMany ? await p.competitorAd.findMany({ take: 500 }).catch(() => []) : [];
+    const minAge = CampaignsService.BUILDER_AD_MIN_AGE_DAYS * 86_400_000;
+    const ads = fresh((allAds as any[]).filter((a) => orgCompIds.has(a.competitorId) && a.isActive === true && a.startedAt && Date.now() - new Date(a.startedAt).getTime() >= minAge));
+    return {
+      note: CampaignsService.BUILDER_INBOX_NOTE,
+      winningAdMinAgeDays: CampaignsService.BUILDER_AD_MIN_AGE_DAYS,
+      signals: sorted,
+      importable: {
+        insights: insights.filter((r: any) => !importedKeys.has(`competitor_insight:${r.id}`)).map((r: any) => ({ source: "competitor_insight", sourceRefId: r.id, competitorId: r.competitorId ?? null, competitorName: r.competitorId ? compName.get(r.competitorId) ?? null : null, label: `${String(r.kind ?? "insight")}: ${String(r.title ?? "")}`, createdAt: r.createdAt })),
+        prices: prices.filter((r: any) => !importedKeys.has(`competitor_price:${r.id}`)).map((r: any) => ({ source: "competitor_price", sourceRefId: r.id, competitorId: r.competitorId ?? null, competitorName: r.competitorId ? compName.get(r.competitorId) ?? null : null, label: `${String(r.productName ?? "")} — ৳${(Number(r.priceMinor ?? 0) / 100).toLocaleString("en-IN")}`, createdAt: r.createdAt })),
+        ads: ads.filter((r: any) => !importedKeys.has(`competitor_ad:${r.id}`)).map((r: any) => ({ source: "competitor_ad", sourceRefId: r.id, competitorId: r.competitorId ?? null, competitorName: r.competitorId ? compName.get(r.competitorId) ?? null : null, label: `বিজ্ঞাপন ${Math.floor((Date.now() - new Date(r.startedAt).getTime()) / 86_400_000)} দিন ধরে Active`, createdAt: r.createdAt })),
+      },
+    };
+  }
+
+  async createBuilderSignal(organizationId: string, actorId: string, dto: { text: string; productId?: string }) {
+    const p = this.prisma as any;
+    const text = String(dto.text ?? "").trim();
+    if (text.length < CampaignsService.BUILDER_SIGNAL_MIN_CHARS) throw new BadRequestException(`সিগন্যালের লেখা কমপক্ষে ${CampaignsService.BUILDER_SIGNAL_MIN_CHARS} অক্ষরের হতে হবে`);
+    if (text.length > CampaignsService.BUILDER_SIGNAL_MAX_CHARS) throw new BadRequestException(`সিগন্যালের লেখা সর্বোচ্চ ${CampaignsService.BUILDER_SIGNAL_MAX_CHARS} অক্ষর`);
+    if (dto.productId) {
+      const product = await p.product.findFirst({ where: { id: dto.productId, organizationId } });
+      if (!product) throw new NotFoundException("Product not found in this organization");
+    }
+    const signal = await p.builderInboxSignal.create({
+      data: { organizationId, source: "manual", text, productId: dto.productId ?? null, status: "new", createdById: actorId },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.builder_signal_created", entityType: "BuilderInboxSignal", entityId: signal.id, metadata: { source: "manual" } }).catch(() => undefined);
+    return { signal };
+  }
+
+  /** Import ONE stored competitor row as a signal. The
+   *  text is composed from stored METADATA only —
+   *  CompetitorAd.creativeText is NEVER copied (CN18
+   *  leak-proof rule, spec-pinned). Dedupe: a
+   *  non-dismissed signal for the same source row is
+   *  returned instead of creating a duplicate. */
+  async importCompetitorSignal(organizationId: string, actorId: string, dto: { source: string; sourceRefId: string }) {
+    const p = this.prisma as any;
+    const source = String(dto.source ?? "");
+    const ref = String(dto.sourceRefId ?? "");
+    if (!["competitor_insight", "competitor_price", "competitor_ad"].includes(source) || !ref) {
+      throw new BadRequestException("source must be competitor_insight | competitor_price | competitor_ad with a sourceRefId");
+    }
+    const existing = await p.builderInboxSignal.findMany({ where: { organizationId, source, sourceRefId: ref }, take: 50 }).catch(() => []);
+    const live = (existing as any[]).find((s) => s.status !== "dismissed");
+    if (live) return { signal: live, alreadyImported: true };
+    let text = "";
+    let competitorId: string | null = null;
+    let productId: string | null = null;
+    const compNameOf = async (cid: string | null | undefined) => {
+      if (!cid || !p.competitor?.findFirst) return "অজানা প্রতিযোগী";
+      const c = await p.competitor.findFirst({ where: { id: cid, organizationId } }).catch(() => null);
+      return c ? String(c.name) : "অজানা প্রতিযোগী";
+    };
+    if (source === "competitor_insight") {
+      const row = p.competitorInsight?.findFirst ? await p.competitorInsight.findFirst({ where: { id: ref, organizationId } }).catch(() => null) : null;
+      if (!row) throw new NotFoundException("Competitor insight not found in this organization");
+      competitorId = row.competitorId ?? null;
+      productId = row.productId ?? null;
+      text = `প্রতিযোগীর Insight (${String(row.kind ?? "insight")}): "${String(row.title ?? "")}" — ${String(row.detail ?? "")}`.slice(0, CampaignsService.BUILDER_SIGNAL_MAX_CHARS);
+    } else if (source === "competitor_price") {
+      const row = p.competitorPriceObservation?.findFirst ? await p.competitorPriceObservation.findFirst({ where: { id: ref, organizationId } }).catch(() => null) : null;
+      if (!row) throw new NotFoundException("Competitor price observation not found in this organization");
+      competitorId = row.competitorId ?? null;
+      const name = await compNameOf(competitorId);
+      text = `প্রতিযোগী ${name} "${String(row.productName ?? "")}" ৳${(Number(row.priceMinor ?? 0) / 100).toLocaleString("en-IN")} দামে বিক্রি করছে (সংরক্ষিত Price Observation থেকে)`;
+      const matched = await this.matchProductByName(organizationId, String(row.productName ?? ""));
+      productId = matched?.id ?? null;
+    } else {
+      const row = p.competitorAd?.findFirst ? await p.competitorAd.findFirst({ where: { id: ref } }).catch(() => null) : null;
+      if (!row || !row.competitorId) throw new NotFoundException("Competitor ad not found");
+      const comp = p.competitor?.findFirst ? await p.competitor.findFirst({ where: { id: row.competitorId, organizationId } }).catch(() => null) : null;
+      if (!comp) throw new NotFoundException("Competitor ad not found in this organization");
+      competitorId = row.competitorId;
+      const days = row.startedAt ? Math.floor((Date.now() - new Date(row.startedAt).getTime()) / 86_400_000) : 0;
+      // NOTE: row.creativeText is deliberately never read here.
+      text = `প্রতিযোগী ${String(comp.name)}-এর একটি বিজ্ঞাপন ${days} দিন ধরে Active আছে${row.linkUrl ? ` (Link: ${String(row.linkUrl)})` : ""} — ${CampaignsService.BUILDER_AD_IMPORT_NOTE}`;
+    }
+    const signal = await p.builderInboxSignal.create({
+      data: { organizationId, source, sourceRefId: ref, competitorId, text, productId, status: "new", createdById: actorId },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.builder_signal_imported", entityType: "BuilderInboxSignal", entityId: signal.id, metadata: { source, sourceRefId: ref } }).catch(() => undefined);
+    return { signal, alreadyImported: false };
+  }
+
+  async dismissBuilderSignal(organizationId: string, actorId: string, signalId: string) {
+    const p = this.prisma as any;
+    const signal = await this.builderSignalOrThrow(organizationId, signalId);
+    if (signal.status === "dismissed") return { signal };
+    if (signal.status !== "new") throw new BadRequestException("শুধু 'new' অবস্থার সিগন্যাল Dismiss করা যায় — Drafted সিগন্যালের ইতিহাস থাকে");
+    const updated = await p.builderInboxSignal.update({ where: { id: signalId }, data: { status: "dismissed" } });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.builder_signal_dismissed", entityType: "BuilderInboxSignal", entityId: signalId, metadata: {} }).catch(() => undefined);
+    return { signal: updated };
+  }
+
+  /** One click -> a suggestPlan DRAFT seeded from the
+   *  signal. suggestPlan itself only ever creates drafts
+   *  (no publish path exists in it), and the created
+   *  plan's status is asserted "draft" before the signal
+   *  is marked drafted — the no-publish guarantee is
+   *  spec-pinned, not just intended. */
+  async draftFromSignal(organizationId: string, actorId: string, signalId: string, dto: { adAccountId: string; totalDailyBudget: string }) {
+    const p = this.prisma as any;
+    const signal = await this.builderSignalOrThrow(organizationId, signalId);
+    if (signal.status === "drafted") throw new BadRequestException("এই সিগন্যাল থেকে ইতিমধ্যে Draft তৈরি হয়েছে");
+    if (signal.status !== "new") throw new BadRequestException("Dismissed সিগন্যাল থেকে Draft তৈরি হয় না");
+    let productId = signal.productId ?? null;
+    if (!productId) {
+      const matched = await this.matchProductByName(organizationId, signal.text);
+      productId = matched?.id ?? null;
+    }
+    const suggestion: any = await this.suggestPlan(organizationId, actorId, {
+      adAccountId: dto.adAccountId, productId: productId ?? undefined, goal: signal.text, totalDailyBudget: dto.totalDailyBudget,
+    });
+    const plan = suggestion?.plan;
+    if (!plan?.id || plan.status !== "draft") {
+      throw new BadRequestException("suggestPlan একটি Draft তৈরি করেনি — সিগন্যাল অপরিবর্তিত রাখা হলো");
+    }
+    const updated = await p.builderInboxSignal.update({ where: { id: signalId }, data: { status: "drafted", draftPlanId: plan.id, productId: productId ?? signal.productId ?? null } });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.builder_signal_drafted", entityType: "BuilderInboxSignal", entityId: signalId, metadata: { draftPlanId: plan.id, productId, productMatched: Boolean(productId) } }).catch(() => undefined);
+    return { signal: updated, plan, productMatched: Boolean(productId), note: "এটি শুধু একটি DRAFT — Publish হয়নি। Builder-এ যাচাই করে সম্পাদনা করুন, তারপর নিজে Submit করুন।" };
+  }
+
+  // ---------- CA21 (CB5): COD return-adjusted ROAS ----------
+  /** CA21 LINKAGE FINDING (verified in code before
+   *  building): orders carry NO campaign id. Two REAL
+   *  linkages exist, and this view unions them (each
+   *  order counted once, provenance reported):
+   *  (1) the first-party attribution engine's own join —
+   *  AttributionCredit rows whose touchpoint's campaign
+   *  is this plan's name or external campaign id (the
+   *  exact join planPerformance's first-party revenue
+   *  uses), giving credited ORDER IDS;
+   *  (2) the AB7 order stamps — Order.utmCampaign equal
+   *  to a utm_campaign value THIS plan's ads emit
+   *  (CA17's utmParamsFor for the plan account's
+   *  platform, plus the legacy Phase-J slug) with
+   *  utm_source matching the plan platform's source.
+   *  There is no click-level attribution and no
+   *  plan→store link; the scope text below says exactly
+   *  that, in the payload and the UI. */
+  static readonly ADJUSTED_ROAS_SCOPE = "পরিধি: শুধু সেই COD অর্ডার যেগুলো এই Plan-এর সঙ্গে দুটি আসল যোগসূত্রের যেকোনো একটি দিয়ে মিলেছে — (১) First-party Attribution Engine-এর Credit (Touchpoint-এর Campaign = এই Plan), অথবা (২) অর্ডারের নিজের utm_campaign + utm_source স্ট্যাম্প (AB7) এই Plan-এর বিজ্ঞাপনের মানের সঙ্গে মিলেছে। Plan Publish হওয়ার পর থেকে হিসাব। স্ট্যাম্প/Credit-বিহীন অর্ডার এই হিসাবে আসেনি। এটি Click-Attribution নয়";
+  static readonly ADJUSTED_ROAS_DEFINITIONS = {
+    delivered: "EC33-এর Sold সংজ্ঞা (isSoldOrder): Cancelled/Refunded/Failed নয় এবং (Status completed/delivered অথবা CourierShipment delivered/partial_delivered)",
+    returned: "Raw Status 'returned' অথবা received/completed অবস্থার ReturnRequest আছে এমন অর্ডার — Returned অর্ডার Delivered আয়ে কখনো ঢোকে না",
+    adjusted: "প্রতিটি Delivered COD অর্ডারে (মোট − refundedMinor), শূন্যের নিচে নয়; Adjusted ROAS = এই Adjusted আয় ÷ একই Window-তে Plan Campaign-এর সংরক্ষিত Ad Spend",
+  };
+
+  /** CA21: the return-adjusted view beside the raw one.
+   *  The raw figure is NEVER replaced: the payload
+   *  carries planPerformance's existing first-party
+   *  revenue/ROAS verbatim AND an order-set gross ROAS
+   *  (same matched orders, before return adjustment). */
+  async planAdjustedRoas(organizationId: string, planId: string, now = new Date()) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    const p = this.prisma as any;
+    const base = {
+      planId, label: "cod_return_adjusted_from_real_orders",
+      scope: CampaignsService.ADJUSTED_ROAS_SCOPE,
+      definitions: CampaignsService.ADJUSTED_ROAS_DEFINITIONS,
+    };
+    if (!plan.externalCampaignId) {
+      return { ...base, available: false, reason: "Plan এখনো Publish হয়নি — Adjusted ROAS শুধু Live Campaign-এর Window-তে হিসাব হয়" };
+    }
+    const account = p.adAccount?.findFirst ? await p.adAccount.findFirst({ where: { id: plan.adAccountId, organizationId } }).catch(() => null) : null;
+    const platform = account?.platform === "google" ? "google" : account?.platform === "tiktok" ? "tiktok" : "meta";
+    const params = this.utmParamsFor(plan, { platform: platform as any });
+    const campaignParam = params.find((x) => x.key === "utm_campaign")?.value ?? "";
+    const sourceParam = (params.find((x) => x.key === "utm_source")?.value ?? (platform === "meta" ? "facebook" : platform)).toLowerCase();
+    const legacySlug = this.utmSlug(String(plan.name ?? "")) || "campaign";
+    const candidates = [...new Set([campaignParam, legacySlug].filter(Boolean))];
+
+    // window: publish instant (fallback: first metric day,
+    // then plan creation) → now, by UTC day floor for rows.
+    const metricRows = p.dailyAdMetric?.findMany
+      ? await p.dailyAdMetric.findMany({ where: { organizationId, campaignExternalId: plan.externalCampaignId }, take: 20000 }).catch(() => [])
+      : [];
+    const campaignRows = (metricRows as any[]).filter((r) => (r.adSetExternalId ?? "") === "" && (r.adExternalId ?? "") === "");
+    let firstMetric: Date | null = null;
+    for (const r of campaignRows) {
+      const d = new Date(r.date);
+      if (!Number.isNaN(d.getTime()) && (!firstMetric || d < firstMetric)) firstMetric = d;
+    }
+    const windowStart = plan.publishedAt ? new Date(plan.publishedAt) : firstMetric ?? new Date(plan.createdAt);
+    const windowDayStart = new Date(Date.UTC(windowStart.getUTCFullYear(), windowStart.getUTCMonth(), windowStart.getUTCDate()));
+    let spend = 0n;
+    for (const r of campaignRows) {
+      const t = new Date(r.date).getTime();
+      if (Number.isNaN(t) || t < windowDayStart.getTime() || t > now.getTime()) continue;
+      try { spend += BigInt(r.spendMinor ?? 0); } catch { /* malformed row never poisons totals */ }
+    }
+
+    // linkage (1): attribution credits → order ids
+    const creditedOrderIds = new Set<string>();
+    if (p.attributionCredit?.findMany && p.touchpoint?.findMany) {
+      const credits = await p.attributionCredit.findMany({ where: { organizationId }, take: 20000 }).catch(() => []);
+      if ((credits as any[]).length) {
+        const tpIds = [...new Set((credits as any[]).map((c) => c.touchpointId).filter(Boolean))];
+        const tps = tpIds.length ? await p.touchpoint.findMany({ where: { id: { in: tpIds } } }).catch(() => []) : [];
+        const tpMap = new Map((tps as any[]).map((t) => [t.id, t]));
+        for (const c of credits as any[]) {
+          const tp: any = tpMap.get(c.touchpointId);
+          if (tp && (tp.campaign === plan.name || tp.campaign === plan.externalCampaignId) && c.orderId) creditedOrderIds.add(String(c.orderId));
+        }
+      }
+    }
+    // linkage (2): utm-stamped orders for this plan
+    const stampedOrders = p.order?.findMany
+      ? await p.order.findMany({ where: { organizationId, utmCampaign: { in: candidates } }, take: 20000 }).catch(() => [])
+      : [];
+    const orderById = new Map<string, any>();
+    const provenance = new Map<string, string[]>();
+    const addOrder = (o: any, via: string) => {
+      if (!o?.id) return;
+      orderById.set(String(o.id), o);
+      const arr = provenance.get(String(o.id)) ?? [];
+      if (!arr.includes(via)) arr.push(via);
+      provenance.set(String(o.id), arr);
+    };
+    for (const o of stampedOrders as any[]) {
+      if (String(o.utmSource ?? "").trim().toLowerCase() !== sourceParam) continue;
+      addOrder(o, "utm_stamp");
+    }
+    if (creditedOrderIds.size && p.order?.findMany) {
+      const credited = await p.order.findMany({ where: { organizationId, id: { in: [...creditedOrderIds] } }, take: 20000 }).catch(() => []);
+      for (const o of credited as any[]) addOrder(o, "attribution_credit");
+    }
+    const orderDate = (o: any) => {
+      const t = o.placedAt ? new Date(o.placedAt).getTime() : o.createdAt ? new Date(o.createdAt).getTime() : NaN;
+      return Number.isNaN(t) ? null : t;
+    };
+    const matched = [...orderById.values()].filter((o) => {
+      if (o.isPractice) return false;
+      const t = orderDate(o);
+      return t != null && t >= windowDayStart.getTime() && t <= now.getTime();
+    });
+    const coverage = {
+      viaAttributionCredit: matched.filter((o) => provenance.get(String(o.id))?.includes("attribution_credit")).length,
+      viaUtmStamp: matched.filter((o) => provenance.get(String(o.id))?.includes("utm_stamp")).length,
+      matchedUtmCampaigns: candidates, expectedSource: sourceParam,
+    };
+    if (!matched.length) {
+      return {
+        ...base, available: false,
+        reason: "এই Plan-এর সঙ্গে যোগসূত্র মেলা কোনো অর্ডার Window-তে নেই — Credit বা UTM স্ট্যাম্প ছাড়া অর্ডার আন্দাজে এই Plan-এর বলে ধরা হয় না",
+        windowStart: windowDayStart.toISOString(), spendMinor: spend.toString(), coverage,
+      };
+    }
+    const isCod = (o: any) => o.isCod === true || String(o.paymentMethod ?? "").toLowerCase() === "cod";
+    const codMatched = matched.filter(isCod);
+    const matchedIds = matched.map((o) => String(o.id));
+    // returned leg: raw status or a received/completed RMA
+    const returnedIds = new Set<string>(matched.filter((o) => String(o.status ?? "") === "returned").map((o) => String(o.id)));
+    if (p.returnRequest?.findMany && matchedIds.length) {
+      const rrs = await p.returnRequest.findMany({ where: { organizationId, orderId: { in: matchedIds }, status: { in: ["received", "completed"] } }, take: 20000 }).catch(() => []);
+      for (const rr of rrs as any[]) returnedIds.add(String(rr.orderId));
+    }
+    const shipByOrder = new Map<string, string[]>();
+    if (p.courierShipment?.findMany && matchedIds.length) {
+      const ships = await p.courierShipment.findMany({ where: { organizationId, orderId: { in: matchedIds } }, take: 20000 }).catch(() => []);
+      for (const s of ships as any[]) {
+        const arr = shipByOrder.get(String(s.orderId)) ?? [];
+        arr.push(String(s.status ?? ""));
+        shipByOrder.set(String(s.orderId), arr);
+      }
+    }
+    let deliveredCount = 0;
+    let returnedCount = 0;
+    let gross = 0n;
+    let refundedTotal = 0n;
+    let adjusted = 0n;
+    let returnedValue = 0n;
+    for (const o of codMatched) {
+      const total = (() => { try { return BigInt(o.totalMinor ?? 0); } catch { return 0n; } })();
+      if (returnedIds.has(String(o.id))) { returnedCount++; returnedValue += total; continue; }
+      if (!isSoldOrder(o, shipByOrder.get(String(o.id)) ?? [])) continue;
+      deliveredCount++;
+      gross += total;
+      const refunded = (() => { try { return BigInt(o.refundedMinor ?? 0); } catch { return 0n; } })();
+      refundedTotal += refunded;
+      const net = total - refunded;
+      adjusted += net > 0n ? net : 0n;
+    }
+    const roas = (rev: bigint) => (spend > 0n ? Math.round((Number(rev) / Number(spend)) * 100) / 100 : null);
+    const perf: any = await this.planPerformance(organizationId, planId).catch(() => null);
+    return {
+      ...base, available: true,
+      windowStart: windowDayStart.toISOString(), windowEnd: now.toISOString(),
+      spendMinor: spend.toString(),
+      matchedOrders: matched.length,
+      codMatchedOrders: codMatched.length,
+      nonCodMatchedOrders: matched.length - codMatched.length,
+      deliveredOrders: deliveredCount,
+      returnedOrders: returnedCount,
+      grossRevenueMinor: gross.toString(),
+      refundedMinor: refundedTotal.toString(),
+      returnedValueMinor: returnedValue.toString(),
+      adjustedRevenueMinor: adjusted.toString(),
+      rawRoas: spend > 0n ? roas(gross) : null,
+      adjustedRoas: spend > 0n ? roas(adjusted) : null,
+      zeroSpendNote: spend > 0n ? null : "এই Window-তে Plan Campaign-এর কোনো সংরক্ষিত Ad Spend নেই — ROAS হিসাব হয় না (ভাগফল শূন্য দিয়ে ভাগ করা হয় না)",
+      existingFirstParty: perf?.totals ? {
+        revenueMinor: perf.totals.firstPartyRevenueMinor, orders: perf.totals.firstPartyOrders, roas: perf.totals.roas,
+        note: "Builder-এর বিদ্যমান First-party Revenue/ROAS (Attribution Credit-এর যোগফল) — Return/Refund বাদ না দেওয়া Raw হিসাব; Adjusted হিসাব সেটিকে প্রতিস্থাপন করে না, পাশাপাশি থাকে",
+      } : null,
+      coverage,
+    };
+  }
+
   /** CN7: deterministic recommendations from the plan's real
    * synced rows. This endpoint MUTATES NOTHING — it returns
    * proposals with their evidence; each action names the
@@ -4350,7 +6751,7 @@ export class CampaignsService implements OnModuleInit {
                 fromAdSetId: donor.adSetId, toAdSetId: winner.adSetId, shiftMinor: shift.toString(),
                 fromDailyAfterMinor: (donorDaily - shift).toString(), toDailyAfterMinor: (winnerDaily + shift).toString(),
               },
-              action: { kind: "budget_shift_proposal", applyVia: "live_budget_edit", note: "এটি শুধু প্রস্তাব — প্রয়োগ করতে Ad Set-এর বিদ্যমান Live Budget Edit ব্যবহার করুন। কিছুই নিজে থেকে বদলায়নি।" },
+              action: { kind: "budget_shift_proposal", applyVia: "live_budget_edit", note: "এটি শুধু প্রস্তাব — নিচের Apply বোতামে মানুষ নিশ্চিত করলে এটি Live Budget Edit পথেই প্রয়োগ হবে (অথবা Ad Set-এর Live Budget Edit দিয়েও করা যায়)। সংখ্যা এর মধ্যে বদলে গেলে Apply refuse করবে। কিছুই নিজে থেকে বদলায়নি।" },
             });
           }
         }
@@ -4359,14 +6760,28 @@ export class CampaignsService implements OnModuleInit {
     return { published: true, label: "deterministic_heuristics_from_synced_rows", thresholds, recommendations };
   }
 
-  /** CN7: apply the ONE recommendation kind that is safe to
+  /** Exact major-unit string for a minor amount (the
+   * updateAdSetBudget input format) — no float detour, so
+   * ৳333.33 round-trips to exactly 33333 minor. */
+  private static minorToMajorString(minor: bigint): string {
+    const neg = minor < 0n;
+    const abs = neg ? -minor : minor;
+    return `${neg ? "-" : ""}${(abs / 100n).toString()}.${(abs % 100n).toString().padStart(2, "0")}`;
+  }
+
+  /** CN7: apply the recommendation kinds that are safe to
    * execute from here — creating a fresh DRAFT copy of the
-   * plan (the CB5 promote-the-winner pattern). Budget shifts
-   * and pauses deliberately refuse here: they go through
-   * their existing explicit paths, named in the refusal. */
-  async applyRecommendation(organizationId: string, actorId: string, planId: string, dto: { kind: string; adId?: string }) {
+   * plan (the CB5 promote-the-winner pattern) and, since
+   * CA11, the budget_shift proposal. Pauses still refuse
+   * here: they go through their existing explicit path,
+   * named in the refusal. */
+  async applyRecommendation(organizationId: string, actorId: string, planId: string, dto: {
+    kind: string; adId?: string;
+    proposal?: { fromAdSetId: string; toAdSetId: string; shiftMinor: string; fromDailyAfterMinor: string; toDailyAfterMinor: string };
+  }): Promise<any> {
+    if (dto.kind === "budget_shift") return this.applyBudgetShiftRecommendation(organizationId, actorId, planId, dto);
     if (dto.kind !== "create_fresh_draft") {
-      throw new BadRequestException("এই সুপারিশ এখান থেকে প্রয়োগ হয় না — Budget Shift-এর জন্য Live Budget Edit, Pause-এর জন্য Ad Set Pause বোতাম ব্যবহার করুন (দুটোই বিদ্যমান স্পষ্ট পথ)।");
+      throw new BadRequestException("এই সুপারিশ এখান থেকে প্রয়োগ হয় না — Budget Shift-এর জন্য Recommendation-এর Apply বোতাম (বা Live Budget Edit), Pause-এর জন্য Ad Set Pause বোতাম ব্যবহার করুন (সবই বিদ্যমান স্পষ্ট পথ)।");
     }
     const full = await this.getPlanFull(organizationId, planId);
     const ad = (full.adSets ?? []).flatMap((s: any) => (s.ads ?? []).map((a: any) => ({ ...a, adSetId: s.id }))).find((a: any) => a.id === dto.adId);
@@ -4374,6 +6789,309 @@ export class CampaignsService implements OnModuleInit {
     const draft = await this.duplicatePlan(organizationId, actorId, planId, { name: `${full.name} — Fresh Creative Draft` });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.fresh_draft_from_recommendation", entityType: "CampaignPlan", entityId: (draft as any).id, metadata: { sourcePlanId: planId, fatiguedAdId: ad.id, fatiguedAdName: ad.name } }).catch(() => undefined);
     return { draftId: (draft as any).id, plan: draft, note: "নতুন DRAFT তৈরি হয়েছে — ওই Draft-এ ক্লান্ত Ad-টির Creative বদলে তারপর স্বাভাবিক Approval পথে যান। Live Campaign অপরিবর্তিত।" };
+  }
+
+  /** CA11: apply a CN7 budget_shift proposal — the explicit
+   * human click the recommendation always required, now
+   * wired. The client sends back the proposal it was
+   * shown; the server REGENERATES the recommendation and
+   * refuses (returning the fresh proposal) when any number
+   * moved — stale math is never applied silently. The
+   * shift itself goes through updateAdSetBudget (the
+   * existing Meta-confirmed live budget edit) donor first,
+   * then winner; if the winner leg fails after the donor
+   * moved, the donor is rolled back and the failure is
+   * audited + reported, never hidden. A post-apply re-read
+   * verifies both budgets landed as proposed. */
+  async applyBudgetShiftRecommendation(organizationId: string, actorId: string, planId: string, dto: {
+    proposal?: { fromAdSetId: string; toAdSetId: string; shiftMinor: string; fromDailyAfterMinor: string; toDailyAfterMinor: string };
+  }) {
+    const sent = dto.proposal;
+    if (!sent?.fromAdSetId || !sent?.toAdSetId || !sent?.shiftMinor) {
+      throw new BadRequestException("Budget Shift প্রয়োগে Recommendation-এর proposal পাঠাতে হবে — proposal ছাড়া কোনো সংখ্যা প্রয়োগ হবে না।");
+    }
+    const fresh = await this.planRecommendations(organizationId, planId);
+    const rec = (fresh.recommendations as any[]).find((r) => r.type === "budget_shift");
+    if (!rec) {
+      throw new BadRequestException({
+        message: "এই মুহূর্তে কোনো Budget Shift প্রস্তাব নেই — ডেটা বদলে গেছে। নতুন প্রস্তাব দেখে আবার নিশ্চিত করুন।",
+        freshProposal: null,
+      } as any);
+    }
+    const p = rec.proposal;
+    const stale =
+      p.fromAdSetId !== sent.fromAdSetId || p.toAdSetId !== sent.toAdSetId ||
+      p.shiftMinor !== String(sent.shiftMinor) ||
+      p.fromDailyAfterMinor !== String(sent.fromDailyAfterMinor) ||
+      p.toDailyAfterMinor !== String(sent.toDailyAfterMinor);
+    if (stale) {
+      throw new BadRequestException({
+        message: "সংখ্যা বদলে গেছে — আপনি যে প্রস্তাব দেখে নিশ্চিত করেছিলেন তা আর হুবহু নেই। নতুন প্রস্তাবটি দেখে আবার নিশ্চিত করুন; পুরনো সংখ্যা প্রয়োগ হয়নি।",
+        freshProposal: p,
+      } as any);
+    }
+    const full = await this.getPlanFull(organizationId, planId);
+    const donor = (full.adSets ?? []).find((s: any) => s.id === p.fromAdSetId);
+    const winner = (full.adSets ?? []).find((s: any) => s.id === p.toAdSetId);
+    if (!donor || !winner) throw new BadRequestException("প্রস্তাবের Ad Set পাওয়া যায়নি");
+    const before = {
+      fromDailyMinor: donor.dailyBudgetMinor != null ? BigInt(donor.dailyBudgetMinor).toString() : null,
+      toDailyMinor: winner.dailyBudgetMinor != null ? BigInt(winner.dailyBudgetMinor).toString() : null,
+    };
+    const shift = BigInt(p.shiftMinor);
+    const fromAfter = BigInt(p.fromDailyAfterMinor);
+    const toAfter = BigInt(p.toDailyAfterMinor);
+    // Donor first (a decrease can only free budget), then
+    // the winner. updateAdSetBudget is Meta-confirmed: a
+    // throw means Meta did NOT confirm that leg.
+    await this.updateAdSetBudget(organizationId, actorId, planId, p.fromAdSetId, { dailyBudget: CampaignsService.minorToMajorString(fromAfter) });
+    try {
+      await this.updateAdSetBudget(organizationId, actorId, planId, p.toAdSetId, { dailyBudget: CampaignsService.minorToMajorString(toAfter) });
+    } catch (e) {
+      // Roll the donor back to its pre-apply budget so a
+      // half-applied shift never stands unexplained.
+      let rolledBack = false;
+      if (before.fromDailyMinor != null) {
+        rolledBack = await this.updateAdSetBudget(organizationId, actorId, planId, p.fromAdSetId, { dailyBudget: CampaignsService.minorToMajorString(BigInt(before.fromDailyMinor)) })
+          .then(() => true).catch(() => false);
+      }
+      await this.audit.log({ organizationId, userId: actorId, action: "campaign.budget_shift_failed", entityType: "CampaignPlan", entityId: planId, metadata: { fromAdSetId: p.fromAdSetId, toAdSetId: p.toAdSetId, shiftMinor: shift.toString(), stage: "winner_leg", donorRolledBack: rolledBack, error: e instanceof Error ? e.message : String(e) } }).catch(() => undefined);
+      throw new BadRequestException(`Donor Ad Set-এর বাজেট কমেছে, কিন্তু Winner Ad Set-এ বাড়ানো যায়নি: ${e instanceof Error ? e.message : e}${rolledBack ? " — Donor আগের বাজেটে ফিরিয়ে দেওয়া হয়েছে।" : " — Donor ফিরিয়ে দেওয়াও ব্যর্থ; Budget হাতে যাচাই করুন।"}`);
+    }
+    // Post-apply verification: re-read and compare against
+    // the proposal the human confirmed.
+    const afterFull = await this.getPlanFull(organizationId, planId);
+    const donorAfter = (afterFull.adSets ?? []).find((s: any) => s.id === p.fromAdSetId);
+    const winnerAfter = (afterFull.adSets ?? []).find((s: any) => s.id === p.toAdSetId);
+    const after = {
+      fromDailyMinor: donorAfter?.dailyBudgetMinor != null ? BigInt(donorAfter.dailyBudgetMinor).toString() : null,
+      toDailyMinor: winnerAfter?.dailyBudgetMinor != null ? BigInt(winnerAfter.dailyBudgetMinor).toString() : null,
+    };
+    const verified = after.fromDailyMinor === fromAfter.toString() && after.toDailyMinor === toAfter.toString();
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.budget_shift_applied", entityType: "CampaignPlan", entityId: planId, metadata: { fromAdSetId: p.fromAdSetId, toAdSetId: p.toAdSetId, shiftMinor: shift.toString(), before, after, verified } });
+    return {
+      applied: true, verified, before, after,
+      shiftMinor: shift.toString(), fromAdSetId: p.fromAdSetId, toAdSetId: p.toAdSetId,
+      note: verified
+        ? "Budget Shift প্রয়োগ হয়েছে এবং পুনরায় পড়ে যাচাই করা হয়েছে — দুই Ad Set-এর বাজেটই প্রস্তাবের সংখ্যায় আছে।"
+        : "Budget Shift-এর দুই ধাপই Meta নিশ্চিত করেছে, তবে পুনরায় পড়া সংখ্যা প্রস্তাবের সঙ্গে হুবহু মেলেনি — Plan খুলে যাচাই করুন।",
+      plan: afterFull,
+    };
+  }
+
+  /** CA11 allocator window: marginal evidence (spend /
+   * conversions / CPA) is read from the last 30 days of
+   * stored DailyAdMetric campaign-level rows. */
+  static readonly ALLOCATOR_WINDOW_DAYS = 30;
+
+  /** CA11: the plan's current daily-budget total over its
+   * LIVE ad sets (external id + a daily budget) — the only
+   * sets a live budget edit can move. */
+  private planLiveDailyTotal(full: any): bigint {
+    let total = 0n;
+    for (const s of full.adSets ?? []) {
+      if (s.externalAdSetId && s.dailyBudgetMinor != null) total += BigInt(s.dailyBudgetMinor);
+    }
+    return total;
+  }
+
+  /** CA11: the ad set an allocation lands on — the plan's
+   * best-CPA live set with conversions in the performance
+   * window; without per-set conversion evidence, the
+   * largest daily budget (stated via targetBasis, never
+   * hidden). */
+  private allocatorTargetSet(full: any, perf: any): { adSet: any; basis: "lowest_cpa" | "largest_daily_budget" } | null {
+    const live = (full.adSets ?? []).filter((s: any) => s.externalAdSetId && s.dailyBudgetMinor != null);
+    if (!live.length) return null;
+    const perSet = new Map<string, any>((perf?.perAdSet ?? []).map((x: any) => [x.adSetId, x]));
+    let best: any = null; let bestCpa: bigint | null = null;
+    for (const s of live) {
+      const g = perSet.get(s.id);
+      if (!g || !(g.conversions > 0) || BigInt(g.spendMinor) <= 0n) continue;
+      const cpa = BigInt(g.spendMinor) / BigInt(g.conversions);
+      if (bestCpa === null || cpa < bestCpa) { best = s; bestCpa = cpa; }
+    }
+    if (best) return { adSet: best, basis: "lowest_cpa" };
+    const largest = [...live].sort((a: any, b: any) => Number(BigInt(b.dailyBudgetMinor) - BigInt(a.dailyBudgetMinor)))[0];
+    return { adSet: largest, basis: "largest_daily_budget" };
+  }
+
+  /** CA11: multi-plan budget allocator — PROPOSAL only.
+   * The owner names a total extra daily budget; it is
+   * distributed across the selected plans by DETERMINISTIC
+   * marginal evidence from stored rows: a plan is eligible
+   * only with real conversions in the window AND a CPA at
+   * or below the eligible set's median CPA; its weight is
+   * its conversion count; its cap is its current live
+   * daily total (an allocation never more than doubles a
+   * plan). Plans failing any test are listed in `excluded`
+   * with the reason and their evidence — weights are never
+   * invented for a plan without data. Nothing is applied
+   * here; applyBudgetAllocator is the confirmed second
+   * step and re-verifies every number. */
+  async budgetAllocatorProposal(organizationId: string, dto: { planIds: string[]; totalShiftMinor: string }) {
+    const totalShift = (() => { try { return BigInt(dto.totalShiftMinor ?? "0"); } catch { return 0n; } })();
+    if (totalShift <= 0n) throw new BadRequestException("মোট অতিরিক্ত বাজেট ধনাত্মক হতে হবে (minor units)");
+    const planIds = [...new Set((dto.planIds ?? []).filter(Boolean))].slice(0, 50);
+    if (!planIds.length) throw new BadRequestException("অন্তত একটি Plan বেছে নিন");
+    const windowDays = CampaignsService.ALLOCATOR_WINDOW_DAYS;
+    const since = new Date(Date.now() - windowDays * 86400000);
+    const excluded: any[] = [];
+    const eligible: any[] = [];
+    for (const planId of planIds) {
+      const plan = await (this.prisma as any).campaignPlan.findFirst({ where: { id: planId, organizationId } }).catch(() => null);
+      if (!plan) { excluded.push({ planId, name: null, reason: "plan_not_found" }); continue; }
+      if (plan.status !== "published" || !plan.externalCampaignId) { excluded.push({ planId, name: plan.name, reason: "not_published" }); continue; }
+      const full = await this.getPlanFull(organizationId, planId);
+      if (this.isCbo(full)) { excluded.push({ planId, name: plan.name, reason: "cbo_no_live_budget_path" }); continue; }
+      const dailyTotal = this.planLiveDailyTotal(full);
+      if (dailyTotal <= 0n) { excluded.push({ planId, name: plan.name, reason: "no_daily_budget" }); continue; }
+      // Plan-level evidence from campaign-level metric
+      // rows ONLY (both external ids empty — the planPacing
+      // / rules-engine counting rule, so ad-set rows never
+      // double the same spend). planPerformance is still
+      // used for the per-set target choice below.
+      const metricRows = await (this.prisma as any).dailyAdMetric.findMany({
+        where: { organizationId, campaignExternalId: plan.externalCampaignId, date: { gte: since } }, take: 10000,
+      }).catch(() => []);
+      let spend = 0n; let conversions = 0;
+      for (const r of metricRows as any[]) {
+        if ((r.adSetExternalId ?? "") !== "" || (r.adExternalId ?? "") !== "") continue;
+        spend += BigInt(r.spendMinor ?? 0);
+        conversions += Number(r.platformConversions ?? r.conversions ?? 0);
+      }
+      const perf = await this.planPerformance(organizationId, planId, { since });
+      const evidence = { spendMinor: spend.toString(), conversions, cpaMinor: conversions > 0 ? (spend / BigInt(conversions)).toString() : null, windowDays };
+      if (spend <= 0n || conversions <= 0) { excluded.push({ planId, name: plan.name, reason: "no_evidence", evidence }); continue; }
+      eligible.push({ planId, name: plan.name, full, perf, dailyTotal, evidence, cpa: spend / BigInt(conversions), weight: conversions });
+    }
+    // Efficiency gate: at or below the eligible set's
+    // median CPA (lower-middle element for even counts).
+    if (eligible.length) {
+      const sorted = [...eligible].sort((a, b) => Number(a.cpa - b.cpa));
+      const median = sorted[Math.floor((sorted.length - 1) / 2)].cpa;
+      for (let i = eligible.length - 1; i >= 0; i--) {
+        if (eligible[i].cpa > median) {
+          excluded.push({ planId: eligible[i].planId, name: eligible[i].name, reason: "below_efficiency", evidence: eligible[i].evidence, medianCpaMinor: median.toString() });
+          eligible.splice(i, 1);
+        }
+      }
+    }
+    // Water-filling: proportional to conversion weight,
+    // capped per plan at its current daily total; capped
+    // plans leave the pool and the remainder redistributes.
+    // A final dust pass gives any floor-division remainder
+    // to the heaviest plans with room, so the only
+    // unallocated money is what caps genuinely refuse.
+    const allocations = new Map<string, bigint>(eligible.map((e) => [e.planId, 0n]));
+    let remaining = totalShift;
+    const active = new Set(eligible.map((e) => e.planId));
+    const byId = new Map(eligible.map((e) => [e.planId, e]));
+    while (remaining > 0n && active.size > 0) {
+      const totalWeight = [...active].reduce((acc, id) => acc + byId.get(id).weight, 0);
+      if (totalWeight <= 0) break;
+      // Shares are computed against the pass-START remainder
+      // and weight total — mutating `remaining` mid-pass
+      // would skew every later plan's share.
+      const passRemaining = remaining;
+      let progressed = false;
+      for (const id of [...active]) {
+        const e = byId.get(id);
+        const share = (passRemaining * BigInt(e.weight)) / BigInt(totalWeight);
+        const room = e.dailyTotal - allocations.get(id)!;
+        const give = share < room ? share : room;
+        if (give > 0n) { allocations.set(id, allocations.get(id)! + give); remaining -= give; progressed = true; }
+        if (allocations.get(id)! >= e.dailyTotal) active.delete(id);
+      }
+      if (!progressed) break;
+    }
+    if (remaining > 0n && active.size > 0) {
+      for (const e of [...active].map((id) => byId.get(id)).sort((a, b) => b.weight - a.weight)) {
+        if (remaining <= 0n) break;
+        const room = e.dailyTotal - allocations.get(e.planId)!;
+        const give = remaining < room ? remaining : room;
+        if (give > 0n) { allocations.set(e.planId, allocations.get(e.planId)! + give); remaining -= give; }
+      }
+    }
+    const out = eligible
+      .filter((e) => allocations.get(e.planId)! > 0n)
+      .map((e) => {
+        const target = this.allocatorTargetSet(e.full, e.perf);
+        return {
+          planId: e.planId, name: e.name,
+          amountMinor: allocations.get(e.planId)!.toString(),
+          currentDailyTotalMinor: e.dailyTotal.toString(),
+          newDailyTotalMinor: (e.dailyTotal + allocations.get(e.planId)!).toString(),
+          targetAdSetId: target?.adSet.id ?? null, targetAdSetName: target?.adSet.name ?? null, targetBasis: target?.basis ?? null,
+          evidence: e.evidence,
+        };
+      });
+    // Eligible plans the caps squeezed to zero are reported,
+    // not silently dropped.
+    for (const e of eligible) {
+      if (allocations.get(e.planId)! <= 0n) excluded.push({ planId: e.planId, name: e.name, reason: "cap_reached_by_others", evidence: e.evidence });
+    }
+    const allocated = out.reduce((acc, a) => acc + BigInt(a.amountMinor), 0n);
+    return {
+      label: "proposal_only",
+      note: "এটি শুধু প্রস্তাব — প্রয়োগ হয়নি। হিসাব: গত ৩০ দিনের আসল Spend/Conversion থেকে CPA; Median CPA-র বেশি CPA-ওয়ালা Plan বাদ; ওজন = Conversion সংখ্যা; Plan প্রতি সর্বোচ্চ = তার বর্তমান দৈনিক মোট বাজেট।",
+      windowDays, totalShiftMinor: totalShift.toString(),
+      allocatedMinor: allocated.toString(), unallocatedMinor: (totalShift - allocated).toString(),
+      allocations: out, excluded,
+    };
+  }
+
+  /** CA11: apply a CONFIRMED allocator proposal. Each
+   * plan's shift is its own approved change: the plan's
+   * current daily total must still equal the proposal's
+   * (staleness is a per-plan refusal with the fresh total,
+   * never a silent apply), the per-plan cap is re-checked,
+   * the increase lands on the plan's target ad set through
+   * updateAdSetBudget (Meta-confirmed), is re-read for
+   * verification, and is audited per plan. Per-plan
+   * results: one plan failing never fails or hides the
+   * others. */
+  async applyBudgetAllocator(organizationId: string, actorId: string, dto: {
+    allocations: { planId: string; amountMinor: string; expectedDailyTotalMinor: string }[];
+  }) {
+    const items = (dto.allocations ?? []).filter((a) => a?.planId).slice(0, 50);
+    if (!items.length) throw new BadRequestException("প্রয়োগের জন্য অন্তত একটি Allocation পাঠাতে হবে");
+    const results: any[] = [];
+    for (const item of items) {
+      const planId = item.planId;
+      try {
+        const amount = BigInt(item.amountMinor ?? "0");
+        if (amount <= 0n) { results.push({ planId, ok: false, error: "zero_amount" }); continue; }
+        const plan = await this.getPlanOrThrow(organizationId, planId);
+        if (plan.status !== "published" || !plan.externalCampaignId) { results.push({ planId, ok: false, error: "not_published" }); continue; }
+        const full = await this.getPlanFull(organizationId, planId);
+        if (this.isCbo(full)) { results.push({ planId, ok: false, error: "cbo_no_live_budget_path" }); continue; }
+        const currentTotal = this.planLiveDailyTotal(full);
+        if (currentTotal.toString() !== String(item.expectedDailyTotalMinor)) {
+          results.push({ planId, ok: false, error: "stale_daily_total", currentDailyTotalMinor: currentTotal.toString() });
+          continue;
+        }
+        if (amount > currentTotal) { results.push({ planId, ok: false, error: "exceeds_cap", currentDailyTotalMinor: currentTotal.toString() }); continue; }
+        const perf = await this.planPerformance(organizationId, planId, { since: new Date(Date.now() - CampaignsService.ALLOCATOR_WINDOW_DAYS * 86400000) });
+        const target = this.allocatorTargetSet(full, perf);
+        if (!target) { results.push({ planId, ok: false, error: "no_daily_budget" }); continue; }
+        const beforeMinor = BigInt(target.adSet.dailyBudgetMinor);
+        const afterMinor = beforeMinor + amount;
+        await this.updateAdSetBudget(organizationId, actorId, planId, target.adSet.id, { dailyBudget: CampaignsService.minorToMajorString(afterMinor) });
+        const afterFull = await this.getPlanFull(organizationId, planId);
+        const setAfter = (afterFull.adSets ?? []).find((s: any) => s.id === target.adSet.id);
+        const verified = setAfter?.dailyBudgetMinor != null && BigInt(setAfter.dailyBudgetMinor) === afterMinor;
+        await this.audit.log({ organizationId, userId: actorId, action: "campaign.budget_allocator_applied", entityType: "CampaignPlan", entityId: planId, metadata: { amountMinor: amount.toString(), targetAdSetId: target.adSet.id, targetBasis: target.basis, beforeDailyMinor: beforeMinor.toString(), afterDailyMinor: afterMinor.toString(), verified } });
+        results.push({ planId, ok: true, targetAdSetId: target.adSet.id, targetBasis: target.basis, beforeDailyMinor: beforeMinor.toString(), afterDailyMinor: afterMinor.toString(), verified });
+      } catch (e) {
+        results.push({ planId, ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return {
+      results,
+      appliedCount: results.filter((r) => r.ok).length,
+      failedCount: results.filter((r) => !r.ok).length,
+    };
   }
 
   /** CN7: automation guardrails as seen from a plan. The
@@ -4464,6 +7182,248 @@ export class CampaignsService implements OnModuleInit {
    * account. Currencies are NEVER mixed: org totals are
    * reported per currency. Platform-reported figures,
    * kept separate from first-party attribution as always. */
+  /** CA27: a trait VALUE is emitted only when at least
+   * this many winning ads share it — below that, a
+   * "pattern" would be an anecdote dressed as data. */
+  static readonly WINNER_TRAIT_MIN_SAMPLE = 3;
+  /** CA27: a non-A/B ad counts as a proven performer
+   * only with real conversions on top of the CA25 bars. */
+  static readonly WINNER_PROVEN_MIN_CONVERSIONS = 5;
+
+  /** CA27: deterministic creative-trait facts of the
+   * org's WINNING ads, computed from real rows only:
+   * winners are (1) the ads of plans an A/B verdict
+   * named winner (abTestResults — winnerPlanId only,
+   * verdict-gated), and (2) proven performers: ads whose
+   * ad-level DailyAdMetric rows clear the CA25 evidence
+   * bars (>= 1,000 impressions, >= ৳100 spend) with
+   * >= 5 conversions. Traits: format, aspect bucket
+   * (from the creative's stored width/height), primary-
+   * text length bucket, CTA. Text-overlay is NOT
+   * computed: CA5's vision check runs at generation time
+   * and stores no per-asset result, so the payload says
+   * exactly that instead of guessing. A trait value with
+   * fewer than WINNER_TRAIT_MIN_SAMPLE winners is
+   * suppressed (counted in `suppressed`, never emitted). */
+  async winnerTraits(organizationId: string) {
+    const winners = new Map<string, { ad: any; sources: string[] }>();
+    const addWinner = (ad: any, source: string) => {
+      if (!ad?.id) return;
+      const cur = winners.get(ad.id) ?? { ad, sources: [] };
+      if (!cur.sources.includes(source)) cur.sources.push(source);
+      winners.set(ad.id, cur);
+    };
+    // (1) A/B verdict winners.
+    try {
+      const groups = await this.abTestResults(organizationId);
+      for (const g of groups as any[]) {
+        if (!g.winnerPlanId) continue;
+        const full = await this.getPlanFull(organizationId, g.winnerPlanId).catch(() => null);
+        for (const s of full?.adSets ?? []) for (const ad of s.ads ?? []) addWinner(ad, "ab_verdict");
+      }
+    } catch { /* no A/B data — the performer path still applies */ }
+    // (2) Proven performers from ad-level metric rows.
+    try {
+      const plans = await this.prisma.campaignPlan.findMany({ where: { organizationId }, select: { id: true } });
+      const adSets = plans.length
+        ? await this.prisma.campaignAdSet.findMany({ where: { planId: { in: plans.map((p: any) => p.id) } }, select: { id: true } })
+        : [];
+      const ads = adSets.length
+        ? await (this.prisma as any).campaignAd.findMany({ where: { adSetId: { in: adSets.map((s: any) => s.id) } } })
+        : [];
+      const byExt = new Map<string, any>();
+      for (const ad of ads as any[]) if (ad.externalAdId) byExt.set(ad.externalAdId, ad);
+      const extIds = [...byExt.keys()];
+      const rows = extIds.length
+        ? await (this.prisma as any).dailyAdMetric.findMany({ where: { organizationId, level: "ad", adExternalId: { in: extIds } }, select: { adExternalId: true, impressions: true, spendMinor: true, conversions: true } }).catch(() => [])
+        : [];
+      const totals = new Map<string, { impressions: number; spendMinor: number; conversions: number }>();
+      for (const r of rows as any[]) {
+        const cur = totals.get(r.adExternalId) ?? { impressions: 0, spendMinor: 0, conversions: 0 };
+        cur.impressions += Number(r.impressions ?? 0); cur.spendMinor += Number(r.spendMinor ?? 0); cur.conversions += Number(r.conversions ?? 0);
+        totals.set(r.adExternalId, cur);
+      }
+      for (const [ext, t] of totals) {
+        if (t.impressions >= CampaignsService.ASSET_PERF_MIN_IMPRESSIONS && t.spendMinor >= CampaignsService.ASSET_PERF_MIN_SPEND_MINOR && t.conversions >= CampaignsService.WINNER_PROVEN_MIN_CONVERSIONS) {
+          addWinner(byExt.get(ext), "proven_performer");
+        }
+      }
+    } catch { /* metric path unavailable — verdict path stands */ }
+
+    // Aspect buckets need the creative rows' dimensions.
+    const assetIds = [...new Set([...winners.values()].map((w) => w.ad.imageAssetId ?? w.ad.videoAssetId).filter(Boolean))] as string[];
+    const assetRows = assetIds.length && (this.prisma as any).creativeAsset?.findMany
+      ? await (this.prisma as any).creativeAsset.findMany({ where: { id: { in: assetIds } }, select: { id: true, width: true, height: true } }).catch(() => [])
+      : [];
+    const dims = new Map<string, { width: number; height: number }>();
+    for (const r of assetRows as any[]) if (r.width && r.height) dims.set(r.id, { width: r.width, height: r.height });
+
+    const counts = new Map<string, { trait: string; value: string; count: number }>();
+    const bump = (trait: string, value: string | null) => {
+      if (!value) return;
+      const key = `${trait}:${value}`;
+      const cur = counts.get(key) ?? { trait, value, count: 0 };
+      cur.count++;
+      counts.set(key, cur);
+    };
+    for (const { ad } of winners.values()) {
+      bump("format", ad.format ?? "link");
+      const assetId = ad.imageAssetId ?? ad.videoAssetId;
+      const d = assetId ? dims.get(assetId) : undefined;
+      if (d) {
+        const r = d.width / d.height;
+        bump("aspect", r >= 0.95 && r <= 1.05 ? "বর্গাকার (1:1)" : r < 0.95 ? "উল্লম্ব (4:5 / 9:16)" : "অনুভূমিক (16:9 ধরনের)");
+      }
+      const len = String(ad.primaryText ?? "").length;
+      bump("textLength", len < 60 ? "ছোট লেখা (< 60 অক্ষর)" : len <= 150 ? "মাঝারি লেখা (60–150 অক্ষর)" : "বড় লেখা (> 150 অক্ষর)");
+      bump("cta", ad.callToAction ?? null);
+    }
+    const all = [...counts.values()];
+    const emitted = all.filter((t) => t.count >= CampaignsService.WINNER_TRAIT_MIN_SAMPLE)
+      .sort((a, b) => a.trait.localeCompare(b.trait) || b.count - a.count);
+    const suppressed = all.filter((t) => t.count < CampaignsService.WINNER_TRAIT_MIN_SAMPLE);
+    const byTrait = new Map<string, { value: string; count: number }[]>();
+    for (const t of emitted) {
+      const arr = byTrait.get(t.trait) ?? [];
+      arr.push({ value: t.value, count: t.count });
+      byTrait.set(t.trait, arr);
+    }
+    const label: Record<string, string> = { format: "ফরম্যাট", aspect: "অনুপাত", textLength: "লেখার দৈর্ঘ্য", cta: "CTA" };
+    const factsBn = emitted.length
+      ? `আগের বিজয়ী বিজ্ঞাপনগুলোর বৈশিষ্ট্য (আসল ডেটা — ${winners.size}টি বিজয়ী Ad থেকে): ` +
+        [...byTrait.entries()].map(([trait, vals]) => `${label[trait] ?? trait}: ${vals.map((v) => `${v.value} (${v.count}টি)`).join(", ")}`).join(" · ")
+      : "";
+    return {
+      winnersConsidered: winners.size,
+      sources: {
+        abVerdict: [...winners.values()].filter((w) => w.sources.includes("ab_verdict")).length,
+        provenPerformer: [...winners.values()].filter((w) => w.sources.includes("proven_performer")).length,
+      },
+      minSample: CampaignsService.WINNER_TRAIT_MIN_SAMPLE,
+      traits: emitted,
+      suppressed: suppressed.map((t) => ({ trait: t.trait, value: t.value, count: t.count, reason: `ন্যূনতম নমুনা ${CampaignsService.WINNER_TRAIT_MIN_SAMPLE}-এর নিচে — প্যাটার্ন বলা যায় না` })),
+      factsBn,
+      excluded: ["টেক্সট-ওভারলে: CA5 Vision যাচাই Generation-এর সময়ের সতর্কতা মাত্র — Asset-এ সংরক্ষিত ফল নেই, তাই এই বৈশিষ্ট্য হিসাব হয়নি (অনুমান করা হয়নি)।"],
+      note: "বৈশিষ্ট্যগুলো শুধু আসল A/B Verdict ও Ad-level Metric থেকে — কোনো অনুমান বা AI-এর ধারণা নয়।",
+    };
+  }
+
+  /** CA25: an asset's badge/rating exists only when BOTH
+   * evidence bars are met by REAL ad-level metric rows:
+   * at least 1,000 impressions AND at least ৳100 of real
+   * spend (minor units) attributed to that asset's ads.
+   * Below either bar the asset is "unrated" — the picker
+   * shows তথ্য নেই and never ranks it above a rated one. */
+  static readonly ASSET_PERF_MIN_IMPRESSIONS = 1000;
+  static readonly ASSET_PERF_MIN_SPEND_MINOR = 10000;
+
+  /** CA25: per-asset REAL past performance for the
+   * builder's asset picker. Attribution chain, honest by
+   * construction: org plans → their ads (imageAssetId /
+   * videoAssetId, or imageUrl/videoUrl whose sourceRef is
+   * creative:<id> / media:<id>) → each ad's externalAdId →
+   * DailyAdMetric rows with level "ad" ONLY. Campaign-
+   * and ad-set-level rows are NEVER attributed to a
+   * creative (the CA7 honesty rule) — summing them into
+   * an asset would fabricate per-creative numbers. */
+  async assetPerformance(organizationId: string) {
+    const plans = await this.prisma.campaignPlan.findMany({ where: { organizationId }, select: { id: true } });
+    const planIds = plans.map((p: any) => p.id);
+    const adSets = planIds.length
+      ? await this.prisma.campaignAdSet.findMany({ where: { planId: { in: planIds } }, select: { id: true } })
+      : [];
+    const adSetIds = adSets.map((s: any) => s.id);
+    const ads = adSetIds.length
+      ? await (this.prisma as any).campaignAd.findMany({
+          where: { adSetId: { in: adSetIds } },
+          select: { id: true, externalAdId: true, imageAssetId: true, videoAssetId: true, imageUrl: true, videoUrl: true },
+        })
+      : [];
+
+    // asset key -> the ads that used it
+    const keyOf = (ad: any): { key: string; source: "creative" | "media"; assetId: string; kind: "image" | "video" } | null => {
+      if (ad.imageAssetId) return { key: `creative:${ad.imageAssetId}`, source: "creative", assetId: ad.imageAssetId, kind: "image" };
+      if (ad.videoAssetId) return { key: `creative:${ad.videoAssetId}`, source: "creative", assetId: ad.videoAssetId, kind: "video" };
+      const ref = (url: string | null | undefined) => {
+        const m = /^(creative|media):([0-9a-fA-F-]{36})$/.exec(String(url ?? ""));
+        return m ? { src: m[1] as "creative" | "media", id: m[2] } : null;
+      };
+      const ri = ref(ad.imageUrl); if (ri) return { key: `${ri.src}:${ri.id}`, source: ri.src, assetId: ri.id, kind: "image" };
+      const rv = ref(ad.videoUrl); if (rv) return { key: `${rv.src}:${rv.id}`, source: rv.src, assetId: rv.id, kind: "video" };
+      return null;
+    };
+    const byAsset = new Map<string, { source: "creative" | "media"; assetId: string; kind: "image" | "video"; adIds: string[]; externalIds: string[] }>();
+    for (const ad of ads as any[]) {
+      const k = keyOf(ad);
+      if (!k) continue;
+      const cur = byAsset.get(k.key) ?? { source: k.source, assetId: k.assetId, kind: k.kind, adIds: [], externalIds: [] };
+      cur.adIds.push(ad.id);
+      if (ad.externalAdId) cur.externalIds.push(ad.externalAdId);
+      byAsset.set(k.key, cur);
+    }
+
+    const extIds = [...new Set((ads as any[]).map((a) => a.externalAdId).filter(Boolean))] as string[];
+    const metricRows = extIds.length
+      ? await (this.prisma as any).dailyAdMetric.findMany({
+          where: { organizationId, level: "ad", adExternalId: { in: extIds } },
+          select: { adExternalId: true, impressions: true, clicks: true, spendMinor: true, conversions: true },
+        }).catch(() => [])
+      : [];
+    const byExt = new Map<string, { impressions: number; clicks: number; spendMinor: number; conversions: number }>();
+    for (const r of metricRows as any[]) {
+      const cur = byExt.get(r.adExternalId) ?? { impressions: 0, clicks: 0, spendMinor: 0, conversions: 0 };
+      cur.impressions += Number(r.impressions ?? 0); cur.clicks += Number(r.clicks ?? 0);
+      cur.spendMinor += Number(r.spendMinor ?? 0); cur.conversions += Number(r.conversions ?? 0);
+      byExt.set(r.adExternalId, cur);
+    }
+
+    // Asset display info from the real asset rows.
+    const creativeIds = [...byAsset.values()].filter((a) => a.source === "creative").map((a) => a.assetId);
+    const mediaIds = [...byAsset.values()].filter((a) => a.source === "media").map((a) => a.assetId);
+    const creativeRows = creativeIds.length && (this.prisma as any).creativeAsset?.findMany
+      ? await (this.prisma as any).creativeAsset.findMany({ where: { id: { in: creativeIds } }, select: { id: true, name: true, kind: true, createdAt: true } }).catch(() => [])
+      : [];
+    const mediaRows = mediaIds.length && (this.prisma as any).mediaAsset?.findMany
+      ? await (this.prisma as any).mediaAsset.findMany({ where: { id: { in: mediaIds } }, select: { id: true, name: true, kind: true, createdAt: true } }).catch(() => [])
+      : [];
+    const infoOf = new Map<string, any>();
+    for (const r of creativeRows as any[]) infoOf.set(`creative:${r.id}`, r);
+    for (const r of mediaRows as any[]) infoOf.set(`media:${r.id}`, r);
+
+    const assets = [...byAsset.entries()].map(([key, a]) => {
+      const t = a.externalIds.reduce((acc, ext) => {
+        const m = byExt.get(ext);
+        if (m) { acc.impressions += m.impressions; acc.clicks += m.clicks; acc.spendMinor += m.spendMinor; acc.conversions += m.conversions; }
+        return acc;
+      }, { impressions: 0, clicks: 0, spendMinor: 0, conversions: 0 });
+      const rated = t.impressions >= CampaignsService.ASSET_PERF_MIN_IMPRESSIONS && t.spendMinor >= CampaignsService.ASSET_PERF_MIN_SPEND_MINOR;
+      const info = infoOf.get(key);
+      return {
+        key, source: a.source, assetId: a.assetId, kind: a.kind,
+        name: info?.name ?? null, assetCreatedAt: info?.createdAt ?? null,
+        adsUsed: a.adIds.length,
+        impressions: t.impressions, clicks: t.clicks, spendMinor: t.spendMinor, conversions: t.conversions,
+        rated,
+        ctrPct: rated && t.impressions > 0 ? Math.round((t.clicks / t.impressions) * 10000) / 100 : null,
+        cpaMinor: rated && t.conversions > 0 ? Math.round(t.spendMinor / t.conversions) : null,
+      };
+    });
+    // Rated first (CTR desc) — the picker's performance
+    // sort mirrors this; unrated assets are never above
+    // rated ones.
+    assets.sort((x, y) => (y.rated ? 1 : 0) - (x.rated ? 1 : 0) || (y.ctrPct ?? -1) - (x.ctrPct ?? -1));
+
+    return {
+      thresholds: {
+        minImpressions: CampaignsService.ASSET_PERF_MIN_IMPRESSIONS,
+        minSpendMinor: CampaignsService.ASSET_PERF_MIN_SPEND_MINOR,
+        rule: "Rating পেতে কমপক্ষে 1,000 Impression এবং কমপক্ষে ৳100 আসল খরচ (শুধু Ad-level Metric থেকে) লাগবে",
+      },
+      assets,
+      note: "সংখ্যাগুলো শুধু Ad-level DailyAdMetric থেকে — Campaign/Ad Set-level সারি কোনো Creative-এর নামে ধরা হয়নি (CA7-এর সততার নিয়ম)। Threshold-এর নিচে Asset 'তথ্য নেই' হিসেবে দেখায়।",
+    };
+  }
+
   async portfolioTotals(organizationId: string) {
     const p = this.prisma as any;
     const rows = await p.dailyAdMetric.findMany({ where: { organizationId }, take: 20000 }).catch(() => []);
@@ -4729,6 +7689,160 @@ export class CampaignsService implements OnModuleInit {
     return { plan: full, targetAccount: { id: target.id, name: target.name }, mapping, blockers };
   }
 
+  /** CA3: assemble a Google Search RSA from the plan's ads.
+   * Sources, in order — headlines: plan name, then per ad its
+   * CN5 textOptions headlines → legacy headline → ad name;
+   * descriptions: per ad its textOptions descriptions →
+   * textOptions primaryTexts → legacy description → legacy
+   * primaryText (deduped). Google's limits are hard (15
+   * headlines ≤30 chars, 4 descriptions ≤90 chars): an
+   * option over its length limit, and anything past the cap,
+   * is listed in notCarried with the reason — text is NEVER
+   * truncated silently and overflow is never dropped without
+   * a record (the pre-CA3 assembly sliced strings to the
+   * limit and capped the arrays silently). RSA pinning is
+   * not sent: CN5 text options have no pin model, and the
+   * mapping note on the draft says so. */
+  private assembleGoogleRsa(ads: any[], planName: string): { headlines: string[]; descriptions: string[]; notCarried: string[] } {
+    const headlinePool: string[] = [];
+    const descPool: string[] = [];
+    const push = (pool: string[], v: any) => { const t = String(v ?? "").trim(); if (t && !pool.includes(t)) pool.push(t); };
+    push(headlinePool, planName);
+    for (const ad of ads) {
+      const opts = this.textOptionsOf(ad);
+      for (const h of opts?.headlines ?? []) push(headlinePool, h);
+      push(headlinePool, ad.headline);
+      push(headlinePool, ad.name);
+      for (const d of opts?.descriptions ?? []) push(descPool, d);
+      for (const p of opts?.primaryTexts ?? []) push(descPool, p);
+      push(descPool, ad.description);
+      push(descPool, ad.primaryText);
+    }
+    const notCarried: string[] = [];
+    const take = (pool: string[], maxLen: number, cap: number, label: string) => {
+      const ok: string[] = [];
+      for (const t of pool) {
+        if (t.length > maxLen) { notCarried.push(`${label} "${t.slice(0, 40)}…" — ${t.length} অক্ষর, Google-এর সীমা ${maxLen}; কেটে পাঠানো হয়নি`); continue; }
+        if (ok.length >= cap) { notCarried.push(`${label} "${t.slice(0, 40)}…" — RSA-তে সর্বোচ্চ ${cap}টি যায়, এটি অতিরিক্ত`); continue; }
+        ok.push(t);
+      }
+      return ok;
+    };
+    return {
+      headlines: take(headlinePool, 30, 15, "Headline"),
+      descriptions: take(descPool, 90, 4, "Description"),
+      notCarried,
+    };
+  }
+
+  /** CA15 (CB4): resolve the audiences a plan references
+   * into the verbatim signal records a PMax draft
+   * carries. Names come only from real rows
+   * (SavedAudience / AudienceRecord); an id whose row is
+   * gone is carried WITHOUT a name — never invented. */
+  private async resolveAudienceSignals(organizationId: string, savedIds: string[], customIds: string[], excludedIds: string[]): Promise<any[]> {
+    const out: any[] = [];
+    const p = this.prisma as any;
+    for (const id of savedIds) {
+      const row = p.savedAudience?.findFirst ? await p.savedAudience.findFirst({ where: { id, organizationId } }).catch(() => null) : null;
+      out.push({ source: "saved_audience", savedAudienceId: id, name: row?.name ?? null });
+    }
+    const byExternal = async (externalId: string, excluded: boolean) => {
+      const row = p.audienceRecord?.findFirst ? await p.audienceRecord.findFirst({ where: { externalAudienceId: externalId, organizationId } }).catch(() => null) : null;
+      out.push({ source: excluded ? "excluded_custom_audience" : "custom_audience", externalAudienceId: externalId, name: row?.name ?? null, kind: row?.kind ?? null, recordId: row?.id ?? null, excluded });
+    };
+    for (const id of customIds) await byExternal(id, false);
+    for (const id of excludedIds) await byExternal(id, true);
+    return out;
+  }
+
+  /** CA15: the fan-out draft name — the org's CA13
+   * naming template rendered for the TARGET platform
+   * when one is set (token values from the plan tree's
+   * own records, via namingItemsForPlan); otherwise the
+   * plan's name, exactly as the single-draft path uses.
+   * A blank render falls back to the plan name. */
+  private async fanoutDraftName(organizationId: string, full: any, platformLabel: string): Promise<string> {
+    const template = await this.namingTemplate(organizationId);
+    if (!template) return full.name;
+    const items = await this.namingItemsForPlan(organizationId, full);
+    const planItem = items.find((i: any) => i.level === "plan");
+    const rendered = renderNamingTemplate(template, { ...(planItem?.values ?? { objective: full.objective }), platform: platformLabel });
+    return rendered || full.name;
+  }
+
+  /** CA15: one-click fan-out PREVIEW — the Google +
+   * TikTok mappings for the chosen target accounts,
+   * computed and returned WITH their gaps (unmapped /
+   * notCarried / transformations) BEFORE anything is
+   * created. The preview persists no draft and makes no
+   * platform call: it rides crossPlatformDraft's dry-run
+   * path. A per-platform failure (bad account, access)
+   * is reported on that platform's block only. */
+  async fanoutPreview(organizationId: string, planId: string, actorId: string, dto: { googleAccountId?: string; googleKind?: string; tiktokAccountId?: string; tiktokObjectiveType?: string; tiktokPixelId?: string; tiktokOptimizationEvent?: string }) {
+    if (!dto.googleAccountId && !dto.tiktokAccountId) throw new BadRequestException("অন্তত একটি Target Account দিন (Google বা TikTok)");
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    if (!["approved", "published", "publish_failed"].includes(plan.status)) {
+      throw new BadRequestException(`Fan-out-এর জন্য Approved Plan দরকার (বর্তমান: ${plan.status})`);
+    }
+    const full = await this.getPlanFull(organizationId, planId);
+    const platforms: any[] = [];
+    if (dto.googleAccountId) {
+      const nameOverride = await this.fanoutDraftName(organizationId, full, "Google");
+      platforms.push(await this.fanoutAttempt("google", () => this.crossPlatformDraft(organizationId, planId, actorId, { platform: "google", targetAdAccountId: dto.googleAccountId!, kind: dto.googleKind, nameOverride, dryRun: true } as any)));
+    }
+    if (dto.tiktokAccountId) {
+      const nameOverride = await this.fanoutDraftName(organizationId, full, "TikTok");
+      platforms.push(await this.fanoutAttempt("tiktok", () => this.crossPlatformDraft(organizationId, planId, actorId, { platform: "tiktok", targetAdAccountId: dto.tiktokAccountId!, objectiveType: dto.tiktokObjectiveType, pixelId: dto.tiktokPixelId, optimizationEvent: dto.tiktokOptimizationEvent, nameOverride, dryRun: true } as any)));
+    }
+    return {
+      planId, platforms,
+      note: "এটি শুধু Preview — কোনো Draft তৈরি হয়নি, কোনো Platform Call হয়নি। Confirm করলেই দুই Platform-এ PAUSED Draft তৈরি হবে; যা Map হয়নি তা প্রতিটি Block-এ তালিকাভুক্ত আছে।",
+    };
+  }
+
+  /** CA15: one-click fan-out CREATE — runs only on the
+   * user's confirmation of the preview. Every platform
+   * is re-mapped server-side at confirm time through
+   * the existing single-draft path (never trusting
+   * client-supplied fields): a platform whose mapping
+   * has gaps comes back blocked with its stored export
+   * draft, exactly as the single path behaves, and one
+   * platform's failure never masks the other's result.
+   * Drafts link back to this plan via the draft row's
+   * planId (the CN9 column). The daily budget is COPIED
+   * in BDT as-is — labelled in each block's budget
+   * object; no currency conversion exists or is claimed. */
+  async fanoutCreate(organizationId: string, planId: string, actorId: string, dto: { googleAccountId?: string; googleKind?: string; tiktokAccountId?: string; tiktokObjectiveType?: string; tiktokPixelId?: string; tiktokOptimizationEvent?: string }) {
+    if (!dto.googleAccountId && !dto.tiktokAccountId) throw new BadRequestException("অন্তত একটি Target Account দিন (Google বা TikTok)");
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    if (!["approved", "published", "publish_failed"].includes(plan.status)) {
+      throw new BadRequestException(`Fan-out-এর জন্য Approved Plan দরকার (বর্তমান: ${plan.status})`);
+    }
+    const full = await this.getPlanFull(organizationId, planId);
+    const platforms: any[] = [];
+    if (dto.googleAccountId) {
+      const nameOverride = await this.fanoutDraftName(organizationId, full, "Google");
+      platforms.push(await this.fanoutAttempt("google", () => this.crossPlatformDraft(organizationId, planId, actorId, { platform: "google", targetAdAccountId: dto.googleAccountId!, kind: dto.googleKind, nameOverride } as any)));
+    }
+    if (dto.tiktokAccountId) {
+      const nameOverride = await this.fanoutDraftName(organizationId, full, "TikTok");
+      platforms.push(await this.fanoutAttempt("tiktok", () => this.crossPlatformDraft(organizationId, planId, actorId, { platform: "tiktok", targetAdAccountId: dto.tiktokAccountId!, objectiveType: dto.tiktokObjectiveType, pixelId: dto.tiktokPixelId, optimizationEvent: dto.tiktokOptimizationEvent, nameOverride } as any)));
+    }
+    const created = platforms.filter((b) => b.status === "created").length;
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.fanout", entityType: "CampaignPlan", entityId: planId, metadata: { platforms: platforms.map((b) => ({ platform: b.platform, status: b.status, draftId: b.draftId ?? null })), created } }).catch(() => undefined);
+    return { planId, platforms, created, total: platforms.length };
+  }
+
+  private async fanoutAttempt(platform: string, call: () => Promise<any>): Promise<any> {
+    try {
+      const r = await call();
+      return { platform, ...r };
+    } catch (e) {
+      return { platform, status: "error", error: e instanceof Error ? e.message : "Fan-out ব্যর্থ হয়েছে" };
+    }
+  }
+
   /**
    * CB6: cross-platform draft from an APPROVED plan,
    * through the EXISTING Google/TikTok publish paths
@@ -4798,6 +7912,46 @@ export class CampaignsService implements OnModuleInit {
     const firstUrl = allAds.find((a: any) => a.linkUrl)?.linkUrl;
     if (!firstUrl) unmapped.push("কোনো Ad এর Link URL নেই");
 
+    // CA15 (CB4): gap accounting shared by every cross-
+    // platform shape — plan concepts NONE of these shapes
+    // can carry are listed per platform (never silently
+    // dropped, never approximated into a fake mapping).
+    // Audience signals resolve from REAL rows only:
+    // SavedAudience by the ad sets' savedAudienceId,
+    // AudienceRecord by the external ids that
+    // customAudienceIds / excludedAudienceIds hold (those
+    // fields store Meta external ids — see
+    // attachAudienceId). Age/gender counts as a gap only
+    // when it RESTRICTS beyond the builder defaults
+    // (18–65, all genders) — the default itself is broad
+    // targeting, not a lost restriction.
+    const savedAudienceIds: string[] = [...new Set<string>((full.adSets ?? []).map((s: any) => (s.targeting as any)?.savedAudienceId).filter(Boolean).map(String))];
+    const planCustomAudienceIds: string[] = [...new Set<string>((full.adSets ?? []).flatMap((s: any) => (((s.targeting as any)?.customAudienceIds ?? []) as string[])).map(String))];
+    const planExcludedAudienceIds: string[] = [...new Set<string>((full.adSets ?? []).flatMap((s: any) => (((s.targeting as any)?.excludedAudienceIds ?? []) as string[])).map(String))];
+    const audienceSignals = await this.resolveAudienceSignals(organizationId, savedAudienceIds, planCustomAudienceIds, planExcludedAudienceIds);
+    const restrictsAgeGender = (full.adSets ?? []).some((s: any) => {
+      const t = s.targeting ?? {};
+      const g = (t.genders ?? []) as number[];
+      return (typeof t.ageMin === "number" && t.ageMin > 18) || (typeof t.ageMax === "number" && t.ageMax < 65) || (g.length > 0 && !g.includes(0));
+    });
+    const hasLeadFormSet = (full.adSets ?? []).some((s: any) => s.leadFormId);
+    const hasCatalogSet = (full.adSets ?? []).some((s: any) => s.catalogRecordId || s.productSetId);
+    const distinctLinkUrls = [...new Set(allAds.map((a: any) => a.linkUrl).filter(Boolean))] as string[];
+    const sharedGaps = (platformLabel: string): string[] => {
+      const gaps: string[] = [];
+      if (restrictsAgeGender) gaps.push(`বয়স/লিঙ্গ সীমাবদ্ধতা ${platformLabel}-এর এই Flow-তে যায় না — শুধু দেশ ও Interest Map হয়`);
+      if (hasLeadFormSet) gaps.push(`Lead Form ${platformLabel}-এ যায় না — Cross-Platform Draft Website Creative তৈরি করে, Form বাঁধে না`);
+      if (hasCatalogSet) gaps.push(`Catalog/Product Set ${platformLabel}-এর এই Draft-এ যায় না — Catalog Campaign আলাদা Flow`);
+      if (distinctLinkUrls.length > 1) gaps.push(`সব Ad-এর Landing URL এক নয় (${distinctLinkUrls.length}টি আলাদা) — শুধু প্রথম Ad-এর URL গেছে, বাকিগুলো এই Draft-এ যায়নি`);
+      return gaps;
+    };
+    // CA15: a fan-out caller may pass the CA13-templated
+    // name (rendered server-side by the fan-out methods);
+    // the single-draft path never does, so its names stay
+    // byte-identical to before.
+    const draftName = (dto as any).nameOverride && String((dto as any).nameOverride).trim() ? String((dto as any).nameOverride) : plan.name;
+    if (draftName !== plan.name) transformations.push(`নাম CA13 Naming Template দিয়ে তৈরি হয়েছে (Plan-এর নাম "${plan.name}" নয়)`);
+
     let mapped: any = null;
     if (dto.platform === "google" && kind === "pmax") {
       // CN17: Performance Max mapping — the field set is
@@ -4825,22 +7979,44 @@ export class CampaignsService implements OnModuleInit {
       if (!imageUrls.length) unmapped.push("PMax-এর জন্য অন্তত ১টি Marketing Image URL দরকার — কোনো Ad-এ সরাসরি ছবির URL নেই (লাইব্রেরি Asset-এর ID URL নয়)");
       if (interests.length) notCarried.push(`Keyword (${interests.length}টি Interest থেকে) PMax-এ যায় না — Performance Max-এ Keyword নেই; Keyword চাইলে Search Draft তৈরি করুন`);
       if (allAds.some((a: any) => (a.format ?? "link") === "video" || a.videoAssetId)) notCarried.push("ভিডিও Creative PMax-এ পাঠানো হয়নি — এই PMax Path-এ Video Asset নেই (শুধু Text ও Image Asset যায়)");
-      if ((full.adSets ?? []).some((s: any) => ((s.targeting?.customAudienceIds ?? []) as string[]).length)) notCarried.push("Saved Audience Signal এই PMax Path-এ পাঠানো হয় না — PublishingService-এর PMax কাঠামোতে Audience Signal-এর Field নেই");
+      // CA15 (CB4): the plan's saved/custom audiences are
+      // no longer dropped here — they are carried VERBATIM
+      // into the draft fields as audienceSignals (resolved
+      // from real rows by resolveAudienceSignals). They are
+      // still NOT sent to Google at publish: a Meta
+      // audience has no Google user-list counterpart in
+      // this account, and inventing one would be a fake
+      // mapping. The publish path ignores the field; the
+      // draft keeps the signal for the human to act on.
+      if (audienceSignals.length) transformations.push(`Saved Audience Signal (${audienceSignals.length}টি) Draft-এ সংরক্ষিত হয়েছে (audienceSignals) — Google-এ পাঠানো হয়নি: Meta Audience-এর Google User List এই অ্যাকাউন্টে নেই`);
+      notCarried.push(...sharedGaps("Google Performance Max"));
       mapped = {
-        adAccountId: dto.targetAdAccountId, name: plan.name, dailyBudget: dailyTaka, countryCodes: countries,
+        adAccountId: dto.targetAdAccountId, name: draftName, dailyBudget: dailyTaka, countryCodes: countries,
         finalUrl: firstUrl, businessName, logoUrl: logoUrl || undefined,
         headlines, longHeadlines, descriptions, imageUrls,
+        ...(audienceSignals.length ? { audienceSignals } : {}),
       };
     } else if (dto.platform === "google") {
-      const slice = (v: string, n: number, label: string) => { if (v.length > n) transformations.push(`${label} ${n} অক্ষরে কাটা হয়েছে`); return v.slice(0, n); };
-      const headlines = [...new Set([plan.name, ...allAds.flatMap((a: any) => [a.headline, a.name])].filter(Boolean).map((v: string) => slice(String(v).trim(), 30, "Headline")))].filter(Boolean);
-      const descriptions = [...new Set(allAds.flatMap((a: any) => [a.description, a.primaryText]).filter(Boolean).map((v: string) => slice(String(v).trim(), 90, "Description")))].filter(Boolean);
-      if (headlines.length < 3) unmapped.push(`Google RSA এর জন্য অন্তত ৩টি Headline দরকার — পাওয়া গেছে ${headlines.length}টি (Ad Headline/নাম থেকে)`);
+      // CA3: RSA arrays come from the ads' CN5 text options
+      // (merged with the legacy fields) via assembleGoogleRsa
+      // — over-limit options and cap overflow land in
+      // notCarried, never silently truncated or dropped.
+      const rsa = this.assembleGoogleRsa(allAds, plan.name);
+      const headlines = rsa.headlines;
+      const descriptions = rsa.descriptions;
+      notCarried.push(...rsa.notCarried);
+      transformations.push("Google RSA: CN5 Text Options + Legacy Field থেকে Headline/Description সাজানো হয়েছে; Pinning পাঠানো হয়নি (CN5-এ Pin Model নেই)");
+      if (headlines.length < 3) unmapped.push(`Google RSA এর জন্য অন্তত ৩টি Headline দরকার — পাওয়া গেছে ${headlines.length}টি (Text Options/Headline/নাম থেকে)`);
       if (descriptions.length < 2) unmapped.push(`Google RSA এর জন্য অন্তত ২টি Description দরকার — পাওয়া গেছে ${descriptions.length}টি`);
       if (!interests.length) unmapped.push("Google Keyword আবশ্যক — কোনো Ad Set এ Interest নেই (Interest গুলোই Keyword হিসেবে যায়)");
+      // CA15: Search RSA carries no audience, no video —
+      // listed, never silently dropped.
+      if (audienceSignals.length) notCarried.push(`Audience Signal (${audienceSignals.length}টি Saved/Custom Audience) Google Search Draft-এ যায় না — এই Flow-তে Search-এর Audience Mapping নেই`);
+      if (allAds.some((a: any) => (a.format ?? "link") === "video" || a.videoAssetId)) notCarried.push("ভিডিও Creative Google Search RSA-তে যায় না — RSA শুধু Text Ad");
+      notCarried.push(...sharedGaps("Google Search"));
       mapped = {
-        adAccountId: dto.targetAdAccountId, name: plan.name, dailyBudget: dailyTaka, countryCodes: countries,
-        headlines: headlines.slice(0, 15), descriptions: descriptions.slice(0, 4), finalUrl: firstUrl,
+        adAccountId: dto.targetAdAccountId, name: draftName, dailyBudget: dailyTaka, countryCodes: countries,
+        headlines, descriptions, finalUrl: firstUrl,
         keywords: interests.map((text) => ({ text })),
       };
     } else {
@@ -4848,8 +8024,36 @@ export class CampaignsService implements OnModuleInit {
       const adText = firstAd?.primaryText ? String(firstAd.primaryText).slice(0, 100) : "";
       if (firstAd?.primaryText && firstAd.primaryText.length > 100) transformations.push("Ad Text 100 অক্ষরে কাটা হয়েছে");
       const imageUrl = allAds.find((a: any) => a.imageUrl)?.imageUrl;
-      if (!imageUrl) unmapped.push("TikTok এর জন্য ছবি/ভিডিওর URL দরকার — কোনো Ad এ সরাসরি ছবির URL নেই (লাইব্রেরি Asset এর ID URL নয়)");
+      // CA15: a video creative CAN ride TikTok (publish
+      // accepts videoUrl) — resolve the library asset's
+      // own source URL; an asset whose URL cannot be
+      // resolved is listed, never silently dropped.
+      let videoUrl: string | undefined;
+      const videoAd = allAds.find((a: any) => a.videoAssetId || (a.format ?? "link") === "video");
+      if (videoAd?.videoAssetId && (this.prisma as any).creativeAsset?.findFirst) {
+        const asset = await (this.prisma as any).creativeAsset.findFirst({ where: { id: String(videoAd.videoAssetId), organizationId } }).catch(() => null);
+        if (asset && typeof asset.sourceUrl === "string" && asset.sourceUrl.startsWith("http")) videoUrl = asset.sourceUrl;
+      }
+      if (videoAd && !videoUrl) notCarried.push("ভিডিও Creative-এর URL Library Asset থেকে পাওয়া যায়নি — TikTok Draft-এ ভিডিও যায়নি");
+      if (videoUrl) transformations.push("ভিডিও Creative Library Asset-এর Source URL দিয়ে TikTok-এ পাঠানো হয়েছে");
+      if (!imageUrl && !videoUrl) unmapped.push("TikTok এর জন্য ছবি/ভিডিওর URL দরকার — কোনো Ad এ সরাসরি ছবির URL নেই (লাইব্রেরি Asset এর ID URL নয়)");
       if (!adText) unmapped.push("কোনো Ad Text নেই");
+      if (audienceSignals.length) notCarried.push(`Audience Signal (${audienceSignals.length}টি Saved/Custom Audience) TikTok Draft-এ যায় না — এই Flow-তে TikTok Audience Mapping নেই`);
+      notCarried.push(...sharedGaps("TikTok"));
+      // CA3 TikTok spike verdict (see
+      // docs/campaign-advanced-cb1-acceptance.md): TikTok's
+      // standard /ad/create/ carries ONE ad_text; multiple ad
+      // texts exist only in the separate ACO product
+      // (/ad/aco/create/, confirmed in TikTok's official SDK),
+      // whose full create contract is a separate verified
+      // build and is NOT used here. Extra CN5 text variants
+      // are therefore listed in notCarried — never dropped
+      // silently, never claimed as sent.
+      const chosenText = String(firstAd?.primaryText ?? "").trim();
+      const extraTexts = [...new Set(allAds.flatMap((a: any) => [...(this.textOptionsOf(a)?.primaryTexts ?? []), a.primaryText]))]
+        .map((t: any) => String(t ?? "").trim())
+        .filter((t: string) => t && t !== chosenText);
+      for (const t of extraTexts) notCarried.push(`Ad Text Variant "${t.slice(0, 40)}…" — TikTok Standard Ad-এ একটিমাত্র Text যায়; Multi-text শুধু আলাদা ACO Product-এ (CA3 Spike Verdict), এই Publish-এ পাঠানো হয়নি`);
       // CN17: the draft's objective choice (TikTok v1.3
       // spike — see PublishingService.publishTikTok).
       // Inputs an objective needs but this draft does not
@@ -4866,10 +8070,37 @@ export class CampaignsService implements OnModuleInit {
         unmapped.push("TRAFFIC Objective-এ Ad Group-এ Pixel ID পাঠানো যায় না — TikTok তা Reject করে (Pixel শুধু WEB_CONVERSIONS-এ)");
       }
       mapped = {
-        adAccountId: dto.targetAdAccountId, name: plan.name, dailyBudget: dailyTaka, countryCodes: countries, adText, landingUrl: firstUrl, imageUrl,
+        adAccountId: dto.targetAdAccountId, name: draftName, dailyBudget: dailyTaka, countryCodes: countries, adText, landingUrl: firstUrl, imageUrl,
+        ...(videoUrl ? { videoUrl } : {}),
         objectiveType: tiktokObjective,
         ...(tiktokObjective === "WEB_CONVERSIONS" ? { pixelId: dto.pixelId?.trim() || undefined, optimizationEvent: dto.optimizationEvent?.trim() || undefined } : {}),
       };
+    }
+
+    // CA17: the plan's UTM tagging rides every mapped
+    // draft — Google as the campaign Final URL Suffix
+    // (its own field; the final URLs themselves stay
+    // clean), TikTok as params on the landing URL (TikTok
+    // ads carry the URL itself; there is no suffix
+    // field). A link's existing utm_* are the owner's
+    // and win — skipped ones are reported, not forced.
+    if (mapped && dto.platform === "google") {
+      const qs = this.utmQueryString(this.utmParamsFor(plan, { platform: "google" }));
+      if (qs) { mapped.finalUrlSuffix = qs; transformations.push("UTM: Google Campaign-এ Final URL Suffix যোগ হয়েছে (Plan-এর UTM Template/Default থেকে)"); }
+    }
+    if (mapped && dto.platform === "tiktok" && mapped.landingUrl) {
+      const tagged = this.applyUtmParams(String(mapped.landingUrl), this.utmParamsFor(plan, { platform: "tiktok" }));
+      if (tagged.applied.length) { mapped.landingUrl = tagged.url; transformations.push(`UTM: TikTok Landing URL-এ ${tagged.applied.join(", ")} যোগ হয়েছে (Plan-এর UTM Template/Default থেকে)`); }
+      if (tagged.skipped.length) transformations.push(`UTM: Landing URL-এ আগে থেকেই ছিল বলে বদলানো হয়নি: ${tagged.skipped.join(", ")}`);
+    }
+
+    // CA15: fan-out preview dry run — the mapping above
+    // is returned WITHOUT persisting a draft and WITHOUT
+    // any platform call. Creation happens only through
+    // the confirmed fan-out create (or this single-draft
+    // path called without dryRun).
+    if ((dto as any).dryRun) {
+      return { status: unmapped.length ? "blocked" : "ready", platform: dto.platform, kind, mapped, unmapped, notCarried, transformations, budget, draftId: null };
     }
 
     if (unmapped.length) {
@@ -5061,11 +8292,17 @@ export class CampaignsService implements OnModuleInit {
         platform: "google", kind: "pmax", label,
         name: f.name ?? null, dailyBudget: f.dailyBudget ?? null, countryCodes: f.countryCodes ?? [],
         businessName: f.businessName ?? null, logoUrl: f.logoUrl ?? null, finalUrl: f.finalUrl ?? null,
+        finalUrlSuffix: f.finalUrlSuffix ?? null,
         headlines: (f.headlines ?? []).map((h: string) => ({ text: h, length: String(h).length, limit: 30 })),
         longHeadlines: (f.longHeadlines ?? []).map((h: string) => ({ text: h, length: String(h).length, limit: 90 })),
         descriptions: (f.descriptions ?? []).map((d: string) => ({ text: d, length: String(d).length, limit: 90 })),
         imageUrls: f.imageUrls ?? [],
-        notes: ["Performance Max-এ Keyword থাকে না — Keyword চাইলে Search Draft ব্যবহার করুন", "এই Path-এ Video Asset ও Audience Signal যায় না"],
+        // CA15: audience signals are stored verbatim on
+        // the draft (from the plan's real audience rows);
+        // they are NOT sent to Google at publish — a Meta
+        // audience has no Google user-list counterpart.
+        audienceSignals: f.audienceSignals ?? [],
+        notes: ["Performance Max-এ Keyword থাকে না — Keyword চাইলে Search Draft ব্যবহার করুন", "এই Path-এ Video Asset যায় না", ...(Array.isArray(f.audienceSignals) && f.audienceSignals.length ? ["Audience Signal Draft-এ সংরক্ষিত আছে — Google-এ পাঠানো হয়নি (Meta Audience-এর Google User List এই অ্যাকাউন্টে নেই)"] : [])],
       };
     }
     if (draft.platform === "google") {
@@ -5075,6 +8312,7 @@ export class CampaignsService implements OnModuleInit {
         headlines: (f.headlines ?? []).map((h: string) => ({ text: h, length: String(h).length, limit: 30 })),
         descriptions: (f.descriptions ?? []).map((d: string) => ({ text: d, length: String(d).length, limit: 90 })),
         finalUrl: f.finalUrl ?? null,
+        finalUrlSuffix: f.finalUrlSuffix ?? null,
         keywords: (f.keywords ?? []).map((k: any) => (typeof k === "string" ? { text: k, matchType: "EXACT" } : { text: k.text, matchType: k.matchType ?? "EXACT" })),
       };
     }
@@ -5140,26 +8378,222 @@ export class CampaignsService implements OnModuleInit {
     return { status: created ? "created" : "failed", draft: updated, publication: record, note: "নতুন PAUSED Draft তৈরি হয়েছে — আগের External Draft অপরিবর্তিত আছে (Update/Delete এই Flow-তে নেই)।" };
   }
 
-  /** CN9: external status of a created draft. This codebase
-   * has NO Google/TikTok campaign-status read path
-   * (PublishingService creates only; the Ads clients read
-   * metrics, not campaign status) — so sync honestly reports
-   * the as-created status from our own records instead of
-   * dressing a metrics read up as a status check. */
+  /** OU4 + CA16 union: external status of a created draft —
+   * a REAL platform read through PublishingService. Two
+   * equivalent readers exist and either may answer: OU4's
+   * unified crossPlatformCampaignStatus (mapped
+   * providerStatus + raw enum) is tried first; CA16's
+   * per-platform readers (getGoogleCampaignStatus /
+   * getTikTokCampaignStatus — verbatim platform enums)
+   * answer when the unified reader is absent or fails.
+   * Drafts never created on the platform keep an honest
+   * unavailable with the specific reason; a failed read
+   * reports the platform's own error and falls back to the
+   * as-created record, labelled as such — a metrics read is
+   * still never dressed up as a status check. Sync never
+   * throws for provider/config errors (available:false, the
+   * message verbatim in `reason`); only a missing draft
+   * throws (getCrossPlatformDraftOrThrow).
+   * publicationStatus (from the creation record) rides on
+   * the CA16 paths too, for the pre-OU4 consumers. */
   async syncCrossPlatformDraftStatus(organizationId: string, planId: string, draftId: string) {
     const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
+    const base = { status: draft.status, externalCampaignId: draft.externalCampaignId ?? null };
+    if (!draft.externalCampaignId) {
+      return {
+        available: false,
+        reason: "এই Draft-এর কোনো External Campaign ID নেই — প্ল্যাটফর্মে এখনো তৈরি হয়নি, তাই পড়ার মতো কোনো Campaign Status নেই।",
+        ...base, statusLabel: "as_created",
+      };
+    }
+    // Union: the creation record's own status rides on the
+    // CA16 paths too (OU4 kept publicationStatus on its
+    // unavailable paths for the pre-OU4 consumers).
     let publicationStatus: string | null = null;
     if (draft.publicationId && (this.prisma as any).platformPublication?.findFirst) {
       const pub = await (this.prisma as any).platformPublication.findFirst({ where: { id: draft.publicationId, organizationId } }).catch(() => null);
       publicationStatus = pub?.status ?? null;
     }
+    const caBase = { status: draft.status, externalCampaignId: draft.externalCampaignId ?? null, publicationStatus };
+    if (draft.status !== "created") {
+      return { ...caBase, available: false, statusLabel: "as_created", reason: "এই Draft এখনো Platform-এ তৈরি হয়নি — Live Status পড়ার কিছু নেই।" };
+    }
+    // OU4 unified reader first: mapped providerStatus + raw.
+    let unifiedError: string | null = null;
+    if (this.publishing && typeof (this.publishing as any).crossPlatformCampaignStatus === "function") {
+      try {
+        const result: any = await (this.publishing as any).crossPlatformCampaignStatus(organizationId, draft.targetAdAccountId, draft.platform, draft.externalCampaignId);
+        const now = new Date().toISOString();
+        return {
+          available: true,
+          statusLabel: "platform",
+          providerStatus: result.providerStatus,
+          providerStatusRaw: result.providerStatusRaw,
+          platformStatus: result.providerStatusRaw ?? result.providerStatus,
+          ...(result.name ? { name: result.name } : {}),
+          status: draft.status,
+          externalCampaignId: draft.externalCampaignId,
+          publicationStatus,
+          syncedAt: now,
+          checkedAt: now,
+        };
+      } catch (e) {
+        unifiedError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    // CA16 per-platform readers: verbatim platform enums —
+    // the fallback when the unified reader is absent or failed.
+    const reader = draft.platform === "google" ? (this.publishing as any)?.getGoogleCampaignStatus : (this.publishing as any)?.getTikTokCampaignStatus;
+    if (typeof reader !== "function") {
+      if (unifiedError !== null) {
+        return { available: false, reason: unifiedError, status: draft.status, externalCampaignId: draft.externalCampaignId ?? null, statusLabel: "as_created", publicationStatus };
+      }
+      return {
+        available: false,
+        reason: "Cross-platform Campaign Status পড়ার পথ এই Context-এ উপলব্ধ নয় — PublishingService এই Service-এ যুক্ত নেই। তাই Status যাচাই করা যায়নি।",
+        ...base, statusLabel: "as_created", publicationStatus,
+      };
+    }
+    try {
+      const live = await reader.call(this.publishing, organizationId, draft.targetAdAccountId, draft.externalCampaignId);
+      if (draft.platform === "google") {
+        if (!live?.status) return { ...caBase, available: false, statusLabel: "as_created", reason: "Google এই Campaign-এর কোনো Status ফেরত দেয়নি।" };
+        return { ...caBase, available: true, statusLabel: "platform", platformStatus: live.status, status: live.status, checkedAt: new Date().toISOString() };
+      }
+      if (!live?.operationStatus && !live?.secondaryStatus) return { ...caBase, available: false, statusLabel: "as_created", reason: "TikTok এই Campaign-এর কোনো Status ফেরত দেয়নি।" };
+      return { ...caBase, available: true, statusLabel: "platform", platformStatus: live.operationStatus ?? live.secondaryStatus, operationStatus: live.operationStatus ?? null, secondaryStatus: live.secondaryStatus ?? null, status: live.operationStatus ?? live.secondaryStatus, checkedAt: new Date().toISOString() };
+    } catch (e) {
+      return { ...caBase, available: false, statusLabel: "as_created", reason: `Platform Status পড়া যায়নি: ${e instanceof Error ? e.message : "অজানা ত্রুটি"}` };
+    }
+  }
+
+  /** OU4: pause/resume a created cross-platform draft on the
+   * PROVIDER, mirroring setMetaStatus discipline: resume is
+   * gated by assertCampaignAccountAccess (pause never is —
+   * stopping spend is a safety action), a provider failure
+   * logs an error step and throws "did NOT confirm" with the
+   * local state unchanged (this method never writes the
+   * draft row), and success logs a `${platform}_pause|_resume`
+   * publish-log step + a campaign.xdraft_paused/resumed audit.
+   * Delete/archive is deliberately NOT part of this lifecycle
+   * (TikTok v1.3 has no campaign delete; pause is the floor). */
+  async setCrossPlatformDraftLifecycle(organizationId: string, actorId: string, planId: string, draftId: string, action: "pause" | "resume") {
+    if (action !== "pause" && action !== "resume") throw new BadRequestException(`action must be "pause" or "resume" (got "${action}")`);
+    if (!this.publishing || typeof (this.publishing as any).crossPlatformSetCampaignStatus !== "function") {
+      throw new BadRequestException("Cross-platform publishing is not available in this context");
+    }
+    const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
+    if (draft.status !== "created" || !draft.externalCampaignId) {
+      throw new BadRequestException(`শুধু তৈরি (created) Draft-এরই প্ল্যাটফর্ম Status বদলানো যায় — এই Draft-এর Status "${draft.status}"${draft.externalCampaignId ? "" : " এবং কোনো External Campaign ID নেই"}।`);
+    }
+    // CC27 discipline, same as Meta: activation gated, pause always allowed.
+    if (action === "resume") await this.assertCampaignAccountAccess(organizationId, actorId, { adAccountId: draft.targetAdAccountId });
+    const target: "ACTIVE" | "PAUSED" = action === "resume" ? "ACTIVE" : "PAUSED";
+    const step = `${draft.platform}_${action}`;
+    const platformLabel = draft.platform === "google" ? "Google" : draft.platform === "tiktok" ? "TikTok" : draft.platform;
+    try {
+      await (this.publishing as any).crossPlatformSetCampaignStatus(organizationId, actorId, draft.targetAdAccountId, draft.platform, draft.externalCampaignId, target);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Status change failed";
+      await this.logStep(planId, actorId, step, "error", { externalId: draft.externalCampaignId, error: message }).catch(() => undefined);
+      throw new BadRequestException(`${platformLabel} did NOT confirm the status change: ${message}. Local status is unchanged.`);
+    }
+    await this.logStep(planId, actorId, step, "success", { externalId: draft.externalCampaignId }).catch(() => undefined);
+    await this.audit.log({ organizationId, userId: actorId, action: action === "pause" ? "campaign.xdraft_paused" : "campaign.xdraft_resumed", entityType: "CrossPlatformDraft", entityId: draftId, metadata: { platform: draft.platform, externalCampaignId: draft.externalCampaignId, target } }).catch(() => undefined);
+    // Fresh provider read for the returned status; if that
+    // read fails, fall back to the target we just confirmed
+    // with the provider — providerStatusSource says which.
+    let providerStatus: string = target === "ACTIVE" ? "active" : "paused";
+    let providerStatusRaw: string | undefined;
+    let providerStatusSource: "fresh_sync" | "target_mapped" = "target_mapped";
+    try {
+      const fresh: any = await (this.publishing as any).crossPlatformCampaignStatus(organizationId, draft.targetAdAccountId, draft.platform, draft.externalCampaignId);
+      if (fresh) {
+        providerStatus = fresh.providerStatus;
+        providerStatusRaw = fresh.providerStatusRaw;
+        providerStatusSource = "fresh_sync";
+      }
+    } catch { /* keep the confirmed target mapping */ }
     return {
-      available: false,
-      reason: "Google/TikTok Campaign-Status পড়ার পথ এই কোডবেসে নেই — PublishingService শুধু তৈরি করে, Ads Client শুধু Metric পড়ে। তাই Status যাচাই করা যায়নি।",
-      status: draft.status, statusLabel: "as_created",
-      externalCampaignId: draft.externalCampaignId ?? null,
-      publicationStatus,
+      draft,
+      providerStatus,
+      ...(providerStatusRaw ? { providerStatusRaw } : {}),
+      providerStatusSource,
     };
+  }
+
+  /** CA16: pause / activate a CREATED cross-platform
+   * draft on its platform — the Meta control treatment:
+   * activation is gated on campaign-account access
+   * (CC27), pause is always allowed, the platform must
+   * CONFIRM (its error propagates verbatim and nothing
+   * local changes), and the confirmed change is written
+   * to the publish log + audit. The draft row's own
+   * status stays the creation lifecycle ("created");
+   * the live status read is the truth for current state. */
+  async setCrossPlatformDraftStatus(organizationId: string, actorId: string, planId: string, draftId: string, target: "ACTIVE" | "PAUSED") {
+    if (target !== "ACTIVE" && target !== "PAUSED") throw new BadRequestException("target হতে হবে ACTIVE বা PAUSED");
+    if (!this.publishing) throw new BadRequestException("Cross-platform publishing is not available in this context");
+    const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
+    if (draft.status !== "created" || !draft.externalCampaignId) throw new BadRequestException("এই Draft এখনো Platform-এ তৈরি হয়নি — Status বদলানো যাবে না");
+    if (target === "ACTIVE") await this.assertCampaignAccountAccess(organizationId, actorId, { adAccountId: draft.targetAdAccountId });
+    const setter = draft.platform === "google" ? (this.publishing as any).setGoogleCampaignStatus : (this.publishing as any).setTikTokCampaignStatus;
+    if (typeof setter !== "function") throw new BadRequestException("এই Deployment-এ Platform Status বদলের Path যুক্ত নেই");
+    const platformTarget = draft.platform === "google" ? (target === "ACTIVE" ? "ENABLED" : "PAUSED") : (target === "ACTIVE" ? "ENABLE" : "DISABLE");
+    try {
+      await setter.call(this.publishing, organizationId, draft.targetAdAccountId, draft.externalCampaignId, platformTarget);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Status change failed";
+      await this.logStep(planId, actorId, `${draft.platform}_status`, "error", { entityRef: draftId, externalId: draft.externalCampaignId, error: message }).catch(() => undefined);
+      throw new BadRequestException(`Platform Status বদল নিশ্চিত করেনি: ${message}। Local Record অপরিবর্তিত আছে।`);
+    }
+    await this.logStep(planId, actorId, `${draft.platform}_status`, "success", { entityRef: draftId, externalId: draft.externalCampaignId }).catch(() => undefined);
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.xdraft_status", entityType: "CrossPlatformDraft", entityId: draftId, metadata: { platform: draft.platform, target, platformStatus: platformTarget, externalCampaignId: draft.externalCampaignId } }).catch(() => undefined);
+    return { platform: draft.platform, target, platformStatus: platformTarget, externalCampaignId: draft.externalCampaignId };
+  }
+
+  /** CA16: change a CREATED draft's daily budget on its
+   * platform — a money move, so it follows the Meta
+   * budget treatment: explicit value, platform confirms
+   * FIRST, local fields update only after confirmation,
+   * before/after in the audit. The platform address of
+   * the budget comes from the creation record itself
+   * (Google: the budget step's resource name; TikTok:
+   * the ad group id — the level this flow budgets at).
+   * A draft whose creation record lacks that address
+   * gets an honest refusal, never a guessed call. */
+  async updateCrossPlatformDraftBudget(organizationId: string, actorId: string, planId: string, draftId: string, dailyBudgetRaw: string) {
+    const daily = Number(dailyBudgetRaw);
+    if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException("দৈনিক বাজেট ধনাত্মক সংখ্যা হতে হবে");
+    if (!this.publishing) throw new BadRequestException("Cross-platform publishing is not available in this context");
+    const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
+    if (draft.status !== "created" || !draft.externalCampaignId) throw new BadRequestException("এই Draft এখনো Platform-এ তৈরি হয়নি — Budget বদলানো যাবে না");
+    let pub: any = null;
+    if (draft.publicationId && (this.prisma as any).platformPublication?.findFirst) {
+      pub = await (this.prisma as any).platformPublication.findFirst({ where: { id: draft.publicationId, organizationId } }).catch(() => null);
+    }
+    const before = (draft.fields as any)?.dailyBudget ?? null;
+    try {
+      if (draft.platform === "google") {
+        const budgetResource = (pub?.detail?.steps ?? []).find((s: any) => s.step === "budget")?.resourceName;
+        if (!budgetResource) throw new BadRequestException("এই Draft-এর Creation Record-এ Google Budget Resource নেই — Budget বদলানো যাবে না (Re-publish করলে নতুন Record তৈরি হবে)");
+        await (this.publishing as any).updateGoogleCampaignBudget(organizationId, draft.targetAdAccountId, budgetResource, daily);
+      } else {
+        const adgroupId = pub?.detail?.adgroupId;
+        if (!adgroupId) throw new BadRequestException("এই Draft-এর Creation Record-এ TikTok Ad Group ID নেই — Budget বদলানো যাবে না (Re-publish করলে নতুন Record তৈরি হবে)");
+        await (this.publishing as any).updateTikTokAdGroupBudget(organizationId, draft.targetAdAccountId, String(adgroupId), daily);
+      }
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      const message = e instanceof Error ? e.message : "Budget change failed";
+      await this.logStep(planId, actorId, `${draft.platform}_budget`, "error", { entityRef: draftId, externalId: draft.externalCampaignId, error: message }).catch(() => undefined);
+      throw new BadRequestException(`Platform Budget বদল নিশ্চিত করেনি: ${message}। Local Record অপরিবর্তিত আছে।`);
+    }
+    const fields = { ...((draft.fields as any) ?? {}), dailyBudget: daily.toFixed(2) };
+    const updated = await (this.prisma as any).crossPlatformDraft.update({ where: { id: draftId }, data: { fields } }).catch(() => ({ ...draft, fields }));
+    await this.logStep(planId, actorId, `${draft.platform}_budget`, "success", { entityRef: draftId, externalId: draft.externalCampaignId }).catch(() => undefined);
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.xdraft_budget", entityType: "CrossPlatformDraft", entityId: draftId, metadata: { platform: draft.platform, before, after: daily.toFixed(2), externalCampaignId: draft.externalCampaignId } }).catch(() => undefined);
+    return { draft: updated, before, after: daily.toFixed(2), platform: draft.platform };
   }
 
   /** Live schedule edit: start/end times on a published ad set,
@@ -5215,6 +8649,119 @@ export class CampaignsService implements OnModuleInit {
     return changes;
   }
 
+  // ---------- CA17 (CB4): plan-level UTM template ----------
+
+  /** The five UTM keys a plan template may set, and the
+   * tokens its values may carry. */
+  static readonly UTM_KEYS = ["source", "medium", "campaign", "content", "term"] as const;
+  static readonly UTM_TOKENS = ["platform", "campaign", "adset", "ad"] as const;
+
+  private utmSlug(value: string): string {
+    return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  }
+
+  /** CA17: the UTM params for one placement, from the
+   * plan's template or the built-in defaults. Defaults:
+   * source = the platform's own name (facebook / google /
+   * tiktok), medium "cpc", campaign = plan-name slug,
+   * content = ad-set slug and term = ad slug (each only
+   * when that context exists). A template key overrides
+   * its default; keys the template does not set keep
+   * their defaults. Template values render the tokens
+   * {platform} {campaign} {adset} {ad} against the same
+   * real facts; a key rendering EMPTY is omitted — an
+   * empty utm value is never sent. */
+  utmParamsFor(plan: any, ctx: { platform: "meta" | "google" | "tiktok"; adSetName?: string | null; adName?: string | null }): { key: string; value: string }[] {
+    const sourceName = ctx.platform === "meta" ? "facebook" : ctx.platform;
+    const facts: Record<string, string> = {
+      platform: sourceName,
+      campaign: this.utmSlug(plan?.name ?? "") || "campaign",
+      adset: this.utmSlug(ctx.adSetName ?? ""),
+      ad: this.utmSlug(ctx.adName ?? ""),
+    };
+    const defaults: Record<string, string | undefined> = {
+      source: sourceName, medium: "cpc", campaign: facts.campaign,
+      content: facts.adset || undefined,
+      term: facts.ad || undefined,
+    };
+    const template = plan?.utmTemplate && typeof plan.utmTemplate === "object" && !Array.isArray(plan.utmTemplate) ? plan.utmTemplate : null;
+    const out: { key: string; value: string }[] = [];
+    for (const key of CampaignsService.UTM_KEYS) {
+      let value: string | undefined;
+      if (template && typeof template[key] === "string") {
+        value = template[key].replace(/\{(platform|campaign|adset|ad)\}/g, (_m: string, t: string) => facts[t] ?? "").replace(/\s+/g, "-").trim();
+      } else {
+        value = defaults[key];
+      }
+      if (value) out.push({ key: `utm_${key}`, value });
+    }
+    return out;
+  }
+
+  utmQueryString(params: { key: string; value: string }[]): string {
+    return params.map((p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`).join("&");
+  }
+
+  /** Append UTM params WITHOUT overwriting any utm_*
+   * already on the link (the Phase J rule: existing
+   * params are the owner's). Invalid URLs pass through
+   * unchanged; applied/skipped keys are reported so the
+   * caller can say exactly what happened. */
+  applyUtmParams(linkUrl: string, params: { key: string; value: string }[]): { url: string; changed: boolean; applied: string[]; skipped: string[] } {
+    const applied: string[] = []; const skipped: string[] = [];
+    try {
+      const u = new URL(linkUrl);
+      for (const p of params) {
+        if (u.searchParams.has(p.key)) { skipped.push(p.key); continue; }
+        u.searchParams.set(p.key, p.value); applied.push(p.key);
+      }
+      const url = u.toString();
+      return { url, changed: url !== linkUrl, applied, skipped };
+    } catch {
+      return { url: linkUrl, changed: false, applied, skipped };
+    }
+  }
+
+  async getPlanUtmTemplate(organizationId: string, planId: string) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    return {
+      template: (plan as any).utmTemplate ?? null,
+      keys: [...CampaignsService.UTM_KEYS],
+      tokens: [...CampaignsService.UTM_TOKENS],
+      samples: {
+        meta: this.utmQueryString(this.utmParamsFor(plan, { platform: "meta" })),
+        google: this.utmQueryString(this.utmParamsFor(plan, { platform: "google" })),
+        tiktok: this.utmQueryString(this.utmParamsFor(plan, { platform: "tiktok" })),
+      },
+    };
+  }
+
+  async setPlanUtmTemplate(organizationId: string, actorId: string, planId: string, dto: { template?: Record<string, string> | null }) {
+    await this.getPlanOrThrow(organizationId, planId);
+    const raw = dto?.template ?? null;
+    let template: Record<string, string> | null = null;
+    if (raw !== null) {
+      if (typeof raw !== "object" || Array.isArray(raw)) throw new BadRequestException("UTM Template অবজেক্ট হতে হবে");
+      const keys = Object.keys(raw);
+      const unknown = keys.filter((k) => !(CampaignsService.UTM_KEYS as readonly string[]).includes(k));
+      if (unknown.length) throw new BadRequestException(`অজানা UTM Key: ${unknown.join(", ")} — ব্যবহারযোগ্য: ${CampaignsService.UTM_KEYS.join(", ")}`);
+      if (!keys.length) throw new BadRequestException("Template-এ অন্তত একটি Key দিন — Template মুছতে চাইলে null পাঠান");
+      template = {};
+      for (const k of keys) {
+        const v = String((raw as any)[k] ?? "").trim();
+        if (!v) throw new BadRequestException(`utm_${k}-এর মান খালি হতে পারবে না`);
+        if (v.length > 120) throw new BadRequestException(`utm_${k}-এর মান সর্বোচ্চ ১২০ অক্ষরের হতে পারে`);
+        const used = [...v.matchAll(/\{([a-zA-Z]+)\}/g)].map((m) => m[1].toLowerCase());
+        const badTokens = used.filter((t) => !(CampaignsService.UTM_TOKENS as readonly string[]).includes(t));
+        if (badTokens.length) throw new BadRequestException(`অজানা Token: ${badTokens.map((t) => `{${t}}`).join(", ")} — ব্যবহারযোগ্য: ${CampaignsService.UTM_TOKENS.map((t) => `{${t}}`).join(" ")}`);
+        template[k] = v;
+      }
+    }
+    await (this.prisma as any).campaignPlan.update({ where: { id: planId }, data: { utmTemplate: template } });
+    await this.audit.log({ organizationId, userId: actorId, action: "campaign.utm_template_updated", entityType: "CampaignPlan", entityId: planId, metadata: { template } }).catch(() => undefined);
+    return this.getPlanUtmTemplate(organizationId, planId);
+  }
+
   /** UTM governance (Phase J): every ad link leaving this system
    * carries utm_source/medium/campaign so the first-party tracker and
    * the first-party rule metrics can attribute it. Existing utm_*
@@ -5253,6 +8800,55 @@ export class CampaignsService implements OnModuleInit {
     return this.getPlanFull(organizationId, planId);
   }
 
+  /**
+   * SA-B15 (A2): account-scoped twin of setMetaStatus, for Meta
+   * campaigns that exist on the platform but were NOT created
+   * through a CampaignPlan here (e.g. made in Ads Manager and
+   * synced in as AdCampaign rows) — setMetaStatus stays the
+   * dashboard path for plan campaigns; this pair gives the
+   * Action Engine exactly one hub home for the account-scoped
+   * case, with the SAME discipline: the CC27 gate on activation
+   * (pause is never gated — stopping spend is a safety action),
+   * Meta confirms FIRST through the account's own client
+   * (metaClientForAccount), and a platform failure throws
+   * "Meta did NOT confirm …" with no local state claimed.
+   * Deliberately NO local status write: no sync maintains
+   * AdCampaign.status on this line, so a value written here
+   * would later masquerade as platform truth — the read
+   * companion below reads Meta live instead.
+   */
+  async setMetaCampaignStatusByAccount(organizationId: string, actorId: string, adAccountId: string, externalCampaignId: string, target: "ACTIVE" | "PAUSED") {
+    if (target !== "ACTIVE" && target !== "PAUSED") throw new BadRequestException(`target must be ACTIVE or PAUSED (got "${target}")`);
+    if (!externalCampaignId) throw new BadRequestException("externalCampaignId is required to change campaign status");
+    const account = await (this.prisma as any).adAccount.findFirst({ where: { id: adAccountId, organizationId } });
+    if (!account) throw new NotFoundException("Ad account not found in this organization");
+    if (account.platform !== "meta") throw new BadRequestException("This lifecycle path is Meta-only");
+    // CC27: activation gated, pause always allowed (same as setMetaStatus).
+    if (target === "ACTIVE") await this.assertCampaignAccountAccess(organizationId, actorId, { adAccountId });
+    const client = await this.metaClientForAccount(organizationId, account);
+    try {
+      await client.setObjectStatus(externalCampaignId, target);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Status change failed";
+      throw new BadRequestException(`Meta did NOT confirm the status change: ${message}. Local status is unchanged.`);
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: target === "PAUSED" ? "campaign.paused" : "campaign.activated", entityType: "AdCampaign", entityId: externalCampaignId, metadata: { platform: "meta", adAccountId, externalCampaignId, target, via: "action_engine" } });
+    return { platform: "meta", externalCampaignId, status: target };
+  }
+
+  /** SA-B15 (A2): live Meta status read for an account-scoped
+   *  campaign — the Action Engine verifier's read-back. Returns
+   *  Meta's own configured status + effective status; a status
+   *  Meta does not report comes back null, never guessed. */
+  async getMetaCampaignStatusByAccount(organizationId: string, adAccountId: string, externalCampaignId: string) {
+    const account = await (this.prisma as any).adAccount.findFirst({ where: { id: adAccountId, organizationId } });
+    if (!account) throw new NotFoundException("Ad account not found in this organization");
+    if (account.platform !== "meta") throw new BadRequestException("This status read is Meta-only");
+    const client = await this.metaClientForAccount(organizationId, account);
+    const res = await client.getObjectStatus(externalCampaignId);
+    return { platform: "meta", externalCampaignId, status: res.status ?? null, effectiveStatus: res.effectiveStatus ?? null };
+  }
+
   // ---------- AI copy suggestions (saved as draft ads, editable) ----------
   async generateCopy(organizationId: string, actorId: string, planId: string, dto: { adSetId: string; productId: string; linkUrl?: string }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
@@ -5269,9 +8865,14 @@ export class CampaignsService implements OnModuleInit {
 
     let variants: { primaryText: string; headline: string }[] = [];
     if (provider.isRealLlm) {
+      // CA27: the org's winner-trait FACTS (real A/B
+      // verdicts + ad-level metrics, minimum-sample
+      // gated) ride the copy prompt as a labelled line —
+      // absent traits add nothing, never a guess.
+      const winnerTraits = await this.winnerTraits(organizationId).catch(() => null);
       const result = await provider.complete([
         { role: "system", content: "You write short ad copy for an ecommerce product. Use ONLY the product facts provided: never invent discounts, stock claims, delivery promises or features. Bengali (Bangla script) by default unless the product name is English-only. Return ONLY JSON: {\"variants\":[{\"primaryText\":string,\"headline\":string}]} with exactly 2 variants." },
-        { role: "user", content: `Product: ${product.name}\nPrice: ${price}\nCategory: ${product.category ?? "-"}\nDescription: ${product.description ?? "-"}\nBusiness: ${profile?.industry ?? "-"}; brand voice: ${profile?.brandVoice ?? "-"}` },
+        { role: "user", content: `Product: ${product.name}\nPrice: ${price}\nCategory: ${product.category ?? "-"}\nDescription: ${product.description ?? "-"}\nBusiness: ${profile?.industry ?? "-"}; brand voice: ${profile?.brandVoice ?? "-"}${winnerTraits?.factsBn ? `\n${winnerTraits.factsBn}` : ""}` },
       ], { jsonMode: true, maxTokens: 800 });
       try {
         const parsed = JSON.parse(result.text);
@@ -5302,22 +8903,183 @@ export class CampaignsService implements OnModuleInit {
     return { created, provider: provider.name };
   }
 
+  /** CA1: AI image generation from inside the builder. The
+   * plan supplies the ad account (a draft may target another
+   * via dto.adAccountId); the actual generation, storage and
+   * Meta ingest live in CreativesService.generateAiImage —
+   * this method only gates on the plan and delegates. The
+   * result is a Creative Library asset (name prefix "AI ছবি — "),
+   * never an ad: the human still picks it into an ad. */
+  async generateImage(organizationId: string, actorId: string, planId: string, dto: { prompt: string; productId?: string; adAccountId?: string }) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    this.assertEditable(plan);
+    if (!this.creatives) throw new BadRequestException("AI image generation is not available in this context");
+    return this.creatives.generateAiImage(organizationId, actorId, {
+      adAccountId: dto.adAccountId ?? plan.adAccountId,
+      prompt: dto.prompt,
+      productId: dto.productId,
+    });
+  }
+
+  /** CA2: AI video ad generation. The SCRIPT is built here
+   * under the suggestPlan fact discipline: the LLM writes
+   * words only, every number in its text must already exist
+   * in the product fact pack (the price, in either digit
+   * script), and any violation — or no real LLM at all —
+   * falls back to a template script built from the same real
+   * facts, LABELLED scriptSource:"template" in the response
+   * (the generateCopy dev-template precedent — a fallback is
+   * never dressed up as an LLM result). Assembly, storage and
+   * Meta ingest live in CreativesService.generateAiVideo;
+   * the output is slideshow video from the product's own
+   * photos, never presented as filmed footage. */
+  async generateVideo(organizationId: string, actorId: string, planId: string, dto: { productId: string; adAccountId?: string }) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    this.assertEditable(plan);
+    if (!this.creatives) throw new BadRequestException("AI video generation is not available in this context");
+    const product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
+    if (!product) throw new NotFoundException("Product not found in this organization");
+    const price = formatMinor(BigInt(product.priceMinor), product.currency);
+
+    const taka = Number(BigInt(product.priceMinor)) / 100;
+    const allowedNumbers = new Set([String(taka), taka.toFixed(2)]);
+    const numbersOk = (text: string) => {
+      const found = text.replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString()).match(/\d+(?:\.\d+)?/g) ?? [];
+      return found.every((n) => allowedNumbers.has(n) || allowedNumbers.has(String(Number(n))) || allowedNumbers.has(Number(n).toFixed(2)));
+    };
+    const templateScript = () => ({
+      headline: String(product.name).slice(0, 80),
+      lines: [
+        product.description ? String(product.description).slice(0, 90) : product.category ? `${product.category} — আমাদের কালেকশন থেকে` : "আমাদের কালেকশন থেকে",
+        "বিস্তারিত দেখতে ক্লিক করুন",
+      ],
+    });
+
+    let script = templateScript();
+    let scriptSource: "llm" | "template" = "template";
+    const provider = this.llm.getProvider();
+    if (provider.isRealLlm) {
+      const result = await provider.complete([
+        { role: "system", content: "You write a SHORT slideshow script for an ecommerce product video. Use ONLY the product facts provided: never invent discounts, stock claims, delivery promises or features. Bengali (Bangla script). Return ONLY JSON: {\"headline\":string,\"lines\":[string]} with 2-3 short lines (each at most 60 characters) shown after the headline." },
+        { role: "user", content: `Product: ${product.name}\nPrice: ${price}\nCategory: ${product.category ?? "-"}\nDescription: ${product.description ?? "-"}` },
+      ], { jsonMode: true, maxTokens: 500 }).catch(() => null);
+      if (result) {
+        await (this.prisma as any).aIUsageRecord.create({
+          data: { organizationId, userId: actorId, feature: "ad_video_script", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+        }).catch(() => undefined);
+        try {
+          const parsed = JSON.parse(result.text);
+          const headline = String(parsed?.headline ?? "").trim();
+          const lines = (Array.isArray(parsed?.lines) ? parsed.lines : []).map((l: any) => String(l ?? "").trim()).filter(Boolean).slice(0, 3);
+          if (headline && lines.length >= 1 && numbersOk(headline) && lines.every(numbersOk)) {
+            script = { headline: headline.slice(0, 120), lines: lines.map((l: string) => l.slice(0, 90)) };
+            scriptSource = "llm";
+          }
+        } catch { /* invalid LLM output → the labelled template script stands */ }
+      }
+    }
+
+    const out = await this.creatives.generateAiVideo(organizationId, actorId, {
+      adAccountId: dto.adAccountId ?? plan.adAccountId,
+      productId: product.id,
+      name: `AI ভিডিও — ${product.name}`.slice(0, 120),
+      script,
+    });
+    return { ...out, script, scriptSource, provider: provider.name };
+  }
+
+  /** Numbers in a text, digit-script normalized (Bengali
+   * digits → Latin), as canonical numeric strings. */
+  private static numbersInText(text: string): string[] {
+    const normalized = String(text ?? "").replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString());
+    const found = normalized.match(/\d+(?:\.\d+)?/g) ?? [];
+    return [...new Set(found.map((n) => String(Number(n))))].sort();
+  }
+
+  /** CA4: per-ad copy localization (bn ↔ en) via the org's
+   * REAL LLM. Numbers are LOCKED to the source: the union of
+   * numbers across the whole ad must be identical after
+   * translation — an invented or dropped number refuses the
+   * whole operation and NOTHING is saved (no silent save,
+   * ever). There is NO template fallback for translation: no
+   * real LLM configured = an honest unavailable answer. The
+   * result is stored as locale-labelled variants under
+   * textOptions.locales.<locale> (the canonical fields stay
+   * untouched); a same-locale request is refused from a
+   * script-detection heuristic, labelled as such. */
+  async localizeAdCopy(organizationId: string, actorId: string, planId: string, adId: string, dto: { targetLocale: string }) {
+    const plan = await this.getPlanOrThrow(organizationId, planId);
+    this.assertEditable(plan);
+    const target = dto.targetLocale;
+    if (!["bn", "en"].includes(target)) throw new BadRequestException("targetLocale must be bn or en");
+    const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, planId } });
+    if (!ad) throw new NotFoundException("Ad not found in this plan");
+    const opts = this.textOptionsOf(ad);
+    const source = {
+      primaryTexts: opts?.primaryTexts ?? (ad.primaryText ? [String(ad.primaryText)] : []),
+      headlines: opts?.headlines ?? (ad.headline ? [String(ad.headline)] : []),
+      descriptions: opts?.descriptions ?? (ad.description ? [String(ad.description)] : []),
+    };
+    const sourceAll = [...source.primaryTexts, ...source.headlines, ...source.descriptions].join("\n");
+    if (!sourceAll.trim()) throw new BadRequestException("এই Ad-এ অনুবাদ করার মতো কোনো Text নেই");
+    const detected = /[\u0980-\u09FF]/.test(sourceAll) ? "bn" : "en"; // Bengali Unicode block
+    if (detected === target) {
+      throw new BadRequestException(target === "bn" ? "Ad-এর Text এমনিতেই বাংলায় আছে বলে মনে হচ্ছে (Script দেখে আন্দাজ) — আবার অনুবাদের দরকার নেই" : "Ad-এর Text এমনিতেই English-এ আছে বলে মনে হচ্ছে (Script দেখে আন্দাজ) — আবার অনুবাদের দরকার নেই");
+    }
+    const provider = this.llm.getProvider();
+    if (!provider.isRealLlm) {
+      throw new BadRequestException("অনুবাদের জন্য আসল AI Provider দরকার — Organization Settings-এ LLM Provider configure করুন। Template দিয়ে অনুবাদ করা হয় না।");
+    }
+    const sourceNumbers = CampaignsService.numbersInText(sourceAll);
+    const result = await provider.complete([
+      { role: "system", content: `Translate ecommerce ad copy into ${target === "bn" ? "Bengali (Bangla script)" : "English"}. Keep EVERY number exactly as it appears in the source — never add, drop or change a number, price, discount or quantity. Keep the same number of items in each list, in the same order. Return ONLY JSON: {"primaryTexts":[string],"headlines":[string],"descriptions":[string]} — include a list only when the source has it; use [] otherwise.` },
+      { role: "user", content: JSON.stringify(source) },
+    ], { jsonMode: true, maxTokens: 1200 }).catch(() => null);
+    if (!result) throw new BadRequestException("AI Provider থেকে অনুবাদ পাওয়া যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন");
+    await (this.prisma as any).aIUsageRecord.create({
+      data: { organizationId, userId: actorId, feature: "ad_copy_localization", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+    }).catch(() => undefined);
+    let parsed: any;
+    try { parsed = JSON.parse(result.text); } catch { throw new BadRequestException("AI-এর অনুবাদ পড়া যায়নি (JSON নয়) — কিছু সেভ হয়নি"); }
+    const clean = (v: any) => (Array.isArray(v) ? v.map((x: any) => String(x ?? "").trim()) : []);
+    const translated = {
+      primaryTexts: clean(parsed?.primaryTexts),
+      headlines: clean(parsed?.headlines),
+      descriptions: clean(parsed?.descriptions),
+    };
+    for (const key of ["primaryTexts", "headlines", "descriptions"] as const) {
+      if (source[key].length && translated[key].length !== source[key].length) {
+        throw new BadRequestException(`অনুবাদে ${key}-এর সংখ্যা বদলে গেছে (আছে ${source[key].length}টি, অনুবাদে ${translated[key].length}টি) — নিরাপত্তার জন্য কিছু সেভ হয়নি`);
+      }
+    }
+    const translatedNumbers = CampaignsService.numbersInText([...translated.primaryTexts, ...translated.headlines, ...translated.descriptions].join("\n"));
+    if (JSON.stringify(translatedNumbers) !== JSON.stringify(sourceNumbers)) {
+      throw new BadRequestException(`অনুবাদে সংখ্যা/দাম বদলে গেছে — Source-এ ছিল [${sourceNumbers.join(", ") || "কোনো সংখ্যা নেই"}], অনুবাদে এসেছে [${translatedNumbers.join(", ") || "কোনো সংখ্যা নেই"}]। সংখ্যা লক করা থাকে বলে কিছু সেভ হয়নি`);
+    }
+    const existingOpts = ad.textOptions && typeof ad.textOptions === "object" ? ad.textOptions : {};
+    const baseOpts = opts ?? { primaryTexts: source.primaryTexts, headlines: source.headlines, descriptions: source.descriptions };
+    const locales = { ...((existingOpts as any).locales ?? {}), [target]: translated };
+    const newTextOptions = { ...baseOpts, locales };
+    await (this.prisma as any).campaignAd.update({ where: { id: ad.id }, data: { textOptions: newTextOptions } });
+    return { adId: ad.id, locale: target, sourceLocaleDetected: detected, translated, numbersLocked: sourceNumbers };
+  }
+
   /**
    * CB3: deterministic creative health checks. Labelled
    * heuristics (lengths, missing pieces, domain match) —
    * not Meta verdicts; structural errors stay errors.
    */
-  async creativeHealth(organizationId: string, planId: string) {
+  async creativeHealth(organizationId: string, planId: string, actorId?: string) {
     const full = await this.getPlanFull(organizationId, planId);
     const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null);
     let siteDomain = "";
     try { siteDomain = profile?.websiteUrl ? new URL(profile.websiteUrl).hostname.replace(/^www\./, "") : ""; } catch { siteDomain = ""; }
-    const findings: { adId: string; adName: string; level: "warn" | "error"; message: string }[] = [];
+    const findings: { adId: string; adName: string; level: "warn" | "error" | "not_checked"; message: string }[] = [];
     let adsChecked = 0;
     for (const s of full.adSets ?? []) {
       for (const ad of s.ads ?? []) {
         adsChecked++;
-        const f = (level: "warn" | "error", message: string) => findings.push({ adId: ad.id, adName: ad.name, level, message });
+        const f = (level: "warn" | "error" | "not_checked", message: string) => findings.push({ adId: ad.id, adName: ad.name, level, message });
         if (!ad.headline) f("warn", "Headline নেই — Feed এ লিংকের পাশে শিরোনামটি দেখায়, থাকলে ক্লিক বাড়ে (heuristic)");
         else if (String(ad.headline).length > 40) f("warn", `Headline ${String(ad.headline).length} অক্ষর — 40 এর বেশি হলে Feed এ কেটে যেতে পারে (heuristic)`);
         if (String(ad.primaryText ?? "").length > 125) f("warn", "Primary Text 125 অক্ষরের বেশি — Feed এ 'আরও দেখুন' এর আড়ালে চলে যাবে (heuristic)");
@@ -5332,6 +9094,73 @@ export class CampaignsService implements OnModuleInit {
             const d = new URL(ad.linkUrl).hostname.replace(/^www\./, "");
             if (d !== siteDomain) f("warn", `Link এর Domain (${d}) ব্যবসার Website (${siteDomain}) থেকে আলাদা — ইচ্ছাকৃত না হলে যাচাই করুন`);
           } catch { /* validatePlan covers malformed URLs */ }
+        }
+      }
+    }
+
+    // ---------- CA5: dimension checks + vision estimates ----------
+    // Deterministic dimension checks read the width/height now
+    // stored on CreativeAsset (CA5 migration). An asset WITHOUT
+    // dimensions is reported not_checked — never passed
+    // silently. The text-in-image and 9:16 safe-zone items are
+    // VisionService ESTIMATES (labelled as such in every
+    // message); vision unavailable / bytes unreadable / cap
+    // reached → not_checked with the reason.
+    const allAds = (full.adSets ?? []).flatMap((s: any) => s.ads ?? []);
+    const assetIds = [...new Set(allAds.flatMap((a: any) => [a.imageAssetId, a.videoAssetId]).filter(Boolean))] as string[];
+    const assetRows = assetIds.length && (this.prisma as any).creativeAsset?.findMany
+      ? await (this.prisma as any).creativeAsset.findMany({ where: { id: { in: assetIds }, organizationId } }).catch(() => [])
+      : [];
+    const assetById = new Map<string, any>((assetRows ?? []).map((r: any) => [r.id, r]));
+    const actor = actorId ?? (full as any).createdById ?? "system";
+    let visionScanned = 0;
+    for (const ad of allAds) {
+      const f = (level: "warn" | "error" | "not_checked", message: string) => findings.push({ adId: ad.id, adName: ad.name, level, message });
+      const isVideo = (ad.format ?? "link") === "video" || !!ad.videoAssetId;
+      const asset = (ad.videoAssetId ? assetById.get(ad.videoAssetId) : undefined) ?? (ad.imageAssetId ? assetById.get(ad.imageAssetId) : undefined);
+      if (asset) {
+        if (asset.width && asset.height) {
+          const w = Number(asset.width), h = Number(asset.height);
+          if (Math.min(w, h) < 500) f("warn", `Creative-এর রেজোলিউশন কম (${w}×${h}) — ছোট দিক 500px-এর নিচে হলে Feed-এ ঝাপসা দেখাতে পারে (heuristic)`);
+          if (h / w > 1.92) f("warn", `Creative ${w}×${h} — 9:16-এর চেয়েও লম্বা Aspect, প্ল্যাটফর্ম উপরে/নিচে Crop করবে (heuristic)`);
+          if (!isVideo && w / h >= 1.5 && !ad.placementAssets?.placements?.vertical) f("warn", `Landscape ছবি (${w}×${h}) — Stories/Reels-এ Crop/ফাঁকা জায়গা থাকবে; Vertical (9:16) Asset দিলে ভালো হয় (heuristic)`);
+        } else {
+          f("not_checked", "Creative-এর Dimension (Width/Height) জানা নেই — এই Asset-টি Dimension সংরক্ষণের আগের; Aspect/Resolution যাচাই হয়নি (not checked)");
+        }
+      }
+      const imageUrl = asset?.kind === "image" ? asset.sourceUrl : ad.imageUrl;
+      if (!isVideo && imageUrl) {
+        if (!this.vision || !this.creatives) {
+          f("not_checked", "Vision যাচাই এই Context-এ যুক্ত নেই — ছবিতে লেখার পরিমাণ যাচাই হয়নি (not checked)");
+        } else if (visionScanned >= 5) {
+          f("not_checked", "একবারে সর্বোচ্চ ৫টি Ad-এর ছবি Vision দিয়ে যাচাই হয় — এই Ad-টি এই রানে যাচাই হয়নি (not checked)");
+        } else {
+          visionScanned++;
+          const got = await this.creatives.creativeImageBytes(imageUrl).catch(() => null);
+          if (!got) {
+            f("not_checked", "ছবির Bytes আমাদের CDN থেকে পাওয়া যায়নি — Vision যাচাই হয়নি (not checked)");
+          } else {
+            const res = await this.vision.analyzeImage(organizationId, actor, {
+              imageBytes: got.bytes, mimeType: got.mimeType, feature: "vision_ad_creative_scan",
+              prompt: "You inspect an ecommerce ad image. Estimate how much of the image area is covered by text/lettering, and whether important content touches the edges. Return ONLY JSON: {\"textCoveragePercent\": number (0-100), \"contentAtEdges\": [\"top\"|\"bottom\"|\"left\"|\"right\"], \"summary\": string}. These are estimates — note uncertainty in the summary.",
+            }).catch((e: any) => ({ available: false as const, reason: String(e?.message ?? e).slice(0, 200) }));
+            if (!res.available) {
+              f("not_checked", `Vision যাচাই হয়নি — ${(res as any).reason} (not checked)`);
+            } else {
+              let parsed: any = null;
+              try { parsed = JSON.parse(res.text); } catch { parsed = null; }
+              if (!parsed || typeof parsed.textCoveragePercent !== "number") {
+                f("not_checked", "Vision-এর উত্তর পড়া যায়নি — ছবিতে লেখার পরিমাণ যাচাই হয়নি (not checked)");
+              } else {
+                if (parsed.textCoveragePercent > 20) f("warn", `ছবিতে লেখার পরিমাণ বেশি হতে পারে — Vision Estimate: ~${Math.round(parsed.textCoveragePercent)}% জায়গা জুড়ে লেখা (estimate; Meta-র বর্তমান নিয়মে লেখা নিষেধ নয়, তবে লেখা-ভারী ছবি সাধারণত কম পৌঁছায়)`);
+                const isVertical = asset?.width && asset?.height ? Number(asset.height) > Number(asset.width) : false;
+                const edges: string[] = Array.isArray(parsed.contentAtEdges) ? parsed.contentAtEdges : [];
+                if (isVertical && (edges.includes("top") || edges.includes("bottom"))) {
+                  f("warn", "9:16 Safe Zone: ছবির মূল অংশ একদম উপরে/নিচের ধারে — Stories/Reels-এর UI (উপরে Profile-এর নাম, নিচে CTA বোতাম) তা ঢেকে দিতে পারে (Vision estimate)");
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -5382,6 +9211,65 @@ export class CampaignsService implements OnModuleInit {
       }
     }
 
+    // CA7: per-audience history as FACTS — the org's
+    // stored rollups (CA7), ranked by CPA. The minimums
+    // are stated, not implied: an audience qualifies only
+    // with at least ৳500 of attributed spend AND at least
+    // one conversion in its window, so a single lucky
+    // click can never top the list. Server-computed from
+    // stored rows, exactly like pastPerformance above.
+    const TOP_AUDIENCE_MIN_SPEND_MINOR = 50000n; // ৳500
+    let topAudiences: { name: string; kind: string; spend: number; conversions: number; cpa: number; windowDays: number }[] = [];
+    try {
+      const rollups = p.audiencePerformanceRollup?.findMany ? await p.audiencePerformanceRollup.findMany({ where: { organizationId }, take: 200 }) : [];
+      topAudiences = (rollups ?? [])
+        .filter((r: any) => { try { return BigInt(r.spendMinor ?? 0) >= TOP_AUDIENCE_MIN_SPEND_MINOR; } catch { return false; } })
+        .filter((r: any) => Number(r.conversions ?? 0) >= 1)
+        .map((r: any) => {
+          const spend = Number(BigInt(r.spendMinor ?? 0)) / 100;
+          const conversions = Number(r.conversions ?? 0);
+          return { name: String(r.name ?? ""), kind: String(r.audienceKind ?? ""), spend, conversions, cpa: Math.round((spend / conversions) * 100) / 100, windowDays: Number(r.windowDays ?? 90) };
+        })
+        .sort((a: any, b: any) => a.cpa - b.cpa)
+        .slice(0, 3);
+    } catch { topAudiences = []; }
+
+    // CA9(c): top regions as FACTS, when stored breakdown
+    // rows exist — the org's region rows aggregated with
+    // the same stated minimums as the plan region view
+    // (>= 2 stored rows AND >= 1 conversion per region).
+    let topRegions: { region: string; divisionLabel: string | null; spend: number; conversions: number; cpa: number | null }[] = [];
+    try {
+      const brows = p.dailyAdBreakdown?.findMany ? await p.dailyAdBreakdown.findMany({ where: { organizationId, dimension: "region" }, take: 5000 }) : [];
+      topRegions = CampaignsService.aggregateRegionRows(brows ?? [])
+        .filter((r) => r.rows >= CampaignsService.REGION_MIN_ROWS && r.conversions >= 1)
+        .slice(0, 3)
+        .map((r) => ({ region: r.region, divisionLabel: r.divisionLabel, spend: r.spend, conversions: r.conversions, cpa: r.cpa }));
+    } catch { topRegions = []; }
+
+    // CA20: per-form lead quality as FACTS for lead
+    // plans — the org's forms meeting the stated minimum
+    // (CA20's >= 10 attributed leads), from real CRM rows
+    // via leadFormQuality. (Forms carry no product link in
+    // the schema, so these are org-level form facts —
+    // stated as such, never dressed as product facts.)
+    let leadFormFacts: { name: string; totalLeads: number; qualifiedRate: number | null; orderRate: number | null }[] = [];
+    if (objective === "OUTCOME_LEADS") {
+      try {
+        const quality = await this.leadFormQuality(organizationId);
+        leadFormFacts = (quality.forms ?? [])
+          .filter((f: any) => !f.belowThreshold)
+          .map((f: any) => ({ name: f.name, totalLeads: f.totalLeads, qualifiedRate: f.qualifiedRate, orderRate: f.orderRate }))
+          .slice(0, 3);
+      } catch { leadFormFacts = []; }
+    }
+
+    // CA27: winner-trait FACTS ride the same labelled-
+    // facts discipline (CA7/CA9/CA20) — real A/B verdicts
+    // + ad-level metrics, minimum-sample gated. Absent
+    // traits mean NO line is added, never a guess.
+    const winnerTraits = await this.winnerTraits(organizationId).catch(() => null);
+
     const price = product ? formatMinor(BigInt(product.priceMinor), product.currency) : null;
     const categoryInterests: Record<string, string[]> = {
       clothing: ["Fashion", "Online shopping"], fashion: ["Fashion", "Online shopping"],
@@ -5415,7 +9303,7 @@ export class CampaignsService implements OnModuleInit {
     if (provider.isRealLlm) {
       const result = await provider.complete([
         { role: "system", content: "You draft ecommerce ad plans. Use ONLY the facts given: never invent prices, discounts, stock or delivery promises. Bengali (Bangla script). Return ONLY JSON: {\"planName\":string,\"copies\":[{\"primaryText\":string,\"headline\":string}]} with one copy per ad set, in order." },
-        { role: "user", content: `Goal: ${dto.goal ?? "sales"}\nProduct: ${product?.name ?? "-"}\nPrice: ${price ?? "-"}\nCategory: ${product?.category ?? "-"}\nBusiness industry: ${profile?.industry ?? "-"}; brand voice: ${profile?.brandVoice ?? "-"}\nAd sets: ${split.map((s) => s.name).join(" | ")}` },
+        { role: "user", content: `Goal: ${dto.goal ?? "sales"}\nProduct: ${product?.name ?? "-"}\nPrice: ${price ?? "-"}\nCategory: ${product?.category ?? "-"}\nBusiness industry: ${profile?.industry ?? "-"}; brand voice: ${profile?.brandVoice ?? "-"}\nAd sets: ${split.map((s) => s.name).join(" | ")}${winnerTraits?.factsBn ? `\n${winnerTraits.factsBn}` : ""}` },
       ], { jsonMode: true, maxTokens: 700 }).catch(() => null);
       if (result) {
         await p.aIUsageRecord.create({ data: { organizationId, userId: actorId, feature: "plan_suggestion", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated } }).catch(() => undefined);
@@ -5451,6 +9339,10 @@ export class CampaignsService implements OnModuleInit {
         objective, productName: product?.name ?? null, price,
         savedAudiences: Array.isArray(savedAudiences) ? savedAudiences.length : 0,
         pastPerformance,
+        topAudiences,
+        topRegions,
+        leadFormFacts,
+        winnerTraits: winnerTraits ? { winnersConsidered: winnerTraits.winnersConsidered, traits: winnerTraits.traits, factsBn: winnerTraits.factsBn } : null,
         note: "এটি একটি খসড়া — সংখ্যা ও বাজেট সার্ভার হিসাব করেছে; যাচাই করে সম্পাদনা করুন, তারপর Submit করুন।",
       },
     };
@@ -5464,8 +9356,8 @@ export class CampaignsService implements OnModuleInit {
     if (plan.externalCampaignId || ["published", "publishing"].includes(plan.status)) {
       throw new BadRequestException("Advantage+ can only be changed before publishing — the budget structure is fixed at creation time");
     }
-    if (enabled && plan.objective !== "OUTCOME_SALES") {
-      throw new BadRequestException("Advantage+ is a Sales format: the plan objective must be OUTCOME_SALES");
+    if (enabled && !["OUTCOME_SALES", "OUTCOME_APP_PROMOTION"].includes(plan.objective)) {
+      throw new BadRequestException("Advantage+ runs on the Sales or App Promotion objectives: the plan objective must be OUTCOME_SALES or OUTCOME_APP_PROMOTION");
     }
     await (this.prisma as any).campaignPlan.update({ where: { id: planId }, data: { advantagePlus: enabled } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.advantage_plus_set", entityType: "CampaignPlan", entityId: planId, metadata: { enabled } });

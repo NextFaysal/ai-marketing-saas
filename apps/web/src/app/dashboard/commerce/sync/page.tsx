@@ -9,7 +9,7 @@ import { ResponsiveTable } from "@repo/ui";
 // GET /organizations/:id/stores returns the full Store rows
 // (IntegrationsService.listStores), so refundPushEnabled /
 // courierTrackingMetaKey are present at runtime.
-interface Store { id: string; name: string; url?: string; platform?: string; syncMode?: string; refundPushEnabled?: boolean; courierTrackingMetaKey?: string | null; weightUnit?: string | null }
+interface Store { id: string; name: string; url?: string; platform?: string; syncMode?: string; refundPushEnabled?: boolean; refundToCreditEnabled?: boolean; courierTrackingMetaKey?: string | null; weightUnit?: string | null }
 interface Listing {
   id: string; storeId: string; productId: string; externalId: string | null;
   publishState: string; syncStatus: string; lastSyncError?: string | null;
@@ -171,6 +171,26 @@ export default function SyncCenterPage() {
       // honestly, rather than hiding the toggle's failure.
       setRefundError(e instanceof Error ? e.message : "Refund Push বদলানো ব্যর্থ");
     } finally { setRefundBusy(false); }
+  }
+
+  // NF7 (FB3): refund-to-credit opt-in — same per-store refund
+  // settings area as Refund Push above. Default OFF: while off,
+  // the orders UI does not render the credit option at all and
+  // the API refuses refund-to-credit attempts.
+  const [creditBusy, setCreditBusy] = useState(false);
+  const [creditError, setCreditError] = useState("");
+  async function toggleRefundToCredit(enabled: boolean) {
+    const orgId = getOrganizationId(); if (!orgId || !selectedStore) return;
+    setCreditBusy(true); setCreditError("");
+    try {
+      const updated = await apiFetch<Store>(`/organizations/${orgId}/commerce/stores/${selectedStore.id}/refund-to-credit`, {
+        method: "PATCH", body: JSON.stringify({ enabled }),
+      });
+      setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
+      toast({ title: updated.refundToCreditEnabled ? `"${selectedStore.name}" স্টোরে Refund-to-Credit চালু হয়েছে।` : `"${selectedStore.name}" স্টোরে Refund-to-Credit বন্ধ হয়েছে।`, tone: "success" });
+    } catch (e) {
+      setCreditError(e instanceof Error ? e.message : "Refund-to-Credit বদলানো ব্যর্থ");
+    } finally { setCreditBusy(false); }
   }
 
   async function saveWeightUnit(unit: string) {
@@ -489,6 +509,21 @@ export default function SyncCenterPage() {
               </label>
               {refundBusy ? <p className="text-xs text-slate-500">বদলানো হচ্ছে…</p> : null}
               {refundError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{refundError}</p> : null}
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={selectedStore.refundToCreditEnabled === true}
+                  disabled={creditBusy}
+                  onChange={(e) => toggleRefundToCredit(e.target.checked)}
+                />
+                <span>
+                  <span className="font-semibold">Refund → স্টোর ক্রেডিট (NF7)</span>
+                  <span className="block text-xs text-slate-500">বন্ধ থাকলে অর্ডারের Refund অংশে স্টোর ক্রেডিটের অপশনই দেখা যাবে না এবং API-ও ক্রেডিটে রিফান্ড নেবে না। চালু থাকলে refund কাস্টমারের স্টোর ক্রেডিট লেজারে জমা হবে। শুধু OWNER বদলাতে পারেন।</span>
+                </span>
+              </label>
+              {creditBusy ? <p className="text-xs text-slate-500">বদলানো হচ্ছে…</p> : null}
+              {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
               <div className="space-y-1">
                 <label className="block text-sm font-medium">Courier Tracking Meta Key
                   <div className="mt-1 flex flex-wrap items-center gap-2">

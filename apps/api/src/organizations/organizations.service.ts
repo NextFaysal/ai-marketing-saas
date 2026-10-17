@@ -5,7 +5,7 @@ import { AuditService } from "../audit/audit.service";
 import { StorageService } from "../storage/storage.service";
 import { StorageRegistryService } from "../storage/storage-registry.service";
 import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../storage/media-url";
-import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
+import { ApproveJoinRequestDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, RequestToJoinDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateOrgIdentityDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
 import { MediaStore } from "../inbox/media-store";
 import { PERMISSION_AREAS, PERMISSION_AREA_KEYS, PRESET_ROLE_PROFILES, effectiveAccess, findUnknownAreas, normalizeOverrides, presetProfile } from "../common/permission-catalog";
 import { NOTIFICATION_CATEGORIES, NOTIFICATION_CATEGORY_KEYS } from "../common/agent-notify";
@@ -25,6 +25,30 @@ import { Role } from "@repo/db";
 
 const INVITABLE_ROLES: Role[] = ["ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER"] as Role[];
 
+/**
+ * NF8: the org's own Google review link, pasted in Settings. A
+ * plain URL the org owns — empty/null clears it; anything set
+ * must parse as an http(s) URL (the SU5 RSS-link discipline).
+ * No host allow-list: Google hands out several shapes
+ * (g.page / maps links / short links), and the link is only
+ * ever OFFERED to a happy customer, never fetched server-side.
+ */
+export function normalizeGoogleReviewUrl(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new BadRequestException("Google রিভিউ লিংকটি সঠিক http/https ঠিকানা নয়।");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new BadRequestException("Google রিভিউ লিংকটি সঠিক http/https ঠিকানা নয়।");
+  }
+  return trimmed;
+}
+
 @Injectable()
 export class OrganizationsService {
   constructor(
@@ -36,6 +60,16 @@ export class OrganizationsService {
     @Optional() private readonly storage?: StorageService,
     @Optional() private readonly storageRegistry?: StorageRegistryService,
   ) {}
+
+  /** ORG13 (Organization Next OB4): Organization.tags is the
+   * platform team's internal classification — it must never ride
+   * a tenant-facing read. Applied on the tenant org read paths
+   * (listMine / getOne / create / identity update returns). */
+  private tenantOrgView<T extends Record<string, any>>(org: T): T {
+    if (!org || typeof org !== "object" || !("tags" in org)) return org;
+    const { tags: _tags, ...rest } = org as any;
+    return rest;
+  }
 
   /** TD1/TD2: the live availability check behind
    * GET /organizations/slug-available — the same decision create()
@@ -55,6 +89,26 @@ export class OrganizationsService {
       if (availability.reason === "taken") throw new ConflictException("This slug is already taken");
       throw new BadRequestException(availability.message);
     }
+    // ORG12 (Organization Next OB4): per-user owned-org cap from
+    // the platform setting "maxOrgsPerUser". No setting = no cap
+    // (the code carries no built-in number — the cap is the
+    // operator's policy, owner decision D1). Only OWNER-role
+    // memberships count: being INVITED into other people's orgs
+    // never eats the caller's own allowance, and an archived org
+    // still counts (it is alive and restorable). Any membership
+    // status counts — a suspended membership does not surrender
+    // ownership. A count that cannot be read never blocks.
+    const { maxOrgsPerUser } = await import("../common/platform-settings");
+    const orgCap = await maxOrgsPerUser(this.prisma as any);
+    if (orgCap !== null) {
+      let owned = -1;
+      try {
+        owned = await (this.prisma as any).membership.count({ where: { userId, role: "OWNER" } });
+      } catch { owned = -1; }
+      if (owned >= orgCap) {
+        throw new BadRequestException(`আপনি সর্বোচ্চ ${orgCap}টি Organization-এর মালিক হতে পারবেন — সেই সীমা পূর্ণ হয়ে গেছে। নতুন Organization তৈরি করতে চাইলে প্ল্যাটফর্ম সাপোর্টে যোগাযোগ করুন।`);
+      }
+    }
     const org = await (this.prisma as any).$transaction(async (tx: any) => {
       const created = await tx.organization.create({
         data: {
@@ -68,7 +122,7 @@ export class OrganizationsService {
       return created;
     });
     await this.audit.log({ organizationId: org.id, userId, action: "org.create", entityType: "Organization", entityId: org.id, ipAddress: ip });
-    return { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() };
+    return { ...this.tenantOrgView(org), creditMinor: BigInt(org.creditMinor ?? 0).toString() };
   }
 
   async listMine(userId: string) {
@@ -77,13 +131,13 @@ export class OrganizationsService {
       include: { organization: true },
       orderBy: { createdAt: "asc" },
     });
-    return memberships.map((m: any) => ({ ...m.organization, creditMinor: BigInt(m.organization?.creditMinor ?? 0).toString(), myRole: m.role }));
+    return memberships.map((m: any) => ({ ...this.tenantOrgView(m.organization ?? {}), creditMinor: BigInt(m.organization?.creditMinor ?? 0).toString(), myRole: m.role }));
   }
 
   async getOne(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     if (!org) throw new NotFoundException("Organization not found");
-    return { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() };
+    return { ...this.tenantOrgView(org), creditMinor: BigInt(org.creditMinor ?? 0).toString() };
   }
 
   async listMembers(organizationId: string) {
@@ -241,6 +295,10 @@ export class OrganizationsService {
       gateways: {
         sslcommerz: pc.effectiveSslcommerzConfig() !== null,
         bkash: pc.effectiveBkashConfig() !== null,
+        // OU5: the international card rail — offered only when
+        // the platform's Stripe config is COMPLETE (secret key +
+        // webhook secret; see effectiveStripeConfig).
+        stripe: pc.effectiveStripeConfig() !== null,
       },
       limits,
       usage: { seatsUsed, aiCallsToday, broadcasts30d },
@@ -542,6 +600,280 @@ export class OrganizationsService {
     return { ok: true, alreadyMember: false, organizationId: inv.organizationId, role: membership.role };
   }
 
+  // ---- ORG9/ORG10 (Organization Next OB3): shareable invite links + join-request queue ----
+  //
+  // The security shape differs from M34 email invitations in one
+  // deliberate way: a link is shareable, so it NEVER creates a
+  // membership. Following a link creates an OrgJoinRequest; an
+  // OWNER/ADMIN approves it (seat-guarded at that moment) and only
+  // then does an ACTIVE membership exist.
+
+  private joinUrl(rawToken: string): string {
+    const base = (process.env.WEB_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    return `${base}/join/${rawToken}`;
+  }
+
+  /** The effective cap of a link. maxUses is nullable in storage,
+   * but null is NEVER "unlimited": creation defaults a missing cap
+   * to 10 and a stored null reads back as 10 too. */
+  private inviteLinkCap(link: any): number {
+    return typeof link.maxUses === "number" && link.maxUses > 0 ? link.maxUses : 10;
+  }
+
+  private inviteLinkState(link: any): string {
+    if (link.revokedAt) return "revoked";
+    if (new Date(link.expiresAt).getTime() < Date.now()) return "expired";
+    if ((link.usedCount ?? 0) >= this.inviteLinkCap(link)) return "exhausted";
+    return "active";
+  }
+
+  private inviteLinkView(link: any) {
+    return {
+      id: link.id, role: link.role, maxUses: this.inviteLinkCap(link),
+      usedCount: link.usedCount ?? 0, expiresAt: link.expiresAt,
+      revokedAt: link.revokedAt ?? null, status: this.inviteLinkState(link),
+      createdById: link.createdById, createdAt: link.createdAt,
+    };
+  }
+
+  /** Second-layer actor check for the OWNER/ADMIN surfaces (the
+   * controller guards run first): membership must exist and be
+   * an ACTIVE OWNER/ADMIN — same pattern as ORG1/ORG5. */
+  private async assertOrgAdmin(organizationId: string, actorId: string) {
+    const actor = await this.memberOrThrow(organizationId, actorId);
+    if (actor.role !== "OWNER" && actor.role !== "ADMIN") {
+      throw new ForbiddenException("Only an OWNER or ADMIN can do this");
+    }
+    if (actor.status !== "ACTIVE") throw new BadRequestException("Your membership is not active");
+    return actor;
+  }
+
+  async createInviteLink(organizationId: string, actorId: string, dto: CreateInviteLinkDto, ip?: string) {
+    if (!INVITABLE_ROLES.includes(dto.role as Role)) {
+      throw new BadRequestException("Role cannot be assigned through an invite link");
+    }
+    await this.assertOrgAdmin(organizationId, actorId);
+    const maxUses = dto.maxUses ?? 10;
+    const days = dto.expiresInDays ?? 7;
+    const rawToken = randomBytes(24).toString("base64url");
+    const link = await (this.prisma as any).orgInviteLink.create({
+      data: {
+        organizationId, role: dto.role, createdById: actorId,
+        tokenHash: this.hashInviteToken(rawToken),
+        maxUses, usedCount: 0,
+        expiresAt: new Date(Date.now() + days * 24 * 3600 * 1000),
+      },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.invite_link_created", entityType: "OrgInviteLink", entityId: link.id,
+      metadata: { role: dto.role, maxUses, expiresInDays: days }, ipAddress: ip,
+    });
+    // The raw token is returned ONCE, to the creating OWNER/ADMIN
+    // (same rule as M34) — afterwards only the hash exists.
+    return { link: this.inviteLinkView(link), inviteUrl: this.joinUrl(rawToken) };
+  }
+
+  async listInviteLinks(organizationId: string, actorId: string) {
+    await this.assertOrgAdmin(organizationId, actorId);
+    const rows = await (this.prisma as any).orgInviteLink.findMany({
+      where: { organizationId }, orderBy: { createdAt: "desc" }, take: 100,
+    });
+    return rows.map((l: any) => this.inviteLinkView(l));
+  }
+
+  async revokeInviteLink(organizationId: string, actorId: string, linkId: string, ip?: string) {
+    await this.assertOrgAdmin(organizationId, actorId);
+    const link = await (this.prisma as any).orgInviteLink.findFirst({ where: { id: linkId, organizationId } });
+    if (!link) throw new NotFoundException("Invite link not found");
+    if (link.revokedAt) throw new BadRequestException("This invite link was already revoked");
+    await (this.prisma as any).orgInviteLink.update({ where: { id: link.id }, data: { revokedAt: new Date() } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.invite_link_revoked", entityType: "OrgInviteLink", entityId: link.id,
+      metadata: { role: link.role, usedCount: link.usedCount ?? 0 }, ipAddress: ip,
+    });
+    return { ok: true };
+  }
+
+  private async findInviteLinkByToken(rawToken: string) {
+    return (this.prisma as any).orgInviteLink.findUnique({
+      where: { tokenHash: this.hashInviteToken(rawToken) },
+    });
+  }
+
+  /** Public (signed-out) link information. Deliberately uniform:
+   * an unknown token and a revoked / expired / exhausted link
+   * are indistinguishable — the same 404 — so this endpoint
+   * cannot be used to probe whether a link ever existed. Only a
+   * currently usable link reveals the organization name + role. */
+  async getInviteLinkPublic(rawToken: string) {
+    const link = await this.findInviteLinkByToken(rawToken);
+    if (!link || this.inviteLinkState(link) !== "active") {
+      throw new NotFoundException("Invitation link not found or the link is invalid");
+    }
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: link.organizationId } });
+    return { organizationId: link.organizationId, organizationName: org?.name ?? "", role: link.role, valid: true };
+  }
+
+  /** Following a link files a join REQUEST — never a membership.
+   * Membership / pending checks and the cap re-check + use count
+   * run inside ONE transaction, so parallel follows cannot
+   * overshoot the cap or double-file a pending request. */
+  async requestToJoin(user: { userId: string; email: string }, rawToken: string, dto: RequestToJoinDto, ip?: string) {
+    const link = await this.findInviteLinkByToken(rawToken);
+    if (!link) throw new NotFoundException("Invitation link not found or the link is invalid");
+    if (this.inviteLinkState(link) !== "active") {
+      throw new BadRequestException("This invite link is no longer accepting requests");
+    }
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: link.organizationId } });
+    const message = (dto.message ?? "").trim().slice(0, 500) || null;
+    const request = await (this.prisma as any).$transaction(async (tx: any) => {
+      const membership = await tx.membership.findUnique({
+        where: { userId_organizationId: { userId: user.userId, organizationId: link.organizationId } },
+      });
+      if (membership) throw new ConflictException("You are already a member of this organization");
+      const pending = await tx.orgJoinRequest.findFirst({
+        where: { organizationId: link.organizationId, userId: user.userId, status: "PENDING" },
+      });
+      if (pending) throw new ConflictException("You already have a pending request to join this organization");
+      const fresh = await tx.orgInviteLink.findUnique({ where: { id: link.id } });
+      if (!fresh || this.inviteLinkState(fresh) !== "active") {
+        throw new BadRequestException("This invite link is no longer accepting requests");
+      }
+      const created = await tx.orgJoinRequest.create({
+        data: { organizationId: link.organizationId, userId: user.userId, inviteLinkId: link.id, message, status: "PENDING" },
+      });
+      await tx.orgInviteLink.update({
+        where: { id: link.id }, data: { usedCount: (fresh.usedCount ?? 0) + 1 },
+      });
+      return created;
+    });
+    await this.audit.log({
+      organizationId: link.organizationId, userId: user.userId, action: "org.join_requested", entityType: "OrgJoinRequest", entityId: request.id,
+      metadata: { inviteLinkId: link.id, role: link.role }, ipAddress: ip,
+    });
+    return { ok: true, requestId: request.id, status: "PENDING", organizationId: link.organizationId, organizationName: org?.name ?? "" };
+  }
+
+  /** The join page revisiting: the caller's OWN latest request
+   * for the organization behind this link. The link row must
+   * exist (an unknown token gets the same uniform 404), but its
+   * current state never hides an already-filed request. */
+  async getMyJoinRequest(user: { userId: string; email: string }, rawToken: string) {
+    const link = await this.findInviteLinkByToken(rawToken);
+    if (!link) throw new NotFoundException("Invitation link not found or the link is invalid");
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: link.organizationId } });
+    const mine = await (this.prisma as any).orgJoinRequest.findFirst({
+      where: { organizationId: link.organizationId, userId: user.userId },
+      orderBy: { createdAt: "desc" },
+    });
+    return {
+      organizationId: link.organizationId, organizationName: org?.name ?? "",
+      role: link.role, linkStatus: this.inviteLinkState(link),
+      request: mine ? {
+        id: mine.id, status: mine.status, message: mine.message ?? null,
+        rejectReason: mine.status === "REJECTED" ? (mine.rejectReason ?? null) : null,
+        createdAt: mine.createdAt, decidedAt: mine.decidedAt ?? null,
+      } : null,
+    };
+  }
+
+  async listJoinRequests(organizationId: string, actorId: string) {
+    await this.assertOrgAdmin(organizationId, actorId);
+    const rows = await (this.prisma as any).orgJoinRequest.findMany({
+      where: { organizationId }, orderBy: { createdAt: "desc" }, take: 100,
+    });
+    // Requester identity + link role via two batched reads (the
+    // listMembers custom-role map pattern — no per-row queries).
+    const userIds = Array.from(new Set(rows.map((r: any) => r.userId)));
+    const linkIds = Array.from(new Set(rows.map((r: any) => r.inviteLinkId).filter(Boolean)));
+    const users = userIds.length ? await (this.prisma as any).user.findMany({
+      where: { id: { in: userIds } }, select: { id: true, name: true, email: true },
+    }) : [];
+    const userById = new Map((users as any[]).map((u) => [u.id, u]));
+    const links = linkIds.length ? await (this.prisma as any).orgInviteLink.findMany({
+      where: { id: { in: linkIds } }, select: { id: true, role: true },
+    }) : [];
+    const linkRoleById = new Map((links as any[]).map((l) => [l.id, l.role]));
+    return rows.map((r: any) => ({
+      id: r.id, status: r.status, message: r.message ?? null,
+      rejectReason: r.rejectReason ?? null, createdAt: r.createdAt,
+      decidedAt: r.decidedAt ?? null, decidedById: r.decidedById ?? null,
+      inviteLinkId: r.inviteLinkId ?? null,
+      linkRole: r.inviteLinkId ? (linkRoleById.get(r.inviteLinkId) ?? null) : null,
+      user: userById.get(r.userId) ?? { id: r.userId, name: "", email: "" },
+    }));
+  }
+
+  async approveJoinRequest(organizationId: string, actorId: string, requestId: string, dto: ApproveJoinRequestDto, ip?: string) {
+    await this.assertOrgAdmin(organizationId, actorId);
+    const req = await (this.prisma as any).orgJoinRequest.findFirst({ where: { id: requestId, organizationId } });
+    if (!req) throw new NotFoundException("Join request not found");
+    if (req.status !== "PENDING") throw new BadRequestException(`This request was already ${String(req.status).toLowerCase()}`);
+    let role = (dto.role ?? undefined) as Role | undefined;
+    if (!role && req.inviteLinkId) {
+      const link = await (this.prisma as any).orgInviteLink.findUnique({ where: { id: req.inviteLinkId } });
+      role = (link?.role ?? "VIEWER") as Role;
+    }
+    role = (role ?? "VIEWER") as Role;
+    if (!INVITABLE_ROLES.includes(role)) {
+      throw new BadRequestException("Role cannot be assigned through a join request");
+    }
+    const existing = await (this.prisma as any).membership.findUnique({
+      where: { userId_organizationId: { userId: req.userId, organizationId } },
+    });
+    if (existing && existing.status === "ACTIVE") {
+      // The request achieved its purpose another way (a direct
+      // invite landed first) — close it out cleanly, like
+      // acceptInvitation's alreadyMember path. No seat is consumed
+      // and no duplicate membership is attempted.
+      await (this.prisma as any).orgJoinRequest.update({
+        where: { id: req.id }, data: { status: "APPROVED", decidedById: actorId, decidedAt: new Date() },
+      });
+      await this.audit.log({
+        organizationId, userId: actorId, action: "org.join_request_approved", entityType: "OrgJoinRequest", entityId: req.id,
+        metadata: { requesterUserId: req.userId, role: existing.role, alreadyMember: true }, ipAddress: ip,
+      });
+      return { ok: true, alreadyMember: true, organizationId, role: existing.role };
+    }
+    if (existing) {
+      throw new BadRequestException("This user already has a membership in this organization that is not active. Resolve that membership instead of approving a new request.");
+    }
+    // The plan's seat limit is enforced HERE — the single moment
+    // a membership is about to exist — with the same guard the
+    // invitation paths use (no second implementation).
+    await this.seatGuard(organizationId);
+    const membership = await (this.prisma as any).$transaction(async (tx: any) => {
+      const created = await tx.membership.create({
+        data: { userId: req.userId, organizationId, role, status: "ACTIVE" },
+      });
+      await tx.orgJoinRequest.update({
+        where: { id: req.id }, data: { status: "APPROVED", decidedById: actorId, decidedAt: new Date() },
+      });
+      return created;
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.join_request_approved", entityType: "OrgJoinRequest", entityId: req.id,
+      metadata: { requesterUserId: req.userId, role }, ipAddress: ip,
+    });
+    return { ok: true, alreadyMember: false, organizationId, role: membership.role };
+  }
+
+  async rejectJoinRequest(organizationId: string, actorId: string, requestId: string, dto: RejectJoinRequestDto, ip?: string) {
+    await this.assertOrgAdmin(organizationId, actorId);
+    const req = await (this.prisma as any).orgJoinRequest.findFirst({ where: { id: requestId, organizationId } });
+    if (!req) throw new NotFoundException("Join request not found");
+    if (req.status !== "PENDING") throw new BadRequestException(`This request was already ${String(req.status).toLowerCase()}`);
+    const reason = (dto.reason ?? "").trim().slice(0, 500) || null;
+    await (this.prisma as any).orgJoinRequest.update({
+      where: { id: req.id }, data: { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), rejectReason: reason },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.join_request_rejected", entityType: "OrgJoinRequest", entityId: req.id,
+      metadata: { requesterUserId: req.userId, hasReason: Boolean(reason) }, ipAddress: ip,
+    });
+    return { ok: true };
+  }
+
   // ---- Milestone 35 (Phase N1): onboarding state + member TOTP reset ----
 
   /** Onboarding checklist computed ONLY from real rows: a step is
@@ -709,10 +1041,13 @@ export class OrganizationsService {
     return { ok: true, userId: targetUserId, status, handedOver };
   }
 
-  async removeMember(organizationId: string, actorId: string, targetUserId: string, ip?: string) {
-    const membership = await this.memberOrThrow(organizationId, targetUserId);
-    if (membership.role === "OWNER") throw new BadRequestException("The organization owner cannot be removed");
-    if (targetUserId === actorId) throw new BadRequestException("You cannot remove yourself");
+  /** Shared departure cleanup for removeMember + leaveOrganization:
+   * open conversations return to the pool, inbox-team roster rows
+   * and agent state go too, and the membership row is deleted
+   * (the codebase's membership removal is a hard delete).
+   * Returns the number of conversations handed over. */
+  private async purgeMembership(organizationId: string, membership: any): Promise<number> {
+    const targetUserId = membership.userId;
     const handedOver = await this.handOverOpenConversations(organizationId, targetUserId);
     // Leave no roster residue: inbox teams + agent state go too.
     const teams = await (this.prisma as any).inboxTeam.findMany({
@@ -727,11 +1062,306 @@ export class OrganizationsService {
       where: { organizationId, userId: targetUserId },
     }).catch(() => undefined);
     await (this.prisma as any).membership.delete({ where: { id: membership.id } });
+    return handedOver;
+  }
+
+  async removeMember(organizationId: string, actorId: string, targetUserId: string, ip?: string) {
+    const membership = await this.memberOrThrow(organizationId, targetUserId);
+    if (membership.role === "OWNER") throw new BadRequestException("The organization owner cannot be removed");
+    if (targetUserId === actorId) throw new BadRequestException("You cannot remove yourself");
+    const handedOver = await this.purgeMembership(organizationId, membership);
     await this.audit.log({
       organizationId, userId: actorId, action: "org.member_removed", entityType: "Membership", entityId: membership.id,
       metadata: { targetUserId, memberEmail: membership.user?.email, role: membership.role, handedOver }, ipAddress: ip,
     });
     return { ok: true, userId: targetUserId, removed: true, handedOver };
+  }
+
+  // ---------- ORG1/ORG2/ORG3 (Organization Next OB1): org lifecycle ----------
+
+  /** Best-effort lifecycle email — same pattern as the invitation
+   * mail: an unconfigured or failing SMTP never blocks the action
+   * it reports on; the boolean says only whether it was sent. */
+  private async sendLifecycleEmail(to: string | undefined, subject: string, lines: string[]): Promise<boolean> {
+    if (!to) return false;
+    try {
+      const provider = new EmailProvider();
+      if (!provider.isConfigured()) return false;
+      const sent = await provider.send({ to, subject, text: lines.join("\n") });
+      return Boolean(sent?.providerMessageId);
+    } catch {
+      return false;
+    }
+  }
+
+  /** ORG1: ownership transfer — immediate (v1 has no consent /
+   * accept step; owner decision D4 default). The role swap runs
+   * in ONE transaction so the org can never be left ownerless or
+   * with two owners. updateMemberRole keeps refusing OWNER —
+   * this is the only path that can create an owner. */
+  async transferOwnership(organizationId: string, actorId: string, targetUserId: string, ip?: string) {
+    if (!targetUserId || typeof targetUserId !== "string") {
+      throw new BadRequestException("targetUserId is required");
+    }
+    if (targetUserId === actorId) {
+      throw new BadRequestException("You are already the owner of this organization");
+    }
+    const actor = await this.memberOrThrow(organizationId, actorId);
+    if (actor.role !== "OWNER") {
+      throw new ForbiddenException("Only the current owner can transfer ownership");
+    }
+    if (actor.status !== "ACTIVE") throw new BadRequestException("Your membership is not active");
+    const target = await this.memberOrThrow(organizationId, targetUserId);
+    if (target.role === "OWNER") throw new BadRequestException("That member is already the owner");
+    if (target.status !== "ACTIVE") {
+      throw new BadRequestException("Ownership can only be transferred to an ACTIVE member");
+    }
+    if (target.role !== "ADMIN") {
+      throw new BadRequestException("Ownership can only be transferred to an ADMIN member — promote the member to ADMIN first");
+    }
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    await (this.prisma as any).$transaction(async (tx: any) => {
+      await tx.membership.update({ where: { id: target.id }, data: { role: "OWNER" } });
+      await tx.membership.update({ where: { id: actor.id }, data: { role: "ADMIN" } });
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.ownership_transferred", entityType: "Organization", entityId: organizationId,
+      metadata: { fromUserId: actorId, toUserId: targetUserId, fromEmail: actor.user?.email, toEmail: target.user?.email }, ipAddress: ip,
+    });
+    // Notify both sides — best effort; a mail failure never rolls
+    // the transfer back (the audit row above is the record).
+    const orgName = org?.name ?? "Organization";
+    const [notifiedNew, notifiedOld] = await Promise.all([
+      this.sendLifecycleEmail(target.user?.email, `${orgName} — আপনি এখন এই প্রতিষ্ঠানের মালিক`, [
+        `${orgName} প্রতিষ্ঠানের মালিকানা আপনার কাছে হস্তান্তর হয়েছে।`,
+        `আগের মালিক এখন ADMIN হিসেবে টিমে আছেন।`,
+        `এই পরিবর্তন ইতিমধ্যে কার্যকর — কোনো পদক্ষেপ নেওয়ার দরকার নেই।`,
+      ]),
+      this.sendLifecycleEmail(actor.user?.email, `${orgName} — মালিকানা হস্তান্তর সম্পন্ন`, [
+        `আপনি ${orgName} প্রতিষ্ঠানের মালিকানা ${target.user?.name ?? target.user?.email ?? "একজন ADMIN সদস্যকে"} হস্তান্তর করেছেন।`,
+        `আপনি এখন এই প্রতিষ্ঠানে ADMIN হিসেবে আছেন।`,
+      ]),
+    ]);
+    return {
+      ok: true, organizationId, fromUserId: actorId, toUserId: targetUserId,
+      newOwnerRole: "OWNER", previousOwnerRole: "ADMIN",
+      notified: { newOwner: notifiedNew, previousOwner: notifiedOld },
+    };
+  }
+
+  /** ORG2: self-leave. Non-owners leave with the same cleanup as
+   * an admin removal (conversations return to the pool). The
+   * OWNER can never leave an ownerless org behind — transfer
+   * first (ORG1). A non-owner last member leaving is fine: the
+   * owner always remains, so the org is never memberless. */
+  async leaveOrganization(organizationId: string, userId: string, ip?: string) {
+    const membership = await this.memberOrThrow(organizationId, userId);
+    if (membership.role === "OWNER") {
+      throw new BadRequestException("The owner cannot leave the organization — first transfer ownership to an ADMIN member (Team page → মালিকানা হস্তান্তর), then leave.");
+    }
+    const handedOver = await this.purgeMembership(organizationId, membership);
+    await this.audit.log({
+      organizationId, userId, action: "org.member_left", entityType: "Membership", entityId: membership.id,
+      metadata: { memberEmail: membership.user?.email, role: membership.role, handedOver }, ipAddress: ip,
+    });
+    return { ok: true, userId, left: true, handedOver };
+  }
+
+  /** ORG3: tenant-side archive — OWNER only. Sets archivedAt;
+   * TenantGuard then blocks org APIs except the OWNER's restore /
+   * export / lifecycle paths. Platform status and the
+   * subscription are deliberately untouched (see acceptance). */
+  async archiveOrganization(organizationId: string, actorId: string, ip?: string) {
+    const actor = await this.memberOrThrow(organizationId, actorId);
+    if (actor.role !== "OWNER") throw new ForbiddenException("Only the owner can archive this organization");
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    if (org.archivedAt) return { ok: true, organizationId, archivedAt: org.archivedAt, unchanged: true };
+    const updated = await (this.prisma as any).organization.update({
+      where: { id: organizationId }, data: { archivedAt: new Date() },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.archived", entityType: "Organization", entityId: organizationId, ipAddress: ip,
+    });
+    return { ok: true, organizationId, archivedAt: updated.archivedAt };
+  }
+
+  /** ORG3: restore an archived organization — OWNER only. */
+  async restoreOrganization(organizationId: string, actorId: string, ip?: string) {
+    const actor = await this.memberOrThrow(organizationId, actorId);
+    if (actor.role !== "OWNER") throw new ForbiddenException("Only the owner can restore this organization");
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    if (!org.archivedAt) return { ok: true, organizationId, archivedAt: null, unchanged: true };
+    await (this.prisma as any).organization.update({
+      where: { id: organizationId }, data: { archivedAt: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.restored", entityType: "Organization", entityId: organizationId, ipAddress: ip,
+    });
+    return { ok: true, organizationId, archivedAt: null };
+  }
+
+  /** ORG5 (Organization Next OB2): edit the organization's legal
+   * name and regional defaults — the four fields create() accepts
+   * but nothing could change afterwards (brandName is only the
+   * display name). Partial update: only provided fields move.
+   *
+   * Validation (product voice, Bengali): name non-empty after
+   * trim; currency ISO-4217 shape (3 letters — case-normalized
+   * to upper before the shape check, so "bdt" is accepted and
+   * stored "BDT", while "B1T"/"EU" fail); timezone must be a
+   * real IANA zone (Intl check via the shared isValidTimezone);
+   * country a 2-letter code (same case handling).
+   *
+   * Currency semantics: changing it changes ONLY the org's
+   * default going forward. Historical records and the
+   * subscription keep the currency they were written in — this
+   * method touches nothing but the Organization row, and the
+   * settings UI carries that warning in words.
+   *
+   * Audit: org.identity_updated with metadata { fields: [...] }
+   * — field NAMES only, never old values. A submission whose
+   * values all equal the current ones writes nothing and audits
+   * nothing (unchanged: true). */
+  async updateIdentity(organizationId: string, actorId: string, dto: UpdateOrgIdentityDto, ip?: string) {
+    const actor = await this.memberOrThrow(organizationId, actorId);
+    if (!["OWNER", "ADMIN"].includes(actor.role)) {
+      throw new ForbiddenException("Organization-এর তথ্য বদলাতে মালিক (OWNER) বা অ্যাডমিন (ADMIN) হতে হবে");
+    }
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+
+    const provided = ["name", "currency", "timezone", "country"].filter((f) => (dto as any)[f] !== undefined);
+    if (provided.length === 0) {
+      throw new BadRequestException("কিছুই বদলানোর জন্য পাঠানো হয়নি — অন্তত একটি ঘর পূরণ করুন");
+    }
+
+    const data: Record<string, string> = {};
+    if (dto.name !== undefined) {
+      const name = String(dto.name).trim();
+      if (!name) throw new BadRequestException("প্রতিষ্ঠানের নাম খালি হতে পারে না");
+      if (name !== org.name) data.name = name;
+    }
+    if (dto.currency !== undefined) {
+      const currency = String(dto.currency).trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency)) {
+        throw new BadRequestException("Currency ঠিকমতো দিন — ৩ অক্ষরের ISO কোড (যেমন BDT, USD)");
+      }
+      if (currency !== org.currency) data.currency = currency;
+    }
+    if (dto.timezone !== undefined) {
+      const timezone = String(dto.timezone).trim();
+      if (!timezone || !isValidTimezone(timezone)) {
+        throw new BadRequestException("Timezone টি চেনা যাচ্ছে না — IANA নাম দিন (যেমন Asia/Dhaka)");
+      }
+      if (timezone !== org.timezone) data.timezone = timezone;
+    }
+    if (dto.country !== undefined) {
+      const country = String(dto.country).trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(country)) {
+        throw new BadRequestException("দেশের কোড ২ অক্ষরের হতে হবে (যেমন BD, IN, US)");
+      }
+      if (country !== org.country) data.country = country;
+    }
+
+    const fields = Object.keys(data);
+    const base = { ...this.tenantOrgView(org), creditMinor: BigInt(org.creditMinor ?? 0).toString() };
+    if (fields.length === 0) return { ...base, changedFields: [] as string[], unchanged: true };
+    const updated = await (this.prisma as any).organization.update({ where: { id: organizationId }, data });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.identity_updated", entityType: "Organization", entityId: organizationId,
+      metadata: { fields }, ipAddress: ip,
+    });
+    return { ...this.tenantOrgView(updated), creditMinor: BigInt(updated.creditMinor ?? 0).toString(), changedFields: fields };
+  }
+
+  // ---------- ORG11 (Organization Next OB4): security policy ----------
+
+  /** Shared view of the caller's own standing under this org's
+   * security policy — used by the GET endpoint (any ACTIVE member;
+   * the web OrgStateGate probes it while TenantGuard is blocking
+   * everything else) and echoed after a PATCH. Session age is
+   * measured from the server-side UserSession row (GB6); a token
+   * without a session id cannot be aged, so it reads as blocked
+   * whenever a cap exists (the remedy is a fresh login). */
+  private async securityPolicyView(org: any, actorId: string, sid?: string) {
+    const requireMfa = org?.requireMfa === true;
+    const cap = typeof org?.sessionMaxAgeHours === "number" && Number.isInteger(org.sessionMaxAgeHours) && org.sessionMaxAgeHours > 0
+      ? org.sessionMaxAgeHours : null;
+    let myTotpEnabled = false;
+    try {
+      const me = await (this.prisma as any).user?.findUnique({ where: { id: actorId }, select: { totpEnabled: true } });
+      myTotpEnabled = me?.totpEnabled === true;
+    } catch { /* user lookup unavailable — read as not enabled */ }
+    let mySessionAgeHours: number | null = null;
+    if (sid) {
+      try {
+        const session = await (this.prisma as any).userSession?.findUnique({ where: { id: sid }, select: { createdAt: true } });
+        if (session?.createdAt) mySessionAgeHours = (Date.now() - new Date(session.createdAt).getTime()) / 3_600_000;
+      } catch { /* session table unavailable — age unknown */ }
+    }
+    return {
+      requireMfa,
+      sessionMaxAgeHours: cap,
+      myTotpEnabled,
+      mySessionAgeHours: mySessionAgeHours === null ? null : Math.round(mySessionAgeHours * 10) / 10,
+      myMfaBlocked: requireMfa && !myTotpEnabled,
+      mySessionBlocked: cap !== null && (mySessionAgeHours === null || mySessionAgeHours > cap),
+    };
+  }
+
+  async getSecurityPolicy(organizationId: string, actorId: string, sid?: string) {
+    await this.memberOrThrow(organizationId, actorId);
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    return this.securityPolicyView(org, actorId, sid);
+  }
+
+  /** OWNER-only. Turning requireMfa ON additionally requires the
+   * OWNER's own MFA to be enabled already — otherwise the owner
+   * would lock themselves (and, practically, the whole org's
+   * administration) out the moment the policy lands. Turning it
+   * OFF or changing the session cap carries no such condition. */
+  async updateSecurityPolicy(organizationId: string, actorId: string, dto: UpdateSecurityPolicyDto, ip?: string, sid?: string) {
+    const actor = await this.memberOrThrow(organizationId, actorId);
+    if (actor.role !== "OWNER") {
+      throw new ForbiddenException("নিরাপত্তা নীতি বদলাতে Organization-এর মালিক (OWNER) হতে হবে");
+    }
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+
+    const data: Record<string, unknown> = {};
+    if (dto.requireMfa !== undefined) {
+      if (typeof dto.requireMfa !== "boolean") throw new BadRequestException("requireMfa true বা false হতে হবে");
+      if (dto.requireMfa === true && org.requireMfa !== true) {
+        let myTotpEnabled = false;
+        try {
+          const me = await (this.prisma as any).user?.findUnique({ where: { id: actorId }, select: { totpEnabled: true } });
+          myTotpEnabled = me?.totpEnabled === true;
+        } catch { /* read as not enabled — the safe direction here */ }
+        if (!myTotpEnabled) {
+          throw new BadRequestException("আগে নিজের অ্যাকাউন্টে MFA (2FA) চালু করুন — Settings → নিরাপত্তা (2FA) থেকে চালু করে তারপর এই নীতি চালু করুন। নিজে MFA ছাড়া এই নীতি চালু করলে আপনি নিজেই এই Organization-এ ঢুকতে পারবেন না।");
+        }
+      }
+      if (dto.requireMfa !== (org.requireMfa === true)) data.requireMfa = dto.requireMfa;
+    }
+    if (dto.sessionMaxAgeHours !== undefined) {
+      if (dto.sessionMaxAgeHours !== null && (!Number.isInteger(dto.sessionMaxAgeHours) || dto.sessionMaxAgeHours < 1 || dto.sessionMaxAgeHours > 720)) {
+        throw new BadRequestException("Session-এর সর্বোচ্চ বয়স ১–৭২০ ঘণ্টার মধ্যে হতে হবে (বা সীমা তুলতে খালি পাঠান)");
+      }
+      if (dto.sessionMaxAgeHours !== (org.sessionMaxAgeHours ?? null)) data.sessionMaxAgeHours = dto.sessionMaxAgeHours;
+    }
+    const fields = Object.keys(data);
+    if (fields.length === 0) {
+      return { ...(await this.securityPolicyView(org, actorId, sid)), changedFields: [] as string[], unchanged: true };
+    }
+    const updated = await (this.prisma as any).organization.update({ where: { id: organizationId }, data });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.security_policy_updated", entityType: "Organization", entityId: organizationId,
+      metadata: { fields }, ipAddress: ip,
+    });
+    return { ...(await this.securityPolicyView(updated, actorId, sid)), changedFields: fields };
   }
 
   // ---------- Milestone 72 (Team W3): custom access ----------
@@ -1369,6 +1999,9 @@ export class OrganizationsService {
       const name = dto.brandName.trim();
       data.brandName = name === "" ? null : name;
     }
+    if (dto.googleReviewUrl !== undefined) {
+      data.googleReviewUrl = normalizeGoogleReviewUrl(dto.googleReviewUrl);
+    }
     if (dto.primaryColor !== undefined) {
       const color = dto.primaryColor.trim();
       if (color === "") data.primaryColor = null;
@@ -1387,6 +2020,22 @@ export class OrganizationsService {
       previousDomain = current?.customDomain
         ? normalizeCustomDomainInput(current.customDomain) || null
         : null;
+    }
+    // MX7: brand-kit font + secondary color (same hex discipline;
+    // the font must be one of the builder's allowlist keys so the
+    // stored value can never become arbitrary CSS in email HTML).
+    if ((dto as any).brandSecondaryColor !== undefined) {
+      const color = String((dto as any).brandSecondaryColor).trim();
+      if (color === "") data.brandSecondaryColor = null;
+      else if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new BadRequestException("সেকেন্ডারি রঙ হতে হবে #RRGGBB ফরম্যাটে (যেমন #B45309)");
+      else data.brandSecondaryColor = color.toUpperCase();
+    }
+    if ((dto as any).brandFont !== undefined) {
+      const font = String((dto as any).brandFont).trim();
+      const allowed = ["hind-siliguri", "noto-sans-bengali", "arial", "georgia", "verdana"];
+      if (font === "") data.brandFont = null;
+      else if (!allowed.includes(font)) throw new BadRequestException("ফন্ট তালিকা থেকে বেছে নিন (Hind Siliguri, Noto Sans Bengali, Arial, Georgia, Verdana)");
+      else data.brandFont = font;
     }
     if (dto.customDomain !== undefined) {
       const domain = dto.customDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -1424,7 +2073,10 @@ export class OrganizationsService {
           if (setting && settingTable?.update) {
             await settingTable.update({
               where: { id: setting.id },
-              data: { domainVerifyToken: null, domainVerifiedAt: null },
+              // OU2: the old domain's CfS hostname + HTTPS state
+              // resets with the verification (same rule as the
+              // storefront paths).
+              data: { domainVerifyToken: null, domainVerifiedAt: null, customHostnameId: null, httpsStatus: null, httpsStatusDetail: null, httpsUpdatedAt: null },
             });
           }
         } catch {

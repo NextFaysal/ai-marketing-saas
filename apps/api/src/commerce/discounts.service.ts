@@ -35,6 +35,8 @@ export interface DiscountDto {
   excludedProductIds?: string[] | null;
   excludedCategoryIds?: string[] | null;
   sourceRef?: string | null;
+  // NF14 (FB5): app-only offer — display rule only.
+  appOnly?: boolean;
 }
 
 const KINDS = ["percent", "fixed", "free_shipping"];
@@ -139,6 +141,9 @@ export class DiscountsService {
       excludedProductIds: Array.isArray(d.excludedProductIds) ? d.excludedProductIds : [],
       excludedCategoryIds: Array.isArray(d.excludedCategoryIds) ? d.excludedCategoryIds : [],
       sourceRef: d.sourceRef ?? null,
+      // NF14 (FB5): legacy rows predate the column — absent
+      // reads as false (not app-only).
+      appOnly: d.appOnly ?? false,
     };
   }
 
@@ -266,6 +271,7 @@ export class DiscountsService {
         excludedCategoryIds:
           dto.excludedCategoryIds && dto.excludedCategoryIds.length > 0 ? dto.excludedCategoryIds : null,
         sourceRef: dto.sourceRef ?? null,
+        appOnly: dto.appOnly ?? false,
       },
     });
     const pushes = dto.storeIds?.length ? await this.enqueuePushes(orgId, discount, dto.storeIds) : [];
@@ -331,6 +337,8 @@ export class DiscountsService {
         dto.excludedCategoryIds && dto.excludedCategoryIds.length > 0 ? dto.excludedCategoryIds : null;
     }
     if (dto.sourceRef !== undefined) data.sourceRef = dto.sourceRef;
+    // NF14 (FB5)
+    if (dto.appOnly !== undefined) data.appOnly = dto.appOnly;
     const updated = await this.table().update({ where: { id }, data });
     const pushes = dto.storeIds?.length ? await this.enqueuePushes(orgId, updated, dto.storeIds) : [];
     await this.audit?.log({

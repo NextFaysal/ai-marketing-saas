@@ -9,6 +9,7 @@ import { IdentifierListsService } from "../fraud/identifier-lists.service";
 import { CheckoutGuardService } from "../fraud/checkout-guard.service";
 import { FraudRulesService, fraudRuleMatches } from "../fraud/fraud-rules.service";
 import { seal } from "../common/platform-config";
+import { FraudNetworkService } from "../fraud-network/fraud-network.service";
 import { bdPhoneMatchKey } from "./phone-utils";
 import { namesMateriallyDifferent, scoreFraud } from "./fraud-score";
 
@@ -99,6 +100,12 @@ export class FraudShieldService {
     @Optional() private readonly identifiers?: IdentifierListsService,
     @Optional() private readonly checkoutGuard?: CheckoutGuardService,
     @Optional() private readonly fraudRules?: FraudRulesService,
+    // NF13 (FB5): platform fraud-network sibling signal.
+    // FraudNetworkModule is a leaf (global Prisma/Audit only)
+    // imported by OrdersModule; appended LAST so positional
+    // spec constructions keep their meaning. Optional so older
+    // wirings keep working — absent means no networkSignal.
+    @Optional() private readonly fraudNetwork?: FraudNetworkService,
   ) {
     // Mirror the ConversionsService subscription pattern: the
     // handler is fire-and-forget and assessOrder never throws.
@@ -397,6 +404,24 @@ export class FraudShieldService {
     return out;
   }
 
+  /** NF13 (FB5): the network sibling signal for a phone — the
+   * FraudNetworkService.lookup result, returned ONLY when the
+   * org has opted in (status ok / insufficient_data). A
+   * not_opted_in or unavailable result, a missing service, or
+   * ANY failure yields undefined, so the field stays ABSENT
+   * from the assessment — it is never merged into the org's
+   * own score and a network failure never breaks assessment. */
+  private async networkSignalForPhone(orgId: string, phone: string | null): Promise<any | undefined> {
+    try {
+      if (!this.fraudNetwork || !phone) return undefined;
+      const sig: any = await this.fraudNetwork.lookup(orgId, phone).catch(() => null);
+      if (!sig || sig.status === "not_opted_in" || sig.status === "unavailable") return undefined;
+      return sig;
+    } catch {
+      return undefined;
+    }
+  }
+
   // ---------- assessment ----------
 
   private async loadOrder(orgId: string, orderId: string): Promise<any | null> {
@@ -483,7 +508,7 @@ export class FraudShieldService {
   /** NEVER throws. Returns the assessment, or null when the
    * shield is disabled / the order is missing / anything failed. */
   async assessOrder(orgId: string, orderId: string): Promise<{
-    score: number; band: string; reasons: any[]; reviewHold: boolean;
+    score: number; band: string; reasons: any[]; reviewHold: boolean; networkSignal?: any;
   } | null> {
     try {
       if (!orgId || !orderId) return null;
@@ -495,6 +520,9 @@ export class FraudShieldService {
 
       const phone = await this.resolveOrderPhone(orgId, order);
       const phoneKey = phone ? bdPhoneMatchKey(phone) : null;
+      // NF13: sibling network signal — computed once, failure-
+      // isolated, present only for opted-in orgs (see helper).
+      const networkSignal = await this.networkSignalForPhone(orgId, phone);
 
       // GB3 (GC9, i): a TRUSTED phone short-circuits scoring —
       // stamp 0/low with the single trusted reason, never hold,
@@ -520,7 +548,7 @@ export class FraudShieldService {
           };
           if (ruleOut.tags) trustedData.tags = ruleOut.tags;
           await (this.prisma as any).order.update({ where: { id: order.id }, data: trustedData }).catch(() => undefined);
-          return { score: 0, band: "low", reasons, reviewHold: order.reviewHold === true };
+          return { score: 0, band: "low", reasons, reviewHold: order.reviewHold === true, ...(networkSignal ? { networkSignal } : {}) };
         }
       }
 
@@ -699,7 +727,7 @@ export class FraudShieldService {
         data.reviewHeldAt = now;
       }
       await (this.prisma as any).order.update({ where: { id: order.id }, data }).catch(() => undefined);
-      return { score: result.score, band: result.band, reasons: result.reasons, reviewHold: alreadyHeld || holdNow };
+      return { score: result.score, band: result.band, reasons: result.reasons, reviewHold: alreadyHeld || holdNow, ...(networkSignal ? { networkSignal } : {}) };
     } catch {
       return null;
     }
@@ -717,11 +745,19 @@ export class FraudShieldService {
         metadata: { score: assessment.score, band: assessment.band },
       }).catch(() => undefined);
     }
+    // NF13: carry the sibling signal to staff even when the
+    // shield itself returned no assessment (disabled shield) —
+    // computed from the fresh order's phone, failure-isolated,
+    // and ABSENT unless the org has opted in.
+    const networkSignal =
+      (assessment as any)?.networkSignal ??
+      (fresh ? await this.networkSignalForPhone(orgId, await this.resolveOrderPhone(orgId, fresh).catch(() => null)) : undefined);
     return {
       score: assessment?.score ?? fresh?.riskScore ?? null,
       band: assessment?.band ?? fresh?.riskBand ?? null,
       reasons: assessment?.reasons ?? fresh?.riskReasons ?? null,
       reviewHold: fresh?.reviewHold ?? assessment?.reviewHold ?? false,
+      ...(networkSignal ? { networkSignal } : {}),
       order: fresh ? stringifyOrderMoney(fresh) : null,
     };
   }

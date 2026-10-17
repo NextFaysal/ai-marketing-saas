@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Optional, MessageEv
 import { Observable, Subject, interval, merge } from "rxjs";
 import { map } from "rxjs/operators";
 import { PrismaService } from "../prisma/prisma.service";
+import { issueTicketTrackingToken, verifyTicketTrackingToken } from "./ticket-tracking-token";
 import { AuditService } from "../audit/audit.service";
 import { EmailProvider } from "../messaging/email.provider";
 import { LlmFactory } from "../ai/llm/llm.factory";
@@ -686,6 +687,81 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
     this.broadcastTicketEvent(ticketId, { type: "ticket.updated", data });
 
     return updated;
+  }
+
+  // ---------------- OU8: public signed-token tracking ----------------
+
+  /**
+   * Issue the tracking token for a ticket the caller already has
+   * tenant access to (controller enforces org membership via the
+   * tenant guard; here we only check the ticket belongs to the org).
+   * The token IS the credential for the public page — whoever holds
+   * the link can read public replies and reply as the customer.
+   */
+  async issueTrackingToken(organizationId: string, ticketId: string) {
+    const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket || ticket.organizationId !== organizationId) throw new NotFoundException("Ticket not found");
+    const token = issueTicketTrackingToken({ ticketId, orgId: organizationId });
+    return { token, path: `/ticket/track/${token}` };
+  }
+
+  /** Public view: status + PUBLIC messages only. Internal notes
+   * (isInternal=true) are filtered at the query, and diagnostics /
+   * SLA / assignee internals never enter the payload. */
+  async getPublicTicket(token: string) {
+    const payload = verifyTicketTrackingToken(token);
+    if (!payload) throw new NotFoundException("Ticket not found");
+    const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: payload.ticketId } });
+    if (!ticket || ticket.organizationId !== payload.orgId) throw new NotFoundException("Ticket not found");
+    const messages = await (this.prisma as any).supportTicketMessage.findMany({
+      where: { ticketId: ticket.id, isInternal: false },
+      orderBy: { createdAt: "asc" },
+    });
+    return {
+      id: ticket.id,
+      subject: ticket.subject,
+      category: ticket.category,
+      status: ticket.status,
+      priority: ticket.priority,
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+      resolvedAt: ticket.resolvedAt ?? null,
+      messages: (messages as any[]).map((m) => ({
+        id: m.id,
+        body: m.body,
+        authorKind: m.authorKind,
+        createdAt: m.createdAt,
+      })),
+    };
+  }
+
+  /** Public reply: lands as a PUBLIC message authored as the
+   * customer (authorKind "customer", authorId = the ticket's
+   * creator — the token names exactly that ticket). A reply on a
+   * resolved/closed ticket reopens it, same as the tenant path. */
+  async replyPublic(token: string, body: string) {
+    const payload = verifyTicketTrackingToken(token);
+    if (!payload) throw new NotFoundException("Ticket not found");
+    const text = String(body ?? "").trim();
+    if (!text) throw new BadRequestException("Message body is required");
+    const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: payload.ticketId } });
+    if (!ticket || ticket.organizationId !== payload.orgId) throw new NotFoundException("Ticket not found");
+    const message = await (this.prisma as any).supportTicketMessage.create({
+      data: {
+        ticketId: ticket.id,
+        authorId: ticket.createdById,
+        authorKind: "customer",
+        body: text,
+        isInternal: false,
+      },
+    });
+    const reopen = ticket.status === "resolved" || ticket.status === "closed";
+    await (this.prisma as any).supportTicket.update({
+      where: { id: ticket.id },
+      data: { lastMessageAt: new Date(), ...(reopen ? { status: "open" } : {}) },
+    });
+    this.broadcastTicketEvent(ticket.id, { type: "message.created", data: message });
+    return { id: message.id, body: message.body, authorKind: message.authorKind, createdAt: message.createdAt };
   }
 
   // ---------------- AI Draft & Thread Summary for Agents ----------------

@@ -1,4 +1,4 @@
-import { ConflictException, GoneException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, GoneException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
@@ -34,6 +34,25 @@ import { buildOrgDataBundle } from "../organizations/org-data-export";
  * `data_export_generate` automation job. Files expire 7 days
  * after generation.
  */
+
+/**
+ * OU12: bundle sections that can NEVER be restored from the
+ * export file, with the reason — surfaced verbatim by backup
+ * verification so the limit is part of the recorded result,
+ * not fine print. (Products/orders/customers are not listed:
+ * they are plain records, but no import engine accepts the
+ * bundle format, so their restore is equally unbuilt — the
+ * verification result's `restoreSupported: false` covers the
+ * whole bundle.)
+ */
+export const OU12_NON_RESTORABLE_SECTIONS: Array<{ section: string; reason: string }> = [
+  { section: "integrations", reason: "Export carries provider/status metadata only — credentials are never exported, so connections cannot be recreated from the file." },
+  { section: "mediaAssets", reason: "Export carries media metadata only (no file bytes), so media cannot be recreated from the file." },
+  { section: "members", reason: "Member rows reference global user accounts; the bundle contains no credentials and cannot recreate users." },
+  { section: "payments", reason: "SaaS payment rows are billing records of truth; recreating them would fabricate payment history." },
+  { section: "subscription", reason: "The SaaS plan subscription is live billing state, not restorable data." },
+  { section: "organization", reason: "The organization row carries live state (e.g. credit balance and verification status) from the source org." },
+];
 
 export const DATA_EXPORT_INLINE_MAX_ROWS = 25_000;
 export const DATA_EXPORT_TTL_MS = 7 * 86_400_000;
@@ -217,6 +236,124 @@ export class DataExportsService {
       bytes,
       filename: `qosprey-data-export-${organizationId}-${exportId}.json`,
       sizeBytes: typeof row.sizeBytes === "number" ? row.sizeBytes : bytes.length,
+    };
+  }
+
+  // ---------- OU12: backup verification (NOT a restore) ----------
+
+  /**
+   * OU12 — verify a stored export/backup file: the honest
+   * subset of "backup restore" that the bundle actually
+   * supports. Step-0 evidence (docs/one-umbrella-ou12-section.md):
+   * the bundle does NOT round-trip — there is no bundle import
+   * machinery anywhere in the repo, integration credentials are
+   * never exported, media is metadata-only, member rows point at
+   * global User records, payments/subscription are billing
+   * records of truth, and every id is the source org's own (a
+   * same-org restore would collide on primary keys; a cross-org
+   * one would need a full id-remapping import engine that does
+   * not exist). Building a "restore" on top of that would be a
+   * fake feature, so OU12 builds VERIFICATION instead:
+   *
+   *  - OWNER-only (controller) + the caller must type the org
+   *    slug exactly — the same confirm discipline a restore
+   *    would have required.
+   *  - READ-ONLY against org data: nothing is created, updated
+   *    or deleted except this export row's own verification
+   *    record (backupVerifiedAt + backupVerification) and the
+   *    audit entry. No pre-restore safety export is needed
+   *    precisely because nothing is overwritten — that step
+   *    belongs to a real restore, which is NOT BUILT.
+   *  - The check itself: row ownership/status/expiry, stored
+   *    bytes present, bytes parse as JSON, manifest + data
+   *    present, per-table row counts in `data` match the
+   *    manifest, truncated tables surfaced, and the
+   *    non-restorable sections listed WITH reasons.
+   *  - `restoreSupported` is always false in the result — the
+   *    field exists so no client can mistake a passed
+   *    verification for restore capability.
+   */
+  async verifyBackup(organizationId: string, userId: string, exportId: string, confirmSlug: unknown) {
+    const p = this.prisma as any;
+    const org = await p.organization?.findUnique({ where: { id: organizationId } }).catch(() => null);
+    if (!org) throw new NotFoundException("Organization not found");
+    if (typeof confirmSlug !== "string" || confirmSlug.trim() !== String(org.slug)) {
+      throw new BadRequestException("নিশ্চিত করতে প্রতিষ্ঠানের slug হুবহু লিখুন");
+    }
+    const row = await p.dataExport.findUnique({ where: { id: exportId } }).catch(() => null);
+    // Foreign-org rows are indistinguishable from missing ones (download parity).
+    if (!row || row.organizationId !== organizationId) throw new NotFoundException("Export not found");
+
+    const problems: string[] = [];
+    const counts: Record<string, { manifest: number; actual: number }> = {};
+    let truncatedTables: string[] = [];
+    let sectionsPresent: string[] = [];
+
+    if (row.status !== "ready") problems.push(`status_not_ready:${row.status}`);
+    if (row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now()) problems.push("export_expired");
+    if (!row.fileRef) problems.push("no_file_ref");
+
+    let bundle: any = null;
+    if (row.fileRef) {
+      const bytes = await this.storeFactory().get(row.fileRef).catch(() => null);
+      if (!bytes) {
+        problems.push("stored_file_missing");
+      } else {
+        try {
+          bundle = JSON.parse(bytes.toString("utf8"));
+        } catch {
+          problems.push("file_not_valid_json");
+        }
+      }
+    }
+    if (bundle) {
+      const manifest = bundle.manifest;
+      const data = bundle.data;
+      if (!manifest || typeof manifest !== "object") problems.push("manifest_missing");
+      if (!data || typeof data !== "object") problems.push("data_missing");
+      if (manifest && data) {
+        sectionsPresent = Object.keys(data);
+        const tables: Record<string, any> = manifest.tables ?? {};
+        truncatedTables = Object.entries(tables).filter(([, v]: any) => v?.truncated).map(([k]) => k);
+        for (const [key, stat] of Object.entries(tables) as Array<[string, any]>) {
+          const value = (data as any)[key];
+          const actual = Array.isArray(value) ? value.length : value == null ? 0 : 1;
+          const manifestRows = Number(stat?.rows ?? 0);
+          counts[key] = { manifest: manifestRows, actual };
+          if (actual !== manifestRows) problems.push(`count_mismatch:${key}`);
+        }
+      }
+    }
+
+    const verification = {
+      ok: problems.length === 0,
+      problems,
+      counts,
+      truncatedTables,
+      sectionsPresent,
+      nonRestorableSections: OU12_NON_RESTORABLE_SECTIONS.filter((s) => sectionsPresent.includes(s.section)),
+    };
+    const verifiedAt = new Date();
+    const updated = await p.dataExport.update({
+      where: { id: exportId },
+      data: { backupVerifiedAt: verifiedAt, backupVerification: verification },
+    }).catch(() => null);
+    await this.audit.log({
+      organizationId, userId: userId || undefined,
+      action: "data_export.backup_verified", entityType: "DataExport", entityId: exportId,
+      metadata: {
+        ok: verification.ok, problems, truncatedTables,
+        restoreSupported: false, recordedOnRow: Boolean(updated),
+      },
+    });
+    return {
+      exportId,
+      kind: row.kind as string,
+      verifiedAt: verifiedAt.toISOString(),
+      verification,
+      restoreSupported: false as const,
+      restoreNote:
+        "এই যাচাই শুধু ফাইলটি অক্ষত ও পাঠযোগ্য কিনা নিশ্চিত করে — restore সুবিধা নেই, কারণ এক্সপোর্ট বান্ডলটি restore-এর জন্য তৈরি নয় (তথ্য docs/one-umbrella-ou12-section.md-তে)।",
     };
   }
 

@@ -74,11 +74,27 @@ export async function metaTokenForOrg(prisma: any, organizationId: string): Prom
   return decryptJson<{ accessToken: string }>(integration.credential.encryptedData).accessToken;
 }
 
-export async function graphDelete(token: string, path: string): Promise<any> {
+export async function graphDelete(token: string, path: string, params: Record<string, string> = {}): Promise<any> {
   const version = graphVersion();
-  const params = new URLSearchParams();
-  params.set("access" + "_token", token);
-  const res = await fetch(`https://graph.facebook.com/${version}${path}?${params.toString()}`, { method: "DELETE" });
+  // CA8: endpoints that take parameters on DELETE (the
+  // Custom Audience /users removal path takes the same
+  // `payload` body as the add path) send them form-encoded
+  // in the body, mirroring graphPost. With no params the
+  // original query-token shape is kept byte-identical for
+  // existing callers (catalogs).
+  if (Object.keys(params).length) {
+    const body = new URLSearchParams({ ...params });
+    body.set("access" + "_token", token);
+    const res = await fetch(`https://graph.facebook.com/${version}${path}`, { method: "DELETE", body });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || json?.error) {
+      throw new MetaGraphError(res.status, json?.error?.message ?? `Graph DELETE ${path} failed with HTTP ${res.status}`);
+    }
+    return json;
+  }
+  const qs = new URLSearchParams();
+  qs.set("access" + "_token", token);
+  const res = await fetch(`https://graph.facebook.com/${version}${path}?${qs.toString()}`, { method: "DELETE" });
   const json: any = await res.json().catch(() => null);
   if (!res.ok || json?.error) {
     throw new MetaGraphError(res.status, json?.error?.message ?? `Graph DELETE ${path} failed with HTTP ${res.status}`);

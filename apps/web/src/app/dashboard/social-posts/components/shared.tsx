@@ -20,7 +20,7 @@ import type { CoachResponse, StockConfigStatus, StockSearchItem } from "@/lib/so
 
 export interface SocialAccount {
   id: string;
-  platform: "meta_page" | "instagram" | "tiktok" | "youtube" | "linkedin_page" | "telegram" | "threads";
+  platform: "meta_page" | "instagram" | "tiktok" | "youtube" | "linkedin_page" | "telegram" | "threads" | "google_business_profile";
   externalId: string;
   name: string;
   username?: string | null;
@@ -179,6 +179,8 @@ export const PLATFORM_LABELS: Record<string, string> = {
   linkedin_page: "LinkedIn Page",
   telegram: "Telegram Channel",
   threads: "Threads",
+  // OU9: Google Business Profile (LocalPost publishing only).
+  google_business_profile: "Google Business Profile",
 };
 
 /** SP8/SP9: operator-app platform modes (booleans only, from
@@ -190,6 +192,11 @@ export interface PlatformModes {
   linkedin?: { configured: boolean };
   // SN7: the operator's Threads app presence (button honesty).
   threads?: { configured: boolean };
+  // OU9: GBP rides the operator's Google app; apiAccessApproved
+  // is the operator's declaration that Google approved the
+  // project's Business Profile API access — the connect surface
+  // shows the gate message in plain words while it is false.
+  googleBusinessProfile?: { configured: boolean; apiAccessApproved: boolean };
 }
 
 // SU2 contract: per-account weekly posting slots (org timezone).
@@ -618,6 +625,10 @@ export interface SocialPageCtx {
   setCalCursor: React.Dispatch<React.SetStateAction<{ y: number; m: number }>>;
   youtubePick: { state: string; channels: { id: string; title: string; pictureUrl: string | null }[] } | null;
   setYoutubePick: React.Dispatch<React.SetStateAction<{ state: string; channels: { id: string; title: string; pictureUrl: string | null }[] } | null>>;
+  // OU9: the GBP location picker (the YouTube picker pattern).
+  gbpPick: { state: string; locations: { id: string; title: string; accountLabel: string | null }[] } | null;
+  setGbpPick: React.Dispatch<React.SetStateAction<{ state: string; locations: { id: string; title: string; accountLabel: string | null }[] } | null>>;
+  selectGoogleBusinessLocation: any;
   postsNextCursor: string | null;
   loadMorePosts: any;
   selectedPostIds: Set<string>;

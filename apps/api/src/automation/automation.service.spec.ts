@@ -108,7 +108,7 @@ describe("Automation rules", () => {
   it("high CPA pauses the campaign through CampaignsService and logs evidence", async () => {
     const { svc, tables, campaignsStub } = buildSvc();
     seed(tables);
-    await svc.createRule("org-1", "owner", { name: "CPA guard", metric: "platform_cpa", comparator: "gt", threshold: "300", action: "pause_campaign" });
+    await svc.createRule("org-1", "owner", { name: "CPA guard", metric: "platform_cpa", comparator: "gt", threshold: "300", action: "pause_campaign", mode: "execute" });
     const result = await svc.evaluateRules("org-1", "owner");
     // CPA = 900.00 / 2 = 450 > 300 -> triggered
     expect(result.results[0].triggered).toBe(true);
@@ -119,7 +119,7 @@ describe("Automation rules", () => {
   it("below-threshold CPA does not pause anything", async () => {
     const { svc, tables, campaignsStub } = buildSvc();
     seed(tables);
-    await svc.createRule("org-1", "owner", { name: "CPA guard", metric: "platform_cpa", comparator: "gt", threshold: "500", action: "pause_campaign" });
+    await svc.createRule("org-1", "owner", { name: "CPA guard", metric: "platform_cpa", comparator: "gt", threshold: "500", action: "pause_campaign", mode: "execute" });
     const result = await svc.evaluateRules("org-1", "owner");
     expect(result.results[0].triggered).toBe(false);
     expect(campaignsStub.calls).toHaveLength(0);
@@ -128,7 +128,7 @@ describe("Automation rules", () => {
     const { svc, tables, campaignsStub } = buildSvc();
     tables.campaignPlan.rows.push({ id: "plan-2", organizationId: "org-1", status: "published", metaStatus: "ACTIVE", externalCampaignId: "camp-10" });
     tables.dailyAdMetric.rows.push({ organizationId: "org-1", campaignExternalId: "camp-10", date: new Date(), spendMinor: 60000n, platformConversions: 0, platformConversionValueMinor: 0n });
-    await svc.createRule("org-1", "owner", { name: "Waste guard", metric: "spend_no_conversions", comparator: "gt", threshold: "500", action: "pause_campaign" });
+    await svc.createRule("org-1", "owner", { name: "Waste guard", metric: "spend_no_conversions", comparator: "gt", threshold: "500", action: "pause_campaign", mode: "execute" });
     const result = await svc.evaluateRules("org-1", "owner");
     const forPlan2 = result.results.find((r) => r.planId === "plan-2");
     expect(forPlan2?.triggered).toBe(true);

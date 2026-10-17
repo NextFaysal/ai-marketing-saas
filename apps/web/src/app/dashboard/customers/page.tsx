@@ -14,6 +14,10 @@ import {
   type CustomerLoyalty,
 } from "@/lib/loyalty";
 import { agingRows, isOverLimit, type CustomerKhata } from "@/lib/orders-on7";
+import {
+  buildGrantPayload, buildTierPayload, creditDeltaLabel, creditReasonLabel,
+  type CustomerCreditView, type CustomerTierView, type TierView,
+} from "@/lib/membership";
 import RfmRetentionStudio from "./components/RfmRetentionStudio";
 import {
   CUSTOMER_TYPE_OPTIONS, EMPTY_SEGMENT_DRAFT, buildCustomerListParams, buildSegmentPayload,
@@ -122,6 +126,25 @@ export default function CustomersPage() {
   const [adjustNote, setAdjustNote] = useState("");
   const [adjustBusy, setAdjustBusy] = useState(false);
   const [adjustError, setAdjustError] = useState("");
+  // NF7 (FB3): membership tier + store credit in the detail,
+  // plus the tier-definitions manager below the groups card.
+  const [custTier, setCustTier] = useState<CustomerTierView | null>(null);
+  const [custCredit, setCustCredit] = useState<CustomerCreditView | null>(null);
+  const [membershipError, setMembershipError] = useState("");
+  const [grantTaka, setGrantTaka] = useState("");
+  const [grantNote, setGrantNote] = useState("");
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [grantError, setGrantError] = useState("");
+  const [tiers, setTiers] = useState<TierView[]>([]);
+  const [tierError, setTierError] = useState("");
+  const [tierName, setTierName] = useState("");
+  const [tierMinTaka, setTierMinTaka] = useState("");
+  const [tierSort, setTierSort] = useState("0");
+  const [tierBusy, setTierBusy] = useState("");
+  const [tierPlTierId, setTierPlTierId] = useState("");
+  const [tierPlItems, setTierPlItems] = useState<PriceListItemRow[]>([]);
+  const [tierPlProductId, setTierPlProductId] = useState("");
+  const [tierPlPriceTaka, setTierPlPriceTaka] = useState("");
   const [creditTaka, setCreditTaka] = useState("");
   const [creditBusy, setCreditBusy] = useState(false);
   const [creditError, setCreditError] = useState("");
@@ -422,6 +445,117 @@ export default function CustomersPage() {
     finally { setAdjustBusy(false); }
   }
 
+  /** NF7: load the customer's derived tier + store-credit
+   * balance/ledger. A failed load says so — never a fake zero. */
+  const loadMembership = useCallback(async (customerId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const [t, c] = await Promise.all([
+        apiFetch<{ tier: CustomerTierView }>(`/organizations/${orgId}/customers/${customerId}/membership`),
+        apiFetch<CustomerCreditView>(`/organizations/${orgId}/customers/${customerId}/store-credit`),
+      ]);
+      setCustTier(t.tier); setCustCredit(c); setMembershipError("");
+    } catch (e) {
+      setCustTier(null); setCustCredit(null);
+      setMembershipError(e instanceof Error ? e.message : "মেম্বারশিপ/ক্রেডিট লোড ব্যর্থ");
+    }
+  }, []);
+
+  /** NF7: manual store-credit grant — amount + reason required
+   * (the API enforces both); on success the section refetches
+   * and shows the server's derived balance. */
+  async function grantCredit() {
+    const orgId = getOrganizationId(); if (!orgId || !detail) return;
+    const payload = buildGrantPayload({ amountTaka: grantTaka, note: grantNote });
+    if (!payload) { setGrantError("পরিমাণ (টাকায়) ও কারণ — দুটোই আবশ্যক।"); return; }
+    setGrantBusy(true); setGrantError("");
+    try {
+      const out = await apiFetch<{ balanceMinor: string }>(`/organizations/${orgId}/customers/${detail.customer.id}/store-credit/grant`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      toast({ title: `ক্রেডিট দেওয়া হয়েছে — নতুন ব্যালেন্স ${money(out.balanceMinor)}।`, tone: "success" });
+      setGrantTaka(""); setGrantNote("");
+      await loadMembership(detail.customer.id);
+    } catch (e) { setGrantError(e instanceof Error ? e.message : "ক্রেডিট দেওয়া ব্যর্থ"); }
+    finally { setGrantBusy(false); }
+  }
+
+  /** NF7: tier definitions manager (CRUD + tier price list). */
+  const loadTiers = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const out = await apiFetch<{ items: TierView[] }>(`/organizations/${orgId}/membership/tiers`);
+      setTiers(out.items ?? []); setTierError("");
+    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার লোড ব্যর্থ"); }
+  }, []);
+
+  useEffect(() => { void loadTiers(); }, [loadTiers]);
+
+  async function createTier() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const payload = buildTierPayload({ name: tierName, minSpendTaka: tierMinTaka, sortOrder: tierSort });
+    if (!payload) { setTierError("টিয়ারের নাম ও সঠিক ন্যূনতম খরচ (টাকায়) আবশ্যক।"); return; }
+    setTierBusy("create"); setTierError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/membership/tiers`, { method: "POST", body: JSON.stringify(payload) });
+      toast({ title: "টিয়ার তৈরি হয়েছে — সব কাস্টমারের টিয়ার নতুন হিসাবে আপডেট হয়েছে।", tone: "success" });
+      setTierName(""); setTierMinTaka(""); setTierSort("0");
+      await loadTiers();
+      if (detail) await loadMembership(detail.customer.id);
+    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার তৈরি ব্যর্থ"); }
+    finally { setTierBusy(""); }
+  }
+
+  async function deleteTier(t: TierView) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!(await confirm({ title: `“${t.name}” টিয়ারটি মুছে ফেলবেন?`, body: "এই টিয়ারের সদস্যরা টিয়ারছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং টিয়ারের প্রাইস লিস্টও মুছে যাবে।", danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setTierBusy(t.id); setTierError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/membership/tiers/${t.id}`, { method: "DELETE" });
+      toast({ title: "টিয়ার মোছা হয়েছে।", tone: "success" });
+      if (tierPlTierId === t.id) { setTierPlTierId(""); setTierPlItems([]); }
+      await loadTiers();
+      if (detail) await loadMembership(detail.customer.id);
+    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার মোছা ব্যর্থ"); }
+    finally { setTierBusy(""); }
+  }
+
+  const loadTierPriceList = useCallback(async (tierId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setTierPlTierId(tierId);
+    try {
+      const out = await apiFetch<{ items: PriceListItemRow[] }>(`/organizations/${orgId}/commerce/tiers/${tierId}/price-list`);
+      setTierPlItems(out.items ?? []);
+    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার প্রাইস লিস্ট লোড ব্যর্থ"); }
+  }, []);
+
+  async function addTierPlItem() {
+    const orgId = getOrganizationId(); if (!orgId || !tierPlTierId) return;
+    const minor = takaToMinor(tierPlPriceTaka);
+    if (!tierPlProductId.trim() || minor === null) { setTierError("পণ্যের আইডি ও সঠিক দাম (টাকায়) আবশ্যক।"); return; }
+    setTierBusy("pl-add"); setTierError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/commerce/tiers/${tierPlTierId}/price-list/items`, {
+        method: "POST",
+        body: JSON.stringify({ productId: tierPlProductId.trim(), priceMinor: minor }),
+      });
+      setTierPlProductId(""); setTierPlPriceTaka("");
+      await loadTierPriceList(tierPlTierId);
+    } catch (e) { setTierError(e instanceof Error ? e.message : "আইটেম যোগ ব্যর্থ"); }
+    finally { setTierBusy(""); }
+  }
+
+  async function removeTierPlItem(item: PriceListItemRow) {
+    const orgId = getOrganizationId(); if (!orgId || !tierPlTierId) return;
+    setTierBusy(item.id); setTierError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/commerce/tiers/${tierPlTierId}/price-list/items/${item.id}`, { method: "DELETE" });
+      await loadTierPriceList(tierPlTierId);
+    } catch (e) { setTierError(e instanceof Error ? e.message : "আইটেম মোছা ব্যর্থ"); }
+    finally { setTierBusy(""); }
+  }
+
   /** ON7: save the credit limit via the existing customer PATCH
    * (taka input -> minor string; an empty input clears the
    * limit to null). The server's reply is shown verbatim. */
@@ -486,6 +620,8 @@ export default function CustomersPage() {
     void loadKhata(id);
     setLoyalty(null); setLoyaltyError(""); setAdjustDelta(""); setAdjustNote(""); setAdjustError("");
     void loadLoyalty(id);
+    setCustTier(null); setCustCredit(null); setMembershipError(""); setGrantTaka(""); setGrantNote(""); setGrantError("");
+    void loadMembership(id);
     try {
       const d = await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`);
       setDetail(d); setMergeTarget("");
@@ -1185,6 +1321,67 @@ export default function CustomersPage() {
                   </>
                 )}
               </div>
+              {/* NF7 (FB3): membership tier (derived from sold
+                  orders only) + store credit (ledger-derived
+                  balance, history, staff grant with required
+                  reason). */}
+              <div className="card space-y-3">
+                <h3 className="font-semibold">🏅 মেম্বারশিপ টিয়ার ও স্টোর ক্রেডিট</h3>
+                {membershipError ? (
+                  <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{membershipError}</p>
+                ) : !custCredit ? (
+                  <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div>
+                        <div className="text-2xl font-black">{money(custCredit.balanceMinor)}</div>
+                        <div className="text-xs text-slate-500">স্টোর ক্রেডিট ব্যালেন্স (লেজার থেকে হিসাব করা)</div>
+                      </div>
+                      {custTier?.tierName ? (
+                        <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">🏅 {custTier.tierName} টিয়ার</span>
+                      ) : (
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">কোনো টিয়ার নয়</span>
+                      )}
+                      <span className="text-xs text-slate-500">সারা জীবনের সম্পন্ন খরচ: {money(custTier?.lifetimeSpendMinor ?? "0")} (শুধু completed/delivered অর্ডার)</span>
+                    </div>
+                    {custCredit.entries.length === 0 ? (
+                      <p className="text-sm text-slate-400">এখনো কোনো ক্রেডিট লেনদেন নেই।</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {custCredit.entries.map((en) => (
+                          <div key={en.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0">
+                            <span>
+                              <span className="font-medium">{creditReasonLabel(en.reason)}</span>
+                              {en.note ? <span className="block text-xs text-slate-500">{en.note}</span> : null}
+                              <span className="block text-xs text-slate-400">{en.createdAt ? new Date(en.createdAt).toLocaleDateString("bn-BD") : ""}</span>
+                            </span>
+                            <span className={`font-semibold ${en.deltaMinor.startsWith("-") ? "text-red-600" : "text-emerald-700"}`}>
+                              {creditDeltaLabel(en.deltaMinor)} পয়সা · ব্যালেন্স {money(en.balanceAfter)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="space-y-2 border-t pt-3">
+                      <div className="text-sm font-semibold">ক্রেডিট দিন (স্টাফ)</div>
+                      <p className="text-xs text-slate-500">কারণ দেওয়া বাধ্যতামূলক — কারণটি লেজারে থেকে যাবে। ক্রেডিট শুধু এই কাস্টমারেরই; অন্য কেউ এটি খরচ বা দেখতে পারবে না।</p>
+                      {grantError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{grantError}</p> : null}
+                      <div className="flex flex-wrap items-end gap-2">
+                        <label className="block text-sm">পরিমাণ (টাকা)
+                          <input className="input mt-1 w-36" inputMode="decimal" value={grantTaka} onChange={(e) => setGrantTaka(e.target.value)} placeholder="যেমন: 250" />
+                        </label>
+                        <label className="block flex-1 text-sm">কারণ (বাধ্যতামূলক)
+                          <input className="input mt-1 w-full" value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder="ক্রেডিট দেওয়ার কারণ লিখুন" />
+                        </label>
+                        <button type="button" className="btn-primary" disabled={grantBusy || !grantNote.trim() || !grantTaka.trim()} onClick={() => void grantCredit()}>
+                          {grantBusy ? "হচ্ছে…" : "ক্রেডিট দিন"}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
               <div className="card">
                 <h3 className="mb-2 font-semibold">অর্ডারসমূহ</h3>
                 {detail.orders.length === 0 ? <p className="text-sm text-slate-400">কোনো অর্ডার নেই</p> : detail.orders.map((o) => (
@@ -1333,6 +1530,73 @@ export default function CustomersPage() {
               </button>
               <span className="text-xs text-slate-500">ছাড়টি প্রতিটি পণ্যের জন্য আলাদা দাম হিসেবে লিস্টে লেখা হবে (পণ্য-স্তরের দাম বদলে যাবে, ভ্যারিয়েন্টের দাম নয়)।</span>
               {bulkResult ? <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{bulkResult}</span> : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {/* NF7 (FB3): membership tier definitions + per-tier
+          price list. Tiers are DERIVED from each customer's
+          lifetime sold spend (completed/delivered only) — staff
+          never assign a tier by hand. A tier's price list uses
+          the same PriceList machinery as group lists; at
+          checkout a group list wins over a tier list. */}
+      <div className="card space-y-3">
+        <h2 className="font-semibold">🏅 মেম্বারশিপ টিয়ার ও টিয়ার প্রাইস লিস্ট</h2>
+        <p className="text-xs text-slate-500">কাস্টমারের সারা জীবনের সম্পন্ন (completed/delivered) খরচ যে টিয়ারের ন্যূনতম খরচে পৌঁছায়, তিনি স্বয়ংক্রিয়ভাবে সেই টিয়ারের সদস্য হন — বাতিল/অপেক্ষমাণ অর্ডার কখনোই গণনায় আসে না। টিয়ার বদলালে সব কাস্টমারের টিয়ার নতুন করে হিসাব হয়। টিয়ারের প্রাইস লিস্ট থাকলে সদস্যের চেকআউটে ক্যাটালগ দামের বদলে সেই দাম প্রযোজ্য হয় (গ্রুপ প্রাইস লিস্ট থাকলে সেটিই অগ্রাধিকার পায়)।</p>
+        {tierError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{tierError}</p> : null}
+        {tiers.length === 0 ? <p className="text-sm text-slate-400">কোনো টিয়ার নেই — নিচে প্রথমটি বানান।</p> : tiers.map((t) => (
+          <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
+            <span>
+              <span className="font-medium">{t.name}</span>
+              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">ন্যূনতম খরচ {money(t.minSpendMinor)}</span>
+              <span className="ml-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{t.memberCount ?? 0} জন সদস্য</span>
+              <span className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${t.hasPriceList ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                {t.hasPriceList ? "প্রাইস লিস্ট আছে" : "প্রাইস লিস্ট নেই"}
+              </span>
+            </span>
+            <span className="flex gap-2">
+              <button type="button" className="btn-secondary btn-sm" onClick={() => void loadTierPriceList(t.id)}>প্রাইস লিস্ট</button>
+              <button type="button" className="btn-ghost btn-sm text-red-600" disabled={tierBusy === t.id} onClick={() => void deleteTier(t)}>মুছুন</button>
+            </span>
+          </div>
+        ))}
+        <div className="flex flex-wrap items-end gap-2 border-t pt-3">
+          <label className="block text-sm">টিয়ারের নাম
+            <input className="input mt-1 w-44" value={tierName} onChange={(e) => setTierName(e.target.value)} placeholder="যেমন: Gold" />
+          </label>
+          <label className="block text-sm">ন্যূনতম খরচ (টাকা)
+            <input className="input mt-1 w-40" inputMode="decimal" value={tierMinTaka} onChange={(e) => setTierMinTaka(e.target.value)} placeholder="যেমন: 5000" />
+          </label>
+          <label className="block text-sm">ক্রম
+            <input className="input mt-1 w-20" type="number" step="1" value={tierSort} onChange={(e) => setTierSort(e.target.value)} />
+          </label>
+          <button type="button" className="btn-primary" disabled={tierBusy === "create" || !tierName.trim() || !tierMinTaka.trim()} onClick={() => void createTier()}>
+            {tierBusy === "create" ? "তৈরি হচ্ছে…" : "টিয়ার তৈরি করুন"}
+          </button>
+        </div>
+        {tierPlTierId ? (
+          <div className="space-y-2 border-t pt-3">
+            <div className="text-sm font-semibold">টিয়ার প্রাইস লিস্ট — {tiers.find((t) => t.id === tierPlTierId)?.name ?? ""}</div>
+            {tierPlItems.length === 0 ? <p className="text-sm text-slate-400">এই লিস্টে কোনো আইটেম নেই — সব পণ্যে ক্যাটালগ দামই চলবে।</p> : tierPlItems.map((it) => (
+              <div key={it.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0">
+                <span>{it.productName ?? it.productId}{it.variantName ? ` · ${it.variantName}` : ""}</span>
+                <span className="flex items-center gap-2">
+                  <span className="font-medium">{money(it.priceMinor)}</span>
+                  <button type="button" className="btn-ghost btn-sm text-red-600" disabled={tierBusy === it.id} onClick={() => void removeTierPlItem(it)}>সরান</button>
+                </span>
+              </div>
+            ))}
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="block text-sm">পণ্যের আইডি
+                <input className="input mt-1 w-64" value={tierPlProductId} onChange={(e) => setTierPlProductId(e.target.value)} placeholder="product id" />
+              </label>
+              <label className="block text-sm">দাম (টাকা)
+                <input className="input mt-1 w-36" inputMode="decimal" value={tierPlPriceTaka} onChange={(e) => setTierPlPriceTaka(e.target.value)} placeholder="যেমন: 800" />
+              </label>
+              <button type="button" className="btn-primary btn-sm" disabled={tierBusy === "pl-add" || !tierPlProductId.trim() || !tierPlPriceTaka.trim()} onClick={() => void addTierPlItem()}>
+                {tierBusy === "pl-add" ? "যোগ হচ্ছে…" : "আইটেম যোগ করুন"}
+              </button>
             </div>
           </div>
         ) : null}

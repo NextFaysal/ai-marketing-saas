@@ -5,7 +5,10 @@ import { OrdersModule } from "../orders/orders.module";
 import { FinanceController } from "./finance.controller";
 import { FinanceReportsService } from "./finance-reports.service";
 import { FinanceService } from "./finance.service";
+import { AccountingLiteService } from "./ou7-accounting.service";
+import { BankReconService } from "./ou7-bank-recon.service";
 import { ScheduledReportsService } from "./scheduled-reports.service";
+import { AccountingModule } from "../accounting/accounting.module";
 
 /**
  * GB8 (GC19 + GC20) — reports & finance. Prisma-only services in
@@ -19,9 +22,9 @@ import { ScheduledReportsService } from "./scheduled-reports.service";
  * scheduled_report_sweep job case.
  */
 @Module({
-  imports: [AuditModule, MessagingModule, OrdersModule],
+  imports: [AuditModule, MessagingModule, OrdersModule, AccountingModule],
   controllers: [FinanceController],
-  providers: [FinanceReportsService, FinanceService, ScheduledReportsService],
-  exports: [ScheduledReportsService, FinanceReportsService, FinanceService],
+  providers: [FinanceReportsService, FinanceService, ScheduledReportsService, AccountingLiteService, BankReconService],
+  exports: [ScheduledReportsService, FinanceReportsService, FinanceService, AccountingLiteService, BankReconService],
 })
 export class FinanceModule {}

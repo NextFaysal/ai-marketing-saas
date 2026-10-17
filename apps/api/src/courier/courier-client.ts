@@ -1,8 +1,9 @@
 import { BadRequestException } from "@nestjs/common";
-import { SteadfastClient } from "./steadfast.client";
+import { SteadfastClient, SteadfastError } from "./steadfast.client";
 import { PathaoClient, PATHAO_PROD_BASE } from "./pathao.client";
 import { RedxClient, REDX_DEFAULT_BASE } from "./redx.client";
 import { EcourierClient, ECOURIER_DEFAULT_BASE, ECOURIER_PAYMENT_METHODS } from "./ecourier.client";
+import { PaperflyDevAdapterClient, PaperflyDevAdapterError } from "./paperfly.client";
 
 /**
  * GB5 (GC13) — the courier adapter framework.
@@ -14,6 +15,8 @@ import { EcourierClient, ECOURIER_DEFAULT_BASE, ECOURIER_PAYMENT_METHODS } from 
  * the contract explicit:
  *
  *   COURIER_PROVIDERS          the provider registry keys
+ *   COURIER_CAPABILITIES       per-provider capability map
+ *                              (OU6 — see below)
  *   createCourierClient()      provider key + decrypted creds
  *                              -> the concrete provider client
  *                              (the ONE construction site)
@@ -25,9 +28,23 @@ import { EcourierClient, ECOURIER_DEFAULT_BASE, ECOURIER_PAYMENT_METHODS } from 
  * Adding a provider after GB5 = one client class + one
  * registry entry in each factory below + one credentials-form
  * entry (see docs/completion-gb5-acceptance.md for the recipe).
- * Paperfly was researched in GB5 and is deliberately NOT in
- * the registry: its API is partner-gated with no published
- * developer documentation (docs/gb5-courier-research.md).
+ *
+ * OU6 (One-Umbrella OB2) — capabilities + Paperfly:
+ * COURIER_CAPABILITIES is the ONE descriptor a new courier
+ * plugs into: book / label / track / cancel / balance /
+ * codReconcile / quote as evidenced by that provider's client
+ * IN THIS REPO (never aspirational — a capability is true only
+ * when the code path exists), plus `live` (a real, evidenced
+ * API contract backs the provider).
+ * Paperfly was researched in GB5 and deliberately NOT built:
+ * its API is partner-gated with no published developer
+ * documentation (docs/gb5-courier-research.md) and OU6's
+ * Step-0 search found no contract anywhere in-repo. OU6
+ * therefore registers Paperfly on this framework as a clearly
+ * labelled DEVELOPMENT adapter (paperfly.client.ts) whose
+ * every operation refuses honestly — it is in the registry so
+ * settings/balance surfaces can show its true state, and it
+ * can never book, verify, track or report a balance.
  * Provider-specific extras (Pathao store/city pickers, price
  * plans, RedX areas, charge calculators) stay on the concrete
  * classes and are reached through createCourierClient — the
@@ -41,8 +58,66 @@ import { EcourierClient, ECOURIER_DEFAULT_BASE, ECOURIER_PAYMENT_METHODS } from 
  * is no second account-selection model here.
  */
 
-export const COURIER_PROVIDERS = ["steadfast", "pathao", "redx", "ecourier"] as const;
+export const COURIER_PROVIDERS = ["steadfast", "pathao", "redx", "ecourier", "paperfly"] as const;
 export type CourierProviderKey = (typeof COURIER_PROVIDERS)[number];
+
+/**
+ * OU6: what a provider can actually do, as evidenced by its
+ * client code in this repo. Field meanings:
+ *  book         a real booking call exists (adapter book()).
+ *  label        a shipping-label PDF can be produced for this
+ *               provider's booked shipments (the platform PDF
+ *               builder in pdf.ts, fed by the booked shipment).
+ *  track        a real status/tracking read exists (statusOf()).
+ *  cancel       a provider-side cancellation call exists.
+ *               NONE of the in-repo clients implements one —
+ *               false everywhere, never aspirational.
+ *  balance      a real account-balance read exists on the
+ *               provider's own API (client code evidence:
+ *               SteadfastClient.getBalance -> GET /get_balance;
+ *               no other in-repo client has a balance call).
+ *  codReconcile this provider's shipments can enter the COD
+ *               disbursement reconciliation (courier-
+ *               reconciliation.service.ts documents its upload
+ *               flow for Steadfast / Pathao / RedX only).
+ *  quote        a real pre-booking charge quote exists
+ *               (Pathao price plan, RedX charge calculator —
+ *               see CourierService.quote).
+ *  live         a real, evidenced API contract backs this
+ *               provider. Paperfly: false — development
+ *               adapter only (see paperfly.client.ts).
+ */
+export interface CourierCapabilities {
+  book: boolean;
+  label: boolean;
+  track: boolean;
+  cancel: boolean;
+  balance: boolean;
+  codReconcile: boolean;
+  quote: boolean;
+  live: boolean;
+}
+
+export const COURIER_CAPABILITIES: Record<CourierProviderKey, CourierCapabilities> = {
+  steadfast: { book: true, label: true, track: true, cancel: false, balance: true, codReconcile: true, quote: false, live: true },
+  pathao: { book: true, label: true, track: true, cancel: false, balance: false, codReconcile: true, quote: true, live: true },
+  redx: { book: true, label: true, track: true, cancel: false, balance: false, codReconcile: true, quote: true, live: true },
+  ecourier: { book: true, label: true, track: true, cancel: false, balance: false, codReconcile: false, quote: false, live: true },
+  paperfly: { book: false, label: false, track: false, cancel: false, balance: false, codReconcile: false, quote: false, live: false },
+};
+
+export function courierCapabilities(provider: CourierProviderKey): CourierCapabilities {
+  return COURIER_CAPABILITIES[provider];
+}
+
+/** OU6: a REAL account balance as returned by the provider's
+ * own API — minor units, never estimated or fabricated. Only
+ * adapters whose provider evidences a balance read implement
+ * CourierClient.balance(). */
+export interface CourierBalanceResult {
+  balanceMinor: number;
+  currency: "BDT";
+}
 
 /** The internal shipment-status vocabulary — every provider's
  * statuses are mapped INTO this set (unknown provider strings
@@ -106,14 +181,21 @@ export interface CourierStatusResult {
   rawStatus: string | null;
 }
 
-/** The provider-neutral client contract. */
+/** The provider-neutral client contract. OU6: every adapter
+ * also carries its COURIER_CAPABILITIES descriptor; balance()
+ * is OPTIONAL and present only where the provider's own API
+ * evidences a balance read (capabilities.balance === true). */
 export interface CourierClient {
   readonly provider: CourierProviderKey;
+  readonly capabilities: CourierCapabilities;
+  /** True only for the Paperfly development adapter. */
+  readonly developmentAdapter?: boolean;
   book(req: CourierBookingRequest): Promise<CourierBookingResult>;
   statusOf(ref: { consignmentId: string | null; trackingCode: string | null }): Promise<CourierStatusResult>;
+  balance?(): Promise<CourierBalanceResult>;
 }
 
-export type CourierConcreteClient = SteadfastClient | PathaoClient | RedxClient | EcourierClient;
+export type CourierConcreteClient = SteadfastClient | PathaoClient | RedxClient | EcourierClient | PaperflyDevAdapterClient;
 
 /** The ONE construction site for concrete provider clients.
  * `hooks.onPathaoTokens` preserves CourierService's behaviour of
@@ -146,6 +228,12 @@ export function createCourierClient(
         baseUrl: creds.baseUrl || ECOURIER_DEFAULT_BASE,
         apiKey: creds.apiKey, apiSecret: creds.apiSecret, userId: creds.userId,
       });
+    case "paperfly":
+      // OU6 DEVELOPMENT ADAPTER: the credentials are carried
+      // only so the construction shape matches the other
+      // providers — the adapter never sends them anywhere and
+      // every operation refuses (paperfly.client.ts).
+      return new PaperflyDevAdapterClient({ apiKey: creds.apiKey, apiSecret: creds.apiSecret });
     default:
       throw new BadRequestException(`Unknown courier provider: ${provider}`);
   }
@@ -161,6 +249,7 @@ export function courierAdapter(provider: CourierProviderKey, client: CourierConc
     case "pathao": return new PathaoCourierAdapter(client as PathaoClient);
     case "redx": return new RedxCourierAdapter(client as RedxClient);
     case "ecourier": return new EcourierCourierAdapter(client as EcourierClient);
+    case "paperfly": return new PaperflyCourierAdapter(client as PaperflyDevAdapterClient);
     default:
       throw new BadRequestException(`Unknown courier provider: ${provider}`);
   }
@@ -168,7 +257,21 @@ export function courierAdapter(provider: CourierProviderKey, client: CourierConc
 
 class SteadfastCourierAdapter implements CourierClient {
   readonly provider = "steadfast" as const;
+  readonly capabilities = COURIER_CAPABILITIES.steadfast;
   constructor(private readonly inner: SteadfastClient) {}
+
+  /** OU6: the ONE evidenced balance read in the courier layer
+   * — Steadfast GET /get_balance -> { current_balance } (major
+   * units). A response without a numeric balance is a provider
+   * error, never a fabricated 0. */
+  async balance(): Promise<CourierBalanceResult> {
+    const body = await this.inner.getBalance();
+    const major = Number(body?.current_balance);
+    if (!Number.isFinite(major)) {
+      throw new SteadfastError("Steadfast balance response had no numeric current_balance");
+    }
+    return { balanceMinor: Math.round(major * 100), currency: "BDT" };
+  }
 
   async book(req: CourierBookingRequest): Promise<CourierBookingResult> {
     const consignment = await this.inner.createOrder({
@@ -195,6 +298,7 @@ class SteadfastCourierAdapter implements CourierClient {
 
 class PathaoCourierAdapter implements CourierClient {
   readonly provider = "pathao" as const;
+  readonly capabilities = COURIER_CAPABILITIES.pathao;
   constructor(private readonly inner: PathaoClient) {}
 
   async book(req: CourierBookingRequest): Promise<CourierBookingResult> {
@@ -238,6 +342,7 @@ class PathaoCourierAdapter implements CourierClient {
 
 class RedxCourierAdapter implements CourierClient {
   readonly provider = "redx" as const;
+  readonly capabilities = COURIER_CAPABILITIES.redx;
   constructor(private readonly inner: RedxClient) {}
 
   async book(req: CourierBookingRequest): Promise<CourierBookingResult> {
@@ -279,6 +384,7 @@ class RedxCourierAdapter implements CourierClient {
 
 class EcourierCourierAdapter implements CourierClient {
   readonly provider = "ecourier" as const;
+  readonly capabilities = COURIER_CAPABILITIES.ecourier;
   constructor(private readonly inner: EcourierClient) {}
 
   async book(req: CourierBookingRequest): Promise<CourierBookingResult> {
@@ -336,5 +442,44 @@ class EcourierCourierAdapter implements CourierClient {
 
   async statusOf(ref: { consignmentId: string | null; trackingCode: string | null }): Promise<CourierStatusResult> {
     return this.inner.trackParcel(ref.trackingCode ?? ref.consignmentId ?? "");
+  }
+}
+
+/**
+ * OU6 — Paperfly DEVELOPMENT adapter on the framework. Every
+ * operation refuses with the not-live reason (surfaced to
+ * staff as a BadRequest, exactly like a provider refusal — a
+ * booking attempt can never create a shipment or claim a
+ * tracking code). No balance() is implemented: capabilities
+ * .balance is false and the balance surface reports
+ * not-supported for Paperfly.
+ */
+class PaperflyCourierAdapter implements CourierClient {
+  readonly provider = "paperfly" as const;
+  readonly capabilities = COURIER_CAPABILITIES.paperfly;
+  readonly developmentAdapter = true as const;
+  constructor(private readonly inner: PaperflyDevAdapterClient) {}
+
+  async book(_req: CourierBookingRequest): Promise<CourierBookingResult> {
+    try {
+      await this.inner.createOrder({});
+    } catch (e) {
+      if (e instanceof PaperflyDevAdapterError) throw new BadRequestException(e.message);
+      throw e;
+    }
+    // Unreachable — the dev adapter always refuses. Kept as a
+    // guard so a future edit can never fall through to a
+    // fabricated booking result.
+    throw new BadRequestException("Paperfly development adapter cannot book");
+  }
+
+  async statusOf(_ref: { consignmentId: string | null; trackingCode: string | null }): Promise<CourierStatusResult> {
+    try {
+      await this.inner.statusByTrackingCode("");
+    } catch (e) {
+      if (e instanceof PaperflyDevAdapterError) throw new BadRequestException(e.message);
+      throw e;
+    }
+    throw new BadRequestException("Paperfly development adapter cannot track");
   }
 }

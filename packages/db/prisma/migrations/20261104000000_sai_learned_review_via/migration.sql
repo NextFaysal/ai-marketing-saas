@@ -1,0 +1,16 @@
+-- SA-B23 (Smart AI Phase 6, T1 console family): LearnedItem
+-- review provenance — WHERE a human decision was made.
+--
+-- The per-org Brain fix surface lets a SUPER admin approve or
+-- reject a tenant's pending LearnedItem from the platform
+-- console. The decision stamps reviewedById with the admin's
+-- user id — but that alone cannot distinguish "platform admin
+-- did this" from "org staff did this": the same person can be
+-- both an org member and a platform admin (one User row), and
+-- the org must be able to tell the two apart on its own rows.
+--
+-- reviewedVia is stamped structurally at decision time by
+-- LearningService ("org" for the tenant queue, "admin_console"
+-- for the console path). Nullable: every row decided before
+-- this migration honestly has no recorded via.
+ALTER TABLE "LearnedItem" ADD COLUMN "reviewedVia" TEXT;

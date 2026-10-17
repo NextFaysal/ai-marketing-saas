@@ -41,6 +41,7 @@ import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard, ResponsiveTable } from "@repo/ui";
 import { useConfirm, usePrompt, useToast } from "@repo/ui/client";
 import { extractedSummary, type LabelScanResultView, type LabelMatchView } from "@/lib/cx8";
+import { networkSignalBody, networkSignalHeading, type FraudNetworkSignal } from "@/lib/fraud-network-nf13";
 
 interface OrderItem {
   id: string; name: string; quantity: number; totalMinor: string;
@@ -123,6 +124,9 @@ interface Order {
   // row (distinct from the M50 advisory `risk` object above).
   riskScore?: number | null;
   riskBand?: "low" | "medium" | "high" | null;
+  // NF13: sibling network signal — present only for opted-in
+  // orgs (from the reassess response); never the shop's score.
+  networkSignal?: FraudNetworkSignal | null;
   riskReasons?: RiskReason[] | null;
   riskAssessedAt?: string | null;
   reviewHold?: boolean;
@@ -172,7 +176,8 @@ type NotifConfig = Record<string, NotifEventConfig>;
 // shown verbatim, never paraphrased as success.
 interface PushState {
   orderId: string;
-  store: { id: string; name: string; platform: string; syncMode: string; refundPushEnabled: boolean; courierTrackingMetaKey: string | null } | null;
+  store: { id: string; name: string; platform: string; syncMode: string; refundPushEnabled: boolean; refundToCreditEnabled?: boolean; courierTrackingMetaKey: string | null } | null;
+  refundToCreditEnabled?: boolean;
   storeSyncStatus: string | null; storeSyncError: string | null;
   storeDraftId: string | null; storeInvoiceUrl: string | null;
   recentPushes: { id: string; operation: string; status: string; lastError: string | null; createdAt: string }[];
@@ -1055,13 +1060,14 @@ function OrdersPageInner() {
     const orgId = getOrganizationId(); if (!orgId) return;
     setFraudBusy("reassess"); setFraudNotice("");
     try {
-      const out = await apiFetch<{ score: number | null; band: string | null; reasons: RiskReason[] | null; reviewHold: boolean; order: Order }>(
+      const out = await apiFetch<{ score: number | null; band: string | null; reasons: RiskReason[] | null; reviewHold: boolean; networkSignal?: FraudNetworkSignal | null; order: Order }>(
         `/organizations/${orgId}/orders/${o.id}/reassess`, { method: "POST", body: JSON.stringify({}) },
       );
       const updated: Order = {
         ...(out.order ?? o),
         riskScore: out.score ?? out.order?.riskScore ?? o.riskScore ?? null,
         riskBand: (out.band as Order["riskBand"]) ?? out.order?.riskBand ?? o.riskBand ?? null,
+        networkSignal: out.networkSignal ?? o.networkSignal ?? null,
         riskReasons: out.reasons ?? out.order?.riskReasons ?? null,
         reviewHold: out.reviewHold ?? out.order?.reviewHold ?? o.reviewHold,
       };
@@ -2376,6 +2382,16 @@ function OrdersPageInner() {
               {(fraudOrder.riskReasons ?? []).map((r, i) => <li key={r.key ?? i}>{r.label} <span className="font-semibold text-rose-700">(+{r.points})</span></li>)}
             </ul>
           ) : <p className="text-sm text-slate-500">কোনো ঝুঁকির কারণ রেকর্ড নেই।</p>}
+          {/* NF13: network sibling signal — rendered ONLY when
+              present (opted-in orgs), labelled as combined
+              multi-shop data, never as this shop's own score. */}
+          {fraudOrder.networkSignal && networkSignalBody(fraudOrder.networkSignal) ? (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2">
+              <p className="text-sm font-semibold text-indigo-900">{networkSignalHeading(fraudOrder.networkSignal)}</p>
+              <p className="text-sm text-slate-700">{networkSignalBody(fraudOrder.networkSignal)}</p>
+              <p className="text-[11px] text-slate-500">এটি এই দোকানের নিজের স্কোর নয় — সব দোকানের সম্মিলিত তথ্য, শুধু অতিরিক্ত ধারণার জন্য।</p>
+            </div>
+          ) : null}
           {fraudOrder.reviewHold ? (
             <p className="rounded-lg bg-rose-100 px-3 py-2 text-sm font-medium text-rose-800">
               ⛔ পর্যালোচনার জন্য আটকানো আছে{fraudOrder.reviewHoldReason ? ` — কারণ: ${fraudOrder.reviewHoldReason}` : ""}

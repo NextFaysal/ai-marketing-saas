@@ -12,6 +12,8 @@ interface Settings {
   planYearlyPrices: Record<string, number>;
   planLimits: Record<string, { aiDaily: number; broadcastCap: number; seats: number; productLimit?: number; orderLimit?: number; storageLimitMb?: number; apiDailyLimit?: number }>;
   planLimitsStored: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number; productLimit?: number; orderLimit?: number; storageLimitMb?: number; apiDailyLimit?: number }> | null;
+  // ORG12 (OB4): per-user owned-org cap; null = no limit.
+  maxOrgsPerUser?: number | null;
 }
 interface Announcement { id: string; title: string; body: string; audience?: string; active: boolean; startsAt?: string | null; endsAt?: string | null; createdAt: string }
 const AUDIENCES: { value: string; label: string }[] = [
@@ -37,13 +39,13 @@ const BLOCK_SECTION: Record<string, string> = {
   "config-llm": "ai", "config-image": "ai",
   "config-meta": "apps", "config-tiktok": "apps", "config-google": "apps", "config-google-sso": "apps", "config-linkedin": "apps", "config-threads": "apps",
   "config-smtp": "messaging", "config-sms": "messaging",
-  "config-sslcommerz": "payment", "config-bkash": "payment", "config-wallet": "payment",
+  "config-sslcommerz": "payment", "config-bkash": "payment", "config-wallet": "payment", "config-stripe": "payment",
 };
 const HASH_ALIAS: Record<string, string> = {
   "ai-llm": "config-llm", "ai-image": "config-image",
   "apps-meta": "config-meta", "apps-tiktok": "config-tiktok", "apps-google": "config-google", "apps-google-sso": "config-google-sso", "apps-linkedin": "config-linkedin", "apps-threads": "config-threads",
   "messaging-smtp": "config-smtp", "messaging-sms": "config-sms",
-  "payment-sslcommerz": "config-sslcommerz", "payment-bkash": "config-bkash", "payment-wallet": "config-wallet",
+  "payment-sslcommerz": "config-sslcommerz", "payment-bkash": "config-bkash", "payment-wallet": "config-wallet", "payment-stripe": "config-stripe",
 };
 
 interface PlatformConfigView {
@@ -53,9 +55,11 @@ interface PlatformConfigView {
   sms: { source: string; senderId: string | null; apiUrl: string | null; secretConfigured: boolean };
   sslcommerz: { source: string; storeId: string | null; sandbox: boolean; secretConfigured: boolean };
   bkash: { source: string; appKey: string | null; username: string | null; sandbox: boolean; secretConfigured: boolean };
+  // OU5: platform Stripe (subscription billing card rail).
+  stripe?: { source: string; publishableKey: string | null; mode: string | null; secretConfigured: boolean; webhookSecretConfigured: boolean };
   image: { source: string; provider: string | null; model: string | null; secretConfigured: boolean };
   tiktokApp: { source: string; clientKey: string | null; redirectUri: string | null; audited: boolean; secretConfigured: boolean };
-  googleApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
+  googleApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean; gbpApiAccessApproved?: boolean };
   linkedinApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
   // AB8 (AX26): Google SSO staff login — separate OAuth client from
   // the YouTube googleApp above. Optional in the type only so this
@@ -71,7 +75,7 @@ interface PlatformConfigView {
 const AREA_BLOCK: Record<string, string> = {
   llm: "config-llm", image: "config-image", meta: "config-meta", tiktok: "config-tiktok",
   google: "config-google", linkedin: "config-linkedin", smtp: "config-smtp", sms: "config-sms",
-  sslcommerz: "config-sslcommerz", bkash: "config-bkash", wallet: "config-wallet",
+  sslcommerz: "config-sslcommerz", bkash: "config-bkash", wallet: "config-wallet", stripe: "config-stripe",
 };
 
 function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { setMsg: (m: string) => void; section: string; highlightId: string | null; reportDirty: (key: string, dirty: boolean) => void }) {
@@ -157,7 +161,7 @@ function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { 
     } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "Test ব্যর্থ"}`); }
     finally { setBusy(""); }
   }
-  async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google" | "test-linkedin" | "test-threads") {
+  async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google" | "test-linkedin" | "test-threads" | "test-stripe") {
     setBusy(kind);
     try {
       const out = await apiFetch<any>(`/admin/platform-config/${kind}`, { method: "POST", body: "{}" });
@@ -250,13 +254,31 @@ function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { 
           <label className="block text-sm">Client ID<input id="pc-gg-id" className="ainput mt-1" defaultValue={cfg.googleApp.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID" /></label>
           <label className="block text-sm">Client Secret<input id="pc-gg-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleApp.secretConfigured)} /></label>
           <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-gg-redirect" className="ainput mt-1" defaultValue={cfg.googleApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/youtube/callback" /></label>
+          <label className="flex items-center gap-2 text-sm">
+            <input id="pc-gg-gbp-approved" type="checkbox" defaultChecked={cfg.googleApp.gbpApiAccessApproved ?? false} />
+            <span>📍 Google Business Profile API access অনুমোদিত (OU9) — Google এই প্রজেক্টকে GBP API access দেওয়ার পরই শুধু এটি টিক দিন</span>
+          </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google", { clientId: val("pc-gg-id"), clientSecret: val("pc-gg-secret") || undefined, redirectUri: val("pc-gg-redirect") }, "Google App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google", { clientId: val("pc-gg-id"), clientSecret: val("pc-gg-secret") || undefined, redirectUri: val("pc-gg-redirect"), gbpApiAccessApproved: (document.getElementById("pc-gg-gbp-approved") as HTMLInputElement)?.checked ?? false }, "Google App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
             <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-google")}>{busy === "test-google" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("google", { clear: true }, "Google App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
           </div>
           <p className="text-xs text-slate-400">যাচাই = Client credential পরীক্ষা (dummy token পাঠিয়ে Google-এর invalid_client বনাম invalid_grant উত্তরের পার্থক্য দেখা হয়) — Redirect URI নিবন্ধন বা API চালু থাকা এটি প্রমাণ করে না। Google Cloud Console-এ OAuth Client (Web) বানিয়ে Authorized Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/youtube/callback</code> এবং YouTube Data API v3 চালু করুন। App যাচাই (verification) না হলে YouTube আপলোড Private-এ আটকে রাখে — UI-তে সেটা হুবহু লেখা থাকে, Public বলে দাবি করা হয় না।</p>
           <p className="text-xs text-slate-400">CC20: একই Google App দিয়েই Connect Center-এর Google প্যাক (GA4 / Merchant Center / Business Profile) চলে — সেগুলোর জন্য এই অতিরিক্ত Redirect URI-গুলোও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-ga4/callback</code>, <code>https://api.qosprey.com/social/oauth/google-merchant/callback</code>, <code>https://api.qosprey.com/social/oauth/google-business/callback</code> — আর Google Cloud-এ Analytics Admin API, Merchant API ও Business Profile API চালু করুন।</p>
+          <p className="text-xs text-slate-400">OU9: Social Posts-এর Google Business Profile (Local Post) ফ্লোর জন্য এই অতিরিক্ত Redirect URI-টিও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-business-profile/callback</code>। GBP API access আলাদা করে Google-এর কাছে আবেদন করে অনুমোদন নিতে হয় (অনুমোদন ছাড়া প্রজেক্টের quota 0 থাকে, সব GBP কল ব্যর্থ হয়) — অনুমোদন পাওয়ার আগে উপরের টিকটি দেবেন না: টিক না থাকলে GBP পোস্ট প্রকাশ এই কারণ দেখিয়ে সরাসরি ব্যর্থ হয়, কিছুই Google-এ পাঠানো হয় না।</p>
+        </div>
+        <div id="config-google-sso" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-google-sso" ? "ring-2 ring-indigo-400" : "")}>
+          <div className="flex items-center justify-between"><span className="font-semibold">🔑 Google SSO (স্টাফ লগইন)</span><span className="flex items-center gap-2">{cfg.googleOAuth?.source ? srcBadge(cfg.googleOAuth.source) : null}{(cfg.googleOAuth?.enabled ?? false) ? <span className="abadge-green">চালু আছে</span> : <span className="abadge-red">বন্ধ আছে</span>}</span></div>
+          <label className="block text-sm">Client ID<input id="pc-gso-id" className="ainput mt-1" defaultValue={cfg.googleOAuth?.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID (Web)" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-gso-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleOAuth?.secretConfigured ?? false)} /></label>
+          <label className="flex items-center gap-2 text-sm">
+            <input id="pc-gso-enabled" type="checkbox" defaultChecked={cfg.googleOAuth?.enabled ?? false} />
+            Google SSO চালু (Login পেজে “Google দিয়ে লগইন করুন” বোতাম দেখাবে)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google-oauth", { clientId: val("pc-gso-id"), clientSecret: val("pc-gso-secret") || undefined, enabled: (document.getElementById("pc-gso-enabled") as HTMLInputElement)?.checked ?? false }, "Google SSO সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+          </div>
+          <p className="text-xs text-slate-500">এটি উপরের YouTube Google App থেকে আলাদা OAuth Client — শুধু লগইনের জন্য। Google Cloud Console-এ এই Client-এর Authorized Redirect URI হিসেবে ঠিক এটি নিবন্ধন করুন: <code>https://api.qosprey.com/auth/google/callback</code> (API_PUBLIC_URL বদলালে সেই অনুযায়ী <code>&lt;API_PUBLIC_URL&gt;/auth/google/callback</code>)। Google দিয়ে লগইন শুধু আগে থেকে থাকা অ্যাকাউন্টের যাচাইকৃত ইমেইলেই হয় — নতুন অ্যাকাউন্ট তৈরি হয় না; TOTP চালু থাকলে Google-এর পরেও কোড লাগবে।</p>
         </div>
         <div id="config-google-sso" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-google-sso" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">🔑 Google SSO (স্টাফ লগইন)</span><span className="flex items-center gap-2">{cfg.googleOAuth?.source ? srcBadge(cfg.googleOAuth.source) : null}{(cfg.googleOAuth?.enabled ?? false) ? <span className="abadge-green">চালু আছে</span> : <span className="abadge-red">বন্ধ আছে</span>}</span></div>
@@ -360,6 +382,19 @@ function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { 
           </div>
           <p className="text-xs text-slate-400">সেভ করার সময় আসল Token Grant দিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, bKash-এর Error হুবহু দেখানো হয় (প্রাপ্ত Token সংরক্ষণ করা হয় না)। Callback URL bKash প্যানেলে/চুক্তিতে লাগবে: <code>https://api.qosprey.com/public/payments/bkash/callback</code> — প্ল্যান সক্রিয় হয় শুধুমাত্র Server-to-Server Execute এ Completed নিশ্চিত হলে; Browser Redirect একা যথেষ্ট নয়।</p>
         </div>
+        <div id="config-stripe" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-stripe" ? "ring-2 ring-indigo-400" : "")}>
+          <div className="flex items-center justify-between"><span className="font-semibold">🌍 Stripe (সাবস্ক্রিপশন — আন্তর্জাতিক কার্ড)</span>{srcBadge(cfg.stripe?.source ?? "none")}</div>
+          {cfg.stripe?.mode ? <p className="text-xs font-semibold text-slate-500">বর্তমান key-এর mode: {cfg.stripe.mode === "test" ? "🧪 TEST — আসল টাকা কাটবে না" : "🟢 LIVE — আসল কার্ডে আসল টাকা কাটবে"}</p> : null}
+          <label className="block text-sm">Publishable Key (ঐচ্ছিক)<input id="pc-stripe-pk" className="ainput mt-1" defaultValue={cfg.stripe?.publishableKey ?? ""} placeholder="pk_test_… / pk_live_…" /></label>
+          <label className="block text-sm">Secret Key<input id="pc-stripe-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.stripe?.secretConfigured ?? false)} /></label>
+          <label className="block text-sm">Webhook Signing Secret (whsec_)<input id="pc-stripe-whsec" type="password" className="ainput mt-1" placeholder={secretPh(cfg.stripe?.webhookSecretConfigured ?? false)} /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("stripe", { publishableKey: val("pc-stripe-pk"), secretKey: val("pc-stripe-secret") || undefined, webhookSecret: val("pc-stripe-whsec") || undefined }, "Stripe সেটিং সেভ হয়েছে — Balance যাচাই পাস করেছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-stripe")}>{busy === "test-stripe" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("stripe", { clear: true }, "Stripe Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-400">সেভ করার সময় আসল Balance কল দিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, Stripe-এর Error হুবহু দেখানো হয়। Secret Key ও Webhook Secret দুটোই লাগবে — webhook secret ছাড়া পেমেন্ট যাচাই অসম্ভব বলে checkout-ই চালু হবে না। Webhook endpoint হিসেবে Stripe Dashboard-এ যোগ করুন: <code>https://api.qosprey.com/public/payments/stripe/webhook</code> (event: checkout.session.completed)। প্ল্যান সক্রিয় হয় শুধুমাত্র signature-যাচাইকৃত webhook-এ payment_status paid + সঠিক amount মিললেই — Browser Return একা কখনোই যথেষ্ট নয়।</p>
+        </div>
         <div id="config-wallet" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-wallet" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">🏦 Wallet — প্ল্যাটফর্ম পেমেন্ট ফি (CC10)</span>{srcBadge(cfg.wallet.source)}</div>
           <label className="block text-sm">ফি (basis points — 200 = 2%)<input id="pc-wallet-fee" type="number" min={0} max={10000} step={1} className="ainput mt-1" defaultValue={cfg.wallet.feeBps} /></label>
@@ -454,6 +489,14 @@ export default function SettingsPage() {
   // ADX12: a failed settings load used to sit on "লোড হচ্ছে…"
   // forever; it now gets an error state + retry (below).
   const [loadFailed, setLoadFailed] = React.useState(false);
+  // CA26: platform blueprint definitions as data — the
+  // platform team edits them here; orgs clone, never edit.
+  const [blueprints, setBlueprints] = React.useState<any[]>([]);
+  const loadBlueprints = React.useCallback(async () => {
+    const out = await apiFetch<any>("/admin/blueprints").catch(() => null);
+    setBlueprints(out?.blueprints ?? []);
+  }, []);
+  React.useEffect(() => { void loadBlueprints(); }, [loadBlueprints]);
   const load = React.useCallback(async () => {
     const settings = await apiFetch<Settings>("/admin/settings").catch(() => null);
     setLoadFailed(settings === null);
@@ -551,6 +594,22 @@ export default function SettingsPage() {
             <input className="ainput mt-1" value={s.supportContact} onChange={(e) => setS({ ...s, supportContact: e.target.value })} placeholder="support@qosprey.com" /></label>
           <button className="abtn-secondary" onClick={() => save({ supportContact: s.supportContact }, "Support যোগাযোগ সেভ হয়েছে।")}>সেভ করুন</button>
           <div className="border-t border-slate-800 pt-3">
+            <label className="block text-sm">একজন ব্যবহারকারীর সর্বোচ্চ Organization (শুধু মালিক/OWNER হিসেবে)
+              <input className="ainput mt-1 w-44" inputMode="numeric" placeholder="খালি = কোনো সীমা নেই"
+                value={s.maxOrgsPerUser === null || s.maxOrgsPerUser === undefined ? "" : String(s.maxOrgsPerUser)}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  if (v === "") { setS({ ...s, maxOrgsPerUser: null }); return; }
+                  const n = Number(v);
+                  if (Number.isInteger(n) && n >= 1) setS({ ...s, maxOrgsPerUser: n });
+                }} /></label>
+            <p className="mt-1 text-xs leading-relaxed text-slate-400">
+              সীমা বসালে একজন ব্যবহারকারী OWNER হিসেবে সর্বোচ্চ এতগুলো Organization রাখতে পারবে — সীমায় পৌঁছালে নতুন Organization
+              তৈরি আটকে যাবে। অন্যের Organization-এ আমন্ত্রিত সদস্য হওয়া এই গোনায় আসে না। ঘর খালি রাখলে কোনো সীমা নেই।
+            </p>
+            <button className="abtn-secondary mt-2" onClick={() => save({ maxOrgsPerUser: s.maxOrgsPerUser ?? null }, "Organization-সংখ্যার সীমা সেভ হয়েছে।")}>সীমা সেভ করুন</button>
+          </div>
+          <div className="border-t border-slate-800 pt-3">
             <div className="mb-2 font-semibold">Plan এর দাম (প্রতি মাস, পয়সায় নয় — নিচে টাকায় দেখানো)</div>
             {Object.entries(s.planPrices).map(([tier, minor]) => (
               <div key={tier} className="mb-2 flex items-center gap-2 text-sm">
@@ -645,6 +704,49 @@ export default function SettingsPage() {
             <label className="block text-sm">যেসব Org এর AI বন্ধ (ID, কমা দিয়ে)
               <input className="ainput mt-1" value={aiOrgIds} onChange={(e) => setAiOrgIds(e.target.value)} placeholder="org-id-1, org-id-2" /></label>
             <button className="abtn-secondary" onClick={async () => { if (await save({ killSwitches: { broadcastsPaused: s.killSwitches.broadcastsPaused, aiDisabledOrgIds: aiOrgIds.split(",").map((x) => x.trim()).filter(Boolean) } }, "AI kill switch সেভ হয়েছে।")) { if (generalSnap.current) generalSnap.current.ai = aiOrgIds; } }}>সেভ করুন</button>
+          </div>
+          <div className="acard space-y-3">
+            <div className="font-semibold">⚡ Campaign Blueprints (CA26) — Platform Definitions</div>
+            <p className="text-xs text-slate-400">Blueprint এখন Database-এর Data — এখানকার বদল সব Org-এর Builder-এ সাথে সাথে দেখা যাবে। Org-রা শুধু Clone করে নিজের কপি বানাতে পারে; Platform মূল তারা বদলাতে পারে না। Key হলো পরিচয় — বদলানো যায় না (নতুন Key মানে নতুন Blueprint)।</p>
+            {blueprints.length === 0 ? <p className="text-sm text-slate-400">কোনো Platform Blueprint পাওয়া যায়নি।</p> : blueprints.map((bp) => (
+              <div key={bp.id} className="flex flex-wrap items-center gap-2 rounded border border-slate-800 p-2 text-sm">
+                <b>{bp.name}</b>
+                <span className="text-slate-400">{bp.key} · {bp.objective} · v{bp.version}{bp.advantagePlus ? " · Advantage+" : ""}</span>
+                <span className="ml-auto flex gap-1">
+                  <button className="abtn-secondary" onClick={async () => {
+                    const name = await askInput({ title: "Blueprint-এর নাম", inputLabel: "নাম", initialValue: bp.name, inputRequired: true, confirmLabel: "সেভ করুন" });
+                    if (!name) return;
+                    await apiFetch(`/admin/blueprints/${bp.id}`, { method: "PATCH", body: JSON.stringify({ name }) }).catch(() => null);
+                    toast("নাম সেভ হয়েছে।"); await loadBlueprints();
+                  }}>নাম</button>
+                  <button className="abtn-secondary" onClick={async () => {
+                    const description = await askInput({ title: "Blueprint-এর বর্ণনা", inputLabel: "বর্ণনা", initialValue: bp.description ?? "", confirmLabel: "সেভ করুন" });
+                    if (description === null) return;
+                    await apiFetch(`/admin/blueprints/${bp.id}`, { method: "PATCH", body: JSON.stringify({ description }) }).catch(() => null);
+                    toast("বর্ণনা সেভ হয়েছে।"); await loadBlueprints();
+                  }}>বর্ণনা</button>
+                  <button className="abtn-secondary" onClick={async () => {
+                    if (!(await askConfirm({ title: `"${bp.name}" মুছবেন?`, description: "Org-দের নিজের Clone গুলো থেকে যাবে, কিন্তু নতুন করে আর কেউ এই Blueprint পাবে না।", confirmLabel: "মুছুন", danger: true }))) return;
+                    await apiFetch(`/admin/blueprints/${bp.id}`, { method: "DELETE" }).catch(() => null);
+                    toast("Blueprint মোছা হয়েছে।"); await loadBlueprints();
+                  }}>মুছুন</button>
+                </span>
+              </div>
+            ))}
+            <button className="abtn-secondary" onClick={async () => {
+              const key = await askInput({ title: "নতুন Blueprint", inputLabel: "Key (ছোট হাতের, যেমন winter_sale)", inputRequired: true, confirmLabel: "পরের ধাপ" });
+              if (!key) return;
+              const name = await askInput({ title: "নতুন Blueprint", inputLabel: "নাম", inputRequired: true, confirmLabel: "পরের ধাপ" });
+              if (!name) return;
+              const adSetRaw = await askInput({ title: "Ad Set JSON", inputLabel: "Ad Set সংজ্ঞা (JSON)", initialValue: JSON.stringify({ name: "BD Broad", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", countries: ["BD"], ageMin: 18, ageMax: 65 }), confirmLabel: "পরের ধাপ" });
+              if (!adSetRaw) return;
+              const adRaw = await askInput({ title: "Ad JSON", inputLabel: "Ad সংজ্ঞা (JSON)", initialValue: JSON.stringify({ name: "Ad", primaryText: "", headline: "", linkUrl: "https://example.com", callToAction: "SHOP_NOW" }), confirmLabel: "তৈরি করুন" });
+              if (!adRaw) return;
+              let adSet: any; let ad: any;
+              try { adSet = JSON.parse(adSetRaw); ad = JSON.parse(adRaw); } catch { toast("JSON সঠিক নয় — Blueprint তৈরি হয়নি।"); return; }
+              const out = await apiFetch<any>("/admin/blueprints", { method: "POST", body: JSON.stringify({ key, name, objective: "OUTCOME_SALES", adSet, ad }) }).catch(() => null);
+              if (out) { toast("Blueprint তৈরি হয়েছে।"); await loadBlueprints(); } else toast("তৈরি ব্যর্থ — Key টি আগেই আছে কিনা দেখুন।");
+            }}>➕ নতুন Blueprint</button>
           </div>
       </div>
       <div className={section === "announce" ? "" : "hidden"}>

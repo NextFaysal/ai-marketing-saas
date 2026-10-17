@@ -32,6 +32,17 @@ export class CourierController {
   @Get("connections")
   connections(@Param("organizationId") orgId: string) { return this.courier.getConnections(orgId); }
 
+  /** OU6: courier balance visibility — every provider with its
+   * honest state (ok / not_supported / not_configured / error). */
+  @Get("balances")
+  balances(@Param("organizationId") orgId: string) { return this.courier.getBalances(orgId); }
+
+  /** OU6: one provider's balance view (the settings refresh). */
+  @Get("balance")
+  balance(@Param("organizationId") orgId: string, @Query("provider") provider?: string) {
+    return this.courier.getBalance(orgId, provider);
+  }
+
   // ---------- EC22: courier auto-selection rules ----------
   @Get("rules")
   listRules(@Param("organizationId") orgId: string) { return this.rules.list(orgId); }

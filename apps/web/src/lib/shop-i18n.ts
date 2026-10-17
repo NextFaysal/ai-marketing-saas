@@ -42,6 +42,13 @@ const bnDict = {
   },
   popup: {
     close: "বন্ধ করুন",
+    leadName: "আপনার নাম",
+    leadPhone: "ফোন নম্বর",
+    leadEmail: "ইমেইল",
+    leadSubmit: "জমা দিন",
+    leadSending: "পাঠানো হচ্ছে…",
+    leadThanks: "ধন্যবাদ! আমরা শীঘ্রই যোগাযোগ করব।",
+    leadError: "পাঠানো যায়নি — আবার চেষ্টা করুন।",
   },
   offline: {
     title: "ইন্টারনেট সংযোগ নেই",
@@ -446,6 +453,13 @@ const enDict: ShopDict = {
   },
   popup: {
     close: "Close",
+    leadName: "Your name",
+    leadPhone: "Phone number",
+    leadEmail: "Email",
+    leadSubmit: "Submit",
+    leadSending: "Sending…",
+    leadThanks: "Thank you! We will contact you soon.",
+    leadError: "Could not send — please try again.",
   },
   offline: {
     title: "No internet connection",

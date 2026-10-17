@@ -1230,7 +1230,13 @@ export class SocialService {
     const firstCommentText = this.normalizeFirstComment(dto.firstCommentText);
     const recurrence = this.recurrenceFields(dto);
     const su8 = this.su8CreateFields(dto);
-    return { account, caption, linkUrl, mediaRefs, firstCommentText, recurrence, su8 };
+    // SA-B19 (G1): provenance passthrough — set only when the
+    // caller stamps it (the AI content generator); absent for
+    // every human composer call, exactly as before.
+    const provenance = dto.autoDraftKind
+      ? { autoDraftKind: dto.autoDraftKind, autoDraftRef: dto.autoDraftRef ?? null }
+      : {};
+    return { account, caption, linkUrl, mediaRefs, firstCommentText, recurrence, su8, provenance };
   }
 
   /** SU1: the single row-creation path behind createPost and
@@ -1250,6 +1256,7 @@ export class SocialService {
         firstCommentStatus: v.firstCommentText ? "pending" : null,
         ...v.recurrence,
         ...v.su8,
+        ...v.provenance,
       },
     });
     // SU9: version 1 (kind "create") for every post born on this

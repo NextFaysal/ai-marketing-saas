@@ -1,5 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { AuditService } from "../audit/audit.service";
+import { AccountingService } from "../accounting/accounting.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { FinanceReportsService } from "./finance-reports.service";
 import {
@@ -62,6 +63,10 @@ export class FinanceService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly reports: FinanceReportsService,
+    // NF10: optional so every pre-NF10 construction (specs) keeps
+    // working; when wired (FinanceModule imports AccountingModule)
+    // a newly created expense is journal-backed immediately.
+    @Optional() private readonly accounting?: AccountingService,
   ) {}
 
   private t(name: string): any {
@@ -164,6 +169,13 @@ export class FinanceService {
     const data = this.validateExpenseBody(body ?? {}, false);
     const row = await this.t("expense").create({ data: { organizationId, createdById: actorId ?? null, ...data } });
     await this.audit.log({ organizationId, userId: actorId, action: "finance.expense_created", entityType: "Expense", entityId: String(row.id), metadata: { category: row.category, amountMinor: toBig(row.amountMinor).toString() } }).catch(() => undefined);
+    // NF10: journal-back the new expense going forward (Dr expense
+    // category / Cr payment-method account). Failure-isolated —
+    // the expense record is the source truth and the idempotent
+    // accounting sync can always backfill it later.
+    if (this.accounting) {
+      await this.accounting.generateExpenseEntry(organizationId, row).catch(() => undefined);
+    }
     return this.serializeExpense(row);
   }
 

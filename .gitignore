@@ -8,3 +8,9 @@ coverage/
 .turbo/
 **/.media-store/
 *.tsbuildinfo
+
+# Jest cache junk guard (2026-10-17 union cleanup): a literal "~" path once
+# let 2,146 jest-cache files under apps/api/src/~/workspace/.tmp-int7/ get
+# committed (by release commit 17a2c272). Never again.
+apps/api/src/~/
+**/.tmp-*/

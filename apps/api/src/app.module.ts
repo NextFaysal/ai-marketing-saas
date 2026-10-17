@@ -15,6 +15,7 @@ import { AttributionModule } from "./attribution/attribution.module";
 import { AdsModule } from "./ads/ads.module";
 import { AnalyticsModule } from "./analytics/analytics.module";
 import { AiModule } from "./ai/ai.module";
+import { ActionEngineModule } from "./ai/actions/action-engine.module";
 import { InboxModule } from "./inbox/inbox.module";
 import { CrmModule } from "./crm/crm.module";
 import { CompetitorsModule } from "./competitors/competitors.module";
@@ -45,6 +46,7 @@ import { FulfillmentModule } from "./fulfillment/fulfillment.module";
 import { StorefrontModule } from "./storefront/storefront.module";
 import { LandingsModule } from "./landings/landings.module";
 import { FeedsModule } from "./feeds/feeds.module";
+import { DarazModule } from "./integrations/daraz/daraz.module";
 import { PurchasingModule } from "./purchasing/purchasing.module";
 import { WarehouseModule } from "./warehouse/warehouse.module";
 import { DeliveryModule } from "./delivery/delivery.module";
@@ -66,11 +68,22 @@ import { WebpushModule } from "./webpush/webpush.module";
 import { SocialProofModule } from "./social-proof/social-proof.module";
 import { MerchantApiModule } from "./merchant-api/merchant-api.module";
 import { DataToolsModule } from "./data-tools/data-tools.module";
+import { LiveCommerceModule } from "./live-commerce/live-commerce.module";
+import { VideoStudioModule } from "./video-studio/video-studio.module";
+import { BookingModule } from "./booking/booking.module";
+import { TranslationsModule } from "./translations/translations.module";
+import { GamifiedPromotionsModule } from "./gamified-promotions/gamified-promotions.module";
+import { MembershipModule } from "./membership/membership.module";
+import { AccountingModule } from "./accounting/accounting.module";
+import { HrModule } from "./hr/hr.module";
+import { DropshipModule } from "./dropship/dropship.module";
+import { FraudNetworkModule } from "./fraud-network/fraud-network.module";
+import { AgencyModule } from "./agency/agency.module";
 import { JwtAuthGuard } from "./common/jwt-auth.guard";
 import { ThrottlerGuard } from "./common/throttler.guard";
 
 @Module({
-  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule, FeedbackModule, InventoryModule, SocialModule, Cx8Module, CommerceModule, FulfillmentModule, StorefrontModule, LandingsModule, FeedsModule, PurchasingModule, WarehouseModule, DeliveryModule, TaxModule, ReconciliationModule, SubscriptionsModule, ConnectionsModule, InstallmentsModule, AffiliatesModule, PosModule, OrderNotificationsModule, OrderAutomationModule, StorageModule, FinanceModule, WebhooksOutgoingModule, PublicDocsModule, WebpushModule, SocialProofModule, MerchantApiModule, DataToolsModule, VoiceModule],
+  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, ActionEngineModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule, FeedbackModule, InventoryModule, SocialModule, Cx8Module, CommerceModule, FulfillmentModule, StorefrontModule, LandingsModule, FeedsModule, PurchasingModule, WarehouseModule, DeliveryModule, TaxModule, ReconciliationModule, SubscriptionsModule, ConnectionsModule, InstallmentsModule, AffiliatesModule, PosModule, OrderNotificationsModule, OrderAutomationModule, StorageModule, FinanceModule, WebhooksOutgoingModule, PublicDocsModule, WebpushModule, SocialProofModule, MerchantApiModule, DataToolsModule, VoiceModule, LiveCommerceModule, VideoStudioModule, BookingModule, TranslationsModule, GamifiedPromotionsModule, MembershipModule, AccountingModule, HrModule, DropshipModule, FraudNetworkModule, AgencyModule],
   // Milestone 61: the throttler runs BEFORE the JWT guard so
   // brute force is rejected before any password verification.
   providers: [

@@ -6,6 +6,10 @@ import {
   buildAuditLogQuery,
   canDownloadExport,
   dataExportKindLabel,
+  dataImportErrorLabel,
+  dataImportJobStatusLabel,
+  dataImportSkipReasonLabel,
+  dataImportTableLabel,
   dataExportStatusLabel,
   dataExportsFromPayload,
   exportDownloadFilename,
@@ -143,5 +147,31 @@ describe("audit logs (AX25)", () => {
     const long = auditMetadataSummary({ blob: "x".repeat(300) });
     expect(long.length).toBeLessThanOrEqual(161);
     expect(long.endsWith("…")).toBe(true);
+  });
+});
+
+describe("data import / restore (ORG16)", () => {
+  it("labels every bundle table and skip reason in Bengali", () => {
+    expect(dataImportTableLabel("products")).toBe("পণ্য");
+    expect(dataImportTableLabel("orderItems")).toBe("অর্ডারের আইটেম");
+    expect(dataImportTableLabel("mediaAssets")).toBe("মিডিয়া ফাইল");
+    expect(dataImportTableLabel("unknownTable")).toBe("unknownTable");
+    expect(dataImportSkipReasonLabel("people_not_restored")).toContain("সদস্যপদ");
+    expect(dataImportSkipReasonLabel("bytes_not_in_bundle")).toContain("বাইট");
+    expect(dataImportSkipReasonLabel(undefined)).toBe("");
+  });
+
+  it("translates the report's error codes into owner-readable text", () => {
+    expect(dataImportErrorLabel("target_org_not_empty")).toContain("খালি নয়");
+    expect(dataImportErrorLabel("credential_field_present:products.accessToken")).toContain("credential");
+    expect(dataImportErrorLabel("source_table_truncated:orders")).toContain("অসম্পূর্ণ");
+    expect(dataImportErrorLabel("row_count_mismatch:products")).toContain("অসঙ্গতি");
+    expect(dataImportErrorLabel("some_raw_code")).toBe("some_raw_code");
+  });
+
+  it("labels job statuses", () => {
+    expect(dataImportJobStatusLabel("completed")).toBe("সম্পন্ন");
+    expect(dataImportJobStatusLabel("failed")).toBe("ব্যর্থ");
+    expect(dataImportJobStatusLabel("running")).toBe("চলছে…");
   });
 });

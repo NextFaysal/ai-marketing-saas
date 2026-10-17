@@ -7,6 +7,7 @@ import { formatMinor } from "@repo/contracts";
 import { EmptyState, FilterBar, PageHeader, ResponsiveTable } from "@repo/ui";
 import { useConfirm, useToast } from "@repo/ui/client";
 import { MediaImage } from "@/components/MediaImage";
+import { ProductTranslationsPanel } from "@/components/product-translations";
 import {
   EcBundleDialog, EcCategoryManagerDialog, EcChannelsDialog, EcGalleryDialog,
   type EcCategory, type EcTag,
@@ -2161,6 +2162,13 @@ export default function ProductsPage() {
                   />
                 </div>
               </div>
+
+              {/* NF5 (FB3): multi-language translations + display currencies.
+                  Only for an existing product (translations key off its id);
+                  drafts are never public — approval happens in the panel. */}
+              {editingProduct ? (
+                <ProductTranslationsPanel orgId={getOrganizationId() ?? ""} productId={editingProduct.id} />
+              ) : null}
 
               {/* EC24: প্রি-অর্ডার / ডিজিটাল / সাবস্ক্রিপশন / পাইকারি স্তর */}
               <div className="rounded-xl border border-violet-300 bg-violet-50/40 p-3.5 space-y-3">

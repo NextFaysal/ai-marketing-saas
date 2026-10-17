@@ -1,10 +1,14 @@
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 export class ConnectCourierDto {
-  @IsOptional() @IsString() provider?: string; // steadfast | pathao | redx | ecourier (default steadfast)
+  @IsOptional() @IsString() provider?: string; // steadfast | pathao | redx | ecourier | paperfly (default steadfast)
   // Steadfast
   @IsOptional() @IsString() apiKey?: string;
   @IsOptional() @IsString() secretKey?: string;
+  // Paperfly (OU6): DEVELOPMENT adapter only — the apiKey /
+  // apiSecret fields above/below are the form's shape, but the
+  // service refuses the connect honestly and saves nothing
+  // (no evidenced API contract exists to verify against).
   // Pathao
   @IsOptional() @IsString() clientId?: string;
   @IsOptional() @IsString() clientSecret?: string;
@@ -56,7 +60,10 @@ export class BookShipmentDto {
 
 /** Milestone 53: bulk booking — up to 50 orders through one provider. */
 export class BulkBookDto {
-  @IsOptional() @IsIn(["steadfast", "pathao", "redx", "ecourier"]) provider?: string;
+  // OU6: paperfly is a valid provider key (development
+  // adapter) — each per-order booking then fails honestly with
+  // the not-live reason instead of a bare validation error.
+  @IsOptional() @IsIn(["steadfast", "pathao", "redx", "ecourier", "paperfly"]) provider?: string;
   // CC29: one explicit courier account for the whole batch.
   @IsOptional() @IsString() courierIntegrationId?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @IsString({ each: true }) orderIds!: string[];

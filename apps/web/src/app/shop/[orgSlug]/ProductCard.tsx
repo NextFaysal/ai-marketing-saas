@@ -8,6 +8,7 @@ import { FlashCountdown } from "./FlashCountdown";
 import { WishlistHeart } from "./WishlistHeart";
 import { isV2Tokens, themeOf, type ShopTheme } from "@/lib/shop-theme";
 import { QuickViewButton } from "./QuickView";
+import { displayPriceCaption } from "@/lib/translations";
 
 export function priceText(minor: string): string {
   try {
@@ -84,6 +85,10 @@ export function ProductCard({
           {badge ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.cls}`}>{badge.label}</span> : null}
           {product.freeShipping ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">{t.brand.freeDeliveryBadge}</span> : null}
         </div>
+        {/* NF5: converted DISPLAY price (server-sent, honestly labelled). */}
+        {displayPriceCaption(product) ? (
+          <p className="text-[11px] text-slate-500">{displayPriceCaption(product)}</p>
+        ) : null}
       </div>
     </>
   );
@@ -145,6 +150,10 @@ export function ProductCard({
           {badge ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.cls}`}>{badge.label}</span> : null}
           {product.freeShipping ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">{t.brand.freeDeliveryBadge}</span> : null}
         </div>
+        {/* NF5: converted DISPLAY price (server-sent, honestly labelled). */}
+        {displayPriceCaption(product) ? (
+          <p className="text-[11px] text-[var(--ink-faint)]">{displayPriceCaption(product)}</p>
+        ) : null}
       </div>
     </>
   );

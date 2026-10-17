@@ -8,6 +8,7 @@ import { SteadfastClient } from "./steadfast.client";
 import { PathaoClient } from "./pathao.client";
 import { RedxClient } from "./redx.client";
 import { EcourierClient, mapEcourierStatus } from "./ecourier.client";
+import { PaperflyDevAdapterClient } from "./paperfly.client";
 import { encryptJson } from "../integrations/crypto";
 
 /**
@@ -70,8 +71,12 @@ function seedIntegration(prisma: any, provider: string, creds: any) {
 }
 
 describe("GB5 registry", () => {
-  it("enumerates exactly the buildable providers (Paperfly researched NO-BUILD — absent)", () => {
-    expect([...COURIER_PROVIDERS]).toEqual(["steadfast", "pathao", "redx", "ecourier"]);
+  it("enumerates exactly the buildable providers + the OU6 Paperfly development adapter", () => {
+    // GB5 shipped the 4 buildable providers with Paperfly
+    // NO-BUILD/absent. OU6 registers Paperfly as a labelled
+    // DEVELOPMENT adapter (capabilities.live === false, every
+    // operation refuses) — the buildable set is unchanged.
+    expect([...COURIER_PROVIDERS]).toEqual(["steadfast", "pathao", "redx", "ecourier", "paperfly"]);
   });
 
   it("the factory builds each concrete client; unknown providers throw", () => {
@@ -79,7 +84,10 @@ describe("GB5 registry", () => {
     expect(createCourierClient("pathao", { clientId: "c" })).toBeInstanceOf(PathaoClient);
     expect(createCourierClient("redx", { accessToken: "t" })).toBeInstanceOf(RedxClient);
     expect(createCourierClient("ecourier", { apiKey: "k", apiSecret: "s", userId: "u" })).toBeInstanceOf(EcourierClient);
-    expect(() => createCourierClient("paperfly" as any, {})).toThrow(/Unknown courier provider/);
+    // OU6: paperfly now builds the DEVELOPMENT adapter client
+    // (never a live client — see ou6-courier.spec.ts).
+    expect(createCourierClient("paperfly", {})).toBeInstanceOf(PaperflyDevAdapterClient);
+    expect(() => createCourierClient("sundarban" as any, {})).toThrow(/Unknown courier provider/);
   });
 
   it("adapters expose the provider key and the neutral contract", async () => {

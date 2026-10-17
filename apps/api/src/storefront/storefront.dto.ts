@@ -80,6 +80,13 @@ export class QuoteDto {
    * Resolved server-side; any refusal fails the quote/checkout
    * BEFORE placement (a gift card can never buy a gift card). */
   @IsOptional() @IsString() @MaxLength(32) giftCardCode?: string;
+  /** NF7 (FB3): pay with the identified customer's own store
+   * credit (optionally capped by storeCreditMinor, minor units
+   * as a string). Credit is resolved server-side from the
+   * buyer's identity — there is no code to present, and no way
+   * to spend another customer's credit. */
+  @IsOptional() @IsBoolean() useStoreCredit?: boolean;
+  @IsOptional() @IsString() @MaxLength(24) storeCreditMinor?: string;
 }
 
 /** AB2 (AX3): public gift-card balance lookup body. The code is
@@ -145,6 +152,9 @@ export class CheckoutDto {
   @IsOptional() @IsInt() @Min(0) @Max(1000000) loyaltyPoints?: number;
   /** AB2 (AX3): a gift-card code to redeem (see QuoteDto). */
   @IsOptional() @IsString() @MaxLength(32) giftCardCode?: string;
+  /** NF7 (FB3): pay with own store credit (see QuoteDto). */
+  @IsOptional() @IsBoolean() useStoreCredit?: boolean;
+  @IsOptional() @IsString() @MaxLength(24) storeCreditMinor?: string;
   /** AB4 (AX5b): answers to the org's custom checkout fields
    * for the "shop" surface — validated server-side against the
    * ACTIVE defs (unknown keys / missing required → 400 before
@@ -286,6 +296,13 @@ export class UpdateStorefrontSettingsDto {
   @IsOptional() @IsBoolean() showFeatured?: boolean;
   @IsOptional() @IsBoolean() showCategories?: boolean;
   @IsOptional() @IsBoolean() showSearch?: boolean;
+  // OU8: section customizer toggles + home section order.
+  @IsOptional() @IsBoolean() showHero?: boolean;
+  @IsOptional() @IsBoolean() showBrands?: boolean;
+  @IsOptional() @IsBoolean() showBundles?: boolean;
+  @IsOptional() @IsBoolean() showFlashSale?: boolean;
+  @IsOptional() @IsBoolean() showRecentlyViewed?: boolean;
+  @IsOptional() @IsArray() @IsString({ each: true }) sectionOrder?: string[];
   @IsOptional() @IsString() @MaxLength(500) metaDescription?: string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) featuredProductIds?: string[];
   // EC19: featured source + shop language.
@@ -331,6 +348,9 @@ export class UpdateStorefrontSettingsDto {
     "automotive",
     "sports",
     "jewelry",
+    "v2",
+    "warm",
+    "ocean",
   ])
   themeId?: string;
   @IsOptional() @IsString() @MaxLength(1000) faviconUrl?: string | null;
@@ -433,6 +453,21 @@ export class UpsertStorePopupDto {
   @IsOptional() @IsString() @MaxLength(40) startsAt?: string | null;
   @IsOptional() @IsString() @MaxLength(40) endsAt?: string | null;
   @IsOptional() @IsIn(["home", "all"]) showOn?: string;
+  // OU8: lead-capture mode + which contact fields the form asks for.
+  @IsOptional() @IsIn(["promo", "lead"]) mode?: string;
+  @IsOptional() @IsBoolean() captureName?: boolean;
+  @IsOptional() @IsBoolean() capturePhone?: boolean;
+  @IsOptional() @IsBoolean() captureEmail?: boolean;
+  @IsOptional() @IsString() @MaxLength(500) successMessage?: string | null;
+}
+
+/** OU8: public lead-capture popup submission. Which fields are
+ * required is decided server-side from the popup's capture flags;
+ * the DTO only bounds shapes. */
+export class PopupLeadDto {
+  @IsOptional() @IsString() @MaxLength(120) name?: string;
+  @IsOptional() @IsString() @MaxLength(30) phone?: string;
+  @IsOptional() @IsEmail() @MaxLength(200) email?: string;
 }
 
 export class PopupEventDto {

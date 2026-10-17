@@ -2,13 +2,15 @@ import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { fetchShopHome, shopSortOf } from "@/lib/storefront-server";
+import { fetchShopHome, fetchShopOffers, shopSortOf } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { effectiveThemeId, themeOf } from "@/lib/shop-theme";
+import { orderedVisibleSections, sectionVisibilityOf, type ShopSectionKey } from "@/lib/shop-sections";
 import { buildShopJsonLd, canonicalShopBase, canonicalShopUrlAt, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "./ProductCard";
 import { FlashCountdown } from "./FlashCountdown";
+import { ShopOffers } from "./ShopOffers";
 import { AffiliateRefCapture } from "./AffiliateRefCapture";
 import { BundleCard } from "./BundleCard";
 import { RecentlyViewedStrip } from "./RecentlyViewed";
@@ -26,7 +28,7 @@ import { JewelryProductCard, JewelryThemeHome } from "./JewelryTheme";
 import { ListingFilterDrawer, type ListingFilterSection } from "./ListingFilterDrawer";
 
 type Params = Promise<{ orgSlug: string }>;
-type Search = Promise<{ q?: string; category?: string; page?: string; sort?: string; brand?: string; themePreview?: string }>;
+type Search = Promise<{ q?: string; category?: string; page?: string; sort?: string; brand?: string; themePreview?: string; locale?: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { orgSlug } = await params;
@@ -70,8 +72,14 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const sort = shopSortOf(sp.sort);
 
-  const home = await fetchShopHome(orgSlug, q, category, String(page), "24", sort, brand);
+  // NF5 (FB3): forward the shopper's ?locale= choice (bn|en|hi)
+  // to the API on the same route; absent = the shop's own locale.
+  const home = await fetchShopHome(orgSlug, q, category, String(page), "24", sort, brand, undefined, (sp.locale ?? "").trim() || undefined);
   if (!home) notFound();
+  // NF14 (FB5): active public offers for the offers strip
+  // (failure-isolated — no offers payload, no strip).
+  const offersPayload = await fetchShopOffers(orgSlug).catch(() => null);
+  const offers = offersPayload?.offers ?? [];
 
   const { settings, categories, featuredProducts, products, pagination } = home;
   const brands = home.brands ?? [];
@@ -410,6 +418,135 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       </>
     );
   }
+  // OU8: section customizer — the home sections are collected
+  // into a keyed record and rendered in the merchant's stored
+  // order, minus the sections they hid (lib/shop-sections is the
+  // single source of the render list; the product grid below is
+  // not a section — it always renders last).
+  const sectionTitle = isV2 ? theme.sectionTitleClass : `text-xl font-black ${theme.headerDark ? "text-slate-100" : "text-slate-900"}`;
+  const sectionNodes: Record<ShopSectionKey, React.ReactNode> = {
+    hero: (
+<section className={theme.heroClass}>
+  <h1 className={theme.heroTitleClass}>{settings.shopName}</h1>
+  {settings.metaDescription ? <p className={`mx-auto mt-2 max-w-xl text-sm ${theme.headerDark ? "text-slate-300" : "text-slate-500"}`}>{settings.metaDescription}</p> : null}
+  {settings.showSearch ? (
+    <form method="get" action={`/shop/${orgSlug}`} className="mx-auto mt-5 flex max-w-md gap-2">
+      {category ? <input type="hidden" name="category" value={category} /> : null}
+      {brand ? <input type="hidden" name="brand" value={brand} /> : null}
+      <input
+        type="search"
+        name="q"
+        defaultValue={q}
+        placeholder={t.home.searchPlaceholder}
+        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none"
+      />
+      <button type="submit" className="shrink-0 rounded-xl px-5 py-2.5 text-sm font-bold text-white" style={{ backgroundColor: accent }}>
+        {t.home.searchButton}
+      </button>
+    </form>
+  ) : null}
+</section>
+    ),
+    categories: (
+settings.showCategories && categories.length > 0 ? (
+  <section className="flex flex-wrap items-center gap-2">
+    <Link
+      href={shopHref(orgSlug, q, "", 1, sort, brand)}
+      className={`rounded-full px-4 py-1.5 text-xs font-bold ${!category ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
+      style={!category ? { backgroundColor: accent } : undefined}
+    >
+      {t.home.allProducts}
+    </Link>
+    {categories.map((c) => {
+      const value = c.slug ?? c.id ?? c.name;
+      const active = category === value || category === c.name || (c.id ? category === c.id : false);
+      return (
+        <Link
+          key={`${c.id ?? "legacy"}-${c.name}`}
+          href={shopHref(orgSlug, q, value, 1, sort, brand)}
+          className={`rounded-full px-4 py-1.5 text-xs font-bold ${active ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
+          style={active ? { backgroundColor: accent } : undefined}
+        >
+          {c.name} ({c.productCount})
+        </Link>
+      );
+    })}
+  </section>
+) : null
+    ),
+    brands: (
+brands.length > 0 ? (
+  <section className="flex flex-wrap items-center gap-2">
+    <span className="text-xs font-bold text-slate-500">{t.brand.brandLabel}:</span>
+    <Link
+      href={shopHref(orgSlug, q, category, 1, sort, "")}
+      className={`rounded-full px-4 py-1.5 text-xs font-bold ${!brand ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
+      style={!brand ? { backgroundColor: accent } : undefined}
+    >
+      {t.brand.allBrands}
+    </Link>
+    {brands.map((b) => {
+      const active = brand === b.slug;
+      return (
+        <Link
+          key={b.id}
+          href={shopHref(orgSlug, q, category, 1, sort, b.slug)}
+          className={`rounded-full px-4 py-1.5 text-xs font-bold ${active ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
+          style={active ? { backgroundColor: accent } : undefined}
+        >
+          {b.name} ({b.productCount})
+        </Link>
+      );
+    })}
+  </section>
+) : null
+    ),
+    bundles: (
+(home.bundles ?? []).length > 0 && !filtering ? (
+  <section className="space-y-4">
+    <h2 className={sectionTitle}>{t.home.bundlesHeading}</h2>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {(home.bundles ?? []).map((b) => (
+        <BundleCard key={b.id} orgSlug={orgSlug} bundle={b} locale={locale} />
+      ))}
+    </div>
+  </section>
+) : null
+    ),
+    flash: (
+(home.flashSales?.sales ?? []).length > 0 ? (
+  <section className="space-y-4 rounded-3xl border border-rose-200 bg-rose-50 p-5">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 className="text-xl font-black text-rose-700">⚡ {t.home.flashSale}</h2>
+      <span className="text-sm text-rose-700">
+        <FlashCountdown endsAt={home.flashSales!.sales[0].endsAt} serverNow={home.flashSales!.serverNow} locale={locale} />
+      </span>
+    </div>
+    <div className={theme.gridClass}>
+      {home.flashSales!.sales[0].products.map((p) => (
+        <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales!.serverNow} />
+      ))}
+    </div>
+  </section>
+) : null
+    ),
+    featured: (
+settings.showFeatured && featuredProducts.length > 0 && !filtering ? (
+  <section className="space-y-4">
+    <h2 className={sectionTitle}>{t.home.featured}</h2>
+    <div className={theme.featuredGridClass}>
+      {featuredProducts.map((p) => (
+        <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
+      ))}
+    </div>
+  </section>
+) : null
+    ),
+    recently: (
+!filtering ? <RecentlyViewedStrip orgSlug={orgSlug} locale={locale} theme={isV2 ? theme : undefined} /> : null
+    ),
+  };
+  const renderSections = orderedVisibleSections(settings.sectionOrder, sectionVisibilityOf(settings));
 
   return (
     // ED11 (EB4): one token-timed rise entrance for the home
@@ -433,130 +570,15 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       />
       {/* EC32: capture a partner ?ref= code for checkout attribution. */}
       <AffiliateRefCapture orgSlug={orgSlug} />
-      {/* Hero */}
-      <section className={theme.heroClass}>
-        <h1 className={theme.heroTitleClass}>{settings.shopName}</h1>
-        {settings.metaDescription ? <p className={`mx-auto mt-2 max-w-xl text-sm ${theme.headerDark ? "text-slate-300" : "text-slate-500"}`}>{settings.metaDescription}</p> : null}
-        {settings.showSearch ? (
-          <form method="get" action={`/shop/${orgSlug}`} className="mx-auto mt-5 flex max-w-md gap-2">
-            {category ? <input type="hidden" name="category" value={category} /> : null}
-            {brand ? <input type="hidden" name="brand" value={brand} /> : null}
-            <input
-              type="search"
-              name="q"
-              defaultValue={q}
-              placeholder={t.home.searchPlaceholder}
-              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none"
-            />
-            <button type="submit" className="shrink-0 rounded-xl px-5 py-2.5 text-sm font-bold text-white" style={{ backgroundColor: accent }}>
-              {t.home.searchButton}
-            </button>
-          </form>
-        ) : null}
-      </section>
-
-      {/* Categories */}
-      {settings.showCategories && categories.length > 0 ? (
-        <section className="flex flex-wrap items-center gap-2">
-          <Link
-            href={shopHref(orgSlug, q, "", 1, sort, brand)}
-            className={`rounded-full px-4 py-1.5 text-xs font-bold ${!category ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
-            style={!category ? { backgroundColor: accent } : undefined}
-          >
-            {t.home.allProducts}
-          </Link>
-          {categories.map((c) => {
-            const value = c.slug ?? c.id ?? c.name;
-            const active = category === value || category === c.name || (c.id ? category === c.id : false);
-            return (
-              <Link
-                key={`${c.id ?? "legacy"}-${c.name}`}
-                href={shopHref(orgSlug, q, value, 1, sort, brand)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${active ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
-                style={active ? { backgroundColor: accent } : undefined}
-              >
-                {c.name} ({c.productCount})
-              </Link>
-            );
-          })}
-        </section>
-      ) : null}
-
-      {/* GC6: brand filter — only when the shop has brands with products */}
-      {brands.length > 0 ? (
-        <section className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-500">{t.brand.brandLabel}:</span>
-          <Link
-            href={shopHref(orgSlug, q, category, 1, sort, "")}
-            className={`rounded-full px-4 py-1.5 text-xs font-bold ${!brand ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
-            style={!brand ? { backgroundColor: accent } : undefined}
-          >
-            {t.brand.allBrands}
-          </Link>
-          {brands.map((b) => {
-            const active = brand === b.slug;
-            return (
-              <Link
-                key={b.id}
-                href={shopHref(orgSlug, q, category, 1, sort, b.slug)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${active ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
-                style={active ? { backgroundColor: accent } : undefined}
-              >
-                {b.name} ({b.productCount})
-              </Link>
-            );
-          })}
-        </section>
-      ) : null}
-
-      {/* EC29: bundles strip */}
-      {(home.bundles ?? []).length > 0 && !filtering ? (
-        <section className="space-y-4">
-          <h2 className={isV2 ? theme.sectionTitleClass : `text-xl font-black ${theme.headerDark ? "text-slate-100" : "text-slate-900"}`}>{t.home.bundlesHeading}</h2>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {(home.bundles ?? []).map((b) => (
-              <BundleCard key={b.id} orgSlug={orgSlug} bundle={b} locale={locale} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {/* GB7 (GC18): flash-sale section — countdown on the server clock */}
-      {(home.flashSales?.sales ?? []).length > 0 ? (
-        <section className="space-y-4 rounded-3xl border border-rose-200 bg-rose-50 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xl font-black text-rose-700">⚡ {t.home.flashSale}</h2>
-            <span className="text-sm text-rose-700">
-              <FlashCountdown endsAt={home.flashSales!.sales[0].endsAt} serverNow={home.flashSales!.serverNow} locale={locale} />
-            </span>
-          </div>
-          <div className={theme.gridClass}>
-            {home.flashSales!.sales[0].products.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales!.serverNow} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Featured */}
-      {settings.showFeatured && featuredProducts.length > 0 && !filtering ? (
-        <section className="space-y-4">
-          <h2 className={isV2 ? theme.sectionTitleClass : `text-xl font-black ${theme.headerDark ? "text-slate-100" : "text-slate-900"}`}>{t.home.featured}</h2>
-          <div className={theme.featuredGridClass}>
-            {featuredProducts.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {/* EC27: recently viewed (localStorage only; hidden while filtering) */}
-      {!filtering ? <RecentlyViewedStrip orgSlug={orgSlug} locale={locale} theme={isV2 ? theme : undefined} /> : null}
+      {/* OU8: merchant-ordered, merchant-visible home sections. */}
+      {renderSections.map((k) => (
+        <React.Fragment key={k}>{sectionNodes[k]}</React.Fragment>
+      ))}
 
       {/* Product grid */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className={isV2 ? theme.sectionTitleClass : `text-xl font-black ${theme.headerDark ? "text-slate-100" : "text-slate-900"}`}>
+          <h2 className={sectionTitle}>
             {filtering ? t.home.searchResults : t.home.allProducts}
             <span className={`ml-2 text-sm font-semibold ${theme.headerDark ? "text-slate-400" : "text-slate-400"}`}>({pagination.total}{t.home.itemsSuffix})</span>
           </h2>

@@ -5,7 +5,7 @@ import { chooseCostForDate } from "../analytics/metrics";
 import { AttributionService } from "../attribution/attribution.service";
 import { computeRfm, RFM_SEGMENTS } from "../messaging/rfm";
 import { PlannedToolCall } from "./planner";
-import { contactFactLines, deliveryFactLines, hoursFactLines, matchKnowledge, paymentFactLines } from "../inbox/business-brain";
+import { OrgBrainService } from "./org-brain.service";
 import { detectAnomalies, DailyPoint } from "./anomaly";
 import { formatMinor } from "@repo/contracts";
 import { CompetitorsService } from "../competitors/competitors.service";
@@ -26,7 +26,17 @@ export class ToolsService {
     private readonly analytics: AnalyticsService,
     private readonly attribution: AttributionService,
     @Optional() private readonly competitors?: CompetitorsService,
+    // SA-B1 (P1): the business-knowledge read goes through
+    // OrgBrainService. Optional + lazy fallback so existing
+    // positional constructions (unit specs) keep working; Nest DI
+    // supplies the real one in the app.
+    @Optional() private readonly orgBrain?: OrgBrainService,
   ) {}
+
+  private brainFallback?: OrgBrainService;
+  private brain(): OrgBrainService {
+    return this.orgBrain ?? (this.brainFallback ??= new OrgBrainService(this.prisma as any));
+  }
 
 
   async execute(organizationId: string, call: PlannedToolCall): Promise<unknown> {
@@ -621,36 +631,29 @@ export class ToolsService {
   }
 
   private async knowledge(organizationId: string, query?: string) {
-    const [profile, policies, docs, allDocs] = await Promise.all([
-      (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }),
-      (this.prisma as any).businessPolicy.findMany({ where: { organizationId }, take: 20 }),
-      (this.prisma as any).knowledgeDocument.findMany({ where: { organizationId }, take: 20, orderBy: { createdAt: "desc" } }),
-      // Milestone 77: a wider pool exists only for ranking.
-      query ? (this.prisma as any).knowledgeDocument.findMany({ where: { organizationId }, take: 100 }) : Promise.resolve([]),
-    ]);
+    // SA-B1 (P1): this read now delegates to OrgBrainService with
+    // an INTERNAL audience (the dashboard assistant is the org's
+    // own team). The returned shape is unchanged from the
+    // hand-rolled Milestone 77 version it replaces: profile subset,
+    // Command Center fact lines, policies, recent documents and —
+    // with a query — the top-5 keyword-matched documents (the
+    // wider pool exists only for ranking, as before).
+    const ctx = await this.brain().getContext(organizationId, {
+      audience: "internal", query, matchLimit: 5, includeRecentDocs: true,
+    });
     const cap = (s: string | null | undefined) => (s ? s.slice(0, 500) : null);
-    // Milestone 77 (Business Brain): the Command Center facts
-    // ride along — delivery/payment/contact/hours the owner
-    // set in Settings, in the same verified lines the inbox
-    // autopilot quotes.
-    const facts = profile ? [
-      ...deliveryFactLines(profile), ...paymentFactLines(profile),
-      ...contactFactLines(profile), ...hoursFactLines(profile),
-    ] : [];
-    const matchedDocuments = query
-      ? matchKnowledge(query, allDocs as any[], 5).map((m) => ({ kind: m.doc.kind, title: m.doc.title, content: cap(m.doc.content), matchScore: m.score }))
-      : [];
     return {
-      profile: profile ? {
-        industry: profile.industry, description: cap(profile.description), goals: cap(profile.goals),
-        brandVoice: cap(profile.brandVoice), websiteUrl: profile.websiteUrl,
+      profile: ctx.publicProfile || ctx.internalProfile ? {
+        industry: ctx.publicProfile?.industry ?? null, description: cap(ctx.publicProfile?.description),
+        goals: cap(ctx.internalProfile?.goals),
+        brandVoice: cap(ctx.publicProfile?.brandVoice), websiteUrl: ctx.publicProfile?.websiteUrl ?? null,
         // Milestone 77: owner-set AI behaviour, visible to the model.
-        aiInstructions: cap(profile.aiInstructions), aiReplyLanguage: profile.aiReplyLanguage ?? null,
+        aiInstructions: cap(ctx.ownerInstructions), aiReplyLanguage: ctx.replyLanguage,
       } : null,
-      facts,
-      policies: policies.map((p: any) => ({ type: p.type, title: p.title, content: cap(p.content) })),
-      documents: docs.map((d: any) => ({ kind: d.kind, title: d.title, content: cap(d.content) })),
-      matchedDocuments,
+      facts: ctx.facts,
+      policies: ctx.policies.map((p: any) => ({ type: p.type, title: p.title, content: cap(p.content) })),
+      documents: ctx.documents.map((d: any) => ({ kind: d.kind, title: d.title, content: cap(d.content) })),
+      matchedDocuments: ctx.knowledgeMatches.map((m) => ({ kind: m.kind, title: m.title, content: cap(m.content), matchScore: m.score })),
     };
   }
 

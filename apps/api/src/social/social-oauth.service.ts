@@ -4,8 +4,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson, encryptJson } from "../integrations/crypto";
 import {
-  effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveThreadsAppConfig, effectiveTiktokAppConfig, ensurePlatformConfig, socialOAuthRedirectUri,
+  effectiveGbpApiAccessApproved, effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveThreadsAppConfig, effectiveTiktokAppConfig, ensurePlatformConfig, socialOAuthRedirectUri,
 } from "../common/platform-config";
+import { GoogleBusinessClient, type GbpLocation } from "./google-business.client";
+import { GBP_API_ACCESS_GATE_MSG, GBP_PLATFORM, GBP_PROVIDER, GBP_SCOPE } from "./social.constants";
 import { TikTokClient, type TikTokTokenSet, type TikTokAppCreds } from "./tiktok.client";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 import { YouTubeClient, type GoogleTokenSet, type YouTubeChannel, type GoogleAppCreds } from "./youtube.client";
@@ -95,6 +97,7 @@ export class SocialOAuthService {
   private readonly linkedin: LinkedInClient;
   private readonly telegram: TelegramClient;
   private readonly threads: ThreadsClient;
+  private readonly gbp: GoogleBusinessClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -109,12 +112,15 @@ export class SocialOAuthService {
     @Optional() telegramClient?: TelegramClient,
     // SN7: appended after the SN6 client for the same reason.
     @Optional() threadsClient?: ThreadsClient,
+    // OU9: appended after the SN7 client for the same reason.
+    @Optional() gbpClient?: GoogleBusinessClient,
   ) {
     this.tiktok = tiktokClient ?? new TikTokClient();
     this.youtube = youtubeClient ?? new YouTubeClient();
     this.linkedin = linkedinClient ?? new LinkedInClient();
     this.telegram = telegramClient ?? new TelegramClient();
     this.threads = threadsClient ?? new ThreadsClient();
+    this.gbp = gbpClient ?? new GoogleBusinessClient();
   }
 
   private webBase(): string {
@@ -197,6 +203,11 @@ export class SocialOAuthService {
       youtube: { configured: Boolean(gg) },
       linkedin: { configured: Boolean(effectiveLinkedinAppConfig()) },
       threads: { configured: Boolean(effectiveThreadsAppConfig()) },
+      // OU9: GBP rides the same Google app as YouTube; the UI
+      // additionally needs the API-access approval state so the
+      // gate message can be shown BEFORE a doomed connect/publish
+      // (booleans only, like every sibling entry).
+      googleBusinessProfile: { configured: Boolean(gg), apiAccessApproved: effectiveGbpApiAccessApproved() },
     };
   }
 
@@ -397,6 +408,16 @@ export class SocialOAuthService {
             String(cred.refreshToken),
           );
         }
+      } else if (account.platform === GBP_PLATFORM) {
+        // OU9: GBP tokens are Google tokens — the refresh grant
+        // is the YouTube client's (Google does not rotate the
+        // refresh token), resolved against the app the account
+        // was connected under (googleCredsFor: platform app, or
+        // the tenant's OWN Google app for appSource "own" —
+        // CC28 discipline, identical to YouTube above).
+        const creds = await this.googleCredsFor(organizationId, (account as any).appSource === "own" ? "own" : "platform");
+        if (!creds) throw new Error((account as any).appSource === "own" ? OWN_GOOGLE_NOT_CONFIGURED_MSG : GOOGLE_NOT_CONFIGURED_MSG);
+        fresh = await this.youtube.refreshAccessToken(creds, String(cred.refreshToken));
       } else if (account.platform === "threads") {
         // SN7: th_refresh_token needs NO app secret and no app
         // config at all — the current long-lived token is the
@@ -1127,5 +1148,212 @@ export class SocialOAuthService {
       this.logger.warn(`threads callback failed: ${e instanceof Error ? e.message : "unknown"}`);
       return this.webRedirect({ social_error: "Threads Connect সম্পন্ন করা যায়নি — আবার চেষ্টা করুন।" });
     }
+  }
+
+  // ---------- OU9: Google Business Profile connect ----------
+
+  /** OU9: the Google app credentials for the GBP flow — the
+   * platform googleApp (YouTube's app) or the tenant's OWN
+   * Google app (CC28 TenantAppConfig "google"), but with the
+   * GBP flow's OWN derived redirect URI: Google requires an
+   * EXACT redirect match per flow, and the GBP callback is a
+   * different route from YouTube's, so neither the configured
+   * googleApp.redirectUri (registered for YouTube) nor the
+   * derived YouTube URI may be reused here. The operator /
+   * tenant registers …/social/oauth/google-business-profile
+   * /callback on the app they connect with. */
+  private async gbpCredsFor(organizationId: string, appSource: string): Promise<GoogleAppCreds | null> {
+    const redirectUri = socialOAuthRedirectUri("google-business-profile");
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma, organizationId, "google");
+      if (!own) return null;
+      return { clientId: own.appId, clientSecret: own.appSecret, redirectUri };
+    }
+    await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
+    const cfg = effectiveGoogleAppConfig();
+    if (!cfg) return null;
+    return { clientId: cfg.clientId, clientSecret: cfg.clientSecret, redirectUri };
+  }
+
+  /** The sealed credential a GBP SocialAccount carries (the
+   * YouTube credential shape + the location's account resource,
+   * kept for display/diagnostics; the publish parent is the
+   * account's externalId itself). */
+  private gbpCredential(tokens: GoogleTokenSet, location: GbpLocation): Record<string, unknown> {
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken ?? null,
+      expiresAt: tokens.expiresAt,
+      scope: tokens.scope ?? null,
+      accountName: location.accountName,
+      locationName: location.locationName,
+    };
+  }
+
+  /**
+   * Step 1 (authenticated): mint state + return Google's
+   * authorize URL for the business.manage scope (SP9 YouTube
+   * discipline: access_type=offline + prompt=consent so a
+   * refresh token is issued, including on re-connect).
+   *
+   * The connect is NOT blocked by the API-access gate: OAuth
+   * itself is not a Business Profile API call, and blocking
+   * connect would hide the location list's real answer. The
+   * gate is surfaced in platform-modes (the UI states it before
+   * the tenant starts), the location fetch surfaces Google's
+   * own refusal verbatim when the gate blocks it, and
+   * PUBLISHING refuses outright while unapproved.
+   * ?appSource=own runs under the tenant's OWN Google app
+   * (CC28), bound into the state like every sibling flow.
+   */
+  async googleBusinessConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
+    if (appSource != null && !["platform", "own"].includes(appSource)) {
+      throw new BadRequestException("appSource must be platform or own");
+    }
+    const creds = await this.gbpCredsFor(organizationId, appSource ?? "platform");
+    if (!creds) {
+      throw new BadRequestException(appSource === "own" ? OWN_GOOGLE_NOT_CONFIGURED_MSG : GOOGLE_NOT_CONFIGURED_MSG);
+    }
+    const state = appSource === "own"
+      ? await this.createState(organizationId, userId, GBP_PLATFORM, "connect", { appSource: "own" })
+      : await this.createState(organizationId, userId, GBP_PLATFORM, "connect");
+    const params = new URLSearchParams({
+      client_id: creds.clientId,
+      redirect_uri: creds.redirectUri,
+      response_type: "code",
+      scope: GBP_SCOPE,
+      access_type: "offline",
+      prompt: "consent",
+      state,
+    });
+    return { url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` };
+  }
+
+  /**
+   * Step 2 (PUBLIC callback): exchange + list the user's GBP
+   * locations through the documented v1 APIs. Exactly one
+   * location → the account is created immediately. MORE than
+   * one → NOTHING is created yet: the sealed token bundle +
+   * location list move into a pick state (purpose
+   * "location_pick") and the browser lands back with
+   * ?gbp_pick=<state> for the authenticated picker. ZERO →
+   * honest error, nothing stored. A Google refusal while
+   * listing (the API-access gate's real face) surfaces
+   * VERBATIM in the redirect error. Never throws.
+   */
+  async handleGoogleBusinessCallback(query: { code?: string; state?: string; error?: string }): Promise<string> {
+    try {
+      if (query.error) {
+        return this.webRedirect({ social_error: `Google Business Profile Connect বাতিল/ব্যর্থ হয়েছে: ${query.error}` });
+      }
+      if (!query.code || !query.state) {
+        return this.webRedirect({ social_error: "Google Business Profile callback-এ code/state পাওয়া যায়নি — আবার Connect করার চেষ্টা করুন।" });
+      }
+      const stateRow = await this.consumeState(query.state, GBP_PLATFORM, "connect");
+      if (!stateRow) {
+        return this.webRedirect({ social_error: "Connect লিংকটি মেয়াদোত্তীর্ণ বা ইতিমধ্যে ব্যবহৃত — Social Posts পেজ থেকে আবার Connect করুন।" });
+      }
+      const appSource = (stateRow as any).payload?.appSource === "own" ? "own" : "platform";
+      const creds = await this.gbpCredsFor(stateRow.organizationId, appSource);
+      if (!creds) return this.webRedirect({ social_error: appSource === "own" ? OWN_GOOGLE_NOT_CONFIGURED_MSG : GOOGLE_NOT_CONFIGURED_MSG });
+      let tokens: GoogleTokenSet;
+      try {
+        tokens = await this.youtube.exchangeCode(creds, query.code);
+      } catch (e) {
+        return this.webRedirect({ social_error: `Google Token বিনিময় ব্যর্থ হয়েছে: ${e instanceof Error ? e.message : "unknown error"}` });
+      }
+      if (!tokens.refreshToken) {
+        return this.webRedirect({ social_error: "Google refresh token দেয়নি — Connect আবার চেষ্টা করুন (সম্মতি স্ক্রিনে সব অনুমতি দিন)।" });
+      }
+      let locations: GbpLocation[];
+      try {
+        locations = await this.gbp.listLocations(tokens.accessToken);
+      } catch (e) {
+        // The API-access gate, when it blocks, blocks HERE:
+        // Google's own message is the explanation — never
+        // replaced with a generic failure, never hidden.
+        return this.webRedirect({ social_error: `Google Business Profile Location তালিকা আনা যায়নি: ${e instanceof Error ? e.message : "unknown error"}` });
+      }
+      if (locations.length === 0) {
+        return this.webRedirect({ social_error: "এই Google অ্যাকাউন্টে কোনো Business Profile location পাওয়া যায়নি — কিছু সেভ করা হয়নি। যেই অ্যাকাউন্টে location আছে সেটি দিয়ে Connect করুন।" });
+      }
+      if (locations.length === 1) {
+        const loc = locations[0]!;
+        await this.persistOAuthAccount({
+          organizationId: stateRow.organizationId, actorId: stateRow.userId,
+          platform: GBP_PLATFORM, provider: GBP_PROVIDER,
+          externalId: loc.parent, name: loc.title,
+          credential: this.gbpCredential(tokens, loc),
+          appSource,
+        });
+        return this.webRedirect({ social_connected: GBP_PLATFORM });
+      }
+      const pickState = await this.createState(stateRow.organizationId, stateRow.userId, GBP_PLATFORM, "location_pick", {
+        sealed: encryptJson(this.gbpCredential(tokens, locations[0]!)),
+        appSource,
+        locations: locations.map((l) => ({ parent: l.parent, title: l.title, accountLabel: l.accountLabel, accountName: l.accountName, locationName: l.locationName })),
+      });
+      return this.webRedirect({ gbp_pick: pickState });
+    } catch (e) {
+      this.logger.warn(`google business callback failed: ${e instanceof Error ? e.message : "unknown"}`);
+      return this.webRedirect({ social_error: "Google Business Profile Connect সম্পন্ন করা যায়নি — আবার চেষ্টা করুন।" });
+    }
+  }
+
+  /** The GBP picker's state, validated for THIS org+user
+   * (peeked, not consumed — the selection consumes it). */
+  private async peekGbpPickState(organizationId: string, userId: string, stateId: string): Promise<any | null> {
+    const row = await this.peekState(stateId, GBP_PLATFORM, "location_pick");
+    if (!row) return null;
+    if (row.organizationId !== organizationId || row.userId !== userId) return null;
+    return row;
+  }
+
+  /** Picker step A (authenticated): the locations on offer —
+   * ids/titles only; the sealed tokens never leave the server. */
+  async getGoogleBusinessPickInfo(organizationId: string, userId: string, stateId: string) {
+    const row = await this.peekGbpPickState(organizationId, userId, stateId);
+    if (!row) {
+      throw new BadRequestException("Location বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — Google Business Profile Connect আবার শুরু করুন।");
+    }
+    const locations = (Array.isArray(row.payload?.locations) ? row.payload.locations : [])
+      .map((l: any) => ({ id: l.parent, title: l.title, accountLabel: l.accountLabel ?? null }));
+    return { locations };
+  }
+
+  /** Picker step B (authenticated): consume the pick state and
+   * create the account for the CHOSEN location only. A parent
+   * outside the offered list is refused — the state is the
+   * authority on what this authorization actually granted. */
+  async selectGoogleBusinessLocation(organizationId: string, userId: string, dto: { state?: string; locationId?: string }) {
+    const stateId = typeof dto?.state === "string" ? dto.state : "";
+    const row = await this.peekGbpPickState(organizationId, userId, stateId);
+    if (!row) {
+      throw new BadRequestException("Location বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — Google Business Profile Connect আবার শুরু করুন।");
+    }
+    const locations: GbpLocation[] = (Array.isArray(row.payload?.locations) ? row.payload.locations : [])
+      .map((l: any) => ({ parent: l.parent, locationName: l.locationName, accountName: l.accountName, title: l.title, accountLabel: l.accountLabel ?? null }));
+    const chosen = locations.find((l) => l.parent === dto?.locationId);
+    if (!chosen) {
+      throw new BadRequestException("নির্বাচিত Locationটি এই Connect-এর তালিকায় নেই — তালিকা থেকে একটি Location বেছে নিন।");
+    }
+    const consumed = await this.consumeState(stateId, GBP_PLATFORM, "location_pick");
+    if (!consumed) {
+      throw new BadRequestException("Location বেছে নেওয়ার লিংকটি ইতিমধ্যে ব্যবহৃত হয়েছে — Social Posts পেজে অ্যাকাউন্টটি যুক্ত হয়েছে কিনা দেখুন, না হলে আবার Connect করুন।");
+    }
+    let cred: Record<string, any>;
+    try {
+      cred = decryptJson<Record<string, any>>(String(row.payload?.sealed ?? ""));
+    } catch {
+      throw new BadRequestException("Connect-এর তথ্য পড়া যাচ্ছে না — Google Business Profile Connect আবার শুরু করুন।");
+    }
+    const account = await this.persistOAuthAccount({
+      organizationId, actorId: userId,
+      platform: GBP_PLATFORM, provider: GBP_PROVIDER,
+      externalId: chosen.parent, name: chosen.title,
+      credential: { ...cred, accountName: chosen.accountName, locationName: chosen.locationName },
+      appSource: (row.payload as any)?.appSource === "own" ? "own" : "platform",
+    });
+    return this.serializeAccount(account);
   }
 }

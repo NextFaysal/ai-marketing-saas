@@ -9,14 +9,16 @@ import { PathaoClient, PathaoError, pathaoClientTokens, PATHAO_PROD_BASE } from 
 import { RedxClient, RedxError, REDX_DEFAULT_BASE } from "./redx.client";
 import { EcourierClient, EcourierError, ECOURIER_DEFAULT_BASE } from "./ecourier.client";
 import {
-  COURIER_PROVIDERS, COURIER_STATUSES, courierAdapter, createCourierClient,
+  COURIER_PROVIDERS, COURIER_STATUSES, courierAdapter, courierCapabilities, createCourierClient,
   type CourierBookingResult, type CourierClient, type CourierProviderKey,
 } from "./courier-client";
+import { PAPERFLY_DEV_NOT_LIVE_MESSAGE, PaperflyDevAdapterError } from "./paperfly.client";
 import { InboxService } from "../inbox/inbox.service";
 import { EventsService } from "../common/events.service";
 import { SmsProvider, normalizeBdPhone as normalizeSmsPhone } from "../messaging/sms.provider";
 import { EmailProvider } from "../messaging/email.provider";
 import { newTrackingToken, trackingLinkFor } from "./tracking-token";
+import { customerRiderLocation } from "../delivery/rider-location-visibility";
 import { buildPdf, shippingLabelPage, invoicePage, challanPage, packingSlipPage } from "./pdf";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { buildCourierPerformance, classifyShipmentStatus } from "./courier-performance";
@@ -27,6 +29,11 @@ import { CourierNdrService, isNdrStatus } from "./courier-ndr.service";
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
   if (e instanceof SteadfastError || e instanceof PathaoError || e instanceof RedxError || e instanceof EcourierError) {
+    return new BadRequestException(e.message);
+  }
+  // OU6: the Paperfly development adapter's refusal is an
+  // honest client-facing explanation, never a gateway error.
+  if (e instanceof PaperflyDevAdapterError) {
     return new BadRequestException(e.message);
   }
   return new BadGatewayException(`Courier API তে সংযোগ করা যাচ্ছে না: ${e instanceof Error ? e.message : "network error"}`);
@@ -79,6 +86,10 @@ export function courierAccountKey(provider: Provider, creds: Record<string, any>
     provider === "steadfast" ? String(creds.apiKey ?? "")
     : provider === "pathao" ? `${String(creds.clientId ?? "")}:${String(creds.username ?? "")}`
     : provider === "ecourier" ? `${String(creds.userId ?? "")}:${String(creds.apiKey ?? "")}`
+    // OU6: paperfly rows are never saved (the dev adapter
+    // refuses connect), but the key shape stays total so no
+    // caller can crash on the registered provider.
+    : provider === "paperfly" ? String(creds.apiKey ?? "")
     : String(creds.accessToken ?? "");
   return `fp_${createHash("sha256").update(material).digest("hex").slice(0, 24)}`;
 }
@@ -337,7 +348,13 @@ export class CourierService {
         status: r.status, isDefault: !!r.isDefault, label: r.label ?? null,
         connectedAt: r.createdAt,
       }));
-    if (!integration) return { provider, id: null, connected: false, trackingUrlTemplate: null, accounts };
+    // OU6: the framework descriptor rides on every connection
+    // view so settings surfaces can label providers honestly
+    // (Paperfly: developmentAdapter + live:false; balance
+    // support per provider) without a second endpoint.
+    const capabilities = courierCapabilities(provider);
+    const framework = { capabilities, live: capabilities.live, developmentAdapter: provider === "paperfly" };
+    if (!integration) return { provider, id: null, connected: false, trackingUrlTemplate: null, accounts, ...framework };
     return {
       provider,
       // EC22: the Integration row id — the web rule form uses it
@@ -346,6 +363,7 @@ export class CourierService {
       connected: integration.status === "CONNECTED", status: integration.status, connectedAt: integration.createdAt,
       trackingUrlTemplate: integration.trackingUrlTemplate ?? null,
       accounts,
+      ...framework,
     };
   }
 
@@ -417,6 +435,77 @@ export class CourierService {
     return out;
   }
 
+  /**
+   * OU6: courier balance / billing visibility. Per provider,
+   * exactly one honest state:
+   *  - "ok"             a REAL balance read from the provider's
+   *                     own API (only Steadfast evidences one
+   *                     in-repo: GET /get_balance).
+   *  - "not_supported"  the provider's client/API in-repo has
+   *                     NO balance read (Pathao / RedX /
+   *                     eCourier / Paperfly) — balanceMinor
+   *                     stays null; NO number is ever invented.
+   *  - "not_configured" no CONNECTED account for the provider.
+   *  - "error"          the provider's balance read failed —
+   *                     its own message is carried, the figure
+   *                     stays null.
+   * State precedence: not_configured first (nothing can be
+   * read without an account), then capability, then the read.
+   * Paperfly is the one exception: as a development adapter it
+   * is always not_supported with the dev message, connected or
+   * not — it can never hold a verified account.
+   */
+  async getBalance(organizationId: string, providerValue?: string) {
+    const provider = this.providerOf(providerValue);
+    const capabilities = courierCapabilities(provider);
+    const base = {
+      provider,
+      supported: capabilities.balance,
+      live: capabilities.live,
+      developmentAdapter: provider === "paperfly",
+      balanceMinor: null as number | null,
+      currency: null as string | null,
+      fetchedAt: null as string | null,
+      message: null as string | null,
+    };
+    if (provider === "paperfly") {
+      return { ...base, state: "not_supported" as const, message: PAPERFLY_DEV_NOT_LIVE_MESSAGE };
+    }
+    const integration = await this.integration(organizationId, provider);
+    if (!integration || integration.status !== "CONNECTED" || !integration.credential) {
+      return { ...base, state: "not_configured" as const };
+    }
+    if (!capabilities.balance) {
+      return {
+        ...base, state: "not_supported" as const,
+        message: "এই কুরিয়ার অ্যাকাউন্টের ব্যালেন্স পড়ার কোনো API দেয় না — তাই কোনো সংখ্যা দেখানো হয় না।",
+      };
+    }
+    try {
+      const adapter = await this.clientFor(organizationId, provider);
+      if (!adapter.balance) {
+        return { ...base, state: "not_supported" as const };
+      }
+      const bal = await adapter.balance();
+      return {
+        ...base, state: "ok" as const,
+        balanceMinor: bal.balanceMinor, currency: bal.currency,
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (e) {
+      const err = courierError(e);
+      return { ...base, state: "error" as const, message: err.message };
+    }
+  }
+
+  /** OU6: the balance view for EVERY registered provider —
+   * one failing provider never fails the whole list. */
+  async getBalances(organizationId: string) {
+    const out = [];
+    for (const provider of PROVIDERS) out.push(await this.getBalance(organizationId, provider));
+    return out;
+  }
+
   /** Credentials are verified against the provider's REAL API before saving. */
   async connect(organizationId: string, actorId: string, dto: {
     provider?: string; apiKey?: string; secretKey?: string;
@@ -483,6 +572,14 @@ export class CourierService {
         await this.saveIntegration(organizationId, provider, creds, key);
         await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, packages } });
         return this.getConnection(organizationId, provider);
+      } else if (provider === "paperfly") {
+        // OU6 DEVELOPMENT ADAPTER: verify-before-save is
+        // impossible — Paperfly publishes no API contract to
+        // verify against (docs/gb5-courier-research.md). The
+        // connect attempt REFUSES honestly and saves NOTHING:
+        // no Integration row, no stored credential, no
+        // "connected" state a merchant could mistake for live.
+        throw new BadRequestException(`${PAPERFLY_DEV_NOT_LIVE_MESSAGE} কোনো credential যাচাই বা সংরক্ষণ করা হয়নি।`);
       }
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
@@ -607,6 +704,13 @@ export class CourierService {
     redx?: { deliveryAreaId?: number; pickupAreaId?: number; parcelWeightKg?: number };
   }) {
     const provider = this.providerOf(dto.provider);
+    if (provider === "paperfly") {
+      // OU6: development adapter — no quote surface exists.
+      return {
+        provider, quotable: false, chargeMinor: null, currency: "BDT",
+        reason: PAPERFLY_DEV_NOT_LIVE_MESSAGE,
+      };
+    }
     const client = await this.rawClientFor(organizationId, provider); // throws "যুক্ত নেই" when unconnected
     if (provider === "steadfast") {
       return {
@@ -707,6 +811,14 @@ export class CourierService {
     // providerOf validates an explicit provider (and yields the
     // historical default, steadfast, when none is given).
     let provider = this.providerOf(dto.provider);
+    // OU6: Paperfly is a DEVELOPMENT adapter — a booking
+    // attempt surfaces the not-live reason immediately, before
+    // any account resolution could misreport it as merely
+    // "not connected". (The framework adapter refuses too, as
+    // a second line of defence; no shipment is ever created.)
+    if (provider === "paperfly") {
+      throw new BadRequestException(PAPERFLY_DEV_NOT_LIVE_MESSAGE);
+    }
     const order = await (this.prisma as any).order.findFirst({ where: { id: dto.orderId, organizationId } });
     if (!order) throw new NotFoundException("Order not found in this organization");
     // CX12a: a practice order must never become a real parcel —
@@ -1577,8 +1689,18 @@ export class CourierService {
     if (!shipment) throw new NotFoundException("এই ট্র্যাকিং লিংকটি পাওয়া যায়নি");
     const org = await (this.prisma as any).organization.findFirst({ where: { id: shipment.organizationId } }).catch(() => null);
     const order = await (this.prisma as any).order.findFirst({ where: { id: shipment.orderId, organizationId: shipment.organizationId }, select: { externalNumber: true } }).catch(() => null);
+    // NF9 (FB4): the own-rider's latest fix rides this payload
+    // ONLY under the shared visibility rule (shipment status
+    // out_for_delivery / rider picked_up + rider sharing + an
+    // active assignment for this order); null otherwise — the
+    // page renders nothing, never a placeholder location.
+    const riderLocation = await customerRiderLocation(
+      this.prisma as any, shipment.organizationId, shipment.orderId,
+      { shipmentStatus: shipment.status },
+    ).catch(() => null);
     return {
       provider: shipment.provider,
+      riderLocation,
       trackingCode: shipment.trackingCode ?? null,
       // EC22: direct courier-site tracking link when the account
       // carries a template; null otherwise (page shows the number).

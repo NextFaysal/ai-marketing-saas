@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 
 /**
  * SN7 — Threads API client + container publisher
@@ -68,7 +68,10 @@ export const THREADS_MEDIA_INSIGHT_METRICS = ["views", "likes", "replies", "repo
 export class ThreadsClient {
   private readonly fetchFn: ThreadsFetch;
 
-  constructor(fetchFn?: ThreadsFetch) {
+  // @Optional(): see TelegramClient — the fetch injection
+  // is a test seam, not a Nest provider (pre-existing base
+  // bug found by FB1's boot smoke; same one-line fix).
+  constructor(@Optional() fetchFn?: ThreadsFetch) {
     this.fetchFn = fetchFn ?? ((url, init) => fetch(url, init as any) as any);
   }
 

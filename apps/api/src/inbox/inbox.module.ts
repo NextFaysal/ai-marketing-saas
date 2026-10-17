@@ -24,6 +24,7 @@ import { PracticeModeController } from "./practice-mode.controller";
 import { PracticeModeService } from "./practice-mode.service";
 import { CustomersModule } from "../customers/customers.module";
 import { FraudModule } from "../fraud/fraud.module";
+import { OrgBrainModule } from "../ai/org-brain.module";
 
 @Module({
   // CRM C5: CrmModule provides LeadAssignmentService for the
@@ -34,7 +35,10 @@ import { FraudModule } from "../fraud/fraud.module";
   // IN2: CustomersModule provides CustomersService (the canonical
   // customer merge/unmerge) for the inbox merge endpoints. It
   // imports Orders + Crm only — no cycle back into Inbox.
-  imports: [OrdersModule, CrmModule, InventoryModule, MessagingModule, CustomersModule, FraudModule],
+  // SA-B1 (P1): OrgBrainModule provides OrgBrainService for the
+  // inbox fact pack. It imports nothing but the global Prisma
+  // module, so this adds no cycle.
+  imports: [OrdersModule, CrmModule, InventoryModule, MessagingModule, CustomersModule, FraudModule, OrgBrainModule],
   controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController, SocialCommentsController, AiInstructionsController, PracticeController, PracticeModeController],
   providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService, SocialCommentsService, AiInstructionsService, PracticeService, PracticeModeService],
   exports: [InboxService, RealtimeService, TelegramService, EmailChannelService, SocialCommentsService, PracticeModeService],

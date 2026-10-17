@@ -14,6 +14,7 @@ import { phoneKeyLoose } from "../commerce/promotions";
 import { CheckoutGuardService } from "../fraud/checkout-guard.service";
 import { PromotionsService } from "../commerce/promotions.service";
 import { LoyaltyService } from "../commerce/loyalty.service";
+import { StoreCreditService } from "../membership/store-credit.service";
 import { hashShopSecret } from "./shop-auth.util";
 import { stockStateOf } from "./storefront.service";
 import type {
@@ -60,6 +61,10 @@ export class ShopAccountService {
     // always provides them in the real runtime).
     @Optional() private readonly promotions?: PromotionsService,
     @Optional() private readonly loyalty?: LoyaltyService,
+    // NF7 (FB3): the customer's own store-credit + tier surface.
+    // LAST param + Optional, same discipline; absent answers
+    // with the honest empty shape.
+    @Optional() private readonly storeCredit?: StoreCreditService,
   ) {}
 
   private t(name: string): any {
@@ -471,6 +476,129 @@ export class ShopAccountService {
     }
     const view = await this.loyalty.accountLoyalty(org.id, customer);
     return { ...view, referralCode };
+  }
+
+  // ================= MX14: on-site notification center =================
+
+  private serializeNotification(n: any) {
+    return {
+      id: n.id,
+      title: n.title,
+      body: n.body,
+      url: n.url ?? null,
+      broadcastId: n.broadcastId ?? null,
+      isRead: !!n.readAt,
+      readAt: n.readAt ? new Date(n.readAt).toISOString() : null,
+      createdAt: n.createdAt ? new Date(n.createdAt).toISOString() : null,
+    };
+  }
+
+  /**
+   * MX14 — the signed-in customer's own on-site notifications,
+   * newest first, with the unread count. Rows are resolved
+   * org-first + customer-scoped (the session's customer only) —
+   * there is no way to read another customer's center through
+   * this surface. A missing table (MX14 migration not run)
+   * answers with the honest empty shape instead of crashing the
+   * account area.
+   */
+  async listNotifications(orgSlug: string, token: string | null | undefined) {
+    const { org, customer } = await this.requireSessionCustomer(orgSlug, token);
+    const table = this.t("onsiteNotification");
+    if (!table?.findMany) return { items: [], unreadCount: 0 };
+    const rows: any[] =
+      (await table
+        .findMany({
+          where: { organizationId: org.id, customerId: customer.id },
+          orderBy: { createdAt: "desc" },
+          take: 100,
+        })
+        .catch(() => [])) ?? [];
+    const items = rows.map((n) => this.serializeNotification(n));
+    return { items, unreadCount: items.filter((n) => !n.isRead).length };
+  }
+
+  /** Stamp the linked MessageDelivery's read fields — the
+   * broadcast report funnel reads its "read" stage from these,
+   * so the shop open action and the report share one truth.
+   * Best-effort: a missing/legacy delivery never blocks the
+   * customer's own read state. */
+  private async stampDeliveryRead(deliveryId: string | null | undefined, at: Date): Promise<void> {
+    if (!deliveryId) return;
+    try {
+      await this.t("messageDelivery").update({
+        where: { id: deliveryId },
+        data: { readAt: at, deliveryStatus: "read" },
+      });
+    } catch {
+      /* the notification's own readAt already stands */
+    }
+  }
+
+  /**
+   * MX14 — mark ONE of the customer's own notifications read.
+   * The row must belong to (org, session customer): another
+   * customer's notification id answers the same 404 as a
+   * missing one (existence is never leaked across customers).
+   * Idempotent: an already-read notification keeps its original
+   * readAt. The real open stamps readAt here AND on the linked
+   * MessageDelivery (see stampDeliveryRead).
+   */
+  async markNotificationRead(orgSlug: string, token: string | null | undefined, notificationId: string) {
+    const { org, customer } = await this.requireSessionCustomer(orgSlug, token);
+    const table = this.t("onsiteNotification");
+    const row = table?.findFirst
+      ? await table
+          .findFirst({ where: { id: notificationId, organizationId: org.id, customerId: customer.id } })
+          .catch(() => null)
+      : null;
+    if (!row) throw new NotFoundException("নোটিফিকেশনটি পাওয়া যায়নি");
+    if (row.readAt) return this.serializeNotification(row);
+    const now = new Date();
+    const saved = await table.update({ where: { id: row.id }, data: { readAt: now } });
+    await this.stampDeliveryRead(row.deliveryId, now);
+    return this.serializeNotification(saved ?? { ...row, readAt: now });
+  }
+
+  /** MX14 — mark every unread notification of the session
+   * customer read (same delivery stamping as the single mark). */
+  async markAllNotificationsRead(orgSlug: string, token: string | null | undefined) {
+    const { org, customer } = await this.requireSessionCustomer(orgSlug, token);
+    const table = this.t("onsiteNotification");
+    if (!table?.findMany) return { marked: 0, unreadCount: 0 };
+    const unread: any[] =
+      (await table
+        .findMany({ where: { organizationId: org.id, customerId: customer.id, readAt: null } })
+        .catch(() => [])) ?? [];
+    if (!unread.length) return { marked: 0, unreadCount: 0 };
+    const now = new Date();
+    if (typeof table.updateMany === "function") {
+      await table.updateMany({
+        where: { organizationId: org.id, customerId: customer.id, readAt: null },
+        data: { readAt: now },
+      });
+    } else {
+      for (const n of unread) await table.update({ where: { id: n.id }, data: { readAt: now } });
+    }
+    for (const n of unread) await this.stampDeliveryRead(n.deliveryId, now);
+    return { marked: unread.length, unreadCount: 0 };
+  }
+
+  /**
+   * NF7 (FB3) — the signed-in customer's own store-credit
+   * surface: derived balance, ledger history, and their current
+   * membership tier. Session-resolved customer only — the
+   * service reads exactly that customer's rows, so one customer
+   * can never see another's credit. When the credit service is
+   * unavailable (unit harnesses), answer with the honest empty
+   * shape rather than failing the account page.
+   */
+  async creditView(orgSlug: string, token: string | null | undefined) {
+    const { org, customer } = await this.requireSessionCustomer(orgSlug, token);
+    if (!this.storeCredit) {
+      return { balanceMinor: "0", entries: [], tier: null };
+    }
+    return this.storeCredit.accountCredit(org.id, customer);
   }
 
   async updateProfile(orgSlug: string, token: string | null | undefined, dto: UpdateProfileDto) {

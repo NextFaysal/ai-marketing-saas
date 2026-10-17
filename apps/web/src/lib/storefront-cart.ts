@@ -138,6 +138,11 @@ export interface Quote {
   // AB2: gift-card redemption priced into this quote (last4 +
   // balances only — never the full code).
   giftCard?: { codeLast4: string; balanceMinor: string; discountMinor: string } | null;
+  // NF7: store-credit redemption priced into this quote (the
+  // identified customer's own derived balance + applied amount).
+  // The object only appears when the quote request asked to
+  // use credit.
+  storeCredit?: { balanceMinor: string; discountMinor: string } | null;
   // AB4 (AX5): deposit quote — per-kind amounts (paisa strings;
   // null = deposit not applicable to that payment kind).
   deposit?: { note: string; amounts: { cod: string | null; online: string | null; manual: string | null } } | null;
@@ -334,7 +339,7 @@ export async function setCartContact(
 
 export async function requestQuote(
   orgSlug: string,
-  body: { cartToken: string; district: string; couponCode?: string; referralCode?: string; buyerPhone?: string; giftWrap?: boolean; deliveryMethod?: string; pickupPointId?: string; loyaltyPoints?: number; giftCardCode?: string },
+  body: { cartToken: string; district: string; couponCode?: string; referralCode?: string; buyerPhone?: string; giftWrap?: boolean; deliveryMethod?: string; pickupPointId?: string; loyaltyPoints?: number; giftCardCode?: string; useStoreCredit?: boolean; storeCreditMinor?: string },
 ): Promise<Quote> {
   return publicFetch<Quote>(`${shopPath(orgSlug)}/quote`, {
     method: "POST",
@@ -356,13 +361,18 @@ export async function placeCheckout(
     loyaltyPoints?: number;
     // AB2: gift-card code to redeem (server resolves + prices it).
     giftCardCode?: string;
+    // NF7: pay with the identified customer's own store credit
+    // (server resolves the balance from the buyer identity and
+    // clamps; there is no code and no way to use another's).
+    useStoreCredit?: boolean;
+    storeCreditMinor?: string;
     // EC32: affiliate partner code (attribution only, no discount).
     affiliateCode?: string;
     paymentMethod?: "cod" | "bkash" | "nagad";
     // GC10: online gateway selection (own/platform). When
     // present the server places a non-COD online order and the
     // response's paymentClaimStatus is "online_pending".
-    onlinePayment?: { provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay"; source: "own" | "platform" };
+    onlinePayment?: { provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe"; source: "own" | "platform" };
     note?: string;
     advanceNote?: string;
     deliverySlotId?: string;

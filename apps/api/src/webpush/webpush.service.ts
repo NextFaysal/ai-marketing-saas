@@ -4,8 +4,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
   Optional,
 } from "@nestjs/common";
+import { MessagingService } from "../messaging/messaging.service";
 import * as webpush from "web-push";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -44,13 +46,40 @@ export const WEBPUSH_INLINE_CHUNK = 500;
 export const WEBPUSH_SWEEP_CAMPAIGNS_PER_RUN = 5;
 
 @Injectable()
-export class WebPushService {
+export class WebPushService implements OnModuleInit {
   private readonly logger = new Logger(WebPushService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly audit?: AuditService,
+    // MX12: MessagingService, for the push-send port
+    // registration below. MessagingModule imports nothing, so
+    // WebpushModule importing it adds no cycle. Optional + LAST
+    // positional arg (the codebase precedent) so every existing
+    // spec construction keeps working; absent ⇒ no registration
+    // and messaging push sends fail honestly (port absent).
+    @Optional() private readonly messaging?: MessagingService,
   ) {}
+
+  /**
+   * MX12 — register as messaging's push-send port so Messaging
+   * broadcasts on channel "push" send through THIS service's
+   * real web-push path (org VAPID + the web-push library),
+   * without Messaging ever importing webpush code or writing
+   * its tables (the MS8 registerWorkflowCreator / MX6
+   * registerInboxReplyPort pattern). Defensive typeof check:
+   * unit specs may build this service against a messaging stub
+   * without the registration method.
+   */
+  onModuleInit() {
+    const register = (this.messaging as any)?.registerPushSendPort;
+    if (typeof register === "function") {
+      register.call(this.messaging, {
+        sendPush: (organizationId: string, input: { subscriptionId: string; title: string; body: string; url?: string | null }) =>
+          this.sendForMessaging(organizationId, input),
+      });
+    }
+  }
 
   private t(name: string): any {
     return (this.prisma as any)[name];
@@ -409,6 +438,83 @@ export class WebPushService {
       });
     }
     return { campaigns: drained.length, drained };
+  }
+
+  // ================= MX12: messaging push-send port =================
+
+  /**
+   * The port's send: ONE real web-push send to ONE subscription
+   * of this org, on behalf of a Messaging broadcast. This path
+   * deliberately creates NO WebPushCampaign / WebPushDelivery
+   * rows — the broadcast's own MessageDelivery rows are the
+   * record (Messaging must not grow a parallel campaign
+   * system, and this system's campaigns stay the dashboard
+   * broadcaster's own). Outcomes mirror deliverTo's discipline:
+   *  - the push service accepts (sendNotification resolves) →
+   *    { outcome: "sent" } with its real statusCode;
+   *  - 404/410 → the subscription is marked "gone" HERE (the
+   *    table's owner) and the outcome is "gone" with the real
+   *    error — Messaging records a failed delivery and future
+   *    resolves skip the row because it is no longer active;
+   *  - anything else → "failed" with the real error.
+   * A disabled push setting, a missing keypair, or a
+   * subscription that is not this org's ACTIVE row is a
+   * "failed" outcome with the honest reason — never a throw
+   * across the port and never a fake success.
+   */
+  async sendForMessaging(orgId: string, input: {
+    subscriptionId: string; title: string; body: string; url?: string | null;
+  }): Promise<{ outcome: "sent" | "gone" | "failed"; statusCode?: number | null; error?: string }> {
+    const title = String(input?.title ?? "").trim();
+    const body = String(input?.body ?? "").trim();
+    if (!title || title.length > 120) return { outcome: "failed", error: "Push title is required and must be at most 120 characters" };
+    if (!body || body.length > 300) return { outcome: "failed", error: "Push body is required and must be at most 300 characters" };
+    let url: string | null = null;
+    if (input?.url !== undefined && input?.url !== null && String(input.url).trim() !== "") {
+      const raw = String(input.url).trim();
+      if (!raw.startsWith("/") || raw.startsWith("//") || raw.length > 500) {
+        return { outcome: "failed", error: "Push URL must be a shop-relative path — external URLs are not allowed" };
+      }
+      url = raw;
+    }
+    const setting = await this.findSetting(orgId);
+    if (setting?.enabled !== true) {
+      return { outcome: "failed", error: "Web push is not enabled for this organization — enable it in the Web Push settings first" };
+    }
+    const sub = await this.t("webPushSubscription").findFirst({
+      where: { id: input.subscriptionId, organizationId: orgId },
+    }).catch(() => null);
+    if (!sub) return { outcome: "failed", error: "Push subscription not found in this organization" };
+    if (sub.status !== "active") return { outcome: "failed", error: `Push subscription is ${String(sub.status)} — it is no longer active` };
+    let keys: { publicKey: string; privateKey: string };
+    try {
+      keys = this.requireKeys(setting);
+    } catch (e) {
+      return { outcome: "failed", error: e instanceof Error ? e.message : "VAPID keys are not available" };
+    }
+    webpush.setVapidDetails(this.vapidSubject(), keys.publicKey, keys.privateKey);
+    // The payload is EXACTLY what the shop service worker
+    // renders: title, body, url — no icon, no image, no
+    // action buttons (the worker ignores anything else).
+    const payload = JSON.stringify({ title, body, url });
+    try {
+      const result: any = await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        payload,
+        { TTL: 86400 },
+      );
+      return { outcome: "sent", statusCode: typeof result?.statusCode === "number" ? result.statusCode : null };
+    } catch (e) {
+      const statusCode = typeof (e as any)?.statusCode === "number" ? (e as any).statusCode : null;
+      const message = (e instanceof Error ? e.message : String(e ?? "send failed")).slice(0, 300);
+      if (statusCode === 404 || statusCode === 410) {
+        await this.t("webPushSubscription").update({
+          where: { id: sub.id }, data: { status: "gone" },
+        }).catch(() => undefined);
+        return { outcome: "gone", statusCode, error: message };
+      }
+      return { outcome: "failed", statusCode, error: message };
+    }
   }
 
   // ================= Campaigns (staff) =================

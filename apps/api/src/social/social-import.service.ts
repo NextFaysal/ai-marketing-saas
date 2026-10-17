@@ -371,6 +371,18 @@ export class SocialImportService {
    * other URL→bytes fetch in this codebase; there is no second
    * fetch path). The bytes are decoded as UTF-8.
    */
+  /**
+   * NF2 — the guarded image fetch as raw BYTES (the Video Studio
+   * downloads a product's remote gallery images through exactly
+   * the same SSRF-guarded path as every other URL→bytes fetch in
+   * this codebase; there is no second fetch path). The caller
+   * sniffs the bytes itself — this method guarantees only the
+   * guarded transport + the image byte cap.
+   */
+  async fetchGuardedImageBytes(startUrl: string): Promise<Buffer> {
+    return this.fetchGuardedImage(startUrl);
+  }
+
   async fetchGuardedText(startUrl: string, maxBytes = 1_000_000): Promise<string> {
     const bytes = await this.fetchGuardedBytes(
       startUrl, maxBytes,

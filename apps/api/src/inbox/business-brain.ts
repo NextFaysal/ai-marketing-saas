@@ -26,6 +26,22 @@ export function tokenize(text: string): string[] {
     .filter((t) => t.length > 1 && !STOPWORDS.has(t));
 }
 
+/**
+ * SA-B3: the number guard's extraction, shared. Numbers in a
+ * text, normalized (Bengali digits -> Latin, thousands
+ * separators stripped, numeric-normalized so "১,২০০" and "1200"
+ * compare equal). This is the EXACT logic the inbox autopilot's
+ * deterministic guard has always run (InboxService.extractNumbers
+ * delegates here since SA-B3) — the Answer Store's live
+ * re-verification compares stored-answer numbers against live
+ * source numbers with the same extraction, so a stored answer is
+ * judged by precisely the rule that admitted it.
+ */
+export function extractGuardNumbers(input: string): string[] {
+  const normalized = String(input ?? "").replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString()).replace(/,/g, "");
+  return (normalized.match(/\d+(?:\.\d+)?/g) ?? []).map((n) => String(Number(n)));
+}
+
 export interface KnowledgeMatch { doc: any; score: number }
 
 /**

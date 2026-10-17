@@ -85,6 +85,35 @@ describe("AB8 buildShopManifest", () => {
   });
 });
 
+describe("NF14 cross-shop isolation", () => {
+  it("one shop's manifest never carries another shop's branding", () => {
+    const a = buildShopManifest(
+      home({ organization: { name: "Alpha Org", brandName: "Alpha Fashion", logoUrl: "https://cdn.example/alpha.png", primaryColor: "#dc2626" } }),
+      "alpha-shop",
+    );
+    const b = buildShopManifest(
+      home({ organization: { name: "Beta Org", brandName: "Beta Mart", logoUrl: null, primaryColor: "#0ea5e9", whiteLabel: true } }),
+      "beta-shop",
+    );
+    expect(a.name).toBe("Alpha Fashion");
+    expect(b.name).toBe("Beta Mart");
+    expect(a.theme_color).toBe("#dc2626");
+    expect(b.theme_color).toBe("#0ea5e9");
+    expect(a.start_url).toBe("/shop/alpha-shop");
+    expect(b.start_url).toBe("/shop/beta-shop");
+    expect(a.scope).toBe("/shop/alpha-shop/");
+    expect(b.scope).toBe("/shop/beta-shop/");
+    // No field of B's manifest mentions A (and vice versa).
+    expect(JSON.stringify(b)).not.toContain("Alpha");
+    expect(JSON.stringify(b)).not.toContain("alpha");
+    expect(JSON.stringify(a)).not.toContain("Beta");
+    expect(JSON.stringify(a)).not.toContain("beta");
+    // Icons follow each shop's own branding too.
+    expect(a.icons[0].src).toBe("https://cdn.example/alpha.png");
+    expect(b.icons[0].src).toBe("/shop/beta-shop/icon.svg");
+  });
+});
+
 describe("AB8 buildShopIconSvg + helpers", () => {
   it("renders a 512 rounded rect in the primary color with the first letter", () => {
     const svg = buildShopIconSvg(home({ organization: { name: "Dhaka Store", brandName: null, logoUrl: null, primaryColor: "#dc2626" } }));

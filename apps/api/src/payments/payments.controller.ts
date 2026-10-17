@@ -10,7 +10,7 @@ class CheckoutDto {
   @IsString() @MaxLength(20) plan!: string;
   @IsString() @MinLength(11) @MaxLength(15) phone!: string;
   @IsOptional() @IsString() @MaxLength(24) couponCode?: string;
-  @IsOptional() @IsIn(["sslcommerz", "bkash"]) gateway?: string;
+  @IsOptional() @IsIn(["sslcommerz", "bkash", "stripe"]) gateway?: string;
   @IsOptional() @IsIn(["monthly", "yearly"]) cycle?: string;
 }
 
@@ -130,6 +130,33 @@ export class PaymentsPublicController {
   @Public() @Get("return")
   browserReturnGet(@Req() req: Request, @Res() res: Response) {
     return res.redirect(302, this.payments.returnRedirect((req.query ?? {}) as Record<string, any>));
+  }
+}
+
+/**
+ * OU5 — Stripe endpoints for platform billing. The webhook is
+ * the ONLY activation path: its signature is verified over the
+ * RAW body (main.ts runs with rawBody: true) against the
+ * platform's sealed webhook secret inside the service, and a
+ * verification/amount failure answers 400 (Stripe's documented
+ * failure response). The browser return just redirects to the
+ * billing page with an informational flag.
+ */
+@Controller("public/payments/stripe")
+export class StripePublicController {
+  constructor(private readonly payments: PaymentsService) {}
+
+  @Public() @Post("webhook")
+  async webhook(@Req() req: Request, @Res() res: Response) {
+    const rawBody = (req as any).rawBody?.toString("utf8") ?? "";
+    const signature = req.headers["stripe-signature"];
+    const out = await this.payments.handleStripeWebhook(rawBody, typeof signature === "string" ? signature : undefined);
+    return res.status(out?.ok ? 200 : 400).json(out);
+  }
+
+  @Public() @Get("return")
+  stripeReturn(@Req() req: Request, @Res() res: Response) {
+    return res.redirect(302, this.payments.stripeReturnRedirect((req.query ?? {}) as Record<string, any>));
   }
 }
 

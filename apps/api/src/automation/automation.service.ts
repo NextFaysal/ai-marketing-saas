@@ -15,6 +15,17 @@ import { AudiencesService } from "../audiences/audiences.service";
 import { InboxService } from "../inbox/inbox.service";
 import { EmailChannelService } from "../inbox/channels/email.service";
 import { ProactiveService } from "../ai/proactive.service";
+import { KnowledgeIndexingService } from "../ai/knowledge-indexing.service";
+import { VideoStudioService } from "../video-studio/video-studio.service";
+import { BookingService } from "../booking/booking.service";
+import { FraudNetworkService } from "../fraud-network/fraud-network.service";
+import { WebsiteLearningService } from "../ai/website-learning.service";
+import { ConversationMiningService } from "../ai/conversation-mining.service";
+import { PerformanceLearningService } from "../ai/performance-learning.service";
+import { AdsIntelligenceService } from "../ai/ads-intelligence.service";
+import { CreativeLearningService } from "../ai/creative-learning.service";
+import { CompetitorIntelligenceService } from "../ai/competitor-intelligence.service";
+import { VoiceLearningService } from "../ai/voice-learning.service";
 import { LeadsService } from "../crm/leads.service";
 import { PaymentsService } from "../payments/payments.service";
 import { SocialPublishService } from "../social/social-publish.service";
@@ -55,6 +66,18 @@ export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers", "woo_reviews",
   "meta_insights", "google_insights", "tiktok_insights",
   "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "competitor_multi_sync", "weekly_ads_report", "monthly_report", "saved_report_delivery", "meta_status_sync", "audience_refresh", "dayparting",
+  // CA12 (Campaign Builder Advanced, CB3): plan-level
+  // scheduled pause/resume windows (CampaignPlan.pauseAt /
+  // resumeAt). Per-org enablement like every sweep here:
+  // no job row = nothing runs.
+  "plan_schedule_sweep",
+  // CA18 (Campaign Builder Advanced, CB5): pacing alerts —
+  // evaluates live plans' CN2 pacing + CA18 runway from
+  // REAL DailyAdMetric rows and raises/dedupes/clears
+  // PlanPacingAlert rows. Alert-only: it never pauses a
+  // campaign and never moves a budget. Per-org enablement
+  // like every sweep here: no job row = nothing runs.
+  "pacing_alert_sweep",
   "subscription_sweep", "dunning_reminders", "billing_reminders", "audit_retention",
   "inbox_assignment_sweep", "email_sync", "inbox_retention",
   "lead_followup_sweep", "auto_renew", "ad_spend_watchdog", "social_publish_due", "broadcast_send_sweep",
@@ -138,6 +161,70 @@ export const JOB_TYPES = [
   // backup preference is enabled and due are acted on; per-org
   // enablement).
   "org_backup_sweep",
+  // SA-B2 (P2): knowledge embedding backfill — (re)indexes the
+  // org's knowledge documents + ACTIVE products into
+  // KnowledgeEmbedding for hybrid Brain retrieval. Idempotent
+  // (content-hash skip); per-org enablement like every sweep.
+  "knowledge_index_sweep",
+  // NF2 (FB1): short-video render sweep — renders the org's
+  // queued VideoProjects through the local ffmpeg template
+  // provider (per-org enablement like every sweep; a missing
+  // ffmpeg binary fails each project honestly, labelled).
+  "video_render_sweep",
+  // NF4 (FB2): service-booking reminder sweep — confirmed
+  // bookings starting within 24h get ONE SMS reminder attempt
+  // through the shared sendShopSms path (per-org enablement
+  // like every sweep; the booking row is stamped before the
+  // attempt, so a failed send is recorded, never resent).
+  "service_booking_reminder_sweep",
+  // NF13 (FB5): platform fraud-network sweep — an opted-in
+  // org's terminal orders contribute their outcome (hash-only)
+  // to the shared aggregate. Opt-in is checked inside the
+  // service; a non-opted-in org's sweep is an honest skip.
+  // Per-org enablement like every sweep.
+  "fraud_network_sweep",
+  // SA-B4 (P5b): website learning refresh — re-fetches the org's
+  // OWN public website (robots + SSRF discipline) into website
+  // KnowledgeDocuments; unchanged pages hash-skip. The job's
+  // target org is ignored: the sweep walks every org whose
+  // BusinessProfile enables website learning and has a URL.
+  "website_learning_sweep",
+  // SA-B4 (P6): conversation learning — mines resolved inbox
+  // conversations into SUGGESTED LearnedItems (never live
+  // knowledge) for orgs that OPTED IN
+  // (BusinessProfile.conversationLearningEnabled, default OFF).
+  "conversation_learning_sweep",
+  // SA-B5 (P7): performance learning — recomputes the trailing
+  // 7/30-day PerformanceSnapshots (deterministic aggregates, no
+  // LLM) and queues the top findings as suggested LearnedItems.
+  // The job's target org is ignored: the sweep walks every org
+  // and skips orgs with no source data in the window.
+  "performance_learning_sweep",
+  // SA-B5 (P8a): brand voice learning — summarises the org's
+  // staff reply style into a SUGGESTED AiBrandVoiceProfile for
+  // opted-in orgs only (same D4 gate as conversation mining);
+  // nothing goes live without a human activation.
+  "brand_voice_learning_sweep",
+  // SA-B14 (A1): ads intelligence — computes the deterministic
+  // ads digest per org and queues its top findings as SUGGESTED
+  // LearnedItems (sourceType "ads"; approval forces INTERNAL).
+  // The job's target org is ignored: the sweep walks every org
+  // and skips orgs with no campaign-level ad data in the window.
+  "ads_intelligence_sweep",
+  // SA-B16 (A3): creative intelligence — mines deterministic
+  // creative patterns (pooled CTR vs baseline, named floors)
+  // per org and queues them as SUGGESTED LearnedItems
+  // (sourceType "creative"; approval forces INTERNAL). The
+  // job's target org is ignored: the sweep walks every org
+  // and skips orgs with no qualifying creatives in the window.
+  "creative_learning_sweep",
+  // SA-B17 (C1): competitor intelligence — computes the
+  // deterministic competitor digest per org and queues its
+  // threshold findings as SUGGESTED LearnedItems
+  // (sourceType "competitor"; approval forces INTERNAL). The
+  // job's target org is ignored: the sweep walks every org
+  // and skips orgs tracking no competitors.
+  "competitor_intelligence_sweep",
 ] as const;
 
 
@@ -190,6 +277,10 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতি ঘণ্টায়: সব Published Campaign Plan-এর Meta Status Sync হবে — Meta-তে বাইরে থেকে বদলালে এখানেও তা মিলে যাবে।" },
   { key: "audience_refresh", name: "Audience Refresh (টেমপ্লেট)", type: "audience_refresh", targetKind: "org", intervalMinutes: 360,
     descriptionBn: "প্রতি ৬ ঘণ্টায়: সব Audience-এর সদস্য তালিকা হালনাগাদ ডেটা দিয়ে Refresh হবে।" },
+  { key: "plan_schedule_sweep", name: "Plan Schedule Sweep (টেমপ্লেট)", type: "plan_schedule_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: Campaign Plan-এ বসানো Pause/Resume Window-এর সময় হয়ে গেলে তা কার্যকর হবে — Pause/Resume Meta-নিশ্চিত পথেই হয়, প্রতিটি Window ঠিক একবারই চলে। এই Job না থাকলে কোনো Window কার্যকর হবে না।" },
+  { key: "pacing_alert_sweep", name: "Pacing Alert Sweep (টেমপ্লেট)", type: "pacing_alert_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: Live Plan-গুলোর Pacing যাচাই হবে — শেষ ৭ দিনের আসল খরচের গতিতে Lifetime Budget Plan-এর শেষ তারিখের অন্তত ২ দিন আগে ফুরিয়ে যাওয়ার Projection থাকলে, অথবা আজ পর্যন্ত প্রত্যাশিত খরচের চেয়ে ২০%-এর বেশি খরচ হয়ে গেলে Plan-এর তৈরি-কর্তা Notification পাবেন (একই সতর্কতা ২৪ ঘণ্টায় একবারের বেশি নয়)। এটি শুধু সতর্কতা — কোনো Campaign নিজে থেকে Pause হবে না, কোনো Budget বদলাবে না। এই Job না থাকলে কোনো Pacing Alert আসবে না।" },
   { key: "media_lifecycle_sweep", name: "Media Lifecycle Sweep (টেমপ্লেট)", type: "media_lifecycle_sweep", targetKind: "org", intervalMinutes: 1440,
     descriptionBn: "প্রতিদিন একবার: মিডিয়া লাইব্রেরির মেয়াদ-শেষ ট্র্যাশ আসলেই মোছা হবে, অসম্পূর্ণ আপলোডের পুরনো quarantine ফাইল পরিষ্কার হবে, হারানো/অনাথ ফাইলের রিপোর্ট তৈরি হবে, আর backup bucket সেট থাকলে registry স্ন্যাপশট ও নতুন প্রাইভেট ফাইলের কপি যাবে।" },
   { key: "product_image_mirror_sweep", name: "Product Image Auto-Mirror (টেমপ্লেট)", type: "product_image_mirror_sweep", targetKind: "org", intervalMinutes: 1440,
@@ -260,6 +351,10 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতি দিনে একবার: Connect Center-এ Wallet Payout Schedule চালু থাকলে এবং আজই নির্ধারিত দিন (সাপ্তাহিক/মাসিক) হলে, উপলব্ধ ব্যালেন্স নির্ধারিত সীমার সমান বা বেশি হলে পুরো উপলব্ধ পরিমাণের একটি pending Payout অনুরোধ নিজে থেকে তৈরি হবে। এই Job কখনো approve করে না বা টাকা পাঠায় না — অনুমোদন ও mark-paid আগের মতোই অ্যাডমিনের হাতে। একই দিনে দ্বিতীয়বার চললেও নতুন অনুরোধ তৈরি হবে না।" },
   { key: "inbox_sla_sweep", name: "Inbox SLA Sweep (টেমপ্লেট)", type: "inbox_sla_sweep", targetKind: "org", intervalMinutes: 5,
     descriptionBn: "প্রতি ৫ মিনিটে: প্রথম উত্তরের অপেক্ষায় থাকা কথোপকথনের SLA যাচাই হবে (সীমা = Inbox সেটিংসের স্তরভিত্তিক নিয়ম: VIP → Channel অনুযায়ী → সাধারণ)। সীমার ৭৫% পেরোলে দায়িত্বপ্রাপ্ত এজেন্ট সতর্কতা পাবেন; Breach-এর পর সেটিংসের Escalation বিলম্ব পেরোলে Team Lead জরুরি সতর্কতা পাবেন (সেটিংসে বন্ধ করা যায়); Auto-Reassign সেটিংসে চালু থাকলেই কেবল কথোপকথন সবচেয়ে কম ব্যস্ত যোগ্য এজেন্টের কাছে যাবে। প্রতিটি ধাপ কথোপকথনপ্রতি একবারই হয় এবং Audit-এ লেখা থাকে।" },
+  { key: "service_booking_reminder_sweep", name: "Service Booking Reminder (টেমপ্লেট)", type: "service_booking_reminder_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: আগামী ২৪ ঘণ্টার মধ্যে শুরু হতে যাওয়া নিশ্চিত (confirmed) সার্ভিস বুকিংগুলোর অতিথিকে SMS রিমাইন্ডার পাঠানো হবে — বুকিংপ্রতি একবারই; পাঠানোর আগেই বুকিংয়ে স্ট্যাম্প পড়ে, তাই পাঠানো ব্যর্থ হলেও (SMS চ্যানেল সেটআপ না থাকলে failed_no_channel হিসেবে রেকর্ড থাকে) আবার পাঠানো হয় না।" },
+  { key: "fraud_network_sweep", name: "Fraud Network Sweep (টেমপ্লেট)", type: "fraud_network_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: ফ্রড নেটওয়ার্কে যোগ দেওয়া (opt-in) দোকানের চূড়ান্ত ফলাফলের অর্ডারগুলোর ফলাফল হ্যাশ-আকারে সম্মিলিত হিসাবে যোগ হবে — শুধু সংখ্যা শেয়ার হয়; ফোন নম্বর, নাম বা অর্ডারের বিবরণ কিছুই যায় না। যোগ না দিলে এই Job কিছুই করবে না। প্রতিটি অর্ডার ঠিক একবারই গণনা হয়।" },
 ];
 
 export const RULE_METRICS = [
@@ -414,6 +509,39 @@ export class AutomationService implements OnModuleInit {
     // SocialSyndicationService; appended after SN9, again LAST,
     // for the same positional-construction discipline.
     @Optional() private readonly socialSyndication?: SocialSyndicationService,
+    // SA-B2 (P2): knowledge embedding backfill sweep —
+    // OrgBrainModule is a leaf (global Prisma only); no cycle.
+    // Appended LAST for the same positional discipline.
+    @Optional() private readonly knowledgeIndexing?: KnowledgeIndexingService,
+    // NF2 (FB1): video render sweep — VideoStudioModule imports
+    // SocialModule only; nothing in it imports AutomationModule,
+    // so this adds no cycle. Appended LAST.
+    @Optional() private readonly videoStudio?: VideoStudioService,
+    // NF4 (FB2): booking reminder sweep — BookingModule imports
+    // StorefrontModule + AuditModule only; nothing in it imports
+    // AutomationModule, so this adds no cycle. Appended LAST.
+    @Optional() private readonly booking?: BookingService,
+    // NF13 (FB5): fraud-network sweep — FraudNetworkModule is
+    // a leaf (global Prisma/Audit only); nothing in it imports
+    // AutomationModule, so this adds no cycle. Appended LAST.
+    @Optional() private readonly fraudNetwork?: FraudNetworkService,
+    // SA-B4 (P5/P6): website learning + conversation mining
+    // sweeps — same OrgBrainModule leaf, appended LAST again.
+    @Optional() private readonly websiteLearning?: WebsiteLearningService,
+    @Optional() private readonly conversationMining?: ConversationMiningService,
+    // SA-B5 (P7/P8a): performance + brand voice learning sweeps —
+    // same OrgBrainModule leaf, appended LAST again.
+    @Optional() private readonly performanceLearning?: PerformanceLearningService,
+    @Optional() private readonly voiceLearning?: VoiceLearningService,
+    // SA-B14 (A1): ads intelligence findings sweep — same
+    // OrgBrainModule leaf, appended LAST again.
+    @Optional() private readonly adsIntelligence?: AdsIntelligenceService,
+    // SA-B16 (A3): creative pattern mining sweep — same
+    // OrgBrainModule leaf, appended LAST again.
+    @Optional() private readonly creativeLearning?: CreativeLearningService,
+    // SA-B17 (C1): competitor findings sweep — same
+    // OrgBrainModule leaf, appended LAST again.
+    @Optional() private readonly competitorIntelligence?: CompetitorIntelligenceService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -970,9 +1098,32 @@ export class AutomationService implements OnModuleInit {
       case "web_push_sweep": return this.webpush ? this.webpush.runWebPushSweep(orgId) : { skipped: "web push unavailable" };
       case "data_export_generate": return this.dataExports ? this.dataExports.runPendingForOrg(orgId) : { skipped: "data exports unavailable" };
       case "org_backup_sweep": return this.dataExports ? this.dataExports.runBackupSweepForOrg(orgId) : { skipped: "data exports unavailable" };
+      case "knowledge_index_sweep": return this.knowledgeIndexing ? this.knowledgeIndexing.backfillOrg(orgId) : { skipped: "knowledge indexing unavailable" };
+      case "video_render_sweep": return this.videoStudio ? this.videoStudio.runRenderSweep(orgId) : { skipped: "video studio unavailable" };
+      case "service_booking_reminder_sweep": return this.booking ? this.booking.runReminderSweep(orgId) : { skipped: "booking unavailable" };
+      case "fraud_network_sweep": return this.fraudNetwork ? this.fraudNetwork.runSweep(orgId) : { skipped: "fraud network unavailable" };
+      case "website_learning_sweep": return this.websiteLearning ? this.websiteLearning.runSweep() : { skipped: "website learning unavailable" };
+      case "conversation_learning_sweep": return this.conversationMining ? this.conversationMining.runSweep() : { skipped: "conversation mining unavailable" };
+      case "performance_learning_sweep": return this.performanceLearning ? this.performanceLearning.runSweep() : { skipped: "performance learning unavailable" };
+      case "brand_voice_learning_sweep": return this.voiceLearning ? this.voiceLearning.runSweep() : { skipped: "brand voice learning unavailable" };
+      case "ads_intelligence_sweep": return this.adsIntelligence ? this.adsIntelligence.runSweep() : { skipped: "ads intelligence unavailable" };
+      case "creative_learning_sweep": return this.creativeLearning ? this.creativeLearning.runSweep() : { skipped: "creative learning unavailable" };
+      case "competitor_intelligence_sweep": return this.competitorIntelligence ? this.competitorIntelligence.runSweep() : { skipped: "competitor intelligence unavailable" };
       case "audience_refresh": {
         if (!this.audiences) throw new BadRequestException("Audience service is not available in this deployment");
         return this.audiences.refreshAllMemberships(orgId, actor);
+      }
+      case "plan_schedule_sweep": {
+        // CA12: due plan pause/resume windows for THIS org,
+        // executed exactly once each via the *ExecutedAt
+        // claim stamps (see CampaignsService.scanPlanSchedules).
+        return this.campaigns.scanPlanSchedules(orgId);
+      }
+      case "pacing_alert_sweep": {
+        // CA18: pacing alert evaluation for THIS org —
+        // raises/dedupes/clears PlanPacingAlert rows from
+        // real metric rows (see CampaignsService.scanPacingAlerts).
+        return this.campaigns.scanPacingAlerts(orgId);
       }
       default: throw new BadRequestException(`Unknown job type: ${job.type}`);
     }
@@ -1343,14 +1494,31 @@ export class AutomationService implements OnModuleInit {
   }
 
   // ---------- Automation rules ----------
+  /** CA10: rule modes. "execute" = the pre-CA10 behaviour
+   * (a triggered rule acts at once); "suggest" = a trigger
+   * stores a pending RuleSuggestion and NOTHING executes
+   * until a human approves it in the queue. */
+  static readonly RULE_MODES = ["execute", "suggest"] as const;
+  /** CA10: pending suggestions older than this are lazily
+   * marked expired on read — a week-old pause suggestion
+   * must never be one click away from executing. */
+  static readonly SUGGESTION_TTL_DAYS = 7;
+
   async createRule(organizationId: string, actorId: string, dto: {
     name: string; metric: string; comparator: string; threshold: string; windowDays?: number; action: string; campaignPlanId?: string;
     actionConfig?: { percent?: number; minDailyMinor?: number; maxDailyMinor?: number; cooldownHours?: number };
+    mode?: string;
   }) {
     if (!(RULE_METRICS as readonly string[]).includes(dto.metric)) throw new BadRequestException("Invalid metric");
     if (!["gt", "lt"].includes(dto.comparator)) throw new BadRequestException("Invalid comparator");
     if (!(RULE_ACTIONS as readonly string[]).includes(dto.action)) throw new BadRequestException("Invalid action");
     if (Number.isNaN(Number(dto.threshold))) throw new BadRequestException("threshold must be numeric");
+    // CA10 default decision: NEW rules are suggest-mode —
+    // no new rule silently gains the power to pause or scale
+    // a live campaign. Pre-CA10 rows keep "execute" via the
+    // migration default; the mode is changeable per rule.
+    const mode = dto.mode ?? "suggest";
+    if (!(AutomationService.RULE_MODES as readonly string[]).includes(mode)) throw new BadRequestException("mode must be execute or suggest");
     if (dto.action === "scale_budget") {
       const percent = Number(dto.actionConfig?.percent ?? 0);
       if (!percent || percent < -90 || percent > 200) throw new BadRequestException("scale_budget needs actionConfig.percent between -90 and 200");
@@ -1361,6 +1529,7 @@ export class AutomationService implements OnModuleInit {
         threshold: dto.threshold, windowDays: dto.windowDays ?? 3, action: dto.action,
         campaignPlanId: dto.campaignPlanId ?? null, enabled: true, createdById: actorId,
         actionConfig: dto.actionConfig ?? undefined,
+        mode,
       },
     });
     return rule;
@@ -1424,10 +1593,17 @@ export class AutomationService implements OnModuleInit {
     return (this.prisma as any).automationRule.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" } });
   }
 
-  async updateRule(organizationId: string, ruleId: string, dto: { enabled?: boolean }) {
+  async updateRule(organizationId: string, ruleId: string, dto: { enabled?: boolean; mode?: string }) {
     const rule = await (this.prisma as any).automationRule.findFirst({ where: { id: ruleId, organizationId } });
     if (!rule) throw new NotFoundException("Rule not found");
-    return (this.prisma as any).automationRule.update({ where: { id: ruleId }, data: { ...(dto.enabled !== undefined ? { enabled: dto.enabled } : {}) } });
+    if (dto.mode !== undefined && !(AutomationService.RULE_MODES as readonly string[]).includes(dto.mode)) throw new BadRequestException("mode must be execute or suggest");
+    return (this.prisma as any).automationRule.update({
+      where: { id: ruleId },
+      data: {
+        ...(dto.enabled !== undefined ? { enabled: dto.enabled } : {}),
+        ...(dto.mode !== undefined ? { mode: dto.mode } : {}),
+      },
+    });
   }
 
   async deleteRule(organizationId: string, ruleId: string) {
@@ -1518,6 +1694,17 @@ export class AutomationService implements OnModuleInit {
         if (value === null) { results.push({ ruleId: rule.id, planId: plan.id, triggered: false, detail: `${detail} - not evaluated (no data)` }); continue; }
         const triggered = evaluateThreshold(value, rule.comparator, Number(rule.threshold));
         if (!triggered) { results.push({ ruleId: rule.id, planId: plan.id, triggered: false, detail }); continue; }
+
+        // CA10: SUGGEST mode — the rule fired, but NOTHING
+        // executes. The action it would take is queued as a
+        // pending RuleSuggestion for a human decision. The
+        // "alert" action only records a notice (it moves no
+        // money and changes no status), so alert rules keep
+        // their behaviour in both modes.
+        if ((rule as any).mode === "suggest" && rule.action !== "alert") {
+          results.push(await this.queueRuleSuggestion(organizationId, rule, plan, { value, detail, breachingAds }));
+          continue;
+        }
 
         // Triggered. Pause only makes sense for ACTIVE campaigns; alerts
         // are rate-limited to one per rule+plan per 24 hours.
@@ -1634,6 +1821,195 @@ export class AutomationService implements OnModuleInit {
     return (this.prisma as any).automationRun.findMany({
       where: { organizationId }, orderBy: { createdAt: "desc" }, take: Math.min(100, limit),
     });
+  }
+
+  // ---------- CA10: rule suggestion queue ----------
+
+  /** The suggest-mode half of a trigger: apply the SAME
+   * state guards execute mode applies (a pause suggestion
+   * for a campaign that is not ACTIVE is pointless, a
+   * scale suggestion inside its cooldown is noise), dedupe
+   * against an already-pending twin, then store the
+   * suggestion with its evidence. Returns the evaluate
+   * result entry. Creates NO platform change. */
+  private async queueRuleSuggestion(
+    organizationId: string,
+    rule: any,
+    plan: any,
+    ctx: { value: number; detail: string; breachingAds: { adExternalId: string }[] },
+  ): Promise<{ ruleId: string; planId: string; triggered: boolean; detail: string }> {
+    const { value, detail, breachingAds } = ctx;
+    if (rule.action === "activate_campaign" && plan.metaStatus !== "PAUSED") {
+      return { ruleId: rule.id, planId: plan.id, triggered: false, detail: `${detail} - condition met but campaign is not PAUSED` };
+    }
+    if (rule.action === "pause_campaign" && plan.metaStatus !== "ACTIVE") {
+      return { ruleId: rule.id, planId: plan.id, triggered: false, detail: `${detail} - condition met but campaign is not ACTIVE` };
+    }
+    if (rule.action === "pause_ad" && breachingAds.length === 0) {
+      return { ruleId: rule.id, planId: plan.id, triggered: false, detail: `${detail} - pause_ad needs an ad-level metric breach` };
+    }
+    const cfg: any = rule.actionConfig ?? {};
+    if (rule.action === "scale_budget") {
+      const cooldownMs = Math.max(1, Number(cfg.cooldownHours ?? 24)) * 3600 * 1000;
+      if (rule.lastTriggeredAt && Date.now() - new Date(rule.lastTriggeredAt).getTime() < cooldownMs) {
+        return { ruleId: rule.id, planId: plan.id, triggered: false, detail: `${detail} - scale cooldown active` };
+      }
+    }
+    const table = (this.prisma as any).ruleSuggestion;
+    if (table?.findFirst) {
+      const pending = await table.findFirst({
+        where: { organizationId, ruleId: rule.id, campaignPlanId: plan.id, action: rule.action, status: "pending" },
+      }).catch(() => null);
+      if (pending) {
+        return { ruleId: rule.id, planId: plan.id, triggered: false, detail: `${detail} - suggestion already pending approval (id ${pending.id})` };
+      }
+    }
+    const actionPayload: any =
+      rule.action === "scale_budget"
+        ? { percent: Number(cfg.percent ?? 0), ...(cfg.minDailyMinor !== undefined ? { minDailyMinor: Number(cfg.minDailyMinor) } : {}), ...(cfg.maxDailyMinor !== undefined ? { maxDailyMinor: Number(cfg.maxDailyMinor) } : {}) }
+        : rule.action === "pause_ad"
+          ? { adExternalIds: breachingAds.map((a) => a.adExternalId) }
+          : null;
+    const suggestion = await table.create({
+      data: {
+        organizationId, ruleId: rule.id, campaignPlanId: plan.id, action: rule.action,
+        actionPayload, reason: detail,
+        facts: { metric: rule.metric, value, threshold: rule.threshold, comparator: rule.comparator, windowDays: rule.windowDays } as any,
+        status: "pending",
+      },
+    });
+    await (this.prisma as any).automationRun.create({
+      data: { organizationId, kind: "rule", refId: rule.id, status: "triggered", detail: `Suggestion queued for plan ${plan.id}: ${detail}`, evidence: { planId: plan.id, action: rule.action, metric: rule.metric, value, threshold: rule.threshold, suggestionId: suggestion.id, mode: "suggest" } as any },
+    });
+    await (this.prisma as any).automationRule.update({ where: { id: rule.id }, data: { lastTriggeredAt: new Date() } });
+    return { ruleId: rule.id, planId: plan.id, triggered: true, detail: `Suggestion pending approval: ${detail}` };
+  }
+
+  private async expireStaleSuggestions(organizationId: string) {
+    const table = (this.prisma as any).ruleSuggestion;
+    if (!table?.updateMany) return;
+    const cutoff = new Date(Date.now() - AutomationService.SUGGESTION_TTL_DAYS * 86400000);
+    await table.updateMany({
+      where: { organizationId, status: "pending", createdAt: { lt: cutoff } },
+      data: { status: "expired" },
+    }).catch(() => undefined);
+  }
+
+  async listSuggestions(organizationId: string, status?: string) {
+    await this.expireStaleSuggestions(organizationId);
+    const rows = await (this.prisma as any).ruleSuggestion.findMany({
+      where: { organizationId, ...(status ? { status } : {}) },
+      orderBy: { createdAt: "desc" }, take: 100,
+    });
+    // Names for the queue UI come from the REAL rule/plan
+    // rows; a deleted rule or plan leaves the bare id,
+    // never an invented name.
+    const ruleIds = [...new Set((rows as any[]).map((r) => r.ruleId))];
+    const planIds = [...new Set((rows as any[]).map((r) => r.campaignPlanId))];
+    const rules = ruleIds.length ? await (this.prisma as any).automationRule.findMany({ where: { id: { in: ruleIds }, organizationId } }).catch(() => []) : [];
+    const plans = planIds.length ? await (this.prisma as any).campaignPlan.findMany({ where: { id: { in: planIds }, organizationId } }).catch(() => []) : [];
+    const ruleName = new Map((rules as any[]).map((r) => [r.id, r.name]));
+    const planName = new Map((plans as any[]).map((p) => [p.id, p.name]));
+    return {
+      ttlDays: AutomationService.SUGGESTION_TTL_DAYS,
+      suggestions: (rows as any[]).map((r) => ({
+        ...r,
+        ruleName: ruleName.get(r.ruleId) ?? null,
+        planName: planName.get(r.campaignPlanId) ?? null,
+      })),
+    };
+  }
+
+  /** Execute the action a suggestion stored, through the
+   * SAME CampaignsService paths execute mode uses
+   * (setMetaStatus / scalePlanBudgets / setAdStatus), with
+   * the same state guards re-checked at decision time —
+   * the world may have moved since the rule fired. A guard
+   * skip is a successful decision with nothing to do, not
+   * an error. */
+  private async executeSuggestionAction(organizationId: string, actorId: string, plan: any, suggestion: any): Promise<any> {
+    const payload: any = suggestion.actionPayload ?? {};
+    if (suggestion.action === "pause_campaign") {
+      if (plan.metaStatus !== "ACTIVE") return { ok: true, executed: null, skipped: "campaign_not_active" };
+      await this.campaigns.setMetaStatus(organizationId, actorId, plan.id, "PAUSED");
+      return { ok: true, executed: "pause_campaign" };
+    }
+    if (suggestion.action === "activate_campaign") {
+      if (plan.metaStatus !== "PAUSED") return { ok: true, executed: null, skipped: "campaign_not_paused" };
+      await this.campaigns.setMetaStatus(organizationId, actorId, plan.id, "ACTIVE");
+      return { ok: true, executed: "activate_campaign" };
+    }
+    if (suggestion.action === "scale_budget") {
+      const changes = await this.campaigns.scalePlanBudgets(organizationId, actorId, plan.id, Number(payload.percent ?? 0), {
+        minDailyMinor: payload.minDailyMinor != null ? Number(payload.minDailyMinor) : undefined,
+        maxDailyMinor: payload.maxDailyMinor != null ? Number(payload.maxDailyMinor) : undefined,
+      });
+      return { ok: true, executed: "scale_budget", changes };
+    }
+    if (suggestion.action === "pause_ad") {
+      const ids: string[] = Array.isArray(payload.adExternalIds) ? payload.adExternalIds : [];
+      const adSets = await (this.prisma as any).campaignAdSet.findMany({ where: { planId: plan.id } });
+      const setIds = (adSets as any[]).map((s) => s.id);
+      const localAds = setIds.length ? await (this.prisma as any).campaignAd.findMany({ where: { adSetId: { in: setIds } } }) : [];
+      const paused: string[] = [];
+      for (const extId of ids) {
+        const local = (localAds as any[]).find((x) => x.externalAdId === extId);
+        if (!local) continue;
+        await this.campaigns.setAdStatus(organizationId, actorId, plan.id, local.id, "PAUSED");
+        paused.push(extId);
+      }
+      return { ok: true, executed: "pause_ad", pausedAds: paused };
+    }
+    return { ok: false, error: `unsupported_action_${suggestion.action}` };
+  }
+
+  /** Approve = decide + execute exactly once. The
+   * pending -> approved updateMany claim is the guard: a
+   * second approve (double click, second admin) claims
+   * nothing and is refused. The outcome — success, guard
+   * skip, or failure — is stored verbatim on the row; a
+   * failed execution is NOT retried from the queue (a
+   * fresh evaluation can suggest again). */
+  async approveSuggestion(organizationId: string, actorId: string, suggestionId: string) {
+    const table = (this.prisma as any).ruleSuggestion;
+    const suggestion = await table.findFirst({ where: { id: suggestionId, organizationId } });
+    if (!suggestion) throw new NotFoundException("Suggestion not found");
+    if (suggestion.status !== "pending") throw new BadRequestException(`এই সাজেশন ইতিমধ্যে "${suggestion.status}" — আবার সিদ্ধান্ত নেওয়া যাবে না`);
+    const claimed = await table.updateMany({
+      where: { id: suggestionId, organizationId, status: "pending" },
+      data: { status: "approved", decidedById: actorId, decidedAt: new Date() },
+    });
+    if (!claimed || claimed.count === 0) throw new BadRequestException("এই সাজেশনে ইতিমধ্যে অন্য কেউ সিদ্ধান্ত নিয়েছেন");
+    const plan = await (this.prisma as any).campaignPlan.findFirst({ where: { id: suggestion.campaignPlanId, organizationId } }).catch(() => null);
+    let result: any;
+    if (!plan) result = { ok: false, error: "plan_not_found" };
+    else {
+      try { result = await this.executeSuggestionAction(organizationId, actorId, plan, suggestion); }
+      catch (e) { result = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+    }
+    await table.update({ where: { id: suggestionId }, data: { executedAt: new Date(), executionResult: result } });
+    await (this.prisma as any).automationRun.create({
+      data: { organizationId, kind: "suggestion", refId: suggestionId, status: result.ok ? "triggered" : "error", detail: `Approved suggestion (${suggestion.action}) for plan ${suggestion.campaignPlanId}: ${suggestion.reason}`, evidence: { planId: suggestion.campaignPlanId, action: suggestion.action, approvedBy: actorId, result } as any },
+    }).catch(() => undefined);
+    const rule = await (this.prisma as any).automationRule.findFirst({ where: { id: suggestion.ruleId, organizationId } }).catch(() => null);
+    if (rule) await (this.prisma as any).automationRule.update({ where: { id: rule.id }, data: { lastTriggeredAt: new Date() } }).catch(() => undefined);
+    return table.findFirst({ where: { id: suggestionId, organizationId } });
+  }
+
+  async rejectSuggestion(organizationId: string, actorId: string, suggestionId: string, reason?: string) {
+    const table = (this.prisma as any).ruleSuggestion;
+    const suggestion = await table.findFirst({ where: { id: suggestionId, organizationId } });
+    if (!suggestion) throw new NotFoundException("Suggestion not found");
+    if (suggestion.status !== "pending") throw new BadRequestException(`এই সাজেশন ইতিমধ্যে "${suggestion.status}" — আবার সিদ্ধান্ত নেওয়া যাবে না`);
+    const claimed = await table.updateMany({
+      where: { id: suggestionId, organizationId, status: "pending" },
+      data: { status: "rejected", decidedById: actorId, decidedAt: new Date(), rejectReason: reason ?? null },
+    });
+    if (!claimed || claimed.count === 0) throw new BadRequestException("এই সাজেশনে ইতিমধ্যে অন্য কেউ সিদ্ধান্ত নিয়েছেন");
+    await (this.prisma as any).automationRun.create({
+      data: { organizationId, kind: "suggestion", refId: suggestionId, status: "skipped", detail: `Suggestion rejected (${suggestion.action}) for plan ${suggestion.campaignPlanId}${reason ? `: ${reason}` : ""}`, evidence: { planId: suggestion.campaignPlanId, action: suggestion.action, rejectedBy: actorId } as any },
+    }).catch(() => undefined);
+    return table.findFirst({ where: { id: suggestionId, organizationId } });
   }
 }
 

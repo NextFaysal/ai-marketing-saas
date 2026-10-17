@@ -1,4 +1,5 @@
 import { bkashBase, sslcommerzBase, type BkashConfig, type SslcommerzConfig } from "../common/platform-config";
+import { StripeClient, type StripeCreds } from "../common/stripe.client";
 
 /**
  * CC9 — gateway HTTP client for a TENANT's own payment gateways.
@@ -24,6 +25,13 @@ export interface TenantShurjoCreds { username: string; password: string; prefix:
  * the Search Transaction call carries it in the query string,
  * so request URLs for that call must never be logged either. */
 export interface TenantAamarCreds { storeId: string; signatureKey: string; sandbox: boolean }
+/** OU5 — a tenant's OWN Stripe account credentials. `sandbox`
+ * keeps the CC19 flag shape; for Stripe the mode is a property
+ * of the KEY itself (sk_test_ → test, sk_live_ → live — see
+ * docs/one-umbrella-ou5-stripe-evidence.md), and the service
+ * refuses a save whose flag disagrees with the key's mode.
+ * `sandbox: true` here always means the key IS a test key. */
+export type TenantStripeCreds = StripeCreds & { sandbox: boolean };
 
 export function shurjoBase(creds: TenantShurjoCreds): string {
   return creds.sandbox ? "https://sandbox.shurjopayment.com" : "https://engine.shurjopayment.com";
@@ -34,8 +42,34 @@ export function aamarBase(creds: TenantAamarCreds): string {
 
 export class TenantGatewayClient {
   private readonly bkashTokens = new Map<string, { token: string; expiresAt: number }>();
+  private readonly stripeClient: StripeClient;
 
-  constructor(private readonly fetchFn: typeof fetch = fetch) {}
+  constructor(private readonly fetchFn: typeof fetch = fetch) {
+    this.stripeClient = new StripeClient(fetchFn);
+  }
+
+  // ---------------- OU5: Stripe (tenant's own account) ----------------
+  // All wire work delegates to the ONE Stripe client
+  // (common/stripe.client.ts), which the platform billing path
+  // uses too — there is no second Stripe implementation.
+
+  /** The balance read IS a true credential check: Stripe only
+   * answers it for a valid secret key, and the response's
+   * `livemode` states the key's mode. Used by verify-before-save. */
+  stripeRetrieveBalance(creds: TenantStripeCreds): Promise<{ livemode: boolean }> {
+    return this.stripeClient.retrieveBalance(creds.secretKey);
+  }
+
+  stripeCreateCheckoutSession(creds: TenantStripeCreds, input: {
+    amountMinor: number; currency: string; productName: string;
+    successUrl: string; cancelUrl: string; referenceId: string; customerEmail?: string;
+  }): Promise<{ id: string; url: string }> {
+    return this.stripeClient.createCheckoutSession(creds.secretKey, input);
+  }
+
+  stripeRetrieveCheckoutSession(creds: TenantStripeCreds, sessionId: string): Promise<any> {
+    return this.stripeClient.retrieveCheckoutSession(creds.secretKey, sessionId);
+  }
 
   // ---------------- bKash tokenized ----------------
 

@@ -23,6 +23,10 @@ interface StaffReview {
   rating: number;
   text?: string | null;
   imageUrls?: string[];
+  // NF8: own-review uploaded media (signed URLs minted by the
+  // API for this staff surface only) + the social-draft claim.
+  media?: { kind: string; contentType: string; url: string | null }[];
+  socialDraftPostId?: string | null;
   verified?: boolean;
   replyText?: string | null;
   isVisible: boolean;
@@ -73,6 +77,27 @@ export default function ReviewsModerationPage() {
       setNotice(r.hidden ? "রিভিউটি এখন পাবলিক পেজে দেখা যাবে।" : "রিভিউটি লুকানো হয়েছে — পাবলিক পেজে আর দেখা যাবে না।");
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // NF8: share an approved (visible) own review as a DRAFT
+  // social post — the API creates it through the existing Social
+  // Posts engine, exactly once per review; staff publish it
+  // themselves from the Social composer.
+  async function createSocialDraft(r: StaffReview) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const key = `${r.source}-${r.id}`;
+    setBusy(`draft-${key}`); setError(""); setNotice("");
+    try {
+      const out = await apiFetch<{ created: boolean; reused: boolean; postId: string; status: string }>(
+        `/organizations/${orgId}/product-reviews/store/${encodeURIComponent(r.id)}/social-draft`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      setNotice(out.created
+        ? "সোশ্যাল ড্রাফট তৈরি হয়েছে — Social পোস্ট পেজ থেকে যাচাই করে নিজে পাবলিশ করুন।"
+        : "এই রিভিউয়ের সোশ্যাল ড্রাফট আগেই তৈরি হয়েছে — একই ড্রাফটই আবার দেখানো হলো (নতুন তৈরি হয়নি)।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "সোশ্যাল ড্রাফট তৈরি ব্যর্থ"); }
     finally { setBusy(""); }
   }
 
@@ -174,6 +199,21 @@ export default function ReviewsModerationPage() {
                           ))}
                         </div>
                       ) : null}
+                      {/* NF8: own-review VIDEO media (images already
+                          ride imageUrls above). Signed URLs are
+                          staff-surface only; a null url means the
+                          server has no public URL to hand out. */}
+                      {(r.media ?? []).filter((m) => m.kind === "video").length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {(r.media ?? []).filter((m) => m.kind === "video").map((m, i) => (
+                            m.url ? (
+                              <video key={`${m.url}-${i}`} src={m.url} className="h-24 w-24 rounded-lg border border-slate-200 object-cover" controls preload="metadata" />
+                            ) : (
+                              <span key={i} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] text-slate-500">ভিডিও সংযুক্ত আছে (প্রিভিউ URL পাওয়া যায়নি)</span>
+                            )
+                          ))}
+                        </div>
+                      ) : null}
                       {r.replyText ? (
                         <div className="rounded-xl bg-indigo-50 p-3">
                           <div className="text-[11px] font-bold text-indigo-700">বিক্রেতার উত্তর</div>
@@ -181,13 +221,31 @@ export default function ReviewsModerationPage() {
                         </div>
                       ) : null}
                     </div>
-                    <button
-                      className="rounded-lg border bg-white px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-                      disabled={busy !== ""}
-                      onClick={() => toggleVisible(r)}
-                    >
-                      {busy === `vis-${key}` ? "হচ্ছে…" : r.hidden ? "দেখান" : "লুকান"}
-                    </button>
+                    <div className="flex flex-col items-end gap-2">
+                      <button
+                        className="rounded-lg border bg-white px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                        disabled={busy !== ""}
+                        onClick={() => toggleVisible(r)}
+                      >
+                        {busy === `vis-${key}` ? "হচ্ছে…" : r.hidden ? "দেখান" : "লুকান"}
+                      </button>
+                      {/* NF8: social-proof draft — own + visible
+                          reviews only (the API enforces the same
+                          gate and the exactly-once claim). */}
+                      {own && !r.hidden ? (
+                        r.socialDraftPostId ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">✓ সোশ্যাল ড্রাফট তৈরি হয়েছে</span>
+                        ) : (
+                          <button
+                            className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-50"
+                            disabled={busy !== ""}
+                            onClick={() => createSocialDraft(r)}
+                          >
+                            {busy === `draft-${key}` ? "তৈরি হচ্ছে…" : "📣 সোশ্যাল ড্রাফট তৈরি করুন"}
+                          </button>
+                        )
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="mt-3">

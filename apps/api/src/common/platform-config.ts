@@ -39,8 +39,16 @@ export interface ImageConfig { provider: string; model?: string; apiKey: string 
  * and the video.publish scope; it is never inferred. */
 export interface TiktokAppConfig { clientKey: string; clientSecret: string; redirectUri?: string; audited: boolean }
 /** SP9: the OPERATOR's Google app for YouTube (same one-app
- * model). Tenants OAuth their own Google accounts into it. */
-export interface GoogleAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
+ * model). Tenants OAuth their own Google accounts into it.
+ * OU9: `gbpApiAccessApproved` is the OPERATOR's declaration
+ * that Google has approved THIS app's Google Cloud project for
+ * the Business Profile APIs (Google's prerequisites require a
+ * per-project API-access application + approval — an
+ * unapproved project gets a 0 QPM quota and every GBP call
+ * fails). TikTok `audited` precedent: the flag is the
+ * operator's explicit declaration, never inferred from
+ * credentials existing, and it defaults to false. */
+export interface GoogleAppConfig { clientId: string; clientSecret: string; redirectUri?: string; gbpApiAccessApproved?: boolean }
 /** CC20: the OPERATOR's LinkedIn app for Page connect +
  * organic posting (same one-app model as Google/TikTok).
  * Live posting additionally requires LinkedIn's Community
@@ -62,6 +70,25 @@ export interface GoogleOAuthConfig { clientId: string; clientSecret: string; ena
  * Access for threads_content_publish) — Meta's gate, surfaced
  * verbatim when it refuses; the config cannot declare it away. */
 export interface ThreadsAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
+/** OU2: the OPERATOR's Cloudflare for SaaS (Custom Hostnames)
+ * config — per-merchant-domain HTTPS certificates (TD10 path খ).
+ * `enabled` is the operator's explicit switch (GoogleOAuth
+ * precedent: credentials existing is never enough). `apiToken`
+ * is the zone-scoped Cloudflare API token (sealed like every
+ * sibling secret; never returned by any GET). `zoneId` is OUR
+ * zone (the one CfS is enabled on); `fallbackOrigin` records
+ * the hostname the operator designated as fallback origin in
+ * the Cloudflare panel — it is documentation for the operator,
+ * the app never sets it (fallback designation is a panel act). */
+export interface CloudflareSaasConfig { enabled: boolean; apiToken: string; zoneId: string; fallbackOrigin?: string }
+/** OU5: the OPERATOR's Stripe account for PLATFORM subscription
+ * billing (the international card rail alongside SSLCommerz /
+ * bKash in PaymentsService). Both secrets are sealed in the
+ * SystemSetting row (secretKeyEncrypted / webhookSecretEncrypted);
+ * the publishable key is a plain non-secret field. Tenant shops
+ * do NOT use this config — a tenant's own Stripe gateway is a
+ * per-org CC9 config with its own sealed key pair. */
+export interface StripeConfig { secretKey: string; webhookSecret: string; publishableKey?: string }
 /** CC10: platform-payment wallet settings. `feeBps` is the
  * platform fee on PLATFORM-gateway payments, in basis points
  * (200 = 2%). It is read at the moment a verified payment is
@@ -91,13 +118,15 @@ export interface PlatformConfigSnapshot {
   linkedinApp: LinkedinAppConfig | null;
   googleOAuth: GoogleOAuthConfig | null;
   threadsApp: ThreadsAppConfig | null;
+  cloudflareSaas: CloudflareSaasConfig | null;
+  stripe: StripeConfig | null;
   wallet: WalletConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig", "linkedinAppConfig", "googleOAuthConfig", "threadsAppConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig", "linkedinAppConfig", "googleOAuthConfig", "threadsAppConfig", "cloudflareSaasConfig", "stripeConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, linkedinApp: null, googleOAuth: null, threadsApp: null, wallet: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, linkedinApp: null, googleOAuth: null, threadsApp: null, cloudflareSaas: null, stripe: null, wallet: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
@@ -106,8 +135,8 @@ export function getPlatformConfigSync(): PlatformConfigSnapshot {
 /** Test hook + admin-write hook: replace the snapshot directly.
  * Newer areas are optional for callers so older test setups keep
  * working when the snapshot grows (sslcommerz arrived in M36). */
-export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet" | "linkedinApp" | "googleOAuth" | "threadsApp"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null; linkedinApp?: LinkedinAppConfig | null; googleOAuth?: GoogleOAuthConfig | null; threadsApp?: ThreadsAppConfig | null }) {
-  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, linkedinApp: null, googleOAuth: null, threadsApp: null, ...next };
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet" | "linkedinApp" | "googleOAuth" | "threadsApp" | "cloudflareSaas" | "stripe"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null; linkedinApp?: LinkedinAppConfig | null; googleOAuth?: GoogleOAuthConfig | null; threadsApp?: ThreadsAppConfig | null; cloudflareSaas?: CloudflareSaasConfig | null; stripe?: StripeConfig | null }) {
+  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, linkedinApp: null, googleOAuth: null, threadsApp: null, cloudflareSaas: null, stripe: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -136,14 +165,15 @@ async function readKey(prisma: any, key: string): Promise<any> {
 
 /** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw, linkedinRaw, googleOAuthRaw, threadsRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw, linkedinRaw, googleOAuthRaw, threadsRaw, cloudflareSaasRaw, stripeRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
     readKey(prisma, "sslcommerzConfig"), readKey(prisma, "bkashConfig"),
     readKey(prisma, "imageConfig"),
     readKey(prisma, "tiktokAppConfig"), readKey(prisma, "googleAppConfig"),
     readKey(prisma, "walletConfig"), readKey(prisma, "linkedinAppConfig"), readKey(prisma, "googleOAuthConfig"),
-    readKey(prisma, "threadsAppConfig"),
+    readKey(prisma, "threadsAppConfig"), readKey(prisma, "cloudflareSaasConfig"),
+    readKey(prisma, "stripeConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -193,6 +223,9 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
         clientId: String(googleRaw.clientId),
         clientSecret: unseal(googleRaw.clientSecretEncrypted) ?? "",
         redirectUri: googleRaw.redirectUri ? String(googleRaw.redirectUri) : undefined,
+        // OU9: only a literal stored true declares GBP API
+        // access approved — anything else reads as not approved.
+        gbpApiAccessApproved: googleRaw.gbpApiAccessApproved === true,
       }
     : null;
   const walletFeeBps = Number(walletRaw?.feeBps);
@@ -232,7 +265,33 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
         redirectUri: threadsRaw.redirectUri ? String(threadsRaw.redirectUri) : undefined,
       }
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, linkedinApp, googleOAuth, threadsApp, wallet, loadedAt: Date.now() };
+  // OU2: the CfS config exists in the snapshot only when a zone
+  // id is stored; the token unseals independently (a row whose
+  // token no longer decrypts reads as token "" and the effective
+  // resolver below treats the area as NOT configured — a broken
+  // secret must never half-enable certificate provisioning).
+  const cloudflareSaas: CloudflareSaasConfig | null = cloudflareSaasRaw?.zoneId
+    ? {
+        enabled: cloudflareSaasRaw.enabled === true,
+        apiToken: unseal(cloudflareSaasRaw.apiTokenEncrypted) ?? "",
+        zoneId: String(cloudflareSaasRaw.zoneId),
+        fallbackOrigin: cloudflareSaasRaw.fallbackOrigin ? String(cloudflareSaasRaw.fallbackOrigin) : undefined,
+      }
+    : null;
+  // OU5: the platform Stripe config exists in the snapshot only
+  // when BOTH sealed secrets unseal — a half-config (key without
+  // its webhook secret) can never create a session whose
+  // completion could not be verified, so it reads as absent.
+  const stripeSecret = unseal(stripeRaw?.secretKeyEncrypted);
+  const stripeWebhookSecret = unseal(stripeRaw?.webhookSecretEncrypted);
+  const stripe: StripeConfig | null = stripeRaw && stripeSecret && stripeWebhookSecret
+    ? {
+        secretKey: stripeSecret,
+        webhookSecret: stripeWebhookSecret,
+        publishableKey: stripeRaw.publishableKey ? String(stripeRaw.publishableKey) : undefined,
+      }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, linkedinApp, googleOAuth, threadsApp, cloudflareSaas, stripe, wallet, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -382,10 +441,24 @@ export function effectiveGoogleAppConfig(): (GoogleAppConfig & { source: "admin"
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       redirectUri: process.env.GOOGLE_REDIRECT_URI || undefined,
+      gbpApiAccessApproved: process.env.GOOGLE_GBP_API_ACCESS_APPROVED === "true",
       source: "env",
     };
   }
   return null;
+}
+
+/** OU9: has Google approved the platform Google project's
+ * Business Profile API access? The operator's declaration on
+ * the googleApp config (admin snapshot wins, env is the
+ * fallback — the TikTok `audited` discipline). Default FALSE:
+ * no config, a half-config, or an undeclared flag all read as
+ * NOT approved, and GBP publishing refuses on that basis. The
+ * flag never turns anything on by itself — it only records the
+ * operator's word that Google's approval exists; Google's own
+ * refusal still surfaces verbatim if the declaration is wrong. */
+export function effectiveGbpApiAccessApproved(): boolean {
+  return effectiveGoogleAppConfig()?.gbpApiAccessApproved === true;
 }
 
 /** CC20: the operator's LinkedIn app — same resolution as Google. */
@@ -419,6 +492,42 @@ export function effectiveGoogleOAuthConfig(): (GoogleOAuthConfig & { source: "ad
   }
   return null;
 }
+/** OU2: the operator's Cloudflare for SaaS config — ADMIN
+ * SNAPSHOT ONLY, deliberately NO env fallback (GoogleOAuth
+ * precedent): turning on per-merchant certificate provisioning
+ * against the platform's Cloudflare zone must be an explicit
+ * operator act in the Admin Console. Returns the config ONLY
+ * when it is enabled AND complete (zone id + token); every
+ * other state — absent, disabled, half-filled — is null, and
+ * callers must treat null as "not configured" (the merchant's
+ * HTTPS state becomes not_configured, never a fake active). */
+export function effectiveCloudflareSaasConfig(): (CloudflareSaasConfig & { source: "admin" }) | null {
+  const c = snapshot.cloudflareSaas;
+  if (c?.enabled && c.zoneId && c.apiToken) return { ...c, source: "admin" };
+  return null;
+}
+
+/** OU5: the platform's Stripe config for subscription billing —
+ * admin snapshot wins, env is the fallback (SSLCommerz/bKash
+ * discipline). BOTH the secret key and the webhook secret must
+ * be present: a session whose completion webhook could not be
+ * signature-verified must never be creatable, so a half-config
+ * resolves to null and checkout refuses honestly. */
+export function effectiveStripeConfig(): (StripeConfig & { source: "admin" | "env" }) | null {
+  if (snapshot.stripe?.secretKey && snapshot.stripe?.webhookSecret) {
+    return { ...snapshot.stripe, source: "admin" };
+  }
+  if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
+    return {
+      secretKey: process.env.STRIPE_SECRET_KEY,
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || undefined,
+      source: "env",
+    };
+  }
+  return null;
+}
+
 /** SN7: the operator's Threads app — same resolution as LinkedIn. */
 export function effectiveThreadsAppConfig(): (ThreadsAppConfig & { source: "admin" | "env" }) | null {
   if (snapshot.threadsApp?.clientId && snapshot.threadsApp.clientSecret) {
@@ -442,7 +551,7 @@ export function effectiveThreadsAppConfig(): (ThreadsAppConfig & { source: "admi
  * (payments.service apiBase convention). CC20 widens the segment
  * vocabulary for the Google pack + LinkedIn callback routes —
  * each flow's segment is its own registered redirect path. */
-export function socialOAuthRedirectUri(platform: "tiktok" | "youtube" | "google-ga4" | "google-merchant" | "google-business" | "linkedin" | "threads", configured?: string): string {
+export function socialOAuthRedirectUri(platform: "tiktok" | "youtube" | "google-ga4" | "google-merchant" | "google-business" | "google-business-profile" | "linkedin" | "threads", configured?: string): string {
   if (configured) return configured.replace(/\/$/, "");
   const apiBase = (process.env.API_PUBLIC_URL ?? "http://localhost:4000").replace(/\/$/, "");
   return `${apiBase}/social/oauth/${platform}/callback`;

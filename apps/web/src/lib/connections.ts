@@ -236,7 +236,7 @@ export function llmConfigStatusLabel(view: OrgLlmConfigView): string {
  * reports it (credentials never in this shape — only the
  * non-secret identifier). */
 export interface TenantPaymentGatewayView {
-  provider: string; // sslcommerz | bkash | nagad | shurjopay | aamarpay
+  provider: string; // sslcommerz | bkash | nagad | shurjopay | aamarpay | stripe
   identifier: string | null;
   sandbox: boolean;
   status: string; // verified | configured
@@ -331,6 +331,14 @@ export interface PaymentRefundView {
   amountMinor: string;
   currency: string;
   status: string; // initiated | processing | refunded | failed
+  // OU5 Refund Center: "gateway" (CC24 API path) | "manual"
+  // (provider-dashboard refund tracked in-platform).
+  mode?: string;
+  trackingLabel?: string | null;
+  manualProviderRef?: string | null;
+  manualProofNote?: string | null;
+  manualRecordedById?: string | null;
+  manualRecordedAt?: string | null;
   gatewayRefundRef: string | null;
   gatewayStatusRaw: Record<string, any> | null;
   reason: string | null;

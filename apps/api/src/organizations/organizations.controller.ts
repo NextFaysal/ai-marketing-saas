@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
 import { Request, Response } from "express";
 import { OrganizationsService } from "./organizations.service";
-import { AssignCustomRoleDto, CreateCustomRoleDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateCustomRoleDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UpdateNotificationPreferencesDto, UploadLogoDto } from "./organizations.dto";
+import { ApproveJoinRequestDto, AssignCustomRoleDto, CreateCustomRoleDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, TransferOwnershipDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateCustomRoleDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UpdateNotificationPreferencesDto, UpdateOrgIdentityDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
 import { CurrentUser, AuthUser, PermissionArea, Public, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -97,6 +97,60 @@ export class OrganizationsController {
   @Roles("OWNER", "ADMIN")
   resendInvitation(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("invitationId") invitationId: string, @Req() req: Request) {
     return this.orgs.resendInvitation(id, user.userId, invitationId, req.ip);
+  }
+
+  // ORG9 (Organization Next OB3): shareable invite links. A link
+  // is role-bound, capped and revocable — and it never creates a
+  // membership by itself (see the ORG10 queue below).
+  @PermissionArea("team")
+  @Post(":organizationId/invite-links")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  createInviteLink(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: CreateInviteLinkDto, @Req() req: Request) {
+    return this.orgs.createInviteLink(id, user.userId, dto, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Get(":organizationId/invite-links")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  inviteLinks(@CurrentUser() user: AuthUser, @Param("organizationId") id: string) {
+    return this.orgs.listInviteLinks(id, user.userId);
+  }
+
+  @PermissionArea("team")
+  @Delete(":organizationId/invite-links/:linkId")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  revokeInviteLink(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("linkId") linkId: string, @Req() req: Request) {
+    return this.orgs.revokeInviteLink(id, user.userId, linkId, req.ip);
+  }
+
+  // ORG10 (Organization Next OB3): join-request approval queue.
+  // Approval is the ONLY path from a request to an ACTIVE
+  // membership, and the seat guard runs at that moment.
+  @PermissionArea("team")
+  @Get(":organizationId/join-requests")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  joinRequests(@CurrentUser() user: AuthUser, @Param("organizationId") id: string) {
+    return this.orgs.listJoinRequests(id, user.userId);
+  }
+
+  @PermissionArea("team")
+  @Post(":organizationId/join-requests/:requestId/approve")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  approveJoinRequest(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("requestId") requestId: string, @Body() dto: ApproveJoinRequestDto, @Req() req: Request) {
+    return this.orgs.approveJoinRequest(id, user.userId, requestId, dto, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Post(":organizationId/join-requests/:requestId/reject")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  rejectJoinRequest(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("requestId") requestId: string, @Body() dto: RejectJoinRequestDto, @Req() req: Request) {
+    return this.orgs.rejectJoinRequest(id, user.userId, requestId, dto, req.ip);
   }
 
   @Get(":organizationId/onboarding")
@@ -252,6 +306,77 @@ export class OrganizationsController {
   @Roles("OWNER")
   removeMember(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Req() req: Request) {
     return this.orgs.removeMember(id, user.userId, userId, req.ip);
+  }
+
+  // ORG1 (Organization Next OB1): ownership transfer — only the
+  // current OWNER; the role swap itself is transactional in the
+  // service. Deliberately NOT the role endpoint: OWNER stays
+  // unassignable there.
+  @PermissionArea("team")
+  @Post(":organizationId/transfer-ownership")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER")
+  transferOwnership(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: TransferOwnershipDto, @Req() req: Request) {
+    return this.orgs.transferOwnership(id, user.userId, dto.targetUserId, req.ip);
+  }
+
+  // ORG2: self-leave — any member may call it for THEMSELVES
+  // (the service binds the leave to the caller's own membership
+  // and refuses the OWNER, who must transfer first).
+  @Post(":organizationId/leave")
+  @UseGuards(TenantGuard)
+  leave(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.leaveOrganization(id, user.userId, req.ip);
+  }
+
+  // ORG3: tenant-side archive / restore — OWNER only. While
+  // archived, TenantGuard lets only the owner's lifecycle and
+  // export paths through.
+  @PermissionArea("settings")
+  @Post(":organizationId/archive")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER")
+  archive(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.archiveOrganization(id, user.userId, req.ip);
+  }
+
+  @PermissionArea("settings")
+  @Post(":organizationId/restore")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER")
+  restore(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.restoreOrganization(id, user.userId, req.ip);
+  }
+
+  // ORG5 (Organization Next OB2): the organization's legal name
+  // + regional defaults (currency / timezone / country) — the
+  // fields create() accepted but nothing could edit afterwards.
+  // Slug is never editable here (TD decision: slugs immutable).
+  @PermissionArea("settings")
+  @Patch(":organizationId/identity")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  updateIdentity(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: UpdateOrgIdentityDto, @Req() req: Request) {
+    return this.orgs.updateIdentity(id, user.userId, dto, req.ip);
+  }
+
+  // ORG11 (Organization Next OB4): org security policy — MFA
+  // requirement + session-age cap. GET is any ACTIVE member (the
+  // dashboard's OrgStateGate probes it while TenantGuard blocks
+  // the org's other APIs, so it sits in the guard's allowlist);
+  // PATCH is OWNER-only (RolesGuard + a service-level re-check).
+  @Get(":organizationId/security-policy")
+  @UseGuards(TenantGuard)
+  getSecurityPolicy(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.getSecurityPolicy(id, user.userId, (req as any).user?.sid);
+  }
+
+  @PermissionArea("settings")
+  @Patch(":organizationId/security-policy")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER")
+  updateSecurityPolicy(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: UpdateSecurityPolicyDto, @Req() req: Request) {
+    return this.orgs.updateSecurityPolicy(id, user.userId, dto, req.ip, (req as any).user?.sid);
   }
 
   @PermissionArea("settings")

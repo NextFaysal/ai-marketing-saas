@@ -215,8 +215,13 @@ describe("MS5 snapshot vars from real rows", () => {
   });
 
   it("TEMPLATE_VARIABLES lists exactly the keys prepare builds, per entity", () => {
-    expect(TEMPLATE_VARIABLES.customer.map((v) => v.key)).toEqual(["name", "firstName", "lastName", "email", "phone", "lastOrderNumber", "lastOrderTotal", "ordersCount"]);
-    expect(TEMPLATE_VARIABLES.lead.map((v) => v.key)).toEqual(["name", "email", "phone", "stage", "source", "value"]);
+    // SA-B20 (G2): the registry also lists the memory variables
+    // (lastProductName…aiHook) — prepare builds them ONLY when
+    // the broadcast's personalisation is enabled (see
+    // messaging/variables.ts header); the MS5 keys are unchanged
+    // and keep their order at the head of each list.
+    expect(TEMPLATE_VARIABLES.customer.map((v) => v.key)).toEqual(["name", "firstName", "lastName", "email", "phone", "lastOrderNumber", "lastOrderTotal", "ordersCount", "lastProductName", "lastCategory", "favoriteCategory", "languagePref", "aiHook"]);
+    expect(TEMPLATE_VARIABLES.lead.map((v) => v.key)).toEqual(["name", "email", "phone", "stage", "source", "value", "lastProductName", "lastCategory", "favoriteCategory", "languagePref"]);
     expect(TEMPLATE_VARIABLES.csv.map((v) => v.key)).toEqual(["name", "address"]);
   });
 });

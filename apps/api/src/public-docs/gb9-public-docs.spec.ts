@@ -21,6 +21,12 @@ const FROZEN_PUBLIC_ROUTES: string[] = [
   "GET /public/shop/:orgSlug",
   "GET /public/shop/:orgSlug/brands/:brandSlug",
   "GET /public/shop/:orgSlug/flash-sales",
+  // Final-union regeneration (2026-10-17): three public routes added
+  // by lines unioned after GC23 — OU8 offers + popup-lead capture and
+  // the store-credit account endpoint (storefront.controller). The
+  // published doc already counted 61; the inventory is regenerated
+  // to match deliberately, per this guard's own rule.
+  "GET /public/shop/:orgSlug/offers",
   // AB6 (AX14): cart cross-sell recommendations — deliberately
   // added to the frozen inventory with the route.
   "GET /public/shop/:orgSlug/recommendations",
@@ -31,6 +37,7 @@ const FROZEN_PUBLIC_ROUTES: string[] = [
   "GET /public/shop/:orgSlug/blog",
   "GET /public/shop/:orgSlug/blog/:postSlug",
   "GET /public/shop/:orgSlug/popup",
+  "POST /public/shop/:orgSlug/popup-lead",
   "POST /public/shop/:orgSlug/popup-event",
   "POST /public/shop/:orgSlug/contact",
   "GET /public/shop/:orgSlug/pickup-points",
@@ -50,6 +57,7 @@ const FROZEN_PUBLIC_ROUTES: string[] = [
   // AB1 (AX1/AX2): the signed-in customer's loyalty surface —
   // deliberately added to the frozen inventory with the route.
   "GET /public/shop/:orgSlug/account/loyalty",
+  "GET /public/shop/:orgSlug/account/store-credit",
   "PATCH /public/shop/:orgSlug/account/profile",
   "GET /public/shop/:orgSlug/account/orders",
   "GET /public/shop/:orgSlug/account/orders/:orderId",
@@ -58,6 +66,12 @@ const FROZEN_PUBLIC_ROUTES: string[] = [
   "POST /public/shop/:orgSlug/account/addresses",
   "PATCH /public/shop/:orgSlug/account/addresses/:addressId",
   "DELETE /public/shop/:orgSlug/account/addresses/:addressId",
+  // MB5 (MX14): the signed-in customer's on-site notification
+  // center — deliberately added to the frozen inventory with
+  // the routes.
+  "GET /public/shop/:orgSlug/account/notifications",
+  "POST /public/shop/:orgSlug/account/notifications/read-all",
+  "POST /public/shop/:orgSlug/account/notifications/:notificationId/read",
   "GET /public/shop/:orgSlug/account/wishlist",
   "POST /public/shop/:orgSlug/account/wishlist/merge",
   "POST /public/shop/:orgSlug/account/wishlist",

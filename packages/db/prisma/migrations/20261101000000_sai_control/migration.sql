@@ -1,0 +1,12 @@
+-- SA-B13 (Smart AI Phase 2, W4): the per-org Answer Store
+-- switch, deferred here from SA-B3/SA-B6.
+--
+-- BusinessProfile gains answerStoreEnabled (default TRUE —
+-- every existing org keeps today's behaviour: the store has
+-- served and captured under the autopilot gates since SA-B3).
+-- OFF makes the store inert at the AnswerStoreService gate:
+-- lookup always misses and the automatic captures
+-- (autopilot_grounded / staff_edited, inbox + comment) store
+-- nothing. Stored rows are untouched and the Learn Dashboard
+-- management surface stays available while off.
+ALTER TABLE "BusinessProfile" ADD COLUMN "answerStoreEnabled" BOOLEAN NOT NULL DEFAULT true;

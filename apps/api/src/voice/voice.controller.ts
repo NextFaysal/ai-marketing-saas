@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Header,
+  Optional,
   Param,
   Post,
   Put,
@@ -12,6 +13,7 @@ import {
 } from "@nestjs/common";
 import { Response, Request } from "express";
 import { VoiceService } from "./voice.service";
+import { VoiceConversationService } from "./voice-conversation.service";
 import {
   InitiateVoiceCallDto,
   SimulateCallReplyDto,
@@ -27,7 +29,10 @@ const MANAGE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"] as
 @Controller("organizations/:organizationId")
 @UseGuards(TenantGuard, RolesGuard)
 export class VoiceTenantController {
-  constructor(private readonly voiceService: VoiceService) {}
+  constructor(
+    private readonly voiceService: VoiceService,
+    @Optional() private readonly conversationService?: VoiceConversationService,
+  ) {}
 
   @Get("voice/settings")
   @Roles(...MANAGE_ROLES)
@@ -74,6 +79,38 @@ export class VoiceTenantController {
   ) {
     return this.voiceService.simulateCustomerResponse(callId, dto.digitsPressed);
   }
+
+  // --- NF3 (FB2): AI voice conversation agent ---
+
+  @Post("orders/:orderId/voice-conversation")
+  @Roles(...MANAGE_ROLES)
+  startConversation(
+    @Param("organizationId") orgId: string,
+    @Param("orderId") orderId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.conversationService!.startConversation(orgId, orderId, user.userId);
+  }
+
+  @Post("voice/conversations/:callId/turns")
+  @Roles(...MANAGE_ROLES)
+  addConversationTurn(
+    @Param("organizationId") orgId: string,
+    @Param("callId") callId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: { text: string },
+  ) {
+    return this.conversationService!.handleCustomerTurn(orgId, callId, user.userId, dto?.text ?? "");
+  }
+
+  @Get("voice/conversations/:callId")
+  @Roles(...MANAGE_ROLES)
+  getConversation(
+    @Param("organizationId") orgId: string,
+    @Param("callId") callId: string,
+  ) {
+    return this.conversationService!.getConversation(orgId, callId);
+  }
 }
 
 /**
@@ -81,7 +118,10 @@ export class VoiceTenantController {
  */
 @Controller("voice")
 export class VoiceWebhookController {
-  constructor(private readonly voiceService: VoiceService) {}
+  constructor(
+    private readonly voiceService: VoiceService,
+    @Optional() private readonly conversationService?: VoiceConversationService,
+  ) {}
 
   @Public()
   @Get("twiml/:callId")
@@ -95,6 +135,24 @@ export class VoiceWebhookController {
     const host = req.get("host") || "localhost:4000";
     const baseUrl = `${protocol}://${host}`;
     const xml = await this.voiceService.generateTwiml(callId, baseUrl);
+    res.setHeader("Content-Type", "text/xml; charset=utf-8");
+    res.send(xml);
+  }
+
+  @Public()
+  @Get("twiml-conversation/:callId")
+  @Header("Content-Type", "text/xml; charset=utf-8")
+  async getConversationTwiml(
+    @Param("callId") callId: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const protocol = req.protocol || "https";
+    const host = req.get("host") || "localhost:4000";
+    const baseUrl = `${protocol}://${host}`;
+    const xml = this.conversationService
+      ? await this.conversationService.generateConversationTwiml(callId, baseUrl)
+      : await this.voiceService.generateTwiml(callId, baseUrl);
     res.setHeader("Content-Type", "text/xml; charset=utf-8");
     res.send(xml);
   }

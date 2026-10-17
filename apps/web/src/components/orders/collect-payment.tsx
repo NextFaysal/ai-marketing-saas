@@ -51,8 +51,9 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
   useEffect(() => { void load(); }, [load]);
 
   const ownOptions = ownGateways.filter(
-    (g) => g.isEnabled && (g.environment ?? "live") === "live" && (g.provider === "sslcommerz" || g.provider === "bkash"),
+    (g) => g.isEnabled && (g.environment ?? "live") === "live" && (g.provider === "sslcommerz" || g.provider === "bkash" || g.provider === "stripe"),
   );
+  const providerLabel = (provider: string) => provider === "bkash" ? "বিকাশ" : provider === "stripe" ? "Stripe (কার্ড)" : "SSLCommerz";
   const platformOptions = (platform?.providers ?? []).filter((p) => p.offered && p.enabled);
 
   async function initiate(source: "own" | "platform", provider: string) {
@@ -96,7 +97,7 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
             onClick={() => void initiate("own", g.provider)}
             className="btn-primary btn-sm"
           >
-            {busy === `own:${g.provider}` ? "লিংক তৈরি হচ্ছে..." : `${g.provider === "bkash" ? "বিকাশ" : "SSLCommerz"} — নিজের গেটওয়ে`}
+            {busy === `own:${g.provider}` ? "লিংক তৈরি হচ্ছে..." : `${providerLabel(g.provider)} — নিজের গেটওয়ে`}
           </button>
         ))}
         {platformOptions.map((p) => (
@@ -135,7 +136,7 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
               <div key={t.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
                 <span className={`rounded-full px-2 py-0.5 font-semibold ${meta.cls}`}>{meta.label}</span>
                 <span className="font-semibold">{formatTakaMinor(t.amountMinor)}</span>
-                <span className="text-slate-500">{t.provider === "bkash" ? "বিকাশ" : "SSLCommerz"} · {t.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের গেটওয়ে"}</span>
+                <span className="text-slate-500">{providerLabel(t.provider)} · {t.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের গেটওয়ে"}</span>
                 <span className="text-slate-400">{new Date(t.createdAt).toLocaleString("bn-BD")}</span>
               </div>
             );

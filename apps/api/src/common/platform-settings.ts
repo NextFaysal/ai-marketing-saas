@@ -16,12 +16,107 @@ export async function platformSetting(prisma: any, key: string): Promise<unknown
   }
 }
 
-export async function killSwitches(prisma: any): Promise<{ aiDisabledOrgIds: string[]; broadcastsPaused: boolean }> {
+/** ORG12 (Organization Next OB4): per-user cap on how many
+ * organizations one user may OWN, from SystemSetting
+ * "maxOrgsPerUser". Absent or invalid = NO cap (null) — the code
+ * deliberately carries no built-in number; the cap exists only
+ * when the platform operator sets one (owner decision D1). */
+export async function maxOrgsPerUser(prisma: any): Promise<number | null> {
+  const raw = await platformSetting(prisma, "maxOrgsPerUser");
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 ? raw : null;
+}
+
+/** SA-B24 (Smart AI Phase 6, T3): provenance of the last
+ * global-pause flip — who, why, when. The boolean
+ * `aiGloballyPaused` in the same Json is the operative truth;
+ * this record is the audit-shaped explanation of its last
+ * change (a resume records its own reason too, so a pause can
+ * never be lifted silently either). */
+export interface AiPauseFlipMeta {
+  paused: boolean;
+  reason: string;
+  byId: string | null;
+  at: string;
+}
+
+/** SA-B24: provenance of the last admin flip for one org's
+ * per-org AI disable (the legacy `aiDisabledOrgIds` list
+ * predates reasons; flips through the T3 endpoint stamp this
+ * map, keyed by organizationId). */
+export interface AiOrgPauseMeta {
+  disabled: boolean;
+  reason: string;
+  byId: string | null;
+  at: string;
+}
+
+export interface KillSwitchState {
+  aiDisabledOrgIds: string[];
+  broadcastsPaused: boolean;
+  /** SA-B24 (T3): the GLOBAL AI kill switch — when true, AI
+   * generation/composition is paused for EVERY org (the
+   * per-org list still applies on top). Absent = false: the
+   * field exists only once an admin has flipped it through
+   * the oversight endpoint (or a full settings save carries
+   * it), so every pre-B24 row reads as unpaused. */
+  aiGloballyPaused: boolean;
+  aiGlobalPause: AiPauseFlipMeta | null;
+  aiOrgPauseMeta: Record<string, AiOrgPauseMeta>;
+}
+
+function pauseFlipMeta(raw: any): AiPauseFlipMeta | null {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    paused: raw.paused === true,
+    reason: typeof raw.reason === "string" ? raw.reason : "",
+    byId: raw.byId != null ? String(raw.byId) : null,
+    at: typeof raw.at === "string" ? raw.at : "",
+  };
+}
+
+export async function killSwitches(prisma: any): Promise<KillSwitchState> {
   const raw = (await platformSetting(prisma, "killSwitches")) as any;
+  const orgMeta: Record<string, AiOrgPauseMeta> = {};
+  if (raw?.aiOrgPauseMeta && typeof raw.aiOrgPauseMeta === "object") {
+    for (const [orgId, m] of Object.entries<any>(raw.aiOrgPauseMeta)) {
+      if (!m || typeof m !== "object") continue;
+      orgMeta[orgId] = {
+        disabled: (m as any).disabled === true,
+        reason: typeof (m as any).reason === "string" ? (m as any).reason : "",
+        byId: (m as any).byId != null ? String((m as any).byId) : null,
+        at: typeof (m as any).at === "string" ? (m as any).at : "",
+      };
+    }
+  }
   return {
     aiDisabledOrgIds: Array.isArray(raw?.aiDisabledOrgIds) ? raw.aiDisabledOrgIds.map(String) : [],
     broadcastsPaused: raw?.broadcastsPaused === true,
+    aiGloballyPaused: raw?.aiGloballyPaused === true,
+    aiGlobalPause: pauseFlipMeta(raw?.aiGlobalPause),
+    aiOrgPauseMeta: orgMeta,
   };
+}
+
+/** SA-B24: THE combined pause predicate — the one every AI
+ * enforcement point consults (they all already read through
+ * killSwitches() above). An org is paused when the GLOBAL
+ * switch is on or the org is on the per-org disabled list.
+ * Tolerates the partial fallback objects older call sites
+ * build in their .catch() handlers. */
+export function isAiDisabledForOrg(ks: Partial<KillSwitchState> | null | undefined, organizationId: string): boolean {
+  if (!ks) return false;
+  if ((ks as any).aiGloballyPaused === true) return true;
+  return Array.isArray(ks.aiDisabledOrgIds) && organizationId != null && ks.aiDisabledOrgIds.map(String).includes(String(organizationId));
+}
+
+/** SA-B24: the machine-readable pause reason for skip-shaped
+ * surfaces (sweeps, narration notes, embedding resolution):
+ * the global pause outranks the per-org one. */
+export function aiPauseReason(ks: Partial<KillSwitchState> | null | undefined, organizationId: string): "ai_globally_paused" | "ai_disabled_for_org" | null {
+  if (!ks) return null;
+  if ((ks as any).aiGloballyPaused === true) return "ai_globally_paused";
+  if (Array.isArray(ks.aiDisabledOrgIds) && organizationId != null && ks.aiDisabledOrgIds.map(String).includes(String(organizationId))) return "ai_disabled_for_org";
+  return null;
 }
 
 export async function orgLimitOverrides(prisma: any, organizationId: string) {

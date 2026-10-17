@@ -41,6 +41,26 @@ import { TenantPaymentsService } from "./tenant-payments.service";
 
 const IN_FLIGHT_STATUSES = ["initiated", "processing"];
 
+/**
+ * OU5 — providers with NO refund API evidenced in this codebase
+ * (docs/gb4-gateway-research.md): their refunds can only happen
+ * in the provider's own merchant dashboard. For them — and for
+ * sslcommerz/bkash when staff deliberately choose the manual
+ * route ("gateway-manual" cases) — the Refund Center tracks the
+ * manual refund on the SAME PaymentRefund rows and completes it
+ * through the SAME applyVerifiedRefund bookkeeping. No second
+ * set of books, no new model: a manual row is marked by
+ * gatewayStatusRaw.manual === true and carries the provider
+ * dashboard reference in gatewayRefundRef.
+ */
+export const MANUAL_REFUND_PROVIDERS = ["shurjopay", "aamarpay", "nagad"] as const;
+
+export function isManualRefundRow(row: any): boolean {
+  return !!row && typeof row.gatewayStatusRaw === "object" && row.gatewayStatusRaw !== null && (row.gatewayStatusRaw as any).manual === true;
+}
+
+export const MANUAL_REFUND_TRACKING_LABEL = "provider dashboard-এ হাতে করা হয়েছে — প্ল্যাটফর্ম ট্র্যাক করছে";
+
 function parsePositiveMinor(value: unknown, field = "amountMinor"): bigint {
   const raw = typeof value === "bigint" ? value.toString() : String(value ?? "").trim();
   if (!/^\d+$/.test(raw)) throw new BadRequestException(`${field} অবশ্যই minor unit-এ ধনাত্মক পূর্ণসংখ্যা হতে হবে।`);
@@ -72,6 +92,8 @@ export class PaymentRefundsService {
   }
 
   private refundView(row: any) {
+    const manual = isManualRefundRow(row);
+    const raw = manual ? (row.gatewayStatusRaw as any) : null;
     return {
       id: row.id,
       transactionId: row.tenantPaymentTransactionId,
@@ -82,6 +104,14 @@ export class PaymentRefundsService {
       amountMinor: String(row.amountMinor),
       currency: row.currency ?? "BDT",
       status: row.status,
+      // OU5: "gateway" = the CC24 API path; "manual" = Refund
+      // Center tracking of a provider-dashboard refund.
+      mode: manual ? "manual" : "gateway",
+      trackingLabel: manual ? MANUAL_REFUND_TRACKING_LABEL : null,
+      manualProviderRef: manual ? (row.gatewayRefundRef ?? null) : null,
+      manualProofNote: manual ? (raw?.proofNote ?? null) : null,
+      manualRecordedById: manual ? (raw?.recordedById ?? null) : null,
+      manualRecordedAt: manual ? (raw?.recordedAt ?? null) : null,
       gatewayRefundRef: row.gatewayRefundRef ?? null,
       gatewayStatusRaw: row.gatewayStatusRaw ?? null,
       reason: row.reason ?? null,
@@ -101,6 +131,42 @@ export class PaymentRefundsService {
     return (rows ?? []).reduce((sum: bigint, r: any) => sum + BigInt(r.amountMinor), 0n);
   }
 
+  /**
+   * OU5: the ONE row-creation path for every refund — gateway
+   * (CC24) and manual (Refund Center) alike. Cap check + create
+   * in a single transaction against the shared committed budget
+   * (verified + in-flight, both modes), so a manual request and
+   * a gateway refund can never over-commit the same payment.
+   */
+  private async createRefundRowWithinCap(
+    organizationId: string, actorId: string, txn: any,
+    opts: { amountRaw?: unknown; reason?: string | null; manualRaw?: Record<string, unknown> | null },
+  ) {
+    return this.tx(async (client) => {
+      const committed = await this.committedMinor(client, txn.id);
+      const paid = BigInt(txn.amountMinor);
+      const remaining = paid - committed;
+      if (remaining <= 0n) {
+        throw new BadRequestException("এই পেমেন্টের সম্পূর্ণ পরিমাণ ইতিমধ্যে refund হয়ে গেছে বা প্রক্রিয়াধীন আছে — আর refund করা যাবে না।");
+      }
+      const amount = opts.amountRaw === undefined || opts.amountRaw === null || String(opts.amountRaw).trim() === ""
+        ? remaining
+        : parsePositiveMinor(opts.amountRaw);
+      if (amount > remaining) {
+        throw new BadRequestException(`Refund-এর পরিমাণ অবশিষ্ট ফেরতযোগ্য পরিমাণের (${remaining.toString()} minor) বেশি হতে পারবে না।`);
+      }
+      return client.paymentRefund.create({
+        data: {
+          organizationId, tenantPaymentTransactionId: txn.id, orderId: txn.orderId,
+          provider: String(txn.provider ?? ""), source: txn.source === "platform" ? "platform" : "own",
+          environment: "live", amountMinor: amount, currency: String(txn.currency ?? "BDT"),
+          status: "initiated", reason: opts.reason ?? null, requestedById: actorId,
+          ...(opts.manualRaw ? { gatewayStatusRaw: opts.manualRaw } : {}),
+        },
+      });
+    });
+  }
+
   async initiateRefund(organizationId: string, actorId: string, transactionId: string, dto: { amountMinor?: unknown; reason?: string } = {}) {
     const p: any = this.prisma as any;
     const txn = await p.tenantPaymentTransaction.findFirst({
@@ -109,10 +175,10 @@ export class PaymentRefundsService {
     if (!txn) throw new NotFoundException("Transaction not found");
     const provider = String(txn.provider ?? "");
     if (provider === "nagad") {
-      throw new BadRequestException("Nagad-এর কোনো refund API এই সিস্টেমে সংযুক্ত নয় — Nagad পেমেন্টের refund গেটওয়ে দিয়ে শুরু করা যাবে না। প্রয়োজন হলে Nagad মার্চেন্ট প্যানেল থেকে refund করে এখানে শুধু অর্ডারে রেকর্ড রাখুন।");
+      throw new BadRequestException("Nagad-এর কোনো refund API এই সিস্টেমে সংযুক্ত নয় — Nagad পেমেন্টের refund গেটওয়ে দিয়ে শুরু করা যাবে না। Nagad মার্চেন্ট প্যানেল থেকে refund করে Refund Center-এর ম্যানুয়াল পথে রেকর্ড রাখুন — প্ল্যাটফর্ম সেটি ট্র্যাক করবে।");
     }
     if (provider !== "sslcommerz" && provider !== "bkash") {
-      throw new BadRequestException("শুধু sslcommerz ও bkash পেমেন্টের refund শুরু করা যায়।");
+      throw new BadRequestException("এই প্রোভাইডারের কোনো refund API সংযুক্ত নেই — শুধু sslcommerz ও bkash পেমেন্টের refund গেটওয়ে API দিয়ে শুরু করা যায়। এই প্রোভাইডারের refund প্রোভাইডার dashboard থেকে করে Refund Center-এর ম্যানুয়াল পথে রেকর্ড রাখুন।");
     }
     if (txn.status !== "verified_paid") {
       throw new BadRequestException("শুধু যাচাইকৃতভাবে সম্পন্ন (verified_paid) পেমেন্টই refund করা যায় — এই লেনদেনের অবস্থা তা নয়।");
@@ -148,28 +214,7 @@ export class PaymentRefundsService {
     // Cap check + row creation in ONE transaction: the
     // refundable budget (paid − already verified/in-flight)
     // can never be over-committed, even by two clicks at once.
-    const row = await this.tx(async (client) => {
-      const committed = await this.committedMinor(client, txn.id);
-      const paid = BigInt(txn.amountMinor);
-      const remaining = paid - committed;
-      if (remaining <= 0n) {
-        throw new BadRequestException("এই পেমেন্টের সম্পূর্ণ পরিমাণ ইতিমধ্যে refund হয়ে গেছে বা প্রক্রিয়াধীন আছে — আর refund করা যাবে না।");
-      }
-      const amount = dto?.amountMinor === undefined || dto?.amountMinor === null || String(dto.amountMinor).trim() === ""
-        ? remaining
-        : parsePositiveMinor(dto.amountMinor);
-      if (amount > remaining) {
-        throw new BadRequestException(`Refund-এর পরিমাণ অবশিষ্ট ফেরতযোগ্য পরিমাণের (${remaining.toString()} minor) বেশি হতে পারবে না।`);
-      }
-      return client.paymentRefund.create({
-        data: {
-          organizationId, tenantPaymentTransactionId: txn.id, orderId: txn.orderId,
-          provider, source: txn.source === "platform" ? "platform" : "own",
-          environment: "live", amountMinor: amount, currency: String(txn.currency ?? "BDT"),
-          status: "initiated", reason, requestedById: actorId,
-        },
-      });
-    });
+    const row = await this.createRefundRowWithinCap(organizationId, actorId, txn, { amountRaw: dto?.amountMinor, reason });
 
     // The gateway call itself. Acceptance moves the row to
     // "processing" with the gateway's reference; a gateway
@@ -245,6 +290,12 @@ export class PaymentRefundsService {
     const row = await p.paymentRefund.findFirst({ where: { id: refundId, organizationId } }).catch(() => null);
     if (!row) throw new NotFoundException("Refund not found");
     if (row.status === "refunded" || row.status === "failed") return this.refundView(row);
+    // OU5: a manual (Refund Center) row has NO gateway to ask —
+    // its gatewayRefundRef is a provider-dashboard reference,
+    // not a gateway refund id. Refreshing it against a gateway
+    // would be a category error; it moves only via the manual
+    // record/complete steps.
+    if (isManualRefundRow(row)) return this.refundView(row);
     if (!row.gatewayRefundRef) return this.refundView(row);
 
     const txn = await p.tenantPaymentTransaction.findFirst({ where: { id: row.tenantPaymentTransactionId } }).catch(() => null);
@@ -329,7 +380,9 @@ export class PaymentRefundsService {
         const total = BigInt(order.totalMinor ?? 0);
         const cumulative = BigInt(order.refundedMinor ?? 0) + amount;
         const newRefunded = cumulative > total && total > 0n ? total : cumulative;
-        const note = `[গেটওয়ে রিফান্ড যাচাইকৃত — ${fresh.provider} · refund ${fresh.id}]`;
+        const note = isManualRefundRow(fresh)
+          ? `[ম্যানুয়াল রিফান্ড রেকর্ডকৃত — ${fresh.provider} · provider dashboard-এ হাতে করা হয়েছে, প্ল্যাটফর্ম ট্র্যাক করছে · refund ${fresh.id}]`
+          : `[গেটওয়ে রিফান্ড যাচাইকৃত — ${fresh.provider} · refund ${fresh.id}]`;
         const internalNote = String(order.internalNote ?? "").includes(fresh.id)
           ? order.internalNote
           : [String(order.internalNote ?? "").trim(), note].filter(Boolean).join(" | ");
@@ -369,10 +422,109 @@ export class PaymentRefundsService {
       await this.audit.log({
         organizationId: row.organizationId, userId: actorId, action: "payment_refund.verified",
         entityType: "PaymentRefund", entityId: row.id,
-        metadata: { provider: row.provider, source: row.source, amountMinor: String(row.amountMinor), orderId: row.orderId },
+        metadata: { provider: row.provider, source: row.source, amountMinor: String(row.amountMinor), orderId: row.orderId, mode: isManualRefundRow(row) ? "manual" : "gateway" },
       }).catch(() => undefined);
     }
     return result.view ? this.refundView(result.view) : this.refundView(row);
+  }
+
+  // ---------- OU5 Refund Center — manual (API-less) refunds ----------
+  //
+  // Flow, all on the SAME PaymentRefund rows + bookkeeping:
+  //   1. createManualRefundRequest — staff opens a request
+  //      ("initiated") against a REAL verified_paid transaction.
+  //      Nothing about the order/wallet changes.
+  //   2. recordManualRefundAction — staff records the refund
+  //      they performed in the provider dashboard: provider
+  //      reference (required) + proof note → "processing".
+  //   3. completeManualRefund — staff attests the dashboard
+  //      refund is done; the row completes through
+  //      applyVerifiedRefund — the exact function the gateway
+  //      path uses — so order refundedMinor, order status
+  //      mapping and the platform wallet refund_debit are
+  //      identical, exactly once. Honesty: the platform did NOT
+  //      verify this with the provider (it cannot); the row,
+  //      its label and the order note all say the refund was
+  //      done by hand in the provider dashboard and is only
+  //      TRACKED here, attested by the recording staff member.
+
+  async createManualRefundRequest(organizationId: string, actorId: string, transactionId: string, dto: { amountMinor?: unknown; reason?: string } = {}) {
+    const p: any = this.prisma as any;
+    const txn = await p.tenantPaymentTransaction.findFirst({
+      where: { id: transactionId, organizationId },
+    }).catch(() => null);
+    if (!txn) throw new NotFoundException("Transaction not found");
+    const provider = String(txn.provider ?? "");
+    if (!(MANUAL_REFUND_PROVIDERS as readonly string[]).includes(provider) && provider !== "sslcommerz" && provider !== "bkash") {
+      throw new BadRequestException("এই প্রোভাইডারের পেমেন্টের জন্য ম্যানুয়াল refund ট্র্যাকিং প্রযোজ্য নয়।");
+    }
+    if (txn.status !== "verified_paid") {
+      throw new BadRequestException("শুধু যাচাইকৃতভাবে সম্পন্ন (verified_paid) পেমেন্টেরই refund ট্র্যাক করা যায় — এই লেনদেনের অবস্থা তা নয়।");
+    }
+    if (txn.environment === "sandbox") {
+      throw new BadRequestException("Sandbox টেস্ট লেনদেনে কোনো আসল টাকা আসেনি — refund করার কিছু নেই।");
+    }
+    const reason = dto?.reason !== undefined && dto?.reason !== null ? String(dto.reason).trim().slice(0, 200) || null : null;
+    const row = await this.createRefundRowWithinCap(organizationId, actorId, txn, {
+      amountRaw: dto?.amountMinor, reason,
+      manualRaw: { manual: true, mode: "manual", trackingLabel: MANUAL_REFUND_TRACKING_LABEL, requestedAt: new Date().toISOString() },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "payment_refund.manual_requested",
+      entityType: "PaymentRefund", entityId: row.id,
+      metadata: { provider, source: row.source, transactionId: txn.id, orderId: txn.orderId, amountMinor: String(row.amountMinor), mode: "manual" },
+    }).catch(() => undefined);
+    return this.refundView(row);
+  }
+
+  async recordManualRefundAction(organizationId: string, actorId: string, refundId: string, dto: { providerRef?: string; proofNote?: string } = {}) {
+    const p: any = this.prisma as any;
+    const row = await p.paymentRefund.findFirst({ where: { id: refundId, organizationId } }).catch(() => null);
+    if (!row) throw new NotFoundException("Refund not found");
+    if (!isManualRefundRow(row)) {
+      throw new BadRequestException("এটি ম্যানুয়াল (Refund Center) রিফান্ড নয় — গেটওয়ে রিফান্ডের অবস্থা Refresh দিয়ে আসে।");
+    }
+    if (row.status === "refunded") {
+      throw new BadRequestException("এই রিফান্ডটি ইতিমধ্যে সম্পূর্ণ হিসেবে রেকর্ড হয়েছে — আবার রেকর্ড করা যাবে না।");
+    }
+    if (row.status !== "initiated") {
+      throw new BadRequestException("Provider dashboard-এর কাজটি ইতিমধ্যে রেকর্ড করা হয়েছে — এখন শুধু সম্পূর্ণ করা বাকি।");
+    }
+    const providerRef = String(dto?.providerRef ?? "").trim().slice(0, 200);
+    if (!providerRef) {
+      throw new BadRequestException("Provider dashboard-এর refund reference/transaction ID আবশ্যক — রেফারেন্স ছাড়া ম্যানুয়াল refund রেকর্ড করা যাবে না।");
+    }
+    const proofNote = dto?.proofNote !== undefined && dto?.proofNote !== null ? String(dto.proofNote).trim().slice(0, 500) || null : null;
+    const raw = { ...(row.gatewayStatusRaw as any), proofNote, recordedById: actorId, recordedAt: new Date().toISOString() };
+    const updated = await p.paymentRefund.update({
+      where: { id: row.id }, data: { status: "processing", gatewayRefundRef: providerRef, gatewayStatusRaw: raw },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "payment_refund.manual_recorded",
+      entityType: "PaymentRefund", entityId: row.id,
+      metadata: { provider: row.provider, amountMinor: String(row.amountMinor), providerRef, mode: "manual" },
+    }).catch(() => undefined);
+    return this.refundView(updated);
+  }
+
+  async completeManualRefund(organizationId: string, actorId: string, refundId: string) {
+    const p: any = this.prisma as any;
+    const row = await p.paymentRefund.findFirst({ where: { id: refundId, organizationId } }).catch(() => null);
+    if (!row) throw new NotFoundException("Refund not found");
+    if (!isManualRefundRow(row)) {
+      throw new BadRequestException("এটি ম্যানুয়াল (Refund Center) রিফান্ড নয় — গেটওয়ে রিফান্ড শুধু গেটওয়ের যাচাইয়েই সম্পূর্ণ হয়।");
+    }
+    // Idempotent: a completed manual refund returns as stored —
+    // applyVerifiedRefund's exactly-once claim is never re-run.
+    if (row.status === "refunded") return this.refundView(row);
+    if (row.status === "failed") {
+      throw new BadRequestException("এই রিফান্ডটি ব্যর্থ হিসেবে চিহ্নিত — সম্পূর্ণ করা যাবে না।");
+    }
+    if (row.status !== "processing" || !row.gatewayRefundRef) {
+      throw new BadRequestException("আগে provider dashboard-এ করা refund-এর reference রেকর্ড করুন — তারপরই সম্পূর্ণ করা যাবে।");
+    }
+    const raw = { ...(row.gatewayStatusRaw as any), completedById: actorId, completedAt: new Date().toISOString() };
+    return this.applyVerifiedRefund(row, raw, actorId);
   }
 
   /**
@@ -394,7 +546,7 @@ export class PaymentRefundsService {
     } catch { rows = []; }
     const views: any[] = [];
     for (const row of rows ?? []) {
-      if (IN_FLIGHT_STATUSES.includes(String(row.status)) && row.gatewayRefundRef) {
+      if (IN_FLIGHT_STATUSES.includes(String(row.status)) && row.gatewayRefundRef && !isManualRefundRow(row)) {
         const refreshed = await this.refreshRefund(organizationId, actorId, row.id).catch(() => null);
         views.push(refreshed ?? this.refundView(row));
       } else {

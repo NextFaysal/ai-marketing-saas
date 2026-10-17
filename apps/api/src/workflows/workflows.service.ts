@@ -11,7 +11,7 @@ import { evaluateConditions, renderTemplate } from "../messaging/render";
 import { classifyShipmentStatus } from "../courier/courier-performance";
 import { AbandonedCheckoutsService } from "../commerce/abandoned-checkouts.service";
 import { LlmFactory } from "../ai/llm/llm.factory";
-import { deriveAbandonedCarts } from "../tracking/abandoned-carts";
+import { deriveAbandonedCarts, deriveBrowseAbandoned } from "../tracking/abandoned-carts";
 
 export const WORKFLOW_TRIGGERS = [
   "order_created", "lead_created", "lead_stage_changed", "inbox_message_received", "inbox_unanswered",
@@ -26,6 +26,14 @@ export const WORKFLOW_TRIGGERS = [
   "shipment_status_changed", "shipment_delivered", "shipment_returned",
   // E-commerce cart abandonment trigger.
   "cart_abandoned",
+  // MX5: scan-enrolled journey triggers. No event carries
+  // these — scanJourneyEnrollment / scanBrowseAbandoned (the
+  // 5-minute leader-claimed scan) enroll recipients directly
+  // with a { customerId } / cart-shaped context that
+  // resolveRecipient can resolve. ("schedule" could never do
+  // this — its context has no recipient at all; that is why
+  // MS8 dropped winback_sweep and MX5 enrolls explicitly.)
+  "winback_due", "anniversary_due", "browse_abandoned",
 ] as const;
 export const STEP_TYPES = [
   "send_email", "send_sms", "add_lead_activity", "add_conversation_note", "wait", "condition", "send_inbox_message",
@@ -224,6 +232,8 @@ export class WorkflowsService implements OnModuleInit {
           await this.scanUnanswered().catch(() => undefined);
           await this.scanScheduled().catch(() => undefined);
           await this.scanAbandonedCarts().catch(() => undefined);
+          await this.scanJourneyEnrollment().catch(() => undefined);
+          await this.scanBrowseAbandoned().catch(() => undefined);
           await this.resumeRuns().catch(() => undefined);
         })();
       }, 5 * 60_000);
@@ -277,6 +287,72 @@ export class WorkflowsService implements OnModuleInit {
             : null;
           context.agentReplied = Boolean(reply);
           context.unreadCount = conv.unreadCount;
+        }
+      }
+      // MX4: journey fact refresh — ONLY for Messaging journeys
+      // (workflow.journey non-null); every other workflow's
+      // resume context stays byte-identical to before. The
+      // facts let condition/branch steps react to what happened
+      // during the wait: a purchase since the run started, the
+      // customer's/lead's CURRENT tags, and whether any earlier
+      // send of this run was opened / clicked (delivery rows
+      // are the only source — nothing is inferred).
+      let purchasedOrderId: string | null = null;
+      if ((workflow as any).journey != null) {
+        const p = this.prisma as any;
+        const orgId: string = workflow.organizationId;
+        if (context.customerId) {
+          const order = await p.order?.findFirst?.({
+            where: {
+              organizationId: orgId, customerId: context.customerId,
+              createdAt: { gt: run.createdAt },
+              ...(context.orderId ? { id: { not: context.orderId } } : {}),
+            },
+            orderBy: { createdAt: "asc" },
+          })?.catch?.(() => null);
+          context.purchasedSinceEntry = Boolean(order);
+          if (order) purchasedOrderId = String(order.id);
+          const cust = await p.customer?.findFirst?.({ where: { id: context.customerId, organizationId: orgId } })?.catch?.(() => null);
+          const tags = Array.isArray(cust?.tags) ? cust.tags : [];
+          context.customerTags = tags.map((t: unknown) => String(t)).join(",");
+        } else if (context.leadId) {
+          // No customer ⇒ no order can be attributed to this
+          // run's recipient; the honest value is false, and the
+          // tags come from the lead (String[] on Lead).
+          context.purchasedSinceEntry = false;
+          const lead = await p.lead?.findFirst?.({ where: { id: context.leadId, organizationId: orgId } })?.catch?.(() => null);
+          const tags = Array.isArray(lead?.tags) ? lead.tags : [];
+          context.customerTags = tags.map((t: unknown) => String(t)).join(",");
+        } else {
+          context.purchasedSinceEntry = false;
+          context.customerTags = "";
+        }
+        const opened = await p.messageDelivery?.findFirst?.({
+          where: { workflowRunId: run.id, openedAt: { not: null } },
+        })?.catch?.(() => null);
+        context.journeyOpened = Boolean(opened);
+        const clicked = await p.messageLinkClick?.findFirst?.({
+          where: { workflowRunId: run.id },
+        })?.catch?.(() => null);
+        context.journeyClicked = Boolean(clicked);
+        // MX4 exit-on-purchase: evaluated HERE, at resume
+        // (polling) time only — there is no real-time order
+        // hook, so a purchase is noticed when the run next
+        // resumes, never mid-wait. The run finalizes WITHOUT
+        // executing further steps; the exit is a stepsLog
+        // entry, not a silent disappearance.
+        if ((workflow as any).journey?.exitOnPurchase === true && context.purchasedSinceEntry === true) {
+          const exitLog: any[] = Array.isArray(run.stepsLog) ? [...(run.stepsLog as any[])] : [];
+          exitLog.push({
+            step: "exit", status: "ok", idx: run.nextStepIndex ?? 0,
+            detail: `Journey exited on purchase: order ${purchasedOrderId} was created after this run started — no further steps executed`,
+          });
+          await (this.prisma as any).workflowRun.update({
+            where: { id: run.id },
+            data: { status: "completed", resumeAt: null, stepsLog: exitLog, context },
+          });
+          resumed++;
+          continue;
         }
       }
       const stepsLog: any[] = Array.isArray(run.stepsLog) ? [...(run.stepsLog as any[])] : [];
@@ -453,6 +529,221 @@ export class WorkflowsService implements OnModuleInit {
     return fired;
   }
 
+  /**
+   * MX5 — scan enrollment for the two customer-date journeys
+   * (winback_due + anniversary_due). No event can carry these
+   * triggers, so this scan — running inside the same
+   * leader-claimed 5-minute interval as the other scans —
+   * enrolls customers directly through runWorkflow with a bare
+   * { customerId } context (resolveRecipient resolves it;
+   * enrichContext is not needed on this path).
+   *
+   * winback_due: a customer qualifies when their LATEST order
+   * (of any age — the newest order decides, never an older one)
+   * is at least `inactiveDays` old. The threshold comes from
+   * the workflow's own conditions (scheduleTime precedent:
+   * { field: "inactiveDays", op: "gte", value }), default 60,
+   * clamped 7..365, and the run context carries the customer's
+   * REAL inactiveDays so the condition evaluates truthfully.
+   * Dedupe: no enrollment if this workflow already has a run
+   * for the customer created within the last 90 days. Cap: 50
+   * enrollments per workflow per scan.
+   *
+   * anniversary_due: a customer qualifies when their createdAt
+   * month/day equals TODAY's month/day and createdAt is at
+   * least 300 days ago. "Today" uses Asia/Dhaka — the same
+   * timezone convention as scanScheduled (the org base
+   * timezone across this codebase; Intl formatToParts, no new
+   * dependency). This is the account/first-seen anniversary:
+   * Customer has no date-of-birth or other anniversary date.
+   * Dedupe: no run for this workflow+customer within the last
+   * 300 days. Cap: 50 per workflow per scan.
+   */
+  async scanJourneyEnrollment(now = new Date()): Promise<number> {
+    const p = this.prisma as any;
+    const workflows = await p.workflow.findMany({
+      where: { trigger: { in: ["winback_due", "anniversary_due"] }, enabled: true },
+      take: 100,
+    }).catch(() => []);
+    if (!workflows || workflows.length === 0) return 0;
+
+    let fired = 0;
+    const dhakaParts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Dhaka", day: "2-digit", month: "2-digit",
+    }).formatToParts(now);
+    const dhakaGet = (t: string) => dhakaParts.find((x: any) => x.type === t)?.value ?? "";
+    const dhakaMonth = Number(dhakaGet("month"));
+    const dhakaDay = Number(dhakaGet("day"));
+    const dhakaDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(now);
+
+    for (const workflow of workflows as any[]) {
+      const orgId: string = workflow.organizationId;
+      let enrolledHere = 0;
+
+      if (workflow.trigger === "winback_due") {
+        const rule = ((workflow.conditions as any[]) ?? []).find((c: any) => c.field === "inactiveDays");
+        const rawDays = Number(rule?.value ?? 60);
+        const inactiveDays = Math.max(7, Math.min(365, Number.isFinite(rawDays) && rawDays > 0 ? Math.floor(rawDays) : 60));
+        const cutoff = now.getTime() - inactiveDays * 86400000;
+        // Latest order per customer decides (an older order
+        // must never qualify a customer who ordered recently).
+        const orders = await p.order?.findMany?.({
+          where: { organizationId: orgId },
+          orderBy: { createdAt: "desc" },
+          take: 5000,
+        }).catch(() => []);
+        const latestByCustomer = new Map<string, Date>();
+        for (const o of (orders as any[]) ?? []) {
+          if (!o?.customerId) continue;
+          if (!latestByCustomer.has(String(o.customerId))) {
+            latestByCustomer.set(String(o.customerId), new Date(o.createdAt));
+          }
+        }
+        const candidates = [...latestByCustomer.entries()]
+          .filter(([, latest]) => latest.getTime() <= cutoff)
+          .sort((a, b) => a[1].getTime() - b[1].getTime());
+        if (!candidates.length) continue;
+        const recentRuns = await p.workflowRun.findMany({
+          where: { workflowId: workflow.id, createdAt: { gte: new Date(now.getTime() - 90 * 86400000) } },
+          take: 500,
+        }).catch(() => []);
+        const recentCustomers = new Set(
+          (recentRuns as any[]).map((r: any) => (r.context as any)?.customerId).filter(Boolean).map(String),
+        );
+        for (const [customerId, latest] of candidates) {
+          if (enrolledHere >= 50) break;
+          if (recentCustomers.has(customerId)) continue;
+          const actualInactiveDays = Math.floor((now.getTime() - latest.getTime()) / 86400000);
+          await this.runWorkflow(workflow, { customerId, inactiveDays: actualInactiveDays }).catch(() => undefined);
+          enrolledHere++;
+          fired++;
+        }
+      } else if (workflow.trigger === "anniversary_due") {
+        const customers = await p.customer?.findMany?.({
+          where: { organizationId: orgId, mergedIntoId: null },
+          take: 5000,
+        }).catch(() => []);
+        const minAgeMs = 300 * 86400000;
+        const candidates = ((customers as any[]) ?? []).filter((c: any) => {
+          if (!c?.createdAt) return false;
+          const created = new Date(c.createdAt);
+          if (Number.isNaN(created.getTime())) return false;
+          if (now.getTime() - created.getTime() < minAgeMs) return false;
+          // The customer's own month/day, read in Asia/Dhaka —
+          // the same convention as "today" above.
+          const parts = new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Asia/Dhaka", day: "2-digit", month: "2-digit",
+          }).formatToParts(created);
+          const month = Number(parts.find((x: any) => x.type === "month")?.value ?? "");
+          const day = Number(parts.find((x: any) => x.type === "day")?.value ?? "");
+          return month === dhakaMonth && day === dhakaDay;
+        });
+        if (!candidates.length) continue;
+        const recentRuns = await p.workflowRun.findMany({
+          where: { workflowId: workflow.id, createdAt: { gte: new Date(now.getTime() - 300 * 86400000) } },
+          take: 500,
+        }).catch(() => []);
+        const recentCustomers = new Set(
+          (recentRuns as any[]).map((r: any) => (r.context as any)?.customerId).filter(Boolean).map(String),
+        );
+        for (const customer of candidates) {
+          if (enrolledHere >= 50) break;
+          if (recentCustomers.has(String(customer.id))) continue;
+          await this.runWorkflow(workflow, {
+            customerId: customer.id, anniversaryDate: dhakaDate,
+          }).catch(() => undefined);
+          enrolledHere++;
+          fired++;
+        }
+      }
+    }
+    return fired;
+  }
+
+  /**
+   * MX5 — browse-abandonment scan, mirroring scanAbandonedCarts:
+   * REAL tracking events → deriveBrowseAbandoned (product_view
+   * only, no add_to_cart / purchase) → Visitor lookup for the
+   * contact an identify event stored → runWorkflow with the
+   * cart context shape (resolveRecipient's contact fallback
+   * resolves it). A visitor with NO email and NO phone is
+   * skipped — there is no resolvable recipient, and enrolling
+   * them would only manufacture dead runs. Deduped per
+   * workflow by visitor/session within 24h, exactly like carts.
+   */
+  async scanBrowseAbandoned(now = new Date()): Promise<number> {
+    const p = this.prisma as any;
+    const workflows = await p.workflow.findMany({
+      where: { trigger: "browse_abandoned", enabled: true },
+      take: 100,
+    }).catch(() => []);
+    if (!workflows || workflows.length === 0) return 0;
+
+    let fired = 0;
+    const orgIds = [...new Set(workflows.map((w: any) => w.organizationId))];
+    const lookbackStart = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+
+    for (const orgId of orgIds) {
+      const orgWorkflows = workflows.filter((w: any) => w.organizationId === orgId);
+      const trackingEvents = await p.trackingEvent?.findMany?.({
+        where: {
+          organizationId: orgId,
+          type: { in: ["product_view", "add_to_cart", "checkout_started", "purchase"] },
+          occurredAt: { gte: lookbackStart },
+        },
+        orderBy: { occurredAt: "asc" },
+        take: 5000,
+      }).catch(() => []);
+
+      if (!trackingEvents || trackingEvents.length === 0) continue;
+      const browses = deriveBrowseAbandoned(trackingEvents, now);
+      if (browses.length === 0) continue;
+
+      for (const browse of browses.slice(0, 30)) {
+        const visitor = await p.visitor?.findFirst?.({
+          where: { organizationId: orgId, id: browse.visitorId },
+        }).catch(() => null);
+        // No identify-stored contact ⇒ no resolvable recipient.
+        if (!visitor || (!visitor.email && !visitor.phone)) continue;
+
+        for (const wf of orgWorkflows) {
+          const recentRuns = await p.workflowRun.findMany({
+            where: {
+              workflowId: wf.id,
+              trigger: "browse_abandoned",
+              createdAt: { gte: new Date(now.getTime() - 24 * 3600 * 1000) },
+            },
+            take: 100,
+          }).catch(() => []);
+
+          const alreadyFired = recentRuns.some(
+            (r: any) =>
+              (r.context as any)?.visitorId === browse.visitorId ||
+              (r.context as any)?.sessionKey === browse.sessionKey,
+          );
+          if (alreadyFired) continue;
+
+          const browseContext: Record<string, any> = {
+            visitorId: browse.visitorId,
+            sessionKey: browse.sessionKey,
+            storeId: browse.storeId,
+            signal: "product_view",
+            itemsCount: browse.items.length,
+            itemsSummary: browse.items.map((i: any) => i.name || i.productId || "Product").join(", "),
+            contactEmail: visitor?.email ?? undefined,
+            contactPhone: visitor?.phone ?? undefined,
+            contactName: visitor?.name ?? "Shopper",
+            lastActivityAt: browse.lastActivityAt,
+          };
+
+          await this.runWorkflow(wf, browseContext).catch(() => undefined);
+          fired++;
+        }
+      }
+    }
+    return fired;
+  }
+
   // ---------- CRUD ----------
   /** One validator for create AND update (Workflows W1). */
   private async validateDefinition(organizationId: string, trigger: string, steps: any[], conditions?: unknown) {
@@ -540,11 +831,15 @@ export class WorkflowsService implements OnModuleInit {
     }
   }
 
-  async create(organizationId: string, actorId: string, dto: { name: string; trigger: string; conditions?: unknown; steps: any[]; cooldownMinutes?: number; dailyRunCap?: number | null }) {
+  async create(organizationId: string, actorId: string, dto: { name: string; trigger: string; conditions?: unknown; steps: any[]; cooldownMinutes?: number; dailyRunCap?: number | null; journey?: unknown }) {
     await this.validateDefinition(organizationId, dto.trigger, dto.steps, dto.conditions);
     const workflow = await (this.prisma as any).workflow.create({
       data: {
         organizationId, name: dto.name, trigger: dto.trigger, conditions: dto.conditions ?? undefined, steps: dto.steps, enabled: true, createdById: actorId,
+        // MX4: journey metadata, set ONLY by the Messaging
+        // journey builder (through the MS8 port). Absent ⇒ the
+        // column stays null and the workflow is not a journey.
+        ...(dto.journey !== undefined ? { journey: dto.journey } : {}),
         ...(dto.cooldownMinutes !== undefined ? { cooldownMinutes: Math.max(0, Math.min(10080, Math.floor(Number(dto.cooldownMinutes) || 0))) } : {}),
         ...(dto.dailyRunCap !== undefined ? { dailyRunCap: dto.dailyRunCap === null ? null : Math.max(1, Math.min(10000, Math.floor(Number(dto.dailyRunCap) || 1))) } : {}),
       },
@@ -557,12 +852,16 @@ export class WorkflowsService implements OnModuleInit {
     return (this.prisma as any).workflow.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" } });
   }
 
-  async update(organizationId: string, workflowId: string, dto: { enabled?: boolean; name?: string; trigger?: string; conditions?: unknown; steps?: any[]; cooldownMinutes?: number; dailyRunCap?: number | null }, actorId?: string) {
+  async update(organizationId: string, workflowId: string, dto: { enabled?: boolean; name?: string; trigger?: string; conditions?: unknown; steps?: any[]; cooldownMinutes?: number; dailyRunCap?: number | null; journey?: unknown }, actorId?: string) {
     const workflow = await (this.prisma as any).workflow.findFirst({ where: { id: workflowId, organizationId } });
     if (!workflow) throw new NotFoundException("Workflow not found");
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
+    // MX4: journey metadata updates (e.g. exitOnPurchase) ride
+    // the same write; the journey builder merges the existing
+    // meta service-side, so this stays a plain assignment.
+    if (dto.journey !== undefined) data.journey = dto.journey;
     if (dto.conditions !== undefined) data.conditions = dto.conditions;
     // Workflows W6 governance fields.
     if (dto.cooldownMinutes !== undefined) {
@@ -991,7 +1290,11 @@ export class WorkflowsService implements OnModuleInit {
         if (step.type === "wait") {
           const minutes = Number(step.minutes);
           const resumeAt = new Date(now.getTime() + minutes * 60000);
-          stepsLog.push({ step: "wait", status: "ok", detail: `Paused for ${minutes} minutes (resume at ${resumeAt.toISOString()})` });
+          // MX4: every stepsLog entry now also carries `idx`
+          // (its top-level step index) — additive only; the
+          // pre-MX4 fields are untouched. Pre-MX4 runs have no
+          // idx and readers must treat them as legacy.
+          stepsLog.push({ step: "wait", status: "ok", idx: i, detail: `Paused for ${minutes} minutes (resume at ${resumeAt.toISOString()})` });
           await (this.prisma as any).workflowRun.update({
             where: { id: run.id },
             data: { status: "waiting", resumeAt, nextStepIndex: i + 1, stepsLog, context },
@@ -1000,7 +1303,7 @@ export class WorkflowsService implements OnModuleInit {
         }
         if (step.type === "condition") {
           const ok = evaluateConditions(context, [{ field: step.field, op: step.op, value: step.value }]);
-          stepsLog.push({ step: "condition", status: ok ? "ok" : "skipped", detail: `${step.field} ${step.op} ${JSON.stringify(step.value)} -> ${ok}` });
+          stepsLog.push({ step: "condition", status: ok ? "ok" : "skipped", idx: i, detail: `${step.field} ${step.op} ${JSON.stringify(step.value)} -> ${ok}` });
           if (!ok) break; // branch not taken: stop, run completes
           continue;
         }
@@ -1011,31 +1314,34 @@ export class WorkflowsService implements OnModuleInit {
           const ok = evaluateConditions(context, [{ field: step.field, op: step.op, value: step.value }]);
           const arm = ok ? "then" : "else";
           const subs: any[] = Array.isArray(step[arm]) ? step[arm] : [];
-          stepsLog.push({ step: "branch", status: "ok", detail: `${step.field} ${step.op} ${JSON.stringify(step.value)} -> ${ok} (${arm}: ${subs.length} steps)` });
+          stepsLog.push({ step: "branch", status: "ok", idx: i, detail: `${step.field} ${step.op} ${JSON.stringify(step.value)} -> ${ok} (${arm}: ${subs.length} steps)` });
           for (let sIdx = 0; sIdx < subs.length; sIdx++) {
             const sub = subs[sIdx];
+            // MX4: branch sub-step entries additionally carry
+            // `ref` in the coupon stepRef format ("3.then.0").
+            const ref = `${i}.${arm}.${sIdx}`;
             try {
-              const detail = await this.executeStep(organizationId, run.id, sub, context, `${i}.${arm}.${sIdx}`);
-              stepsLog.push({ step: sub.type, status: "ok", detail, branch: arm });
+              const detail = await this.executeStep(organizationId, run.id, sub, context, ref);
+              stepsLog.push({ step: sub.type, status: "ok", detail, branch: arm, idx: i, ref });
             } catch (e) {
               if (e instanceof StepSkippedError) {
-                stepsLog.push({ step: sub.type, status: "skipped", detail: e.message, branch: arm });
+                stepsLog.push({ step: sub.type, status: "skipped", detail: e.message, branch: arm, idx: i, ref });
               } else {
                 anyFailed = true;
-                stepsLog.push({ step: sub.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed", branch: arm });
+                stepsLog.push({ step: sub.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed", branch: arm, idx: i, ref });
               }
             }
           }
           continue;
         }
         const detail = await this.executeStep(organizationId, run.id, step, context, String(i));
-        stepsLog.push({ step: step.type, status: "ok", detail });
+        stepsLog.push({ step: step.type, status: "ok", detail, idx: i });
       } catch (e) {
         if (e instanceof StepSkippedError) {
-          stepsLog.push({ step: step.type, status: "skipped", detail: e.message });
+          stepsLog.push({ step: step.type, status: "skipped", detail: e.message, idx: i });
         } else {
           anyFailed = true;
-          stepsLog.push({ step: step.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed" });
+          stepsLog.push({ step: step.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed", idx: i });
         }
       }
     }
@@ -1060,7 +1366,14 @@ export class WorkflowsService implements OnModuleInit {
       if (!recipient) throw new Error("No recipient could be resolved from the trigger context");
       const result = await this.messaging.sendToRecipient(organizationId, {
         channel, recipient, subject: template.subject, body: template.body,
-        vars: context, workflowRunId: runId,
+        // MX4: the template's HTML part now rides along for
+        // email (sendToRecipient already supported htmlBody;
+        // templates without one — every MS8 preset template
+        // has htmlBody null — pass undefined and behave
+        // exactly as before). stepRef stamps the delivery row
+        // with this step's position for per-step stats.
+        ...(channel === "email" ? { htmlBody: template.htmlBody ?? undefined } : {}),
+        vars: context, workflowRunId: runId, stepRef,
       });
       // MS2: an opt-out skip is not a send and not a failure.
       if (result.status === "skipped") throw new StepSkippedError(result.error ?? "Recipient opted out");

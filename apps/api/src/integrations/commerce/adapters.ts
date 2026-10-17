@@ -19,6 +19,7 @@ import {
   type CommerceAdapter,
   type CommerceAdapterContext,
 } from "./adapter";
+import { DARAZ_NOT_LIVE_MESSAGE } from "../daraz/daraz.client";
 
 export { CAPABILITY_NOT_IMPLEMENTED };
 export type { CommerceAdapter, CommerceAdapterContext, AdapterExecuteResult };
@@ -298,6 +299,42 @@ export class NativeAdapter implements CommerceAdapter {
   }
 }
 
+/**
+ * OU3 — Daraz DEVELOPMENT adapter (spike:
+ * docs/one-umbrella-ou3-daraz-spike.md). Registered so Daraz has
+ * an honest presence in the adapter framework, with EVERY
+ * capability false and every operation refused with the real
+ * reason: no Daraz endpoint contract is evidenced and no
+ * merchant app is approved. It performs no network call.
+ */
+export class DarazAdapter implements CommerceAdapter {
+  platform = "daraz";
+  capabilities: Record<string, boolean> = {
+    read_products: false,
+    read_orders: false,
+    register_webhooks: false,
+    push_product: false,
+    push_inventory: false,
+    push_category: false,
+    archive_product: false,
+    delete_product_remote: false,
+    push_price: false,
+    push_order_status: false,
+    create_fulfillment: false,
+    push_order_note: false,
+    push_refund: false,
+    cancel_order: false,
+    push_order_address: false,
+    create_draft_order: false,
+    push_customer: false,
+    push_discount: false,
+  };
+
+  async execute(_ctx: CommerceAdapterContext): Promise<AdapterExecuteResult> {
+    return { ok: false, error: DARAZ_NOT_LIVE_MESSAGE };
+  }
+}
+
 @Injectable()
 export class CommerceAdapterRegistry {
   private readonly adapters = new Map<string, CommerceAdapter>();
@@ -306,6 +343,7 @@ export class CommerceAdapterRegistry {
     this.register(new WooCommerceAdapter(prisma));
     this.register(new ShopifyAdapter(prisma));
     this.register(new NativeAdapter());
+    this.register(new DarazAdapter());
   }
 
   get(platform: string): CommerceAdapter | undefined {

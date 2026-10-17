@@ -1,4 +1,5 @@
 import { RFM_SEGMENTS } from "./rfm";
+import { PREDICTIVE_SEGMENTS } from "./engagement";
 
 /**
  * MS3 — the ONE audience-definition vocabulary for the Messaging
@@ -63,6 +64,12 @@ const COMMON_FIELDS: Record<string, FieldSpec> = {
   has_email: { ops: ["eq"], kind: "boolean" },
   has_phone: { ops: ["eq"], kind: "boolean" },
   custom_field: { ops: ["eq", "contains"], kind: "keyed-string" },
+  // MX11: the engagement score + rule-based predictive segments
+  // (messaging/engagement.ts — deterministic rules over real
+  // delivery/click/order records, computed by the resolver;
+  // labelled "rule-based estimate" everywhere they surface).
+  engagement_score: { ops: ["eq", "gte", "lte", "gt", "lt"], kind: "number" },
+  predictive_segment: { ops: ["eq"], kind: "string" },
 };
 
 export const CUSTOMER_FIELDS: Record<string, FieldSpec> = {
@@ -137,6 +144,9 @@ export function validateAudienceDefinition(raw: unknown): AudienceDefinition {
     if (field === "rfm_segment" && !(RFM_SEGMENTS as readonly string[]).includes(String(out.value))) {
       fail(`${at}: rfm_segment must be one of ${RFM_SEGMENTS.join(", ")} (got ${JSON.stringify(out.value)})`);
     }
+    if (field === "predictive_segment" && !(PREDICTIVE_SEGMENTS as readonly string[]).includes(String(out.value))) {
+      fail(`${at}: predictive_segment must be one of ${PREDICTIVE_SEGMENTS.join(", ")} (got ${JSON.stringify(out.value)})`);
+    }
     return out;
   });
   return { entity: entity as AudienceEntity, match: match as AudienceMatch, conditions };
@@ -161,6 +171,13 @@ export interface AudienceFacts {
   stage?: string | null;
   tags?: string[];
   valueMinor?: number | null;
+  // MX11 (both entities): the computed engagement score — a real
+  // computed 0 for a contact with no history (so "eq 0" honestly
+  // matches the never-engaged), null only when the engagement
+  // data could not be read at all (condition then FALSE) — and
+  // the rule-based predictive segments the contact belongs to.
+  engagementScore?: number | null;
+  predictiveSegments?: string[];
 }
 
 function daysCompare(actual: number | null | undefined, op: string, expected: number): boolean {
@@ -209,6 +226,10 @@ function evaluateCondition(facts: AudienceFacts, c: AudienceCondition): boolean 
       return daysCompare(facts.lastOrderDaysAgo, c.op, Number(c.value));
     case "rfm_segment":
       return facts.rfmSegment != null && facts.rfmSegment === String(c.value);
+    case "engagement_score":
+      return daysCompare(facts.engagementScore, c.op, Number(c.value));
+    case "predictive_segment":
+      return Array.isArray(facts.predictiveSegments) && facts.predictiveSegments.includes(String(c.value));
     case "stage": {
       const actual = facts.stage ?? "";
       return c.op === "eq" ? actual === String(c.value) : actual !== String(c.value);

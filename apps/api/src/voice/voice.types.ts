@@ -33,6 +33,14 @@ export interface VoiceCallSettingDto {
   promptIntro?: string;
   maxAttempts?: number;
   retryIntervalMinutes?: number;
+  // NF3 (FB2): conversation agent settings.
+  conversationAgentEnabled?: boolean;
+  conversationMode?: string; // simulation | twilio_relay
+  relayWebsocketUrl?: string | null;
+  conversationLanguage?: string;
+  sttProvider?: string;
+  ttsProvider?: string;
+  ttsVoice?: string;
 }
 
 export interface SimulateCallReplyDto {

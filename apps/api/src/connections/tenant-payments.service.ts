@@ -7,7 +7,8 @@ import { decryptJson, encryptJson } from "../integrations/crypto";
 import { verifyIpnSignature } from "../payments/payments.service";
 import { EventsService } from "../common/events.service";
 import { createAgentNotification } from "../common/agent-notify";
-import { TenantGatewayClient, type TenantAamarCreds, type TenantBkashCreds, type TenantNagadCreds, type TenantShurjoCreds, type TenantSslCreds } from "./tenant-gateway.client";
+import { TenantGatewayClient, type TenantAamarCreds, type TenantBkashCreds, type TenantNagadCreds, type TenantShurjoCreds, type TenantSslCreds, type TenantStripeCreds } from "./tenant-gateway.client";
+import { stripeKeyMode, verifyStripeWebhookSignature } from "../common/stripe.client";
 import { WalletService } from "./wallet.service";
 import { StepUpService, stepUpMarker } from "./step-up.service";
 
@@ -26,7 +27,20 @@ import { StepUpService, stepUpMarker } from "./step-up.service";
  *   the config saves as "configured" and says so.
  * - Nagad: this codebase wires no merchant-API credential check
  *   (and no Nagad checkout), so the config saves as "configured";
- *   initiating a Nagad payment refuses honestly.
+ *   initiating a Nagad payment refuses honestly. OU5 re-check
+ *   (2026-10-16): Nagad's OFFICIAL merchant checkout API docs
+ *   could not be evidenced from a primary source — searches of
+ *   nagad.com.bd returned no developer documentation and the
+ *   developer portal was not fetchable; only blogs/community
+ *   write-ups describe an initialize/complete flow, without an
+ *   officially-published signature/encryption contract. Per the
+ *   verify-first rule, NO checkout is wired from unverified
+ *   secondary sources. Live-verification checklist: obtain the
+ *   official API document + sandbox merchant credentials from
+ *   Nagad merchant onboarding, evidence the initiation endpoint,
+ *   the sensitive-data encryption + signature construction and
+ *   the server-side payment-verification call, THEN wire
+ *   initiation + verified completion behind this config.
  * - Rocket: Rocket merchant payment is a manual-number flow in
  *   Bangladesh — there is no API gateway to configure. It stays
  *   on the existing BusinessProfile manual path (Settings →
@@ -46,6 +60,21 @@ import { StepUpService, stepUpMarker } from "./step-up.service";
  *   (docs/gb4-gateway-research.md) — there is deliberately NO
  *   refund path for them here; refunds for those providers are
  *   a manual provider-dashboard process.
+ * - Stripe (OU5, the international card rail): a REAL
+ *   GET /v1/balance call IS a true credential check → "verified"
+ *   on success; on failure NOTHING is saved. The key's mode is
+ *   part of the contract: a LIVE credential set must carry a
+ *   live key (sk_live_) and a SANDBOX set a test key (sk_test_)
+ *   — Stripe selects test/live by the key itself, so a mismatch
+ *   would let test money near real orders; the save refuses it.
+ *   A payment is marked paid ONLY by the Stripe WEBHOOK after
+ *   its signature verifies over the RAW body against the sealed
+ *   webhook secret AND the session's payment_status is "paid"
+ *   with the exact amount_total + currency — the browser
+ *   success/cancel returns NEVER mark anything paid. Contract
+ *   evidence: docs/one-umbrella-ou5-stripe-evidence.md. No
+ *   Stripe refund path is wired in this item (dashboard refunds
+ *   only; see the acceptance doc's NOT BUILT list).
  *
  * Credentials are sealed (encryptJson) at rest and NEVER returned:
  * a gateway view carries only the provider, its non-secret
@@ -53,10 +82,10 @@ import { StepUpService, stepUpMarker } from "./step-up.service";
  * verification state.
  */
 
-export const TENANT_GATEWAY_PROVIDERS = ["sslcommerz", "bkash", "nagad", "shurjopay", "aamarpay"] as const;
+export const TENANT_GATEWAY_PROVIDERS = ["sslcommerz", "bkash", "nagad", "shurjopay", "aamarpay", "stripe"] as const;
 export type TenantGatewayProvider = (typeof TENANT_GATEWAY_PROVIDERS)[number];
 
-export type TenantGatewayCreds = TenantSslCreds | TenantBkashCreds | TenantNagadCreds | TenantShurjoCreds | TenantAamarCreds;
+export type TenantGatewayCreds = TenantSslCreds | TenantBkashCreds | TenantNagadCreds | TenantShurjoCreds | TenantAamarCreds | TenantStripeCreds;
 
 /**
  * CC19: redact credential-shaped KEYS by name (any depth) from
@@ -86,6 +115,7 @@ const VERIFICATION_NOTES: Record<string, string> = {
   nagad: "no_pre_transaction_check",
   shurjopay: "verified_with_gateway",
   aamarpay: "no_pre_transaction_check",
+  stripe: "verified_with_gateway",
 };
 
 @Injectable()
@@ -330,7 +360,7 @@ export class TenantPaymentsService {
       // aamarPay's is its storeId (the first chain entry).
       identifier = String(row.provider) === "shurjopay"
         ? (creds?.username ?? null)
-        : (creds?.storeId ?? creds?.appKey ?? creds?.merchantId ?? null);
+        : (creds?.storeId ?? creds?.appKey ?? creds?.merchantId ?? creds?.publishableKey ?? null);
     } catch { identifier = null; }
     return {
       provider: row.provider,
@@ -372,7 +402,7 @@ export class TenantPaymentsService {
       throw new BadRequestException("Rocket-এর কোনো API গেটওয়ে নেই — এটি ম্যানুয়াল নম্বরের পেমেন্ট। Settings → পেমেন্ট নোটে Rocket নম্বর/নির্দেশনা দিন; এটিকে API গেটওয়ে হিসেবে দেখানো হবে না।");
     }
     if (!(TENANT_GATEWAY_PROVIDERS as readonly string[]).includes(provider)) {
-      throw new BadRequestException("provider must be sslcommerz | bkash | nagad | shurjopay | aamarpay");
+      throw new BadRequestException("provider must be sslcommerz | bkash | nagad | shurjopay | aamarpay | stripe");
     }
     // GC12: fee columns — KEY-PRESENCE semantics. A key present
     // in the body (even as explicit null) sets/clears the
@@ -470,6 +500,53 @@ export class TenantPaymentsService {
       // aamarPay (its Search Transaction call needs a real
       // tran_id) — saved honestly as "configured", exactly
       // like SSLCommerz.
+    } else if (provider === "stripe") {
+      const secretKey = String(dto?.secretKey ?? "").trim();
+      const webhookSecret = String(dto?.webhookSecret ?? "").trim();
+      const publishableKey = String(dto?.publishableKey ?? "").trim();
+      if (!secretKey || !webhookSecret) {
+        throw new BadRequestException("Stripe Secret Key ও Webhook Signing Secret (whsec_) দুটোই প্রয়োজন — webhook secret ছাড়া কোনো পেমেন্ট যাচাই করা যাবে না, তাই secret key একা সেভ করা হয় না।");
+      }
+      if (!webhookSecret.startsWith("whsec_")) {
+        throw new BadRequestException("Stripe Webhook Signing Secret whsec_ দিয়ে শুরু হতে হবে (Stripe Dashboard → Developers → Webhooks → endpoint-এর Signing secret)।");
+      }
+      const mode = stripeKeyMode(secretKey);
+      if (!mode) {
+        throw new BadRequestException("Stripe Secret Key sk_test_ / sk_live_ (বা restricted rk_) দিয়ে শুরু হতে হবে।");
+      }
+      if (publishableKey) {
+        const pkMode = publishableKey.startsWith("pk_test_") ? "test" : publishableKey.startsWith("pk_live_") ? "live" : null;
+        if (!pkMode) throw new BadRequestException("Stripe Publishable Key pk_test_ / pk_live_ দিয়ে শুরু হতে হবে।");
+        if (pkMode !== mode) throw new BadRequestException("Publishable Key ও Secret Key একই mode-এর হতে হবে (দুটোই test অথবা দুটোই live)।");
+      }
+      // Mode coherence (see class doc): Stripe picks test/live
+      // BY THE KEY, so the credential SET must match the key —
+      // a test key in the live set would let test-mode money
+      // complete real orders, and a live key in the sandbox set
+      // would break the sandbox set's never-real promise.
+      if (environment === "sandbox" && mode !== "test") {
+        throw new BadRequestException("Sandbox সেটে শুধু Stripe TEST key (sk_test_) সেভ করা যাবে — live key এখানে রাখা হয় না।");
+      }
+      if (environment === "live" && mode !== "live") {
+        throw new BadRequestException("Live সেটে শুধু Stripe LIVE key (sk_live_) সেভ করা যাবে — test key Sandbox সেটে রাখুন, সেখানে টেস্ট পেমেন্ট চালানো যায়।");
+      }
+      creds = {
+        secretKey, webhookSecret,
+        ...(publishableKey ? { publishableKey } : {}),
+        sandbox: mode === "test",
+      } satisfies TenantStripeCreds;
+      // REAL credential check: the balance read. Stripe's own
+      // `livemode` answer must agree with the key's mode — a
+      // disagreement means the key is not what it claims, and
+      // the save refuses. A failure saves NOTHING.
+      const balance = await this.gateway.stripeRetrieveBalance(creds as TenantStripeCreds).catch((e) => {
+        throw new BadRequestException(e instanceof Error ? e.message : "Stripe verification failed");
+      });
+      if (balance.livemode !== (mode === "live")) {
+        throw new BadRequestException("Stripe key-এর mode ও Stripe-এর নিজের livemode উত্তরের মিল নেই — key টি যাচাই করা যায়নি, কিছুই সেভ হয়নি।");
+      }
+      status = "verified";
+      lastVerifiedAt = new Date();
     } else {
       const merchantId = String(dto?.merchantId ?? "").trim();
       const privateKey = String(dto?.privateKey ?? "").trim();
@@ -692,10 +769,10 @@ export class TenantPaymentsService {
   async initiateOrderPayment(organizationId: string, orderId: string, providerRaw: string, opts?: { customerName?: string; customerPhone?: string; customerEmail?: string; amountMinor?: bigint | string; purpose?: string }) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
     if (provider === "nagad") {
-      throw new BadRequestException("Nagad API চেকআউট এই সিস্টেমে সংযুক্ত নয় — Nagad কনফিগটি শুধু সংরক্ষিত আছে। আপাতত ম্যানুয়াল Nagad নম্বরের পথটি ব্যবহার করুন।");
+      throw new BadRequestException("Nagad API চেকআউট এই সিস্টেমে সংযুক্ত নয় — Nagad-এর অফিশিয়াল API ডকুমেন্টেশন যাচাইযোগ্যভাবে পাওয়া যায়নি বলে যাচাই ছাড়া চেকআউট লেখা হয়নি; Nagad কনফিগটি শুধু সংরক্ষিত আছে। আপাতত ম্যানুয়াল Nagad নম্বরের পথটি ব্যবহার করুন (Settings → পেমেন্ট নোট)।");
     }
-    if (provider !== "sslcommerz" && provider !== "bkash" && provider !== "shurjopay" && provider !== "aamarpay") {
-      throw new BadRequestException("provider must be sslcommerz | bkash | shurjopay | aamarpay");
+    if (provider !== "sslcommerz" && provider !== "bkash" && provider !== "shurjopay" && provider !== "aamarpay" && provider !== "stripe") {
+      throw new BadRequestException("provider must be sslcommerz | bkash | shurjopay | aamarpay | stripe");
     }
     const resolved = await this.resolveGateway(organizationId, provider);
     if (!resolved) throw new BadRequestException("এই গেটওয়েটি কনফিগার করা নেই — আগে Connect Center-এ নিজের গেটওয়ে যোগ করুন।");
@@ -727,6 +804,9 @@ export class TenantPaymentsService {
       }
       if (provider === "aamarpay") {
         return await this.startAamarPayment(resolved.creds as TenantAamarCreds, txn, order, opts);
+      }
+      if (provider === "stripe") {
+        return { ...(await this.startStripePayment(resolved.creds as TenantStripeCreds, txn, order, opts)), environment: "live" };
       }
       return { ...(await this.startBkashPayment(resolved.creds as TenantBkashCreds, txn, order, opts)), environment: "live" };
     } catch (e) {
@@ -762,8 +842,8 @@ export class TenantPaymentsService {
     if (provider === "nagad") {
       throw new BadRequestException("Nagad-এর কোনো API চেকআউটই সংযুক্ত নয় — sandbox টেস্টও সম্ভব নয়।");
     }
-    if (provider !== "sslcommerz" && provider !== "bkash") {
-      throw new BadRequestException("provider must be sslcommerz | bkash");
+    if (provider !== "sslcommerz" && provider !== "bkash" && provider !== "stripe") {
+      throw new BadRequestException("provider must be sslcommerz | bkash | stripe");
     }
     const resolved = await this.resolveGateway(organizationId, provider, "sandbox");
     if (!resolved) {
@@ -788,7 +868,9 @@ export class TenantPaymentsService {
     try {
       const started = provider === "sslcommerz"
         ? await this.startSslPayment(resolved.creds as TenantSslCreds, txn, fakeOrder, { customerName: "Sandbox Test" })
-        : await this.startBkashPayment(resolved.creds as TenantBkashCreds, txn, fakeOrder, {});
+        : provider === "stripe"
+          ? await this.startStripePayment(resolved.creds as TenantStripeCreds, txn, fakeOrder, { customerName: "Sandbox Test" })
+          : await this.startBkashPayment(resolved.creds as TenantBkashCreds, txn, fakeOrder, {});
       await this.audit.log({
         organizationId, userId: actorId, action: "tenant_payment.test_initiated",
         entityType: "TenantPaymentTransaction", entityId: txn.id,
@@ -1028,6 +1110,34 @@ export class TenantPaymentsService {
       where: { id: txn.id }, data: { providerTxnId: tranId },
     });
     return { redirectUrl: String(res.payment_url), transactionId: txn.id, provider: "aamarpay", providerTxnId: tranId, sandbox: creds.sandbox };
+  }
+
+  /** OU5 — Stripe hosted Checkout for a tenant's OWN Stripe
+   * account. The session's metadata + client_reference_id carry
+   * OUR transaction id; the session id is stored as the row's
+   * providerTxnId (the webhook keys on it). success/cancel URLs
+   * land on the informational return endpoint, which NEVER marks
+   * anything paid — only handleStripeWebhook does, after
+   * signature verification. The amount passes through as
+   * unit_amount verbatim: Stripe amounts ARE minor units, and
+   * the order's own currency is used as-is (an international
+   * card order is priced in its own currency; nothing is
+   * converted or invented here). */
+  private async startStripePayment(creds: TenantStripeCreds, txn: any, order: any, opts?: { customerName?: string; customerPhone?: string; customerEmail?: string }) {
+    const returnUrl = `${this.apiBase()}/public/tenant-payments/stripe/return?session_id={CHECKOUT_SESSION_ID}`;
+    const session = await this.gateway.stripeCreateCheckoutSession(creds, {
+      amountMinor: Number(txn.amountMinor),
+      currency: String(txn.currency ?? "USD"),
+      productName: `Order ${order.externalNumber ?? order.id}`,
+      successUrl: returnUrl,
+      cancelUrl: `${returnUrl}&result=cancelled`,
+      referenceId: txn.id,
+      customerEmail: opts?.customerEmail,
+    });
+    await (this.prisma as any).tenantPaymentTransaction.update({
+      where: { id: txn.id }, data: { providerTxnId: session.id },
+    });
+    return { redirectUrl: session.url, transactionId: txn.id, provider: "stripe", providerTxnId: session.id, sandbox: creds.sandbox };
   }
 
   /**
@@ -1341,6 +1451,106 @@ export class TenantPaymentsService {
   }
 
   /**
+   * OU5 — Stripe webhook for a TENANT gateway (the merchant's
+   * OWN Stripe account). Trust chain, in order:
+   * 1. The event locates the transaction by the Checkout
+   *    Session id (the row's providerTxnId). The body is parsed
+   *    ONLY to find that id — nothing in it is trusted yet.
+   * 2. The signature must verify over the RAW body against the
+   *    transaction's OWN sealed webhook secret (the documented
+   *    HMAC-SHA256 scheme, common/stripe.client.ts). A failure
+   *    is recorded as signature_invalid (CC23 discipline) and
+   *    changes nothing.
+   * 3. Only then is the event acted on: checkout.session.completed
+   *    / checkout.session.async_payment_succeeded with
+   *    payment_status "paid" and amount_total + currency matching
+   *    the recorded transaction EXACTLY → markVerifiedPaid (the
+   *    same verified_paid path every gateway uses; re-delivery
+   *    is a no-op there). expired / async_payment_failed record
+   *    the failure honestly. Everything else is ignored.
+   * The controller answers 400 whenever ok is false (Stripe's
+   * documented failure response) and 200 otherwise.
+   */
+  async handleStripeWebhook(rawBody: string, signatureHeader?: string) {
+    let event: any = null;
+    try { event = JSON.parse(String(rawBody ?? "")); } catch { event = null; }
+    const session = event?.data?.object ?? null;
+    const sessionId = String(session?.id ?? "");
+    if (!event || !sessionId) return { ok: false, reason: "unparseable webhook payload" };
+    let txn: any = null;
+    try {
+      txn = await (this.prisma as any).tenantPaymentTransaction.findFirst({
+        where: { provider: "stripe", providerTxnId: sessionId },
+      });
+    } catch { txn = null; }
+    if (!txn) return { ok: false, ignored: true, reason: "unknown session" };
+    if (txn.status === "verified_paid") return { ok: true, alreadyProcessed: true };
+    const creds = (await this.resolveCredsForTxn(txn)) as TenantStripeCreds | null;
+    if (!creds?.webhookSecret) return { ok: false, reason: "gateway not configured" };
+    if (!verifyStripeWebhookSignature(String(rawBody ?? ""), signatureHeader, creds.webhookSecret)) {
+      await this.recordIpnEvent(txn, "signature_invalid", "stripe webhook signature verification failed");
+      return { ok: false, reason: "signature verification failed" };
+    }
+    const type = String(event.type ?? "");
+    if (type === "checkout.session.expired" || type === "checkout.session.async_payment_failed") {
+      if (txn.status === "initiated") {
+        await (this.prisma as any).tenantPaymentTransaction.update({
+          where: { id: txn.id }, data: { status: "failed" },
+        }).catch(() => undefined);
+        await this.recordFailure(txn.id, `Stripe reported ${type}`).catch(() => undefined);
+        await this.notifyPaymentFailure(txn);
+      }
+      return { ok: true, recorded: "failed" };
+    }
+    if (type !== "checkout.session.completed" && type !== "checkout.session.async_payment_succeeded") {
+      return { ok: true, ignored: true };
+    }
+    // The reference the session was created with must be THIS
+    // transaction (metadata + client_reference_id both carry it).
+    const reference = String(session.metadata?.reference_id ?? session.client_reference_id ?? "");
+    if (reference && reference !== String(txn.id)) {
+      return { ok: false, reason: "session reference does not match this transaction" };
+    }
+    if (String(session.payment_status ?? "") !== "paid") {
+      // A completed session whose money has not arrived yet
+      // (delayed payment method): NOT paid. The later
+      // async_payment_succeeded delivery completes it.
+      return { ok: false, reason: `session payment_status is ${String(session.payment_status ?? "(empty)")} — not paid` };
+    }
+    const confirmedMinor = Number(session.amount_total);
+    if (!Number.isInteger(confirmedMinor) || confirmedMinor !== Number(txn.amountMinor)) {
+      await this.recordIpnEvent(txn, "amount_mismatch", `stripe amount_total ${String(session.amount_total)} != transaction ${String(txn.amountMinor)} minor`);
+      return { ok: false, reason: "confirmed amount does not match this transaction" };
+    }
+    if (String(session.currency ?? "").toUpperCase() !== String(txn.currency).toUpperCase()) {
+      return { ok: false, reason: "confirmed currency does not match this transaction" };
+    }
+    return this.markVerifiedPaid(txn, {
+      payload: { stripeEvent: { id: String(event.id ?? ""), type }, session },
+      providerTxnId: sessionId,
+      valId: session.payment_intent ? String(session.payment_intent) : undefined,
+    });
+  }
+
+  /** OU5 — Stripe browser return (success AND cancel land
+   * here). Informational ONLY, exactly like the SSLCommerz
+   * return: it never marks anything paid and never records a
+   * failure — the webhook does the real work, and the shop
+   * success page polls the verified state. */
+  async stripeReturnRedirect(query: Record<string, any>): Promise<string> {
+    const sessionId = String(query?.session_id ?? "");
+    const flag = String(query?.result ?? "") === "cancelled" ? "cancelled" : "verifying";
+    let txn: any = null;
+    try {
+      txn = sessionId
+        ? await (this.prisma as any).tenantPaymentTransaction.findFirst({ where: { provider: "stripe", providerTxnId: sessionId } })
+        : null;
+    } catch { txn = null; }
+    if (txn) return this.shopRedirectForTxn(txn, flag);
+    return `${this.webBase()}/dashboard/connections?payment=${flag}`;
+  }
+
+  /**
    * bKash callback for a TENANT gateway. The redirect proves
    * nothing: the server-to-server EXECUTE call (falling back to a
    * status QUERY when execute reports the payment already
@@ -1617,7 +1827,7 @@ export class TenantPaymentsService {
    * a payments problem can never break a checkout page.
    */
   async publicPaymentOptions(organizationId: string): Promise<{
-    online: Array<{ provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay"; source: "own" | "platform"; sandbox: boolean }>;
+    online: Array<{ provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe"; source: "own" | "platform"; sandbox: boolean }>;
     options: Array<{ provider: string; source: "own" | "platform" }>;
   }> {
     // Union (GC10 + CC19): GC10 checkout callers pass an org ID;
@@ -1643,9 +1853,9 @@ export class TenantPaymentsService {
       } catch { /* identifier used as-is */ }
     }
     if (lookupAnswered && !orgFound) throw new NotFoundException("Shop not found");
-    const online: Array<{ provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay"; source: "own" | "platform"; sandbox: boolean }> = [];
+    const online: Array<{ provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe"; source: "own" | "platform"; sandbox: boolean }> = [];
     try {
-      for (const provider of ["sslcommerz", "bkash", "shurjopay", "aamarpay"] as const) {
+      for (const provider of ["sslcommerz", "bkash", "shurjopay", "aamarpay", "stripe"] as const) {
         try {
           const resolved = await this.resolveGateway(orgId, provider);
           if (resolved && resolved.row.isEnabled !== false) {
@@ -1670,7 +1880,7 @@ export class TenantPaymentsService {
     // the platform actually offers and the tenant enabled).
     const options: Array<{ provider: string; source: "own" | "platform" }> = [];
     try {
-      for (const provider of ["sslcommerz", "bkash"] as const) {
+      for (const provider of ["sslcommerz", "bkash", "stripe"] as const) {
         const own = await this.resolveGateway(orgId, provider, "live").catch(() => null);
         if (own && own.row.isEnabled !== false) options.push({ provider, source: "own" });
         const offered = this.wallet.platformProviders().find((p) => p.provider === provider)?.offered === true;
@@ -1691,7 +1901,7 @@ export class TenantPaymentsService {
   async assertPublicPaymentOption(
     organizationId: string,
     sel: { provider?: unknown; source?: unknown } | null | undefined,
-  ): Promise<{ provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay"; source: "own" | "platform" }> {
+  ): Promise<{ provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe"; source: "own" | "platform" }> {
     const provider = String(sel?.provider ?? "").trim().toLowerCase();
     const source = String(sel?.source ?? "").trim().toLowerCase();
     const { online } = await this.publicPaymentOptions(organizationId);

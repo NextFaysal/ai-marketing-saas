@@ -4,10 +4,11 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import {
-  effectiveBkashConfig, effectiveSslcommerzConfig, ensurePlatformConfig,
+  effectiveBkashConfig, effectiveSslcommerzConfig, effectiveStripeConfig, ensurePlatformConfig,
   bkashBase, sslcommerzBase, seal, unseal,
-  type BkashConfig, type SslcommerzConfig,
+  type BkashConfig, type SslcommerzConfig, type StripeConfig,
 } from "../common/platform-config";
+import { StripeClient, stripeKeyMode, verifyStripeWebhookSignature } from "../common/stripe.client";
 import { PLAN_TIERS, planPrices, planYearlyPrices, cycleDays } from "../common/platform-settings";
 import { maybeRewardReferral } from "../common/referral";
 import { buildPdf, saasInvoicePage, moneyText } from "../courier/pdf";
@@ -23,6 +24,17 @@ import { buildPdf, saasInvoicePage, moneyText } from "../courier/pdf";
  *   (merchant credentials, documented bKash flow) confirms a
  *   Completed transaction with the exact amount — the callback
  *   query string alone proves nothing.
+ * - Stripe (OU5, the international card rail) follows the SAME
+ *   rules: activation happens ONLY in handleStripeWebhook after
+ *   the webhook signature verifies over the RAW body against
+ *   the platform's sealed webhook secret AND the session's
+ *   payment_status is "paid" with the exact amount_total +
+ *   currency. The browser return activates nothing. One
+ *   Checkout Session (mode=payment) per plan purchase — the
+ *   subscription bookkeeping stays THIS service's PlanCheckout
+ *   + activate(); Stripe's own subscription objects are not
+ *   used (no second architecture). Contract evidence:
+ *   docs/one-umbrella-ou5-stripe-evidence.md.
  * - Activation is idempotent: an already-successful checkout is
  *   a no-op on replay.
  * - Money math order: plan price − coupon discount − org credit
@@ -193,14 +205,18 @@ export class PaymentsService {
   ): Promise<CheckoutResult> {
     await ensurePlatformConfig(this.prisma as any);
     const gateway = String(opts?.gateway ?? "sslcommerz").toLowerCase();
-    if (gateway !== "sslcommerz" && gateway !== "bkash") throw new BadRequestException("gateway must be sslcommerz | bkash");
+    if (gateway !== "sslcommerz" && gateway !== "bkash" && gateway !== "stripe") throw new BadRequestException("gateway must be sslcommerz | bkash | stripe");
     const sslCfg = gateway === "sslcommerz" ? effectiveSslcommerzConfig() : null;
     const bkashCfg = gateway === "bkash" ? effectiveBkashConfig() : null;
+    const stripeCfg = gateway === "stripe" ? effectiveStripeConfig() : null;
     if (gateway === "sslcommerz" && !sslCfg) {
       throw new BadRequestException("Online payment (SSLCommerz) is not configured by the platform team yet. Please use the plan-change request on the Billing page — the team will confirm your payment manually.");
     }
     if (gateway === "bkash" && !bkashCfg) {
       throw new BadRequestException("bKash payment is not configured by the platform team yet. Please choose SSLCommerz or use the plan-change request on the Billing page.");
+    }
+    if (gateway === "stripe" && !stripeCfg) {
+      throw new BadRequestException("Stripe (international card) payment is not configured by the platform team yet. Please choose SSLCommerz or bKash, or use the plan-change request on the Billing page.");
     }
     const plan = String(planRaw ?? "").toUpperCase();
     if (!(PLAN_TIERS as readonly string[]).includes(plan)) throw new BadRequestException("Unknown plan");
@@ -259,7 +275,7 @@ export class PaymentsService {
     const creditApplied = creditBalance > afterDiscount ? afterDiscount : creditBalance;
     const dueMinor = afterDiscount - creditApplied;
 
-    const tranId = `${gateway === "bkash" ? "QB" : "QC"}${Date.now().toString(36).toUpperCase()}${randomBytes(3).toString("hex").toUpperCase()}`;
+    const tranId = `${gateway === "bkash" ? "QB" : gateway === "stripe" ? "QS" : "QC"}${Date.now().toString(36).toUpperCase()}${randomBytes(3).toString("hex").toUpperCase()}`;
     const checkout = await (this.prisma as any).planCheckout.create({
       data: {
         organizationId, plan, amountMinor: dueMinor, currency: "BDT", tranId,
@@ -278,6 +294,10 @@ export class PaymentsService {
 
     if (gateway === "bkash") {
       const out = await this.startBkashCheckout(checkout, bkashCfg!, phone, dueMinor, tranId, plan);
+      return { ...out, prorationMinor: prorationMinor.toString(), cycle };
+    }
+    if (gateway === "stripe") {
+      const out = await this.startStripeCheckout(checkout, stripeCfg!, actor, dueMinor, tranId, plan);
       return { ...out, prorationMinor: prorationMinor.toString(), cycle };
     }
     const out = await this.startSslCheckout(checkout, sslCfg!, org, profile, actor, phone, dueMinor, tranId, plan);
@@ -421,6 +441,137 @@ export class PaymentsService {
     };
   }
 
+  // ---------------- OU5: Stripe Checkout (platform billing) ----------------
+
+  /** Constructed per call so the CURRENT global fetch is the
+   * one used (the TenantGatewayClient injectable-fetch
+   * discipline; specs stub the boundary the same way). */
+  private stripeClient(): StripeClient {
+    return new StripeClient();
+  }
+
+  /** Create the hosted Checkout Session for a plan purchase.
+   * The PlanCheckout row was already recorded as "initiated" —
+   * creating the session activates NOTHING; only the
+   * signature-verified webhook (handleStripeWebhook) may call
+   * activate(). The session currency is the checkout's own
+   * currency (plan prices are BDT-denominated in this codebase;
+   * the amount passes through as unit_amount verbatim because
+   * Stripe amounts ARE minor units). The checkout id rides in
+   * the session metadata + client_reference_id so the webhook
+   * can find this exact row. */
+  private async startStripeCheckout(checkout: any, cfg: StripeConfig, actor: { email: string }, dueMinor: bigint, tranId: string, plan: string) {
+    let session: { id: string; url: string };
+    try {
+      session = await this.stripeClient().createCheckoutSession(cfg.secretKey, {
+        amountMinor: Number(dueMinor),
+        currency: String(checkout.currency ?? "BDT"),
+        productName: `AI Marketing SaaS — ${plan} plan (${String(checkout.cycle ?? "monthly") === "yearly" ? "yearly" : "monthly"})`,
+        successUrl: `${this.apiBase()}/public/payments/stripe/return?session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${this.apiBase()}/public/payments/stripe/return?session_id={CHECKOUT_SESSION_ID}&result=cancelled`,
+        referenceId: checkout.id,
+        customerEmail: actor.email,
+      });
+    } catch (e) {
+      await (this.prisma as any).planCheckout.update({
+        where: { id: checkout.id },
+        data: { status: "failed", gatewayDetail: { error: e instanceof Error ? e.message : "network error" } },
+      });
+      throw new BadRequestException(`Stripe refused to start this payment: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+    const sandbox = stripeKeyMode(cfg.secretKey) === "test";
+    await (this.prisma as any).planCheckout.update({
+      where: { id: checkout.id },
+      data: { gatewayDetail: { sessionId: session.id, sandbox } },
+    });
+    return {
+      gatewayUrl: session.url,
+      tranId,
+      plan,
+      amountMinor: dueMinor.toString(),
+      gateway: "stripe",
+      sandbox,
+    };
+  }
+
+  /**
+   * OU5 — the Stripe webhook for PLATFORM billing. Trust chain:
+   * platform config → signature over the RAW body against the
+   * platform's sealed webhook secret (verified BEFORE anything
+   * in the body is trusted) → the session locates the
+   * PlanCheckout (metadata/client_reference_id carries its id;
+   * the stored sessionId must agree) → checkout.session.completed
+   * / async_payment_succeeded with payment_status "paid" and
+   * amount_total + currency matching the checkout EXACTLY →
+   * activate() (the same bookkeeping SSLCommerz/bKash use).
+   * Duplicate delivery: activate is only reached while the
+   * checkout is "initiated"; a success checkout answers
+   * alreadyProcessed. The controller answers 400 when ok is
+   * false (Stripe's documented failure response).
+   */
+  async handleStripeWebhook(rawBody: string, signatureHeader?: string) {
+    await ensurePlatformConfig(this.prisma as any);
+    const cfg = effectiveStripeConfig();
+    if (!cfg) return { ok: false, reason: "gateway not configured" };
+    if (!verifyStripeWebhookSignature(String(rawBody ?? ""), signatureHeader, cfg.webhookSecret)) {
+      return { ok: false, reason: "signature verification failed" };
+    }
+    let event: any = null;
+    try { event = JSON.parse(String(rawBody ?? "")); } catch { event = null; }
+    const session = event?.data?.object ?? null;
+    const sessionId = String(session?.id ?? "");
+    if (!event || !sessionId) return { ok: false, reason: "unparseable webhook payload" };
+    const reference = String(session.metadata?.reference_id ?? session.client_reference_id ?? "");
+    let checkout: any = null;
+    if (reference) {
+      checkout = await (this.prisma as any).planCheckout.findUnique({ where: { id: reference } }).catch(() => null);
+      if (checkout && String(checkout.gateway ?? "") !== "stripe") checkout = null;
+      if (checkout && checkout.gatewayDetail?.sessionId && String(checkout.gatewayDetail.sessionId) !== sessionId) checkout = null;
+    }
+    if (!checkout) {
+      const candidates = await (this.prisma as any).planCheckout.findMany({
+        where: { gateway: "stripe" }, orderBy: { createdAt: "desc" }, take: 200,
+      }).catch(() => []);
+      checkout = (candidates as any[]).find((c) => String(c.gatewayDetail?.sessionId ?? "") === sessionId) ?? null;
+    }
+    if (!checkout) return { ok: false, ignored: true, reason: "unknown session" };
+    if (checkout.status === "success") return { ok: true, alreadyProcessed: true };
+    const type = String(event.type ?? "");
+    if (type === "checkout.session.expired" || type === "checkout.session.async_payment_failed") {
+      if (checkout.status === "initiated") {
+        await (this.prisma as any).planCheckout.update({
+          where: { id: checkout.id },
+          data: { status: type === "checkout.session.expired" ? "cancelled" : "failed", gatewayDetail: { ...(checkout.gatewayDetail ?? {}), stripeEvent: type } },
+        });
+      }
+      return { ok: true, recorded: type === "checkout.session.expired" ? "cancelled" : "failed" };
+    }
+    if (type !== "checkout.session.completed" && type !== "checkout.session.async_payment_succeeded") {
+      return { ok: true, ignored: true };
+    }
+    if (String(session.payment_status ?? "") !== "paid") {
+      return { ok: false, reason: `session payment_status is ${String(session.payment_status ?? "(empty)")} — not paid` };
+    }
+    const confirmedMinor = Number(session.amount_total);
+    if (!Number.isInteger(confirmedMinor) || confirmedMinor !== Number(checkout.amountMinor)) {
+      return { ok: false, reason: "confirmed amount does not match this checkout" };
+    }
+    if (String(session.currency ?? "").toUpperCase() !== String(checkout.currency).toUpperCase()) {
+      return { ok: false, reason: "confirmed currency does not match this checkout" };
+    }
+    return this.activate(checkout, String(session.payment_intent ?? sessionId), { via: "stripe_webhook", sessionId });
+  }
+
+  /** OU5 — Stripe browser return for platform billing.
+   * Informational ONLY (the SSLCommerz return discipline): it
+   * activates nothing and records nothing; the webhook is the
+   * only activation path. The billing page's "received" state
+   * already says final verification is pending. */
+  stripeReturnRedirect(query: Record<string, any>): string {
+    const flag = String(query?.result ?? "") === "cancelled" ? "cancelled" : "received";
+    return `${this.webBase()}/dashboard/billing?payment=${flag}`;
+  }
+
   /** bKash redirects the browser back with paymentID + status.
    * status=success alone activates NOTHING: the server-to-server
    * execute call must confirm a Completed transaction with the
@@ -553,6 +704,29 @@ export class PaymentsService {
     if (checkout.status === "success") return { ok: true, alreadyProcessed: true, status: checkout.status };
     if (checkout.status !== "initiated") return { ok: false, status: checkout.status, reason: `checkout is ${checkout.status} — nothing to reconcile` };
     await ensurePlatformConfig(this.prisma as any);
+    if ((checkout.gateway ?? "sslcommerz") === "stripe") {
+      // OU5: re-read the session from Stripe with the platform
+      // key and judge it by the SAME rules as the webhook
+      // (paid + exact amount + currency) before activating.
+      const stripeCfg = effectiveStripeConfig();
+      if (!stripeCfg) return { ok: false, reason: "Stripe is not configured" };
+      const sessionId = String(checkout.gatewayDetail?.sessionId ?? "");
+      if (!sessionId) return { ok: false, reason: "checkout has no Stripe session id" };
+      const session = await this.stripeClient().retrieveCheckoutSession(stripeCfg.secretKey, sessionId).catch(() => null);
+      if (!session) return { ok: false, reason: "Stripe session query failed" };
+      if (String(session.payment_status ?? "") !== "paid") {
+        return { ok: false, status: "initiated", gatewayStatus: String(session.payment_status ?? "unknown"), reason: "Stripe does not show a paid session" };
+      }
+      const confirmedMinor = Number(session.amount_total);
+      if (!Number.isInteger(confirmedMinor) || confirmedMinor !== Number(checkout.amountMinor)) {
+        return { ok: false, reason: "confirmed amount does not match this checkout" };
+      }
+      if (String(session.currency ?? "").toUpperCase() !== String(checkout.currency).toUpperCase()) {
+        return { ok: false, reason: "confirmed currency does not match this checkout" };
+      }
+      const out = await this.activate(checkout, String(session.payment_intent ?? sessionId), { via: "stripe_reconcile", sessionId });
+      return { ...out, reconciled: true };
+    }
     if ((checkout.gateway ?? "sslcommerz") === "bkash") {
       const cfg = effectiveBkashConfig();
       if (!cfg) return { ok: false, reason: "bKash is not configured" };
@@ -635,7 +809,7 @@ export class PaymentsService {
         organizationId: checkout.organizationId,
         amountMinor: fullValue,
         currency: checkout.currency,
-        method: gateway === "bkash" ? "bkash_gateway" : "sslcommerz",
+        method: gateway === "bkash" ? "bkash_gateway" : gateway === "stripe" ? "stripe" : "sslcommerz",
         reference: checkout.tranId,
         periodEnd: newEnd,
         recordedById: checkout.createdById,
@@ -643,7 +817,9 @@ export class PaymentsService {
           ? "Paid in full by coupon/credit — no gateway charge"
           : gateway === "bkash"
             ? `bKash online payment (trx ${refId})`
-            : `SSLCommerz online payment (val_id ${refId})`,
+            : gateway === "stripe"
+              ? `Stripe online payment (payment_intent ${refId})`
+              : `SSLCommerz online payment (val_id ${refId})`,
       },
     });
     if (creditApplied > 0n) {

@@ -32,7 +32,7 @@ const PROVIDER_META: { id: GatewayProviderId; icon: string; title: string; note:
   },
   {
     id: "nagad", icon: "🟠", title: "নগদ (Nagad, নিজের)",
-    note: "Nagad Merchant ID ও Private Key দিন। এই সিস্টেমে Nagad-এর কোনো আগাম credential-যাচাই বা API চেকআউট সংযুক্ত নয় — কনফিগটি সেভ হবে \"কনফিগার করা\" হিসেবে, আর চেকআউট আপাতত ম্যানুয়াল Nagad নম্বরের পথেই চলবে।",
+    note: "Nagad Merchant ID ও Private Key দিন। কেন API চেকআউট নেই: Nagad-এর অফিশিয়াল developer ডকুমেন্টেশন প্রকাশ্যে যাচাইযোগ্যভাবে পাওয়া যায়নি (OU5 পুনঃযাচাই, অক্টোবর ২০২৬) — যাচাই ছাড়া signature/checkout কোড লেখা হয়নি, তাই কোনো আগাম credential-যাচাই বা API চেকআউট সংযুক্ত নয়। কনফিগটি শুধু সংরক্ষিত থাকবে \"কনফিগার করা\" হিসেবে; পেমেন্ট নিন ম্যানুয়াল Nagad নম্বরের পথে (Settings → পেমেন্ট নোট), আর Nagad পেমেন্টের refund লাগলে Nagad মার্চেন্ট প্যানেল থেকে করে Refund Center-এ রেকর্ড রাখুন — প্ল্যাটফর্ম সেটি ট্র্যাক করবে। Nagad merchant অ্যাকাউন্ট থেকে অফিশিয়াল API ডক + sandbox credential পেলে যাচাই-প্রথম (verify-first) চেকআউট তখনই সংযুক্ত করা হবে।",
   },
   {
     id: "shurjopay", icon: "🟢", title: "ShurjoPay (নিজের)",
@@ -42,11 +42,16 @@ const PROVIDER_META: { id: GatewayProviderId; icon: string; title: string; note:
     id: "aamarpay", icon: "🔵", title: "aamarPay (নিজের)",
     note: "আপনার aamarPay Store ID ও Signature Key দিন। SSLCommerz-এর মতো এখানে save-time যাচাই নেই — প্রথম আসল পেমেন্টেই যাচাই হবে, তাই এটি সেভ হবে \"configured\" লেবেলসহ। পেমেন্ট সফল ধরা হবে শুধু Search Transaction সার্ভার-যাচাইয়ে Successful + সঠিক amount/currency মিললেই।",
   },
+  {
+    id: "stripe", icon: "🌍", title: "Stripe — আন্তর্জাতিক কার্ড (নিজের)",
+    note: "আপনার নিজের Stripe অ্যাকাউন্টের Secret Key ও Webhook Signing Secret (whsec_) দিন — Publishable Key ঐচ্ছিক (শনাক্তকরণের জন্য)। সেভ করার আগে আসল Balance কল দিয়ে key যাচাই হয় — যাচাই ব্যর্থ হলে কিছুই সেভ হয় না। Mode key দিয়েই ঠিক হয়: Live সেটে শুধু sk_live_, Sandbox সেটে শুধু sk_test_। Webhook endpoint হিসেবে Stripe Dashboard-এ যোগ করুন: /public/tenant-payments/stripe/webhook (API-এর ঠিকানায়) আর event হিসেবে checkout.session.completed বাছুন। পেমেন্ট সফল ধরা হবে শুধু signature-যাচাইকৃত webhook-এ payment_status paid + সঠিক amount/currency মিললেই — browser-এর success পেজ কখনোই পেমেন্ট নিশ্চিত করে না। টাকা সরাসরি আপনার Stripe অ্যাকাউন্টে settle হয়।",
+  },
 ];
 
 const EMPTY_FORM: GatewayForm = {
   storeId: "", storePass: "", username: "", password: "", appKey: "", appSecret: "",
-  merchantId: "", privateKey: "", prefix: "", signatureKey: "", sandbox: true,
+  merchantId: "", privateKey: "", prefix: "", signatureKey: "",
+  secretKey: "", webhookSecret: "", publishableKey: "", sandbox: true,
   feePercent: "", feeFixedTaka: "",
 };
 
@@ -110,7 +115,7 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
                 {!view.isEnabled ? "বন্ধ আছে" : gatewayStatusLabel(view)}
               </span>
             </div>
-            {view.identifier ? <div>{meta.id === "sslcommerz" || meta.id === "aamarpay" ? "Store ID" : meta.id === "bkash" ? "App Key" : meta.id === "shurjopay" ? "Username" : "Merchant ID"}: <span className="font-medium text-slate-700">{view.identifier}</span></div> : null}
+            {view.identifier ? <div>{meta.id === "sslcommerz" || meta.id === "aamarpay" ? "Store ID" : meta.id === "bkash" ? "App Key" : meta.id === "shurjopay" ? "Username" : meta.id === "stripe" ? "Publishable Key" : "Merchant ID"}: <span className="font-medium text-slate-700">{view.identifier}</span></div> : null}
             {verifiedAt ? <div>সর্বশেষ যাচাই: {verifiedAt}</div> : null}
             {view.lastError ? <div className="rounded-lg bg-red-50 px-2 py-1 font-medium text-red-600">⚠️ {view.lastError}</div> : null}
             <div className="flex flex-wrap gap-1.5 pt-1">
@@ -137,7 +142,7 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
         </div>
       ) : null}
       <p className="text-xs leading-relaxed text-slate-500">{meta.note}</p>
-      <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); if (!parseFeePercentToBps(form.feePercent ?? "").ok) { setFeeError("ফি হার 0–100% এর মধ্যে হতে হবে"); return; } if (!parseFeeTakaToMinor(form.feeFixedTaka ?? "").ok) { setFeeError("ফিক্সড ফি সঠিক টাকার পরিমাণে দিন (সর্বোচ্চ ২ দশমিক)"); return; } setFeeError(""); onSave(meta.id, { ...form, sandbox: environment === "sandbox" }, environment); setForm((f) => ({ ...f, storePass: "", password: "", appSecret: "", privateKey: "", signatureKey: "" })); }}>
+      <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); if (!parseFeePercentToBps(form.feePercent ?? "").ok) { setFeeError("ফি হার 0–100% এর মধ্যে হতে হবে"); return; } if (!parseFeeTakaToMinor(form.feeFixedTaka ?? "").ok) { setFeeError("ফিক্সড ফি সঠিক টাকার পরিমাণে দিন (সর্বোচ্চ ২ দশমিক)"); return; } setFeeError(""); onSave(meta.id, { ...form, sandbox: environment === "sandbox" }, environment); setForm((f) => ({ ...f, storePass: "", password: "", appSecret: "", privateKey: "", signatureKey: "", secretKey: "", webhookSecret: "" })); }}>
         {meta.id === "sslcommerz" ? (
           <>
             <label className="block text-sm">Store ID<input className={inputCls} value={form.storeId} onChange={(e) => setForm({ ...form, storeId: e.target.value })} required autoComplete="off" /></label>
@@ -161,6 +166,13 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
           <>
             <label className="block text-sm">Store ID<input className={inputCls} value={form.storeId} onChange={(e) => setForm({ ...form, storeId: e.target.value })} required autoComplete="off" /></label>
             <label className="block text-sm">Signature Key<input type="password" className={inputCls} value={form.signatureKey} onChange={(e) => setForm({ ...form, signatureKey: e.target.value })} required autoComplete="new-password" /></label>
+          </>
+        ) : meta.id === "stripe" ? (
+          <>
+            <label className="block text-sm">Secret Key ({environment === "sandbox" ? "sk_test_…" : "sk_live_…"})<input type="password" className={inputCls} value={form.secretKey} onChange={(e) => setForm({ ...form, secretKey: e.target.value })} required autoComplete="new-password" /></label>
+            <label className="block text-sm">Webhook Signing Secret (whsec_…)<input type="password" className={inputCls} value={form.webhookSecret} onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })} required autoComplete="new-password" /></label>
+            <label className="block text-sm">Publishable Key (ঐচ্ছিক — শনাক্তকরণের জন্য)<input className={inputCls} value={form.publishableKey} onChange={(e) => setForm({ ...form, publishableKey: e.target.value })} autoComplete="off" /></label>
+            <p className="rounded-lg bg-slate-50 px-2 py-1 text-[11px] leading-relaxed text-slate-500">{environment === "sandbox" ? "🧪 Test mode — এই সেটের key দিয়ে কোনো আসল টাকা কাটে না; টেস্ট পেমেন্টে test card 4242 4242 4242 4242 ব্যবহার করুন।" : "🟢 Live mode — এই সেটের key দিয়ে আসল কার্ডে আসল টাকা কাটবে।"}</p>
           </>
         ) : (
           <>
@@ -196,7 +208,7 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="submit" disabled={saving} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-            {saving ? "সেভ হচ্ছে..." : meta.id === "bkash" || meta.id === "shurjopay" ? `যাচাই করে ${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন` : `${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন`}
+            {saving ? "সেভ হচ্ছে..." : meta.id === "bkash" || meta.id === "shurjopay" || meta.id === "stripe" ? `যাচাই করে ${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন` : `${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন`}
           </button>
         </div>
       </form>
@@ -236,6 +248,8 @@ export function PaymentGatewayPanel({ onChanged }: { onChanged?: () => void }) {
       });
       setNotice(provider === "bkash"
         ? `আপনার bKash ${environment === "sandbox" ? "Sandbox" : "Live"} সেটটি bKash-এর কাছে যাচাই হয়ে সেভ হয়েছে।`
+        : provider === "stripe"
+          ? `আপনার Stripe ${environment === "sandbox" ? "Sandbox (Test mode)" : "Live"} সেটটি Stripe-এর কাছে যাচাই হয়ে সেভ হয়েছে — এখন অর্ডারে আন্তর্জাতিক কার্ডে পেমেন্ট নেওয়া যাবে।`
         : provider === "shurjopay"
           ? `আপনার ShurjoPay ${environment === "sandbox" ? "Sandbox" : "Live"} সেটটি token দিয়ে যাচাই হয়ে সেভ হয়েছে — এখন অর্ডারে অনলাইন পেমেন্ট নেওয়া যাবে।`
         : `গেটওয়ের ${environment === "sandbox" ? "Sandbox" : "Live"} সেটটি সেভ হয়েছে (কনফিগার করা) — আগাম যাচাইয়ের সুযোগ এই গেটওয়েতে নেই, প্রথম আসল লেনদেনের সার্ভার-যাচাইয়েই নিশ্চিত হওয়া যাবে।`);

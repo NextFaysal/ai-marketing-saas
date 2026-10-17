@@ -7,6 +7,60 @@ import { PERMISSION_AREA_KEYS } from "./permission-catalog";
 let maintenanceCache: { at: number; window: any } = { at: 0, window: null };
 
 /**
+ * ORG3 (Organization Next OB1): while an organization is archived
+ * (Organization.archivedAt set by its OWNER), the only org-scoped
+ * paths that stay open are the OWNER's own lifecycle + data paths:
+ * reading the org itself, restore/archive, ownership transfer,
+ * leave, and the data-tools export surface (create/list/download
+ * + backup preference + the audit-log viewer). Everything else —
+ * for every member, the owner included — is refused until the
+ * org is restored. Platform suspension (org.status) is a separate
+ * check and still wins first.
+ */
+export function isArchivedOwnerPath(url: string, method: string, organizationId: string): boolean {
+  const path = (url || "").split("?")[0].replace(/\/+$/, "");
+  const base = `/organizations/${organizationId}`;
+  if (!path.startsWith(base)) return false;
+  const rest = path.slice(base.length);
+  if (rest === "") return method === "GET"; // getOne — the limited screen's own data
+  if (rest === "/restore" || rest === "/archive" || rest === "/transfer-ownership" || rest === "/leave") {
+    return method === "POST";
+  }
+  if (rest === "/data-exports" || rest.startsWith("/data-exports/")) return true;
+  // ORG16: bundle restore sits beside export — an owner restoring
+  // a backup into an archived (still empty) org, then un-archiving,
+  // is the recovery flow the export allowlist already exists for.
+  if (rest === "/data-imports" || rest.startsWith("/data-imports/")) return true;
+  if (rest === "/audit-logs") return method === "GET";
+  return false;
+}
+
+/**
+ * ORG11 (Organization Next OB4): while an org's security policy
+ * blocks a member (MFA required but not enabled on their account,
+ * or their session is older than the org's cap), these paths stay
+ * open so the member is never trapped: reading the org itself
+ * (the dashboard identifies the workspace from it), reading the
+ * policy (the dashboard gate probes exactly this to render its
+ * explanation screen), and leaving the organization. Everything
+ * the member needs to FIX the state — MFA setup (/auth/totp/*),
+ * logout/login, the org list — is not org-scoped at all and never
+ * reaches this guard. PATCH security-policy is deliberately NOT
+ * here: a password-compromised OWNER account must not be able to
+ * switch the org's MFA requirement off to walk in.
+ */
+export function isOrgSecurityBypassPath(url: string, method: string, organizationId: string): boolean {
+  const path = (url || "").split("?")[0].replace(/\/+$/, "");
+  const base = `/organizations/${organizationId}`;
+  if (!path.startsWith(base)) return false;
+  const rest = path.slice(base.length);
+  if (rest === "") return method === "GET";
+  if (rest === "/security-policy") return method === "GET";
+  if (rest === "/leave") return method === "POST";
+  return false;
+}
+
+/**
  * Tenant isolation guard.
  * Reads organization id from route param :organizationId or header x-organization-id,
  * then verifies the authenticated user has an ACTIVE membership in that org.
@@ -31,13 +85,91 @@ export class TenantGuard implements CanActivate {
     // A platform-suspended (or deleted) organization locks its
     // members out; super admins keep access for support/recovery.
     try {
-      const org = await (this.prisma as any).organization?.findUnique({ where: { id: organizationId }, select: { status: true } });
+      const org = await (this.prisma as any).organization?.findUnique({ where: { id: organizationId }, select: { status: true, archivedAt: true } });
       if (org?.status && org.status !== "ACTIVE") {
         throw new ForbiddenException(`This organization is ${org.status.toLowerCase()} by the platform team`);
+      }
+      // ORG3: a tenant-archived organization is closed for work
+      // until the OWNER restores it. Only the owner's lifecycle /
+      // export paths (isArchivedOwnerPath) stay open; members are
+      // fully blocked, the owner included outside those paths.
+      if (org?.archivedAt) {
+        const method = (req.method ?? "GET").toUpperCase();
+        const url: string = req.originalUrl ?? req.url ?? "";
+        const isOwner = membership.role === "OWNER";
+        if (!isOwner || !isArchivedOwnerPath(url, method, organizationId)) {
+          throw new ForbiddenException(
+            isOwner
+              ? "This organization is archived — restore it to continue working"
+              : "This organization is archived by its owner",
+          );
+        }
       }
     } catch (e) {
       if (e instanceof ForbiddenException) throw e;
       // organization lookup unavailable (older fakes) — do not block
+    }
+    // ORG11 (Organization Next OB4): org security policy — MFA
+    // requirement + session-age cap. Enforced HERE, per request,
+    // because the policy is per-org while sessions are global: the
+    // same member may be blocked in one org and fine in another.
+    // Session age is measured from the server-side UserSession row
+    // (GB6); a token without a sid cannot be aged, so a capped org
+    // refuses it (the remedy — a fresh login — is always open).
+    // Defensive like the blocks above: any lookup failure fails
+    // OPEN, so an infra hiccup cannot lock a whole org out; only a
+    // positively-read policy + positively-read member state blocks.
+    try {
+      const org = await (this.prisma as any).organization?.findUnique({
+        where: { id: organizationId },
+        select: { requireMfa: true, sessionMaxAgeHours: true },
+      });
+      const cap = typeof org?.sessionMaxAgeHours === "number" && Number.isInteger(org.sessionMaxAgeHours) && org.sessionMaxAgeHours > 0
+        ? org.sessionMaxAgeHours : null;
+      if (org && (org.requireMfa === true || cap !== null)) {
+        const method = (req.method ?? "GET").toUpperCase();
+        const url: string = req.originalUrl ?? req.url ?? "";
+        if (!isOrgSecurityBypassPath(url, method, organizationId)) {
+          if (org.requireMfa === true) {
+            const me = await (this.prisma as any).user?.findUnique({
+              where: { id: req.user.userId }, select: { totpEnabled: true },
+            });
+            if (me && me.totpEnabled !== true) {
+              throw new ForbiddenException({
+                statusCode: 403,
+                code: "ORG_MFA_REQUIRED",
+                message: "এই Organization-এ MFA (2FA) বাধ্যতামূলক — আগে Settings → নিরাপত্তা (2FA) থেকে নিজের অ্যাকাউন্টে MFA চালু করুন, তারপর আবার চেষ্টা করুন।",
+                error: "Forbidden",
+              });
+            }
+          }
+          if (cap !== null) {
+            const sid = (req.user as any)?.sid as string | undefined;
+            let tooOld = !sid; // un-ageable legacy token — a capped org requires a fresh login
+            if (sid) {
+              const session = await (this.prisma as any).userSession?.findUnique({
+                where: { id: sid }, select: { createdAt: true },
+              });
+              if (session?.createdAt) {
+                tooOld = Date.now() - new Date(session.createdAt).getTime() > cap * 3_600_000;
+              } else {
+                tooOld = false; // session row unreadable — fail open (JwtAuthGuard owns revocation)
+              }
+            }
+            if (tooOld) {
+              throw new ForbiddenException({
+                statusCode: 403,
+                code: "ORG_SESSION_EXPIRED",
+                message: `এই Organization-এ সেশনের সর্বোচ্চ বয়স ${cap} ঘণ্টা — আপনার সেশন তার চেয়ে পুরনো। আবার লগইন করে চেষ্টা করুন।`,
+                error: "Forbidden",
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof ForbiddenException) throw e;
+      // policy/session lookup unavailable — do not block
     }
     // Milestone 40 (Admin Phase A4): a scheduled maintenance
     // window with hardLockout refuses tenant WRITES while it is

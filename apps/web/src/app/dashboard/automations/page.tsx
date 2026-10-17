@@ -55,9 +55,27 @@ interface Rule {
   windowDays: number;
   action: string;
   campaignPlanId?: string | null;
+  // CA10: execute | suggest (absent on pre-CA10 rows = execute)
+  mode?: string;
   enabled: boolean;
   lastEvaluatedAt?: string | null;
   lastTriggeredAt?: string | null;
+}
+
+interface RuleSuggestion {
+  id: string;
+  ruleId: string;
+  campaignPlanId: string;
+  action: string;
+  actionPayload?: { percent?: number; minDailyMinor?: number; maxDailyMinor?: number; adExternalIds?: string[] } | null;
+  reason: string;
+  facts?: { metric?: string; value?: number; threshold?: string; comparator?: string; windowDays?: number } | null;
+  status: string;
+  ruleName?: string | null;
+  planName?: string | null;
+  rejectReason?: string | null;
+  executionResult?: { ok?: boolean; executed?: string | null; skipped?: string; changes?: unknown[]; error?: string } | null;
+  createdAt: string;
 }
 
 interface Run {
@@ -180,6 +198,7 @@ const JOB_TYPES_BY_TARGET: Record<string, { value: string; label: string }[]> = 
     { value: "meta_status_sync", label: "Meta Status Sync (সব Published Plan)" },
     { value: "dayparting", label: "Dayparting (Ad Set সময়সূচি প্রয়োগ)" },
     { value: "audience_refresh", label: "Audience Membership Refresh" },
+    { value: "plan_schedule_sweep", label: "Plan Schedule Sweep (Plan-এর Pause/Resume Window কার্যকর — ৫ মিনিট অন্তর চালান)" },
     { value: "inbox_assignment_sweep", label: "Inbox Assignment Sweep (অ্যাসাইনবিহীন চ্যাট পুনঃবণ্টন)" },
     { value: "lead_followup_sweep", label: "Lead Follow-up Sweep (বকেয়া ও আজকের ফলো-আপ এলার্ট)" },
     { value: "social_publish_due", label: "Social Post Auto-Publish (শিডিউল পোস্ট প্রকাশ)" },
@@ -205,6 +224,7 @@ export default function AutomationsPage() {
   // Core Data
   const [jobs, setJobs] = useState<Job[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
+  const [suggestions, setSuggestions] = useState<RuleSuggestion[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [health, setHealth] = useState<Record<string, JobHealth>>({});
   const [deadLetters, setDeadLetters] = useState<{ openCount: number; latest: DeadLetter[] }>({
@@ -360,16 +380,19 @@ export default function AutomationsPage() {
     percent: "20",
     minDaily: "",
     maxDaily: "",
+    // CA10: new rules default to suggest (approval queue)
+    mode: "suggest",
   });
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
     if (!orgId) return;
     try {
-      const [j, r, rn, ints, accs, comps, pls, h] = await Promise.all([
+      const [j, r, rn, sg, ints, accs, comps, pls, h] = await Promise.all([
         apiFetch<Job[]>(`/organizations/${orgId}/automation/jobs`),
         apiFetch<Rule[]>(`/organizations/${orgId}/automation/rules`),
         apiFetch<Run[]>(`/organizations/${orgId}/automation/runs`),
+        apiFetch<{ suggestions: RuleSuggestion[] }>(`/organizations/${orgId}/automation/suggestions`).catch(() => null),
         apiFetch<Integration[]>(`/organizations/${orgId}/integrations`),
         apiFetch<AdAccount[]>(`/organizations/${orgId}/ad-accounts`),
         apiFetch<Competitor[]>(`/organizations/${orgId}/competitors`),
@@ -378,6 +401,7 @@ export default function AutomationsPage() {
       ]);
       setJobs(j);
       setRules(r);
+      if (sg) setSuggestions(sg.suggestions ?? []);
       setRuns(rn);
       setIntegrations(ints);
       setAccounts(accs);
@@ -600,6 +624,7 @@ export default function AutomationsPage() {
           threshold: ruleForm.threshold,
           windowDays: Number(ruleForm.windowDays),
           action: ruleForm.action,
+          mode: ruleForm.mode,
           campaignPlanId: ruleForm.campaignPlanId || undefined,
           actionConfig:
             ruleForm.action === "scale_budget"
@@ -625,6 +650,7 @@ export default function AutomationsPage() {
         percent: "20",
         minDaily: "",
         maxDaily: "",
+        mode: "suggest",
       });
       setNotice("নতুন Ad Guardrail Rule তৈরি হয়েছে! সার্ভার স্বয়ংক্রিয়ভাবে এটি মূল্যায়ন করবে।");
       await load();
@@ -654,6 +680,46 @@ export default function AutomationsPage() {
       })
     );
     setNotice(`Rule "${r.name}" মুছে ফেলা হয়েছে।`);
+    await load();
+  }
+
+  // CA10: approval-queue decisions. Approve executes the
+  // stored action exactly once (server-side claim); the
+  // notice reports the VERBATIM stored outcome.
+  async function decideSuggestion(s: RuleSuggestion, decision: "approve" | "reject") {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    let reason: string | undefined;
+    if (decision === "reject") {
+      const input = prompt("বাতিলের কারণ (ঐচ্ছিক):", "");
+      if (input === null) return;
+      reason = input || undefined;
+    } else if (!confirm(`"${s.ruleName ?? s.ruleId}" Rule-এর সাজেশনটি অনুমোদন করবেন? অ্যাকশনটি (${s.action}) এখনই কার্যকর হবে।`)) return;
+    const res = await wrap(`sug-${s.id}`, () =>
+      apiFetch<RuleSuggestion>(`/organizations/${orgId}/automation/suggestions/${s.id}/${decision}`, {
+        method: "POST",
+        body: JSON.stringify(decision === "reject" ? { reason } : {}),
+      })
+    );
+    if (res) {
+      if (decision === "reject") setNotice("সাজেশন বাতিল করা হয়েছে — কিছুই কার্যকর হয়নি।");
+      else if (res.executionResult?.ok === false) setNotice(`অনুমোদন হয়েছে, কিন্তু কার্যকর করা যায়নি: ${res.executionResult.error ?? "অজানা ত্রুটি"}`);
+      else if (res.executionResult?.skipped) setNotice("অনুমোদন হয়েছে — Campaign-এর বর্তমান অবস্থায় অ্যাকশনটির দরকার ছিল না (skipped)।");
+      else setNotice("সাজেশন অনুমোদিত ও কার্যকর হয়েছে।");
+      await load();
+    }
+  }
+
+  async function setRuleMode(r: Rule, mode: string) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    await wrap(`mode-rule-${r.id}`, () =>
+      apiFetch(`/organizations/${orgId}/automation/rules/${r.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ mode }),
+      })
+    );
+    setNotice(`Rule "${r.name}" এখন ${mode === "suggest" ? "সাজেশন মোডে (অনুমোদন ছাড়া কার্যকর হবে না)" : "সরাসরি কার্যকর মোডে"} আছে।`);
     await load();
   }
 
@@ -704,6 +770,9 @@ export default function AutomationsPage() {
       percent: rb.actionConfig?.percent ? String(rb.actionConfig.percent) : "20",
       minDaily: rb.actionConfig?.minDailyMinor ? String(rb.actionConfig.minDailyMinor / 100) : "",
       maxDaily: rb.actionConfig?.maxDailyMinor ? String(rb.actionConfig.maxDailyMinor / 100) : "",
+      // CA10: blueprints load in suggest mode — the human
+      // still reviews the form before creating the rule.
+      mode: "suggest",
     });
     setActiveTab("rules");
     setNotice(`"${rb.name}" রুল ফর্মে লোড হয়েছে! পর্যালোচনা করে তৈরি বাটনে চাপুন।`);
@@ -1294,6 +1363,54 @@ export default function AutomationsPage() {
             </div>
           </div>
 
+          {/* CA10: Approval queue for suggest-mode rules */}
+          <div className="card p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+              <h4 className="text-sm font-bold text-slate-900">অনুমোদনের অপেক্ষায় — Rule সাজেশন ({suggestions.filter((s) => s.status === "pending").length}টি)</h4>
+              <span className="text-[11px] text-slate-500">সাজেশন মোডের Rule ট্রিগার হলেই এখানে জমা হয়। অনুমোদন না দিলে কিছুই কার্যকর হয় না; ৭ দিনের পুরনো Pending সাজেশন মেয়াদোত্তীর্ণ হয়ে যায়।</span>
+            </div>
+            {suggestions.length === 0 ? (
+              <p className="text-xs text-slate-500">এখনো কোনো সাজেশন আসেনি। সাজেশন মোডের কোনো Rule-এর শর্ত মিললে এখানে দেখা যাবে।</p>
+            ) : (
+              <div className="space-y-2">
+                {suggestions.map((s) => (
+                  <div key={s.id} className={`rounded-xl border p-3 ${s.status === "pending" ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-slate-50/60"}`}>
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-bold text-slate-900">{s.ruleName ?? s.ruleId}</span>
+                      <span className="text-slate-500">→</span>
+                      <span className="font-medium text-slate-800">{s.planName ?? s.campaignPlanId}</span>
+                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700">{RULE_ACTION_LABELS[s.action]?.label ?? s.action}</span>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold ${s.status === "pending" ? "bg-amber-100 text-amber-800" : s.status === "approved" ? "bg-emerald-100 text-emerald-800" : s.status === "rejected" ? "bg-rose-100 text-rose-800" : "bg-slate-200 text-slate-600"}`}>
+                        {s.status === "pending" ? "অপেক্ষমাণ" : s.status === "approved" ? "অনুমোদিত" : s.status === "rejected" ? "বাতিল" : "মেয়াদোত্তীর্ণ"}
+                      </span>
+                      <span className="text-[11px] text-slate-400">{new Date(s.createdAt).toLocaleString("bn-BD")}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">{s.reason}</p>
+                    {s.facts ? (
+                      <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+                        {METRIC_LABELS[s.facts.metric ?? ""] ?? s.facts.metric} = {s.facts.value} (শর্ত: {s.facts.comparator === "lt" ? "<" : ">"} {s.facts.threshold}, {s.facts.windowDays} দিন)
+                        {s.action === "scale_budget" && s.actionPayload?.percent !== undefined ? ` · বাজেট ${s.actionPayload.percent}%` : ""}
+                        {s.action === "pause_ad" && s.actionPayload?.adExternalIds ? ` · ${s.actionPayload.adExternalIds.length}টি Ad` : ""}
+                      </p>
+                    ) : null}
+                    {s.status === "approved" && s.executionResult ? (
+                      <p className="mt-0.5 text-[11px] text-slate-500">
+                        ফলাফল: {s.executionResult.ok === false ? `ব্যর্থ — ${s.executionResult.error ?? ""}` : s.executionResult.skipped ? `skipped (${s.executionResult.skipped})` : `কার্যকর — ${s.executionResult.executed ?? ""}`}
+                      </p>
+                    ) : null}
+                    {s.status === "rejected" && s.rejectReason ? <p className="mt-0.5 text-[11px] text-slate-500">বাতিলের কারণ: {s.rejectReason}</p> : null}
+                    {s.status === "pending" && (
+                      <div className="mt-2 flex gap-2">
+                        <button type="button" className="btn-primary btn-sm font-semibold" disabled={busy === `sug-${s.id}`} onClick={() => decideSuggestion(s, "approve")}>✓ অনুমোদন — এখনই কার্যকর করুন</button>
+                        <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy === `sug-${s.id}`} onClick={() => decideSuggestion(s, "reject")}>✕ বাতিল</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Rule Creator Form */}
           <div className="card p-5 space-y-4">
             <h4 className="text-sm font-bold text-slate-900 border-b pb-2">নতুন Rule তৈরি করুন</h4>
@@ -1373,6 +1490,19 @@ export default function AutomationsPage() {
                   <option value="scale_budget">Budget বাড়ান/কমান (%)</option>
                   <option value="pause_ad">বিজ্ঞাপন Pause (Ad-level)</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">মোড (Mode)</label>
+                <select
+                  className={inputCls}
+                  value={ruleForm.mode}
+                  onChange={(e) => setRuleForm({ ...ruleForm, mode: e.target.value })}
+                >
+                  <option value="suggest">সাজেশন — অনুমোদন ছাড়া কার্যকর হবে না (নিরাপদ)</option>
+                  <option value="execute">সরাসরি কার্যকর — শর্ত মিললেই অ্যাকশন</option>
+                </select>
+                <p className="mt-1 text-[11px] text-slate-500">সাজেশন মোডে Rule ট্রিগার হলে নিচের অনুমোদন কিউতে সাজেশন জমা হয় — মানুষ অনুমোদন না দিলে Campaign-এ কিছুই বদলায় না।</p>
               </div>
 
               <div>
@@ -1469,6 +1599,9 @@ export default function AutomationsPage() {
                         {r.campaignPlanId && (
                           <span className="badge badge-brand text-[10px]">নির্দিষ্ট প্ল্যান</span>
                         )}
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold border ${r.mode === "suggest" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-sky-200 bg-sky-50 text-sky-700"}`}>
+                          {r.mode === "suggest" ? "সাজেশন মোড" : "সরাসরি কার্যকর"}
+                        </span>
                       </div>
 
                       <div className="text-xs text-slate-600 font-medium">
@@ -1487,6 +1620,18 @@ export default function AutomationsPage() {
                     </div>
 
                     <div className="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 shrink-0">
+                      <select
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700"
+                        value={r.mode === "suggest" ? "suggest" : "execute"}
+                        disabled={busy === `mode-rule-${r.id}`}
+                        onChange={(e) => setRuleMode(r, e.target.value)}
+                        title="Rule-এর মোড বদলান"
+                        aria-label={`${r.name} এর মোড`}
+                      >
+                        <option value="suggest">সাজেশন মোড</option>
+                        <option value="execute">সরাসরি কার্যকর</option>
+                      </select>
+
                       <button
                         type="button"
                         className={`rounded-lg px-2.5 py-1.5 text-xs font-medium border transition ${

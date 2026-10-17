@@ -116,6 +116,18 @@ export interface AccountLoyalty {
   referralCode: string | null;
 }
 
+/** MX14: one on-site notification in the customer's center. */
+export interface ShopNotification {
+  id: string;
+  title: string;
+  body: string;
+  url: string | null;
+  broadcastId: string | null;
+  isRead: boolean;
+  readAt: string | null;
+  createdAt: string | null;
+}
+
 export interface WishlistItem {
   productId: string;
   name: string;
@@ -303,6 +315,35 @@ export async function fetchAccountLoyalty(orgSlug: string): Promise<AccountLoyal
   return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/loyalty`);
 }
 
+export interface AccountStoreCreditEntry {
+  id: string;
+  deltaMinor: string;
+  reason: string;
+  orderId: string | null;
+  balanceAfter: string;
+  note: string | null;
+  createdAt: string | null;
+}
+
+export interface AccountStoreCredit {
+  /** Derived ledger balance, paisa as a string. */
+  balanceMinor: string;
+  entries: AccountStoreCreditEntry[];
+  tier: {
+    customerId: string;
+    tierId: string | null;
+    tierName: string | null;
+    lifetimeSpendMinor: string;
+  } | null;
+}
+
+/** NF7: the signed-in customer's OWN store-credit balance,
+ * ledger history and membership tier. Session-scoped on the
+ * server — it can only ever return the caller's own data. */
+export async function fetchAccountStoreCredit(orgSlug: string): Promise<AccountStoreCredit> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/store-credit`);
+}
+
 export async function fetchMyOrders(orgSlug: string, page = 1, pageSize = 10): Promise<OrdersPage> {
   return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/orders?page=${page}&pageSize=${pageSize}`);
 }
@@ -391,4 +432,22 @@ export async function mergeWishlist(
     method: "POST",
     body: JSON.stringify({ productIds }),
   });
+}
+
+// --- MX14: on-site notifications ------------------------------------
+
+export async function fetchNotifications(
+  orgSlug: string,
+): Promise<{ items: ShopNotification[]; unreadCount: number }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/notifications`);
+}
+
+export async function markNotificationRead(orgSlug: string, notificationId: string): Promise<ShopNotification> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: "POST",
+  });
+}
+
+export async function markAllNotificationsRead(orgSlug: string): Promise<{ marked: number; unreadCount: number }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/notifications/read-all`, { method: "POST" });
 }

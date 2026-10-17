@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
+import { GoogleAdsClient } from "../ads/google/google.client";
+import { TikTokManage } from "../ads/tiktok/tiktok.client";
 
 /**
  * Direct publishing to Google Ads and TikTok (Phase I).
@@ -33,6 +35,116 @@ export class PublishingService {
     return { account, secrets: decryptJson<any>(integration.credential.encryptedData) };
   }
 
+  // ---------------- OU4: cross-platform campaign status + lifecycle ----------------
+  private mapGoogleStatus(raw: string): string {
+    const up = String(raw ?? "").toUpperCase();
+    if (up === "ENABLED") return "active";
+    if (up === "PAUSED") return "paused";
+    if (up === "REMOVED") return "removed";
+    return String(raw ?? "").toLowerCase();
+  }
+
+  private mapTikTokStatus(raw: string): string {
+    const up = String(raw ?? "").toUpperCase();
+    if (up === "ENABLE") return "active";
+    if (up === "DISABLE") return "paused";
+    return String(raw ?? "").toLowerCase();
+  }
+
+  /**
+   * OU4: REAL provider status read for a campaign created
+   * through the publish paths above. Google goes through
+   * GoogleAdsClient.campaignManage().getCampaignStatus and
+   * TikTok through TikTokManage.getCampaign — the verbatim
+   * provider enum is kept in providerStatusRaw alongside the
+   * mapped providerStatus. Missing/invalid account config
+   * throws the honest accountSecrets error; callers decide
+   * how to present it (CampaignsService sync catches it).
+   * A provider "no such campaign" answer is also a throw —
+   * never a fabricated status.
+   */
+  async crossPlatformCampaignStatus(organizationId: string, adAccountId: string, platform: string, externalCampaignId: string) {
+    const p = String(platform ?? "").toLowerCase();
+    if (!externalCampaignId) throw new BadRequestException("externalCampaignId is required to read campaign status");
+    if (p === "google") {
+      const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "google");
+      if (!secrets.clientId || !secrets.clientSecret || !secrets.refreshToken || !secrets.developerToken) {
+        throw new BadRequestException("google credentials are missing clientId/clientSecret/refreshToken/developerToken; reconnect the account");
+      }
+      const customerId = String(account.externalId).replace(/-/g, "");
+      const client = new GoogleAdsClient({
+        clientId: secrets.clientId, clientSecret: secrets.clientSecret,
+        refreshToken: secrets.refreshToken, developerToken: secrets.developerToken,
+        ...(secrets.loginCustomerId ? { loginCustomerId: String(secrets.loginCustomerId) } : {}),
+      });
+      const result = await client.campaignManage().getCampaignStatus(customerId, externalCampaignId);
+      if (!result) throw new Error(`Google returned no campaign with id ${externalCampaignId}; status is NOT confirmed`);
+      return {
+        platform: "google",
+        externalCampaignId: result.campaignExternalId,
+        ...(result.name ? { name: result.name } : {}),
+        providerStatus: this.mapGoogleStatus(result.status),
+        providerStatusRaw: result.status,
+      };
+    }
+    if (p === "tiktok") {
+      const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "tiktok");
+      if (!secrets.accessToken) throw new BadRequestException("tiktok credentials are missing accessToken; reconnect the account");
+      const advertiserId = String(secrets.advertiserId ?? account.externalId);
+      const info = await new TikTokManage(secrets.accessToken).getCampaign(advertiserId, externalCampaignId);
+      if (!info) throw new Error(`TikTok returned no campaign with id ${externalCampaignId}; status is NOT confirmed`);
+      return {
+        platform: "tiktok",
+        externalCampaignId: info.campaignExternalId,
+        ...(info.name ? { name: info.name } : {}),
+        providerStatus: this.mapTikTokStatus(info.operationStatus),
+        providerStatusRaw: info.operationStatus,
+      };
+    }
+    throw new BadRequestException(`Unsupported cross-platform status platform: ${platform} (google | tiktok)`);
+  }
+
+  /**
+   * OU4: REAL provider lifecycle change (pause/resume only —
+   * there is no cross-platform delete here; see the OU4
+   * acceptance note). The provider client throws unless the
+   * platform accepts the change, so a resolved return means
+   * the change WAS confirmed. No audit here — CampaignsService
+   * owns the lifecycle audit + publish log, consistent with
+   * the Meta setMetaStatus discipline. actorId is accepted
+   * for signature symmetry with the publish methods.
+   */
+  async crossPlatformSetCampaignStatus(organizationId: string, actorId: string, adAccountId: string, platform: string, externalCampaignId: string, target: "ACTIVE" | "PAUSED") {
+    void actorId;
+    const p = String(platform ?? "").toLowerCase();
+    if (!externalCampaignId) throw new BadRequestException("externalCampaignId is required to change campaign status");
+    if (target !== "ACTIVE" && target !== "PAUSED") throw new BadRequestException(`target must be ACTIVE or PAUSED (got "${target}")`);
+    if (p === "google") {
+      const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "google");
+      if (!secrets.clientId || !secrets.clientSecret || !secrets.refreshToken || !secrets.developerToken) {
+        throw new BadRequestException("google credentials are missing clientId/clientSecret/refreshToken/developerToken; reconnect the account");
+      }
+      const customerId = String(account.externalId).replace(/-/g, "");
+      const client = new GoogleAdsClient({
+        clientId: secrets.clientId, clientSecret: secrets.clientSecret,
+        refreshToken: secrets.refreshToken, developerToken: secrets.developerToken,
+        ...(secrets.loginCustomerId ? { loginCustomerId: String(secrets.loginCustomerId) } : {}),
+      });
+      const raw = target === "ACTIVE" ? "ENABLED" : "PAUSED";
+      await client.campaignManage().setCampaignStatus(customerId, externalCampaignId, raw as "ENABLED" | "PAUSED");
+      return { platform: "google", externalCampaignId, providerStatus: target === "ACTIVE" ? "active" : "paused", providerStatusRaw: raw };
+    }
+    if (p === "tiktok") {
+      const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "tiktok");
+      if (!secrets.accessToken) throw new BadRequestException("tiktok credentials are missing accessToken; reconnect the account");
+      const advertiserId = String(secrets.advertiserId ?? account.externalId);
+      const raw = target === "ACTIVE" ? "ENABLE" : "DISABLE";
+      await new TikTokManage(secrets.accessToken).setCampaignStatus(advertiserId, externalCampaignId, raw as "ENABLE" | "DISABLE");
+      return { platform: "tiktok", externalCampaignId, providerStatus: target === "ACTIVE" ? "active" : "paused", providerStatusRaw: raw };
+    }
+    throw new BadRequestException(`Unsupported cross-platform lifecycle platform: ${platform} (google | tiktok)`);
+  }
+
   private async startRecord(organizationId: string, actorId: string, platform: string, adAccountId: string, name: string) {
     return (this.prisma as any).platformPublication.create({
       data: { organizationId, platform, adAccountId, name, status: "pending", createdById: actorId },
@@ -49,6 +161,10 @@ export class PublishingService {
   async publishGoogle(organizationId: string, actorId: string, dto: {
     adAccountId: string; name: string; dailyBudget: string; countryCodes: string[];
     headlines: string[]; descriptions: string[]; finalUrl: string;
+    // CA17: the plan's UTM params as the campaign's
+    // Final URL Suffix. Optional — absent keeps the
+    // pre-CA17 campaign payload byte-identical.
+    finalUrlSuffix?: string;
     keywords: { text: string; matchType?: string }[];
     negativeKeywords?: string[];
     sitelinks?: { text: string; url: string }[];
@@ -109,6 +225,7 @@ export class PublishingService {
         name: dto.name, advertisingChannelType: "SEARCH", status: "PAUSED", campaignBudget: budgetResource,
         networkSettings: { targetGoogleSearch: true, targetSearchNetwork: false, targetContentNetwork: false },
         containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+        ...(dto.finalUrlSuffix ? { finalUrlSuffix: dto.finalUrlSuffix } : {}),
       } }], "campaign");
       for (const code of dto.countryCodes) {
         const suggestRes = await fetch("https://googleads.googleapis.com/v17/geoTargetConstants:suggest", {
@@ -320,6 +437,8 @@ export class PublishingService {
   async publishGooglePmax(organizationId: string, actorId: string, dto: {
     adAccountId: string; name: string; dailyBudget: string; countryCodes: string[];
     finalUrl: string; businessName: string;
+    // CA17: as publishGoogle — optional Final URL Suffix.
+    finalUrlSuffix?: string;
     headlines: string[]; longHeadlines: string[]; descriptions: string[];
     logoUrl: string; imageUrls: string[];
   }) {
@@ -369,6 +488,7 @@ export class PublishingService {
       const campaignResource = await mutate("campaigns", [{ create: {
         name: dto.name, advertisingChannelType: "PERFORMANCE_MAX", status: "PAUSED", campaignBudget: budgetResource,
         containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+        ...(dto.finalUrlSuffix ? { finalUrlSuffix: dto.finalUrlSuffix } : {}),
       } }], "campaign");
       // Location criteria resolved via Google's own geo suggest — never hardcoded ids.
       for (const code of dto.countryCodes) {
@@ -411,5 +531,159 @@ export class PublishingService {
     } catch (e) {
       return this.finishRecord(record.id, "failed", detail, e instanceof Error ? e.message : "Performance Max publish failed");
     }
+  }
+
+  // ---------------- CA16 (CB4): post-publish control ----------------
+  /**
+   * Spike basis (official docs, verified 2026-10-17 — see
+   * docs/campaign-advanced-cb4-acceptance.md): Google Ads
+   * API MutateCampaigns accepts an `update` operation
+   * (campaign resource + updateMask) — the official
+   * "Update Campaign" sample sets status PAUSED exactly
+   * this way; CampaignBudgetService.MutateCampaignBudgets
+   * is the same mutate framework for amount_micros; and
+   * the API has ONE OAuth scope
+   * (https://www.googleapis.com/auth/adwords) for reads
+   * and writes alike — the very scope the stored refresh
+   * token already exercises for the CREATE mutates above
+   * and for reporting search. TikTok: the official SDK
+   * documents POST /campaign/status/update/
+   * {advertiser_id, campaign_ids, operation_status},
+   * POST /adgroup/update/ (budget = the ad-group budget —
+   * the level THIS flow's budgets live on) and
+   * GET /campaign/get/ for the campaign's own status
+   * fields; the stored advertiser token already performs
+   * create writes with the same authorization.
+   * These methods CONFIRM through the platform's own
+   * response: a Google mutate without a result resource
+   * name, or a TikTok envelope with code !== 0, is a
+   * failure and throws — callers record nothing locally.
+   */
+  private async googleAuthHeaders(secrets: any): Promise<Record<string, string>> {
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: secrets.clientId, client_secret: secrets.clientSecret, refresh_token: secrets.refreshToken, grant_type: "refresh_token" }),
+    });
+    const tokenJson: any = await tokenRes.json().catch(() => null);
+    if (!tokenRes.ok || !tokenJson?.access_token) throw new Error(`Google OAuth failed: ${tokenJson?.error_description ?? tokenJson?.error ?? tokenRes.status}`);
+    return {
+      Authorization: `Bearer ${tokenJson.access_token}`,
+      "developer-token": secrets.developerToken,
+      "Content-Type": "application/json",
+      ...(secrets.loginCustomerId ? { "login-customer-id": String(secrets.loginCustomerId).replace(/-/g, "") } : {}),
+    };
+  }
+
+  private async googleMutate(base: string, headers: Record<string, string>, path: string, operations: any[], step: string): Promise<string> {
+    const res = await fetch(`${base}/${path}:mutate`, { method: "POST", headers, body: JSON.stringify({ operations }) });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || json?.error) throw new Error(`${step}: ${json?.error?.message ?? `HTTP ${res.status}`}`);
+    const resourceName = json?.results?.[0]?.resourceName as string | undefined;
+    if (!resourceName) throw new Error(`${step}: Google returned no resource name; the change is NOT confirmed`);
+    return resourceName;
+  }
+
+  /** Live campaign status, read back via GAQL
+   * (campaign.status is a selectable field). Returns
+   * Google's verbatim enum string, or null when Google
+   * returns no row for the campaign — never guessed. */
+  async getGoogleCampaignStatus(organizationId: string, adAccountId: string, externalCampaignId: string): Promise<{ status: string | null }> {
+    const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "google");
+    const customerId = String(account.externalId).replace(/-/g, "");
+    const headers = await this.googleAuthHeaders(secrets);
+    const id = String(externalCampaignId).replace(/[^0-9]/g, "");
+    if (!id) throw new Error("Google campaign id is not numeric — status cannot be read");
+    const res = await fetch(`https://googleads.googleapis.com/v17/customers/${customerId}/googleAds:search`, {
+      method: "POST", headers, body: JSON.stringify({ query: `SELECT campaign.id, campaign.status FROM campaign WHERE campaign.id = ${id}` }),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || json?.error) throw new Error(`Google status read: ${json?.error?.details?.[0]?.errors?.[0]?.message ?? json?.error?.message ?? `HTTP ${res.status}`}`);
+    const status = json?.results?.[0]?.campaign?.status;
+    return { status: status ? String(status) : null };
+  }
+
+  async setGoogleCampaignStatus(organizationId: string, adAccountId: string, externalCampaignId: string, target: "ENABLED" | "PAUSED"): Promise<{ status: string }> {
+    const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "google");
+    const customerId = String(account.externalId).replace(/-/g, "");
+    const headers = await this.googleAuthHeaders(secrets);
+    const base = `https://googleads.googleapis.com/v17/customers/${customerId}`;
+    await this.googleMutate(base, headers, "campaigns", [{
+      update: { resourceName: `customers/${customerId}/campaigns/${String(externalCampaignId)}`, status: target },
+      updateMask: "status",
+    }], "campaign status");
+    return { status: target };
+  }
+
+  /** The budget is its own resource: the resource name
+   * comes from the creation record's steps (the caller
+   * resolves it); amount goes as amount_micros with the
+   * amount_micros update mask. */
+  async updateGoogleCampaignBudget(organizationId: string, adAccountId: string, budgetResourceName: string, dailyAmount: number): Promise<void> {
+    const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "google");
+    const customerId = String(account.externalId).replace(/-/g, "");
+    const headers = await this.googleAuthHeaders(secrets);
+    const base = `https://googleads.googleapis.com/v17/customers/${customerId}`;
+    await this.googleMutate(base, headers, "campaignBudgets", [{
+      update: { resourceName: budgetResourceName, amountMicros: Math.round(dailyAmount * 1_000_000) },
+      updateMask: "amount_micros",
+    }], "campaign budget");
+  }
+
+  private async tiktokCall(secrets: any, advertiserId: string, path: string, method: "GET" | "POST", payload: any, step: string): Promise<any> {
+    const api = "https://business-api.tiktok.com/open_api/v1.3";
+    const headers = { "Access-Token": secrets.accessToken, "Content-Type": "application/json" };
+    const url = method === "GET" ? `${api}${path}?${new URLSearchParams(payload).toString()}` : `${api}${path}`;
+    const res = await fetch(url, { method, headers, ...(method === "POST" ? { body: JSON.stringify(payload) } : {}) });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || (json?.code !== undefined && json.code !== 0)) {
+      throw new Error(`${step}: ${json?.message ?? `HTTP ${res.status}`}`);
+    }
+    return json?.data;
+  }
+
+  /** Live campaign status from /campaign/get/ — TikTok's
+   * own fields verbatim (operation_status is the
+   * configured ENABLE/DISABLE; secondary_status is
+   * TikTok's delivery status). Absent fields stay null. */
+  async getTikTokCampaignStatus(organizationId: string, adAccountId: string, externalCampaignId: string): Promise<{ operationStatus: string | null; secondaryStatus: string | null }> {
+    const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "tiktok");
+    const advertiserId = String(secrets.advertiserId ?? account.externalId);
+    const id = Number(externalCampaignId);
+    if (!Number.isFinite(id)) throw new Error("TikTok campaign id is not numeric — status cannot be read");
+    const data = await this.tiktokCall(secrets, advertiserId, "/campaign/get/", "GET", {
+      advertiser_id: advertiserId, filtering: JSON.stringify({ campaign_ids: [id] }),
+    }, "campaign status read");
+    const row = Array.isArray(data?.list) ? data.list[0] : undefined;
+    return {
+      operationStatus: row?.operation_status ? String(row.operation_status) : null,
+      secondaryStatus: row?.secondary_status ? String(row.secondary_status) : null,
+    };
+  }
+
+  async setTikTokCampaignStatus(organizationId: string, adAccountId: string, externalCampaignId: string, target: "ENABLE" | "DISABLE"): Promise<{ status: string }> {
+    const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "tiktok");
+    const advertiserId = String(secrets.advertiserId ?? account.externalId);
+    const id = Number(externalCampaignId);
+    if (!Number.isFinite(id)) throw new Error("TikTok campaign id is not numeric — status cannot be changed");
+    await this.tiktokCall(secrets, advertiserId, "/campaign/status/update/", "POST", {
+      advertiser_id: advertiserId, campaign_ids: [id], operation_status: target,
+    }, "campaign status");
+    return { status: target };
+  }
+
+  /** Budget edit at the level this flow PUT the budget:
+   * the ad group (publishTikTok sets budget +
+   * BUDGET_MODE_DAY on the ad group; the campaign itself
+   * carries none). /campaign/update/ budget is NOT used —
+   * it would address a campaign-level budget these
+   * campaigns do not have. */
+  async updateTikTokAdGroupBudget(organizationId: string, adAccountId: string, adgroupId: string, dailyBudget: number): Promise<void> {
+    const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "tiktok");
+    const advertiserId = String(secrets.advertiserId ?? account.externalId);
+    const id = Number(adgroupId);
+    if (!Number.isFinite(id)) throw new Error("TikTok ad group id is not numeric — budget cannot be changed");
+    await this.tiktokCall(secrets, advertiserId, "/adgroup/update/", "POST", {
+      advertiser_id: advertiserId, adgroup_id: id, budget: dailyBudget,
+    }, "ad group budget");
   }
 }

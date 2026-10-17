@@ -46,6 +46,10 @@ describe("CC6 courier connect bodies", () => {
     expect(buildCourierConnectBody("redx", forms)).toEqual({ provider: "redx", accessToken: "tok", baseUrl: undefined });
     expect(buildCourierConnectBody("redx", { ...forms, redx: { accessToken: "tok", baseUrl: "https://legacy.example" } }).baseUrl).toBe("https://legacy.example");
   });
+  it("OU6: paperfly sends the dev-adapter form shape (apiKey + apiSecret, named provider)", () => {
+    expect(buildCourierConnectBody("paperfly", { ...forms, paperfly: { apiKey: "pk", apiSecret: "ps" } }))
+      .toEqual({ provider: "paperfly", apiKey: "pk", apiSecret: "ps" });
+  });
 });
 
 describe("CC7 messaging connect bodies", () => {
@@ -119,6 +123,10 @@ describe("CC9 gateway bodies", () => {
     expect(buildGatewayBody("nagad", form)).toEqual({ merchantId: "M1", privateKey: "pk" });
     expect(buildGatewayBody("shurjopay", form)).toEqual({ username: "017", password: "pw", prefix: "SPX", storeId: "store1", sandbox: true });
     expect(buildGatewayBody("aamarpay", form)).toEqual({ storeId: "store1", signatureKey: "sig-key", sandbox: true });
+    expect(buildGatewayBody("stripe", { ...form, secretKey: "sk_live_x", webhookSecret: "whsec_x", publishableKey: "pk_live_x" }))
+      .toEqual({ secretKey: "sk_live_x", webhookSecret: "whsec_x", publishableKey: "pk_live_x", sandbox: true });
+    expect(buildGatewayBody("stripe", { ...form, secretKey: "sk_test_x", webhookSecret: "whsec_x", publishableKey: "  " }))
+      .toEqual({ secretKey: "sk_test_x", webhookSecret: "whsec_x", publishableKey: undefined, sandbox: true });
   });
 
   it("shurjopay omits a blank optional store id", () => {

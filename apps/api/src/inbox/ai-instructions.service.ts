@@ -165,10 +165,10 @@ export class AiInstructionsService {
    * AI features: the cap counts the SAME feature the calls record
    * under, so ledger and enforcement always agree. */
   private async checkFeatureLimit(organizationId: string, feature: string) {
-    const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
+    const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
-    if (ks.aiDisabledOrgIds.includes(organizationId)) {
-      throw new HttpException("AI features are temporarily disabled for this organization by the platform team.", 403);
+    if (isAiDisabledForOrg(ks, organizationId)) {
+      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });

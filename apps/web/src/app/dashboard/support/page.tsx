@@ -408,6 +408,21 @@ export default function SupportPage() {
     }
   };
 
+  // OU8: public tracking link for the selected ticket.
+  const [trackingUrl, setTrackingUrl] = useState("");
+  async function copyTrackingLink() {
+    const orgId = getOrganizationId();
+    if (!orgId || !selected) return;
+    try {
+      const out = await apiFetch<{ token: string; path: string }>(`/organizations/${orgId}/tickets/${selected.id}/tracking-link`);
+      const url = `${window.location.origin}${out.path}`;
+      setTrackingUrl(url);
+      await navigator.clipboard.writeText(url).catch(() => undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ট্র্যাকিং লিংক তৈরি যায়নি");
+    }
+  }
+
   const lastMsgId = selected?.messages?.length ? selected.messages[selected.messages.length - 1].id : null;
   useEffect(() => {
     if (selected && lastMsgId) threadEndRef.current?.scrollIntoView({ block: "end" });
@@ -815,6 +830,9 @@ export default function SupportPage() {
                     </h2>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button onClick={() => void copyTrackingLink()} className="btn-secondary btn-sm min-h-[36px] text-xs" title="লগইন ছাড়া টিকেট দেখার পাবলিক লিংক (শুধু পাবলিক উত্তর দেখাবে)">
+                      🔗 ট্র্যাকিং লিংক কপি
+                    </button>
                     {selected.status !== "closed" ? (
                       <button onClick={() => setStatus("closed")} className="btn-secondary btn-sm min-h-[36px] text-xs">
                         🔒 বন্ধ করুন
@@ -846,6 +864,12 @@ export default function SupportPage() {
                   <span className="text-slate-400">·</span>
                   <span className="text-slate-500">{fullLabel(selected.createdAt)}</span>
                 </div>
+
+                {trackingUrl ? (
+                  <p className="mt-3 break-all rounded-lg bg-slate-50 p-2 font-mono text-[11px] text-slate-600">
+                    পাবলিক ট্র্যাকিং লিংক (কপি হয়েছে): {trackingUrl}
+                  </p>
+                ) : null}
 
                 {banner ? (
                   <div className={`alert ${banner.tone} mt-4`}>

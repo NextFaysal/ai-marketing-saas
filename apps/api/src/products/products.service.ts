@@ -28,6 +28,7 @@ import { computeStockDiverged, pendingOutboxKeys } from "../commerce/stock-diver
 import { assertEc24Conditionals, assertPreorderLimit, preorderInfo, validateWholesaleTiers } from "../commerce/ec24";
 import { isValidProductVideoUrl } from "./product-video";
 import { refreshBrandSearchVectors, refreshCategorySearchVectors, refreshProductSearchVector } from "./search-vector";
+import { KnowledgeIndexingService } from "../ai/knowledge-indexing.service";
 import { displayProductDescription, displayProductName } from "./product-display";
 // GB2 (GC6): the export writes the importer's own column shape —
 // the CSV writer + money formatter live with the import pipeline.
@@ -308,7 +309,32 @@ export class ProductsService {
     @Optional() private readonly storage?: StorageService,
     @Optional() private readonly storageRegistry?: StorageRegistryService,
     @Optional() private readonly imageMirror?: ProductImageMirrorService,
+    // SA-B2 (P2): embedding-index refresh for hybrid Brain
+    // retrieval. LAST param + Optional, same discipline as every
+    // slot above; absent (positional spec constructions) uses a
+    // lazy same-prisma fallback, and the refresh is
+    // fire-and-forget — an embeddings outage never fails or
+    // blocks a merchant's product write.
+    @Optional() private readonly knowledgeIndexing?: KnowledgeIndexingService,
   ) {}
+
+  private indexingFallback?: KnowledgeIndexingService;
+
+  /** SA-B2 (P2): refresh this product's embedding rows (or drop
+   *  them when it is no longer ACTIVE — indexProduct owns that
+   *  rule). Never throws, never awaited by the write path. */
+  private indexProductAsync(product: any): void {
+    void (async () => {
+      try {
+        const svc = this.knowledgeIndexing ?? (this.indexingFallback ??= new KnowledgeIndexingService(this.prisma as any));
+        await svc.indexProduct(product);
+      } catch (e) {
+        this.logger.warn(
+          `embedding index refresh failed for product ${product?.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    })();
+  }
 
   /** GC10: failure-isolated payment options for payloads. */
   private async paymentOptionsFor(orgId: string) {
@@ -547,6 +573,9 @@ export class ProductsService {
     await this.catalogSyncHook("create", organizationId, product.id);
     // AB6 (AX11): build the new product's FTS vector.
     await this.searchVectorHook("create", () => refreshProductSearchVector(this.prisma, product.id));
+    // SA-B2 (P2): index the new product's text for hybrid Brain
+    // retrieval (fire-and-forget — see indexProductAsync).
+    this.indexProductAsync(product);
     return toPublicProduct(product, null);
   }
 
@@ -1838,6 +1867,8 @@ export class ProductsService {
     await this.catalogSyncHook("update", organizationId, productId);
     // AB6 (AX11): refresh the product's FTS vector.
     await this.searchVectorHook("update", () => refreshProductSearchVector(this.prisma, productId));
+    // SA-B2 (P2): refresh the product's embedding rows.
+    this.indexProductAsync(updated);
     return toPublicProduct(updated, null);
   }
 
@@ -1851,6 +1882,9 @@ export class ProductsService {
     // AB5 (AX10): archiving removes the product from autoSync
     // Meta catalogs (a delete supersedes any pending update).
     await this.catalogSyncHook("delete", organizationId, productId);
+    // SA-B2 (P2): an ARCHIVED product leaves the embedding index
+    // (indexProduct drops rows for non-ACTIVE products).
+    this.indexProductAsync(updated);
     return toPublicProduct(updated, null);
   }
 

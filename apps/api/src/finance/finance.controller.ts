@@ -6,6 +6,8 @@ import { RolesGuard } from "../common/roles.guard";
 import { TenantGuard } from "../common/tenant.guard";
 import { GC19_REPORT_TYPES, FinanceReportsService } from "./finance-reports.service";
 import { FinanceService } from "./finance.service";
+import { AccountingLiteService } from "./ou7-accounting.service";
+import { BankReconService } from "./ou7-bank-recon.service";
 import { ScheduledReportsService } from "./scheduled-reports.service";
 import { type BuiltFile } from "./finance-common";
 
@@ -26,6 +28,8 @@ export class FinanceController {
     private readonly reports: FinanceReportsService,
     private readonly finance: FinanceService,
     private readonly scheduled: ScheduledReportsService,
+    private readonly accounting: AccountingLiteService,
+    private readonly bankRecon: BankReconService,
   ) {}
 
   private actorId(req: any): string | undefined {
@@ -146,5 +150,70 @@ export class FinanceController {
   @Get("scheduled-reports/:id/runs")
   scheduledRuns(@Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.guard(() => this.scheduled.listRuns(orgId, id));
+  }
+
+  // ---------------- OU7 accounting-lite ----------------
+  // Reads: any tenant member (same "analytics" area as the rest of
+  // finance). Writes (posting run, manual entries, bank import /
+  // match confirm): OWNER/ADMIN only, audited in the services.
+
+  @Get("accounting/accounts")
+  accounts(@Param("organizationId") orgId: string) {
+    return this.guard(() => this.accounting.listAccounts(orgId));
+  }
+
+  @Get("accounting/posting-status")
+  postingStatus(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.guard(() => this.accounting.postingStatus(orgId, from, to));
+  }
+
+  @Post("accounting/post")
+  @Roles("OWNER", "ADMIN")
+  postSources(@Param("organizationId") orgId: string, @Req() req: any, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.guard(() => this.accounting.postSources(orgId, this.actorId(req), from, to));
+  }
+
+  @Get("accounting/journal")
+  journal(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string, @Query("page") page?: string, @Query("pageSize") pageSize?: string) {
+    return this.guard(() => this.accounting.listJournal(orgId, from, to, page, pageSize));
+  }
+
+  @Post("accounting/journal/manual")
+  @Roles("OWNER", "ADMIN")
+  manualEntry(@Param("organizationId") orgId: string, @Req() req: any, @Body() body: any) {
+    return this.guard(() => this.accounting.createManualEntry(orgId, this.actorId(req), body));
+  }
+
+  @Get("accounting/trial-balance")
+  trialBalance(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.guard(() => this.accounting.trialBalance(orgId, from, to));
+  }
+
+  @Get("accounting/balance-sheet")
+  balanceSheet(@Param("organizationId") orgId: string, @Query("to") to?: string) {
+    return this.guard(() => this.accounting.balanceSheet(orgId, to));
+  }
+
+  @Post("accounting/bank-statement/import")
+  @Roles("OWNER", "ADMIN")
+  bankImport(@Param("organizationId") orgId: string, @Req() req: any, @Body() body: any) {
+    return this.guard(() => this.bankRecon.importStatement(orgId, this.actorId(req), body?.csv));
+  }
+
+  @Get("accounting/bank-lines")
+  bankLines(@Param("organizationId") orgId: string, @Query("status") status?: string) {
+    return this.guard(() => this.bankRecon.listBankLines(orgId, status));
+  }
+
+  @Post("accounting/bank-lines/:id/confirm-match")
+  @Roles("OWNER", "ADMIN")
+  bankConfirm(@Param("organizationId") orgId: string, @Param("id") id: string, @Req() req: any, @Body() body: any) {
+    return this.guard(() => this.bankRecon.confirmMatch(orgId, this.actorId(req), id, body));
+  }
+
+  @Post("accounting/bank-lines/:id/unmatch")
+  @Roles("OWNER", "ADMIN")
+  bankUnmatch(@Param("organizationId") orgId: string, @Param("id") id: string, @Req() req: any) {
+    return this.guard(() => this.bankRecon.unmatch(orgId, this.actorId(req), id));
   }
 }

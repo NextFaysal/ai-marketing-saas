@@ -19,13 +19,14 @@ import { AssistantApiController } from "./assistant-api.controller";
 import { AssistantApproveController } from "./assistant-approve.controller";
 import { GrowthCopilotService } from "./growth-copilot.service";
 
+import { OrgBrainModule } from "./org-brain.module";
 import { CompetitorsModule } from "../competitors/competitors.module";
 import { ProductsModule } from "../products/products.module";
 import { InventoryModule } from "../inventory/inventory.module";
 import { CommerceModule } from "../commerce/commerce.module";
 
 @Module({
-  imports: [AnalyticsModule, AttributionModule, CampaignsModule, MessagingModule, CompetitorsModule, ProductsModule, InventoryModule, CommerceModule],
+  imports: [AnalyticsModule, AttributionModule, CampaignsModule, MessagingModule, CompetitorsModule, ProductsModule, InventoryModule, CommerceModule, OrgBrainModule],
   controllers: [AiController, AssistantApiController, AssistantApproveController],
   providers: [ReportsService, ChatService, ToolsService, LlmFactory, ProposalsService, ProactiveService, CreativeStudioService, VisionService, PromptsService, MentionsService, AssistantApiService, GrowthCopilotService],
   exports: [ReportsService, ProposalsService, ProactiveService, LlmFactory, VisionService, GrowthCopilotService],

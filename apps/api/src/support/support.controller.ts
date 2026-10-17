@@ -20,7 +20,7 @@ import { SupportService } from "./support.service";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 import { SuperAdminGuard, AdminTier } from "../common/super-admin.guard";
-import { CurrentUser, Roles, type AuthUser } from "../common/decorators";
+import { CurrentUser, Public, Roles, type AuthUser } from "../common/decorators";
 import {
   AdminTicketUpdateDto,
   CannedResponseDto,
@@ -54,6 +54,13 @@ export class TenantSupportController {
   @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER")
   get(@Param("organizationId") id: string, @Param("ticketId") ticketId: string) {
     return this.support.getTicket(id, ticketId);
+  }
+
+  /** OU8: signed public tracking link for this ticket. */
+  @Get(":organizationId/tickets/:ticketId/tracking-link")
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER")
+  trackingLink(@Param("organizationId") id: string, @Param("ticketId") ticketId: string) {
+    return this.support.issueTrackingToken(id, ticketId);
   }
 
   @Post(":organizationId/tickets/:ticketId/messages")
@@ -230,5 +237,27 @@ export class AdminSupportController {
   typingAdmin(@Param("id") ticketId: string, @Body("isTyping") isTyping: boolean) {
     this.support.emitTyping(ticketId, "admin", Boolean(isTyping));
     return { ok: true };
+  }
+}
+
+/**
+ * OU8 — public ticket tracking: the signed token in the link is
+ * the only credential (MS2 preference-center discipline, no login).
+ * Lives OUTSIDE the tenant/admin guard stacks entirely.
+ */
+@Controller("public/tickets")
+export class PublicTicketTrackingController {
+  constructor(private readonly support: SupportService) {}
+
+  @Public()
+  @Get("track/:token")
+  track(@Param("token") token: string) {
+    return this.support.getPublicTicket(token);
+  }
+
+  @Public()
+  @Post("track/:token/reply")
+  reply(@Param("token") token: string, @Body() dto: ReplyDto) {
+    return this.support.replyPublic(token, dto.body);
   }
 }

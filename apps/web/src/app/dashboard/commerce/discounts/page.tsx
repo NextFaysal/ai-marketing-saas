@@ -19,6 +19,8 @@ interface Discount {
   // GB7 (GC17): eligibility + exclusion fields.
   firstOrderOnly?: boolean;
   repeatCustomerOnly?: boolean;
+  // NF14 (FB5): app-only offer — display rule only.
+  appOnly?: boolean;
   perCustomerLimit?: number | null;
   maxOrderMinor?: string | null;
   excludedProductIds?: string[];
@@ -84,6 +86,8 @@ export default function DiscountsPage() {
   // GB7 (GC17): eligibility + exclusions + origin filter
   const [firstOrderOnly, setFirstOrderOnly] = useState(false);
   const [repeatCustomerOnly, setRepeatCustomerOnly] = useState(false);
+  // NF14 (FB5)
+  const [appOnly, setAppOnly] = useState(false);
   const [perCustomerLimit, setPerCustomerLimit] = useState("");
   const [maxOrder, setMaxOrder] = useState("");
   const [excludedProductIdsText, setExcludedProductIdsText] = useState("");
@@ -120,7 +124,7 @@ export default function DiscountsPage() {
   function resetForm() {
     setEditingId(null); setCode(""); setKind("percent"); setValue("10"); setMinOrder("");
     setScopeType("all"); setScopeIds([]); setStartsAt(""); setEndsAt(""); setUsageLimit(""); setTargetStores([]);
-    setFirstOrderOnly(false); setRepeatCustomerOnly(false); setPerCustomerLimit(""); setMaxOrder("");
+    setFirstOrderOnly(false); setRepeatCustomerOnly(false); setAppOnly(false); setPerCustomerLimit(""); setMaxOrder("");
     setExcludedProductIdsText(""); setExcludedCategoryIdsText("");
   }
 
@@ -131,6 +135,7 @@ export default function DiscountsPage() {
     setStartsAt(d.startsAt ? d.startsAt.slice(0, 16) : ""); setEndsAt(d.endsAt ? d.endsAt.slice(0, 16) : "");
     setUsageLimit(d.usageLimit != null ? String(d.usageLimit) : ""); setTargetStores([]);
     setFirstOrderOnly(!!d.firstOrderOnly); setRepeatCustomerOnly(!!d.repeatCustomerOnly);
+    setAppOnly(!!d.appOnly);
     setPerCustomerLimit(d.perCustomerLimit != null ? String(d.perCustomerLimit) : "");
     setMaxOrder(d.maxOrderMinor ? String(Number(d.maxOrderMinor) / 100) : "");
     setExcludedProductIdsText((d.excludedProductIds ?? []).join(", "));
@@ -150,6 +155,7 @@ export default function DiscountsPage() {
       usageLimit: usageLimit ? parseInt(usageLimit, 10) : null,
       firstOrderOnly,
       repeatCustomerOnly,
+      appOnly,
       perCustomerLimit: perCustomerLimit ? parseInt(perCustomerLimit, 10) : null,
       maxOrderMinor: maxOrder ? String(Math.round(parseFloat(maxOrder) * 100)) : null,
       excludedProductIds: splitIds(excludedProductIdsText),
@@ -221,6 +227,7 @@ export default function DiscountsPage() {
         {ORIGIN_LABEL[d.origin] ?? d.origin}
       </span>
       {d.sourceRef ? <div className="mt-1 font-mono text-[10px] text-slate-400">{d.sourceRef}</div> : null}
+      {d.appOnly ? <div className="mt-1 text-[11px] font-semibold text-indigo-600">শুধু অ্যাপে দেখানো হবে</div> : null}
       {d.firstOrderOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু প্রথম অর্ডারে</div> : null}
       {d.repeatCustomerOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু পুরনো কাস্টমারের</div> : null}
       {d.perCustomerLimit != null ? <div className="mt-1 text-[11px] text-slate-500">প্রতি কাস্টমার সর্বোচ্চ {d.perCustomerLimit}বার</div> : null}
@@ -299,6 +306,18 @@ export default function DiscountsPage() {
             <input type="checkbox" checked={repeatCustomerOnly} onChange={(e) => setRepeatCustomerOnly(e.target.checked)} />
             শুধু পুরনো কাস্টমারের জন্য (repeatCustomerOnly)
           </label>
+        </div>
+        {/* NF14 (FB5): app-only offer toggle + the honesty note,
+            verbatim in meaning — display rule, NOT a code block. */}
+        <div className="rounded-xl bg-indigo-50 p-4 text-sm dark:bg-slate-800">
+          <label className="flex items-center gap-2 font-medium">
+            <input type="checkbox" checked={appOnly} onChange={(e) => setAppOnly(e.target.checked)} />
+            অ্যাপ-অনলি অফার (appOnly)
+          </label>
+          <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+            অ্যাপ-অনলি অফার: এই অফারটি শুধু দোকানের ইনস্টল করা অ্যাপে (standalone মোডে) দেখানো হবে।
+            তবে কোডটি শেয়ার হলে ওয়েবেও কাজ করবে — এটি শুধু প্রদর্শনের নিয়ম, কোড বন্ধ করার ব্যবস্থা নয়।
+          </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block text-sm">বাদ যাবে এমন পণ্য (আইডি)

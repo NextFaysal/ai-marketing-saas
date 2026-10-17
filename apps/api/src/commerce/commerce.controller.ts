@@ -44,6 +44,7 @@ import {
   SetPromotionActiveDto,
   UpdateLocationDto,
   UpdateRefundPushDto,
+  UpdateRefundToCreditDto,
   UpdateSyncModeDto,
   UpdateTrackingMetaKeyDto,
 } from "./commerce.dto";
@@ -289,6 +290,19 @@ export class CommerceController {
     @Body() dto: UpdateRefundPushDto,
   ) {
     return this.commerce.updateRefundPush(orgId, user.userId, storeId, dto.enabled === true);
+  }
+
+  /** NF7 (FB3): refund-to-credit gate — OWNER only, beside the
+   *  refund-push gate; audit-logged in the service. */
+  @Patch("stores/:storeId/refund-to-credit")
+  @Roles("OWNER")
+  updateRefundToCredit(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("storeId") storeId: string,
+    @Body() dto: UpdateRefundToCreditDto,
+  ) {
+    return this.commerce.updateRefundToCredit(orgId, user.userId, storeId, dto.enabled === true);
   }
 
   @Patch("stores/:storeId/tracking-meta-key")
@@ -804,6 +818,40 @@ export class CommerceController {
     @Body() dto: BulkPercentOffDto,
   ) {
     return this.priceLists.bulkPercentOff(orgId, user.userId, groupId, dto);
+  }
+
+  // ---------- NF7 (FB3): tier-bound price lists ----------
+  // The SAME PriceListsService machinery as the group lists
+  // above, bound to a membership TierDefinition (PriceList.
+  // tierId). Checkout resolution is the one existing
+  // priceMapForCustomer door — group list first, tier list
+  // when the customer has no group list.
+
+  @Get("tiers/:tierId/price-list")
+  getTierPriceList(@Param("organizationId") orgId: string, @Param("tierId") tierId: string) {
+    return this.priceLists.getTierPriceList(orgId, tierId);
+  }
+
+  @Post("tiers/:tierId/price-list/items")
+  @Roles(...WRITE_ROLES)
+  setTierPriceListItem(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("tierId") tierId: string,
+    @Body() dto: PriceListItemDto,
+  ) {
+    return this.priceLists.setTierItem(orgId, user.userId, tierId, dto);
+  }
+
+  @Delete("tiers/:tierId/price-list/items/:itemId")
+  @Roles(...WRITE_ROLES)
+  removeTierPriceListItem(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("tierId") tierId: string,
+    @Param("itemId") itemId: string,
+  ) {
+    return this.priceLists.removeTierItem(orgId, user.userId, tierId, itemId);
   }
 
   // ---------- AB5 (AX7): quotes ----------

@@ -282,6 +282,32 @@ describe("CX3 inbox debounce", () => {
     expect(drafts[0].content).toContain("কটন শাড়ি");
   });
 
+  it("regression (SA-B8): the triggering message predates the defer stamp (production lag) and still fires", async () => {
+    // In production the inbound row is persisted BEFORE the
+    // intelligence dispatch reaches the defer point, so the
+    // message's createdAt is strictly earlier than any stamp the
+    // defer could make with `new Date()`. The old stamp made the
+    // sweep's `createdAt >= batchSince` query exclude the only
+    // message, discharging the batch silently (and made this spec
+    // flaky: the fake DB usually lands both stamps within the
+    // same millisecond). Simulate that lag deterministically:
+    // the message (and the conversation's lastMessageAt, stamped
+    // at ingest) are 5 seconds old when the defer runs.
+    const { service, conversations, messages } = inboxSetup();
+    await service.updateSettings(ORG, "owner", { aiReplyDelaySeconds: 45 });
+    const past = new Date(Date.now() - 5000);
+    const c = conv({ lastMessageAt: past }); conversations.push(c);
+    messages.push(inbound(c.id, "কটন শাড়ি এর দাম কত?", past));
+    await (service as any).maybeAutoReply(ORG, c, CLS("price"), "কটন শাড়ি এর দাম কত?");
+    expect(new Date(c.autoReplyBatchSince).getTime()).toBe(past.getTime());
+    c.autoReplyDueAt = new Date(Date.now() - 1000);
+    const res = await service.runDueAutoReplies(ORG);
+    expect(res.fired).toBe(1);
+    const sent = messages.filter((m) => m.autoReply && m.status === "sent");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].content).toContain("কটন শাড়ি");
+  });
+
   it("tenant isolation: the sweep only fires the given org's due conversations", async () => {
     const { service, conversations, messages } = inboxSetup();
     await service.updateSettings(ORG, "owner", { aiReplyDelaySeconds: 45 });

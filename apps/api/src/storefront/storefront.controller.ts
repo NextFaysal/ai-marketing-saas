@@ -44,6 +44,7 @@ import {
   CreateAddressDto,
   CreateShopPageDto,
   PopupEventDto,
+  PopupLeadDto,
   UpdateShopPageDto,
   UpsertStorePopupDto,
   CreateDeliverySlotDto,
@@ -131,6 +132,9 @@ export class PublicShopController {
     @Query("pageSize") pageSize?: string,
     @Query("sort") sort?: string,
     @Query("ids") ids?: string,
+    // NF5 (FB3): shopper locale choice (bn | en | hi); unsupported
+    // values fall back to the org's StorefrontSetting.locale.
+    @Query("locale") locale?: string,
   ) {
     return this.storefront.shopHome(orgSlug, {
       q: q || undefined,
@@ -142,6 +146,7 @@ export class PublicShopController {
       sort: sort || undefined,
       // AB6 (AX14): explicit product-id list mode (see service).
       ids: ids || undefined,
+      locale: locale || undefined,
     });
   }
 
@@ -163,6 +168,15 @@ export class PublicShopController {
     return this.storefront.publicFlashSales(orgSlug);
   }
 
+  /** NF14 (FB5): public offers payload (active StoreDiscount
+   * offers, public-safe fields, `appOnly` per offer for the
+   * storefront's standalone display rule). */
+  @Public()
+  @Get(":orgSlug/offers")
+  offers(@Param("orgSlug") orgSlug: string) {
+    return this.storefront.publicOffers(orgSlug);
+  }
+
   /** AB6 (AX14): cart cross-sell recommendations — products
    * bought together with any of the given cart product ids.
    * `context` is accepted for forward compatibility and ignored
@@ -181,8 +195,8 @@ export class PublicShopController {
 
   @Public()
   @Get(":orgSlug/products/:productSlug")
-  product(@Param("orgSlug") orgSlug: string, @Param("productSlug") productSlug: string) {
-    return this.storefront.productDetail(orgSlug, productSlug);
+  product(@Param("orgSlug") orgSlug: string, @Param("productSlug") productSlug: string, @Query("locale") locale?: string) {
+    return this.storefront.productDetail(orgSlug, productSlug, locale || undefined);
   }
 
   /** GB1 (GC2): a published shop content page. Declared after
@@ -218,6 +232,13 @@ export class PublicShopController {
   /** GB1 (GC3): popup impression/click counter (always ok). */
   @Public()
   @RateLimit(60, 60)
+  /** OU8: lead-capture popup submission → a real Lead row. */
+  @Public()
+  @Post(":orgSlug/popup-lead")
+  popupLead(@Param("orgSlug") orgSlug: string, @Body() dto: PopupLeadDto) {
+    return this.storefront.submitPopupLead(orgSlug, dto);
+  }
+
   @Post(":orgSlug/popup-event")
   popupEvent(@Param("orgSlug") orgSlug: string, @Body() dto: PopupEventDto) {
     return this.storefront.recordPopupEvent(orgSlug, dto.kind);
@@ -353,6 +374,14 @@ export class PublicShopController {
     return this.shopAccount.loyaltyView(orgSlug, token);
   }
 
+  /** NF7 (FB3): the signed-in customer's store-credit balance,
+   * ledger history and current membership tier. */
+  @Public()
+  @Get(":orgSlug/account/store-credit")
+  accountStoreCredit(@Param("orgSlug") orgSlug: string, @Headers(SHOP_SESSION_HEADER) token?: string) {
+    return this.shopAccount.creditView(orgSlug, token);
+  }
+
   @Public()
   @Patch(":orgSlug/account/profile")
   updateProfile(
@@ -429,6 +458,31 @@ export class PublicShopController {
     @Headers(SHOP_SESSION_HEADER) token?: string,
   ) {
     return this.shopAccount.deleteAddress(orgSlug, token, addressId);
+  }
+
+  /** MX14: the signed-in customer's on-site notification center
+   * (rows written by Messaging onsite broadcasts). Session-gated
+   * inside ShopAccountService like every account surface. */
+  @Public()
+  @Get(":orgSlug/account/notifications")
+  accountNotifications(@Param("orgSlug") orgSlug: string, @Headers(SHOP_SESSION_HEADER) token?: string) {
+    return this.shopAccount.listNotifications(orgSlug, token);
+  }
+
+  @Public()
+  @Post(":orgSlug/account/notifications/read-all")
+  accountNotificationsReadAll(@Param("orgSlug") orgSlug: string, @Headers(SHOP_SESSION_HEADER) token?: string) {
+    return this.shopAccount.markAllNotificationsRead(orgSlug, token);
+  }
+
+  @Public()
+  @Post(":orgSlug/account/notifications/:notificationId/read")
+  accountNotificationRead(
+    @Param("orgSlug") orgSlug: string,
+    @Param("notificationId") notificationId: string,
+    @Headers(SHOP_SESSION_HEADER) token?: string,
+  ) {
+    return this.shopAccount.markNotificationRead(orgSlug, token, notificationId);
   }
 
   @Public()
@@ -948,5 +1002,16 @@ export class StorefrontStaffController {
   @Roles(...ADMIN_ROLES)
   checkRouting(@Param("organizationId") orgId: string) {
     return this.storefront.checkDomainRouting(orgId);
+  }
+
+  /** OU2: manual Cloudflare-for-SaaS HTTPS status refresh — same
+   * guard/role pattern as the neighbouring domain endpoints
+   * (TenantGuard + RolesGuard, OWNER/ADMIN). No webhooks/polling:
+   * the persisted state moves only on this call or on (re-)
+   * verification. */
+  @Post("domain/https-refresh")
+  @Roles(...ADMIN_ROLES)
+  httpsRefresh(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.storefront.refreshDomainHttps(orgId, user.userId);
   }
 }

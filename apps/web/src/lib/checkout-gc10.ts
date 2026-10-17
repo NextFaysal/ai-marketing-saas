@@ -12,13 +12,13 @@
 import { API_URL } from "./api";
 
 export interface OnlinePaymentOption {
-  provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay";
+  provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe";
   source: "own" | "platform";
   sandbox: boolean;
 }
 
 export interface OnlinePaymentSelection {
-  provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay";
+  provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe";
   source: "own" | "platform";
 }
 
@@ -27,6 +27,7 @@ export function providerDisplayName(provider: string): string {
   if (provider === "bkash") return "bKash";
   if (provider === "shurjopay") return "ShurjoPay";
   if (provider === "aamarpay") return "aamarPay";
+  if (provider === "stripe") return "Stripe (কার্ড)";
   return provider;
 }
 
@@ -44,7 +45,7 @@ export function parseOnlineSelection(value: string | null | undefined): OnlinePa
   if (parts.length !== 3 || parts[0] !== "online") return null;
   const [, source, provider] = parts;
   if (source !== "own" && source !== "platform") return null;
-  if (provider !== "sslcommerz" && provider !== "bkash" && provider !== "shurjopay" && provider !== "aamarpay") return null;
+  if (provider !== "sslcommerz" && provider !== "bkash" && provider !== "shurjopay" && provider !== "aamarpay" && provider !== "stripe") return null;
   return { provider, source };
 }
 
@@ -272,7 +273,7 @@ export function readOnlinePaymentChoice(orgSlug: string): OnlinePaymentSelection
     const raw = sessionStorage.getItem(onlinePaymentChoiceKey(orgSlug));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as OnlinePaymentSelection;
-    if (parsed?.provider !== "sslcommerz" && parsed?.provider !== "bkash" && parsed?.provider !== "shurjopay" && parsed?.provider !== "aamarpay") return null;
+    if (parsed?.provider !== "sslcommerz" && parsed?.provider !== "bkash" && parsed?.provider !== "shurjopay" && parsed?.provider !== "aamarpay" && parsed?.provider !== "stripe") return null;
     if (parsed?.source !== "own" && parsed?.source !== "platform") return null;
     return { provider: parsed.provider, source: parsed.source };
   } catch {

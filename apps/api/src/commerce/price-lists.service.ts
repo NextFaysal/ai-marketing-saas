@@ -422,11 +422,149 @@ export class PriceListsService {
 
   // ---------- resolution (checkout price source) ----------
 
+  // ---------- NF7 (FB3): tier-bound price lists ----------
+  // The SAME PriceList / PriceListItem machinery, bound to a
+  // TierDefinition instead of a CustomerGroup (PriceList.tierId).
+  // Nothing about pricing is forked: items are written through
+  // the same writeItemRow, and resolution below returns the same
+  // map shape through the same priceMapForCustomer door.
+
+  private async loadTierOr404(orgId: string, tierId: string): Promise<any> {
+    const row = await this.t("tierDefinition").findFirst({
+      where: { id: tierId, organizationId: orgId },
+    });
+    if (!row) throw new NotFoundException("মেম্বারশিপ টিয়ারটি পাওয়া যায়নি");
+    return row;
+  }
+
+  private async ensureTierPriceList(orgId: string, tier: any): Promise<any> {
+    const table = this.t("priceList");
+    const existing = await table.findFirst({ where: { tierId: tier.id } });
+    if (existing) return existing;
+    try {
+      return await table.create({ data: { organizationId: orgId, tierId: tier.id } });
+    } catch (e) {
+      if (isUniqueViolation(e)) {
+        const winner = await table.findFirst({ where: { tierId: tier.id } });
+        if (winner) return winner;
+      }
+      throw e;
+    }
+  }
+
+  private async serializeListItems(orgId: string, listId: string) {
+    const rows =
+      (await this.t("priceListItem")
+        .findMany({ where: { priceListId: listId }, orderBy: { createdAt: "asc" } })
+        .catch(() => [])) ?? [];
+    const items: any[] = [];
+    for (const r of rows) {
+      const product = await this.t("product")
+        .findFirst({ where: { id: r.productId, organizationId: orgId } })
+        .catch(() => null);
+      let variant: any = null;
+      if (r.variantId) {
+        variant = await this.t("productVariant")
+          .findFirst({ where: { id: r.variantId, productId: r.productId } })
+          .catch(() => null);
+      }
+      items.push({
+        id: r.id,
+        productId: r.productId,
+        variantId: r.variantId ?? null,
+        priceMinor: toBig(r.priceMinor).toString(),
+        productName: product?.name ?? null,
+        variantName: variant?.name ?? null,
+      });
+    }
+    return items;
+  }
+
+  async getTierPriceList(orgId: string, tierId: string) {
+    const tier = await this.loadTierOr404(orgId, tierId);
+    const list = await this.ensureTierPriceList(orgId, tier);
+    const items = await this.serializeListItems(orgId, list.id);
+    return {
+      tier: {
+        id: tier.id, organizationId: tier.organizationId, name: tier.name,
+        minSpendMinor: toBig(tier.minSpendMinor).toString(), sortOrder: tier.sortOrder ?? 0,
+      },
+      priceListId: list.id,
+      items,
+    };
+  }
+
+  async setTierItem(
+    orgId: string,
+    actorId: string,
+    tierId: string,
+    dto: { productId?: string; variantId?: string | null; priceMinor?: unknown },
+  ) {
+    const tier = await this.loadTierOr404(orgId, tierId);
+    const productId = String(dto?.productId ?? "").trim();
+    if (!productId) throw new BadRequestException("পণ্যের আইডি দিতে হবে");
+    const product = await this.t("product").findFirst({
+      where: { id: productId, organizationId: orgId },
+    });
+    if (!product) {
+      throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${productId}`);
+    }
+    let variantId: string | null = null;
+    if (dto?.variantId !== undefined && dto?.variantId !== null && dto?.variantId !== "") {
+      variantId = String(dto.variantId);
+      const variant = await this.t("productVariant").findFirst({
+        where: { id: variantId, productId },
+      });
+      if (!variant) {
+        throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+      }
+    }
+    const priceMinor = parsePriceMinor(dto?.priceMinor);
+    const list = await this.ensureTierPriceList(orgId, tier);
+    const row = await this.writeItemRow(list.id, productId, variantId, priceMinor);
+    await this.safeAudit({
+      organizationId: orgId, userId: actorId, action: "price_list.tier_item_set",
+      entityType: "PriceList", entityId: list.id,
+      metadata: { tierId, productId, variantId, priceMinor: priceMinor.toString() },
+    });
+    return {
+      item: {
+        id: row.id, productId: row.productId, variantId: row.variantId ?? null,
+        priceMinor: toBig(row.priceMinor).toString(),
+        productName: product.name ?? null,
+        variantName: null,
+      },
+    };
+  }
+
+  async removeTierItem(orgId: string, actorId: string, tierId: string, itemId: string) {
+    await this.loadTierOr404(orgId, tierId);
+    const list = await this.t("priceList")
+      .findFirst({ where: { tierId, organizationId: orgId } })
+      .catch(() => null);
+    if (!list) throw new NotFoundException("প্রাইস লিস্টের আইটেমটি পাওয়া যায়নি");
+    const item = await this.t("priceListItem").findFirst({
+      where: { id: itemId, priceListId: list.id },
+    });
+    if (!item) throw new NotFoundException("প্রাইস লিস্টের আইটেমটি পাওয়া যায়নি");
+    await this.t("priceListItem").delete({ where: { id: itemId } });
+    await this.safeAudit({
+      organizationId: orgId, userId: actorId, action: "price_list.tier_item_removed",
+      entityType: "PriceList", entityId: list.id,
+      metadata: { tierId, itemId, productId: item.productId, variantId: item.variantId ?? null },
+    });
+    return { deleted: true };
+  }
+
   /**
-   * The customer's group price map, or null when the customer
-   * has no group / the group has no list. Keys are
+   * The customer's price map, or null when the customer has no
+   * applicable list. Resolution order (NF7 documented): a
+   * CustomerGroup list wins first (a negotiated group price is
+   * more specific than a membership tier); when the customer has
+   * no group list, the list bound to the customer's current
+   * membership tier (CustomerTier) applies. Keys are
    * `${productId}::${variantId ?? ""}`. FAILURE-ISOLATED: any
-   * error resolves to null — group pricing must never break a
+   * error resolves to null — list pricing must never break a
    * checkout.
    */
   async priceMapForCustomer(orgId: string, customerId: string | null | undefined): Promise<Map<string, bigint> | null> {
@@ -435,10 +573,24 @@ export class PriceListsService {
       const customer = await this.t("customer").findFirst({
         where: { id: customerId, organizationId: orgId },
       });
-      if (!customer?.groupId) return null;
-      const list = await this.t("priceList").findFirst({
-        where: { groupId: customer.groupId, organizationId: orgId },
-      });
+      if (!customer) return null;
+      let list: any = null;
+      if (customer.groupId) {
+        list = await this.t("priceList").findFirst({
+          where: { groupId: customer.groupId, organizationId: orgId },
+        });
+      }
+      if (!list) {
+        // NF7: tier-bound list for the customer's current tier.
+        const ct = await this.t("customerTier")
+          .findFirst({ where: { customerId: customer.id, organizationId: orgId } })
+          .catch(() => null);
+        if (ct?.tierId) {
+          list = await this.t("priceList").findFirst({
+            where: { tierId: ct.tierId, organizationId: orgId },
+          });
+        }
+      }
       if (!list) return null;
       const rows =
         (await this.t("priceListItem").findMany({ where: { priceListId: list.id } }).catch(() => [])) ?? [];

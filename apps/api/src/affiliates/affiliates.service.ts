@@ -5,7 +5,8 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { assertPayoutAutomationAllowed } from "../connections/payout-legal-gate";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
@@ -732,6 +733,36 @@ export class AffiliatesService {
   }
 
   /**
+   * THE FIFO flip — the one and only place approved entries
+   * become "paid": walk approved+paid entries oldest first (id
+   * tiebreak); an approved entry flips when its cumulative
+   * commission is fully covered by the pool (Σ all payouts).
+   * Pending entries never flip. Shared by recordPayout (EC32
+   * manual bookkeeping) and the OU11 execution confirmation, so
+   * both paths have identical bookkeeping — there is no second
+   * flip implementation to drift.
+   */
+  private async applyFifoFlip(entries: any[], pool: bigint): Promise<void> {
+    const fifo = entries
+      .filter((e) => e.status === "approved" || e.status === "paid")
+      .slice()
+      .sort((x, y) => {
+        const dt = new Date(x.createdAt).getTime() - new Date(y.createdAt).getTime();
+        return dt !== 0 ? dt : String(x.id).localeCompare(String(y.id));
+      });
+    let cumulative = 0n;
+    for (const entry of fifo) {
+      cumulative += toBig(entry.commissionMinor);
+      if (cumulative <= pool && entry.status === "approved") {
+        await this.t("commissionEntry").update({
+          where: { id: entry.id },
+          data: { status: "paid" },
+        });
+      }
+    }
+  }
+
+  /**
    * Record a payout the merchant made OUTSIDE the system. This
    * only records it (রেকর্ড করা হয়েছে) — no money is sent here.
    * Guard: amount must not exceed the outstanding approved
@@ -777,28 +808,8 @@ export class AffiliatesService {
     });
 
     // FIFO flip: coverage pool = all payouts incl. this one.
-    // Walk approved+paid entries oldest first (id tiebreak);
-    // an approved entry flips to paid when its cumulative
-    // commission is fully covered by the pool. Pending entries
-    // never flip.
     const pool = before.payoutsSum + amount;
-    const fifo = before.entries
-      .filter((e) => e.status === "approved" || e.status === "paid")
-      .slice()
-      .sort((x, y) => {
-        const dt = new Date(x.createdAt).getTime() - new Date(y.createdAt).getTime();
-        return dt !== 0 ? dt : String(x.id).localeCompare(String(y.id));
-      });
-    let cumulative = 0n;
-    for (const entry of fifo) {
-      cumulative += toBig(entry.commissionMinor);
-      if (cumulative <= pool && entry.status === "approved") {
-        await this.t("commissionEntry").update({
-          where: { id: entry.id },
-          data: { status: "paid" },
-        });
-      }
-    }
+    await this.applyFifoFlip(before.entries, pool);
 
     await this.safeAudit({
       organizationId: orgId,
@@ -811,5 +822,247 @@ export class AffiliatesService {
 
     const balances = await this.partnerBalances(orgId, partnerId);
     return { payout: this.serializePayout(payout), balances };
+  }
+
+  // ================= OU11: payout executions (bank-instruction rail) =================
+
+  /**
+   * OU11 — affiliate payouts ride the SAME disbursement rail
+   * and the SAME legal gate as wallet payouts (see
+   * connections/payout-legal-gate.ts): no execution entry point
+   * here runs while the gate is closed. The flow mirrors the
+   * wallet rail exactly:
+   *  1. createAffiliatePayoutExecution issues a bank instruction
+   *     for an amount covered by the partner's APPROVED
+   *     outstanding commissions — unapproved (pending) commission
+   *     can never be executed against, and amounts already under
+   *     an open instruction are reserved, so instructions can
+   *     never jointly overdraw the outstanding.
+   *  2. The merchant executes at the bank by hand (v1 rail: no
+   *     bKash disbursement API is evidenced anywhere in this
+   *     codebase) and confirms with the BANK's reference.
+   *  3. Confirmation creates the AffiliatePayout through the
+   *     SAME bookkeeping as recordPayout — same row shape, same
+   *     applyFifoFlip — exactly once: a duplicate confirmation
+   *     returns the stored payout and creates nothing.
+   * The EC32 recordPayout path above is the manual bookkeeping
+   * process and, like manual wallet mark-paid, is NOT gated and
+   * is unchanged.
+   */
+
+  private serializePayoutExecution(row: any) {
+    return {
+      id: row.id,
+      organizationId: row.organizationId,
+      subjectType: row.subjectType,
+      partnerId: row.partnerId ?? null,
+      affiliatePayoutId: row.affiliatePayoutId ?? null,
+      amountMinor: toBig(row.amountMinor).toString(),
+      method: row.method,
+      destination: row.destination ?? null,
+      currency: row.currency ?? "BDT",
+      rail: row.rail,
+      status: row.status,
+      instructionRef: row.instructionRef,
+      bankReference: row.bankReference ?? null,
+      failureReason: row.failureReason ?? null,
+      issuedById: row.issuedById,
+      confirmedById: row.confirmedById ?? null,
+      failedById: row.failedById ?? null,
+      issuedAt: row.issuedAt ? new Date(row.issuedAt).toISOString() : null,
+      confirmedAt: row.confirmedAt ? new Date(row.confirmedAt).toISOString() : null,
+      failedAt: row.failedAt ? new Date(row.failedAt).toISOString() : null,
+      createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
+    };
+  }
+
+  private async getAffiliateExecutionOr404(orgId: string, executionId: string) {
+    const row = await this.t("payoutExecution")
+      .findFirst({ where: { id: executionId, organizationId: orgId, subjectType: "affiliate_payout" } })
+      .catch(() => null);
+    if (!row) throw new NotFoundException("Payout execution not found");
+    return row;
+  }
+
+  async listAffiliatePayoutExecutions(orgId: string, partnerId: string) {
+    await this.getPartnerOr404(orgId, partnerId);
+    const rows: any[] =
+      (await this.t("payoutExecution")
+        .findMany({
+          where: { organizationId: orgId, partnerId, subjectType: "affiliate_payout" },
+          orderBy: { createdAt: "desc" },
+        })
+        .catch(() => [])) ?? [];
+    return { total: rows.length, items: rows.map((r) => this.serializePayoutExecution(r)) };
+  }
+
+  async createAffiliatePayoutExecution(
+    orgId: string,
+    actorId: string,
+    partnerId: string,
+    dto: { amountMinor?: string; method?: string; destination?: any; note?: string },
+  ) {
+    // The legal gate is asserted FIRST — before partner lookup
+    // or any validation can create state (the gate refusal
+    // creates nothing, exactly like the wallet rail).
+    await assertPayoutAutomationAllowed(this.prisma as any);
+    const partner = await this.getPartnerOr404(orgId, partnerId);
+    if (!(PAYOUT_METHODS as readonly string[]).includes(String(dto.method))) {
+      throw new BadRequestException("পেআউটের মাধ্যম bkash, nagad, bank, cash অথবা other হতে হবে");
+    }
+    const method = String(dto.method);
+    let amount: bigint;
+    try {
+      amount = BigInt(dto.amountMinor as any);
+    } catch {
+      amount = 0n;
+    }
+    if (amount <= 0n) {
+      throw new BadRequestException("পেআউটের পরিমাণ শূন্যের বেশি হতে হবে");
+    }
+    // Destination: the payee details the bank instruction pays
+    // to. bkash/nagad need a number, bank needs account number
+    // + bank name (the PayoutDestination contract); cash/other
+    // fall back to the partner's own contact snapshot.
+    let destination: any = dto.destination ?? null;
+    if (destination !== null && (typeof destination !== "object" || Array.isArray(destination))) {
+      throw new BadRequestException("Payout গন্তব্যের তথ্য সঠিক নয়।");
+    }
+    if (method === "bkash" || method === "nagad") {
+      if (!String(destination?.number ?? "").trim()) {
+        throw new BadRequestException(`${method} payout-এর জন্য গন্তব্য নম্বর (destination.number) প্রয়োজন।`);
+      }
+    } else if (method === "bank") {
+      if (!String(destination?.accountNumber ?? "").trim() || !String(destination?.bankName ?? "").trim()) {
+        throw new BadRequestException("Bank payout-এর জন্য destination-এ অ্যাকাউন্ট নম্বর ও ব্যাংকের নাম প্রয়োজন।");
+      }
+    } else if (!destination) {
+      destination = { payeeName: partner.name, phone: partner.phone };
+    }
+    const before = await this.balanceParts(orgId, partner.id);
+    const inflight: any[] =
+      (await this.t("payoutExecution")
+        .findMany({ where: { organizationId: orgId, partnerId: partner.id, subjectType: "affiliate_payout", status: "instruction_issued" } })
+        .catch(() => [])) ?? [];
+    const reserved = inflight.reduce((s: bigint, r: any) => s + toBig(r.amountMinor), 0n);
+    const executable = before.outstanding - reserved;
+    if (amount > executable) {
+      throw new BadRequestException(
+        `Execution-এর পরিমাণ (${amount.toString()}) executable বকেয়ার (${executable.toString()} = approved outstanding ${before.outstanding.toString()} − খোলা instruction ${reserved.toString()}) বেশি হতে পারবে না — শুধু APPROVED কমিশনের বিপরীতেই execution হয়`,
+      );
+    }
+    const execution = await this.t("payoutExecution").create({
+      data: {
+        organizationId: orgId, subjectType: "affiliate_payout",
+        partnerId: partner.id, affiliatePayoutId: null, payoutRequestId: null,
+        amountMinor: amount, method, destination, currency: "BDT",
+        rail: "bank_instruction", status: "instruction_issued",
+        instructionRef: `BANK-${randomUUID()}`,
+        issuedById: actorId, issuedAt: new Date(),
+      },
+    });
+    await this.safeAudit({
+      organizationId: orgId, userId: actorId,
+      action: "affiliates.payout_execution_issued",
+      entityType: "PayoutExecution", entityId: execution.id,
+      metadata: { partnerId: partner.id, amountMinor: amount.toString(), method, instructionRef: execution.instructionRef },
+    });
+    return this.serializePayoutExecution(execution);
+  }
+
+  async confirmAffiliatePayoutExecution(
+    orgId: string,
+    actorId: string,
+    executionId: string,
+    dto: { bankReference?: string },
+  ) {
+    await assertPayoutAutomationAllowed(this.prisma as any);
+    const ref = String(dto?.bankReference ?? "").trim();
+    if (!ref) {
+      throw new BadRequestException("Execution confirm করতে হলে ব্যাংকের reference (bankReference) আবশ্যক।");
+    }
+    const execution = await this.getAffiliateExecutionOr404(orgId, executionId);
+    if (execution.status === "confirmed") {
+      // Duplicate confirmation converges on the stored truth:
+      // the payout it created, no second row, no second flip.
+      const payout = execution.affiliatePayoutId
+        ? await this.t("affiliatePayout").findFirst({ where: { id: execution.affiliatePayoutId } }).catch(() => null)
+        : null;
+      const balances = await this.partnerBalances(orgId, execution.partnerId);
+      return {
+        execution: this.serializePayoutExecution(execution),
+        payout: payout ? this.serializePayout(payout) : null,
+        balances, alreadyConfirmed: true,
+      };
+    }
+    if (execution.status !== "instruction_issued") {
+      throw new BadRequestException(`এই execution-টি confirm করা যাবে না (বর্তমান: ${execution.status}) — failed হলে নতুন instruction তৈরি করুন।`);
+    }
+    const amount = toBig(execution.amountMinor);
+    const before = await this.balanceParts(orgId, execution.partnerId);
+    if (amount > before.outstanding) {
+      // Truthful + retryable: nothing is created, the execution
+      // stays open — the outstanding may have been consumed by a
+      // manual recordPayout after the instruction was issued.
+      throw new BadRequestException(
+        `বর্তমান approved outstanding (${before.outstanding.toString()}) এই execution-এর পরিমাণের (${amount.toString()}) চেয়ে কম — confirm করা যাবে না।`,
+      );
+    }
+    const payout = await this.t("affiliatePayout").create({
+      data: {
+        organizationId: orgId,
+        partnerId: execution.partnerId,
+        amountMinor: amount,
+        method: execution.method,
+        reference: ref,
+        note: `OU11 bank instruction ${execution.instructionRef} অনুযায়ী পরিশোধিত`,
+        createdById: actorId,
+      },
+    });
+    // The SAME FIFO flip as recordPayout, with the pool
+    // recomputed from the rows that exist now (incl. this one).
+    await this.applyFifoFlip(before.entries, before.payoutsSum + amount);
+    const updated = await this.t("payoutExecution").update({
+      where: { id: execution.id },
+      data: {
+        status: "confirmed", bankReference: ref, affiliatePayoutId: payout.id,
+        confirmedById: actorId, confirmedAt: new Date(), failureReason: null, failedById: null, failedAt: null,
+      },
+    });
+    await this.safeAudit({
+      organizationId: orgId, userId: actorId,
+      action: "affiliates.payout_execution_confirmed",
+      entityType: "PayoutExecution", entityId: execution.id,
+      metadata: { partnerId: execution.partnerId, affiliatePayoutId: payout.id, bankReference: ref, amountMinor: amount.toString() },
+    });
+    const balances = await this.partnerBalances(orgId, execution.partnerId);
+    return { execution: this.serializePayoutExecution(updated), payout: this.serializePayout(payout), balances };
+  }
+
+  async failAffiliatePayoutExecution(
+    orgId: string,
+    actorId: string,
+    executionId: string,
+    dto: { reason?: string },
+  ) {
+    await assertPayoutAutomationAllowed(this.prisma as any);
+    const reason = String(dto?.reason ?? "").trim();
+    if (!reason) throw new BadRequestException("Execution failed হিসেবে রেকর্ড করতে হলে কারণ (reason) আবশ্যক।");
+    const execution = await this.getAffiliateExecutionOr404(orgId, executionId);
+    if (execution.status === "confirmed") {
+      throw new BadRequestException("Confirmed execution-কে failed করা যাবে না — টাকা ইতিমধ্যে বেরিয়ে গেছে হিসেবে রেকর্ড আছে।");
+    }
+    if (execution.status === "failed") return this.serializePayoutExecution(execution);
+    const updated = await this.t("payoutExecution").update({
+      where: { id: execution.id },
+      data: { status: "failed", failureReason: reason, failedById: actorId, failedAt: new Date() },
+    });
+    await this.safeAudit({
+      organizationId: orgId, userId: actorId,
+      action: "affiliates.payout_execution_failed",
+      entityType: "PayoutExecution", entityId: execution.id,
+      metadata: { partnerId: execution.partnerId, failureReason: reason },
+    });
+    return this.serializePayoutExecution(updated);
   }
 }

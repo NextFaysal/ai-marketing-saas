@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { DataExportsController } from "./data-exports.controller";
 import { DataExportsService } from "./data-exports.service";
+import { DataImportsService } from "./data-imports.service";
 
 /**
  * AB8 (AX25) — Merchant Data Tools. Leaf module: PrismaModule and
@@ -13,7 +14,7 @@ import { DataExportsService } from "./data-exports.service";
  */
 @Module({
   controllers: [DataExportsController],
-  providers: [DataExportsService],
-  exports: [DataExportsService],
+  providers: [DataExportsService, DataImportsService],
+  exports: [DataExportsService, DataImportsService],
 })
 export class DataToolsModule {}

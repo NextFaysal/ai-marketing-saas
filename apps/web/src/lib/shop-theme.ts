@@ -24,7 +24,9 @@ export type ShopThemeId =
   | "automotive"
   | "sports"
   | "jewelry"
-  | "v2";
+  | "v2"
+  | "warm"
+  | "ocean";
 
 export interface ShopTheme {
   headerDark: boolean;
@@ -300,6 +302,36 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardPriceClass: "text-base font-extrabold text-[var(--brand)]",
     sectionTitleClass: "text-xl font-black text-[var(--ink-strong)]",
   },
+  // OU8: token-native "warm" — soft amber-tinted surfaces, extra
+  // rounded corners and a roomier grid rhythm. Authored on the
+  // same EB1 variables as v2 (so --brand drives its price colour)
+  // with its own literal hero tint.
+  warm: {
+    headerDark: false,
+    heroClass: "rounded-[2rem] bg-amber-50 p-8 text-center shadow-[var(--shadow-card)] border border-amber-200",
+    heroTitleClass: "text-3xl font-black text-amber-950 sm:text-4xl",
+    gridClass: "grid grid-cols-2 gap-5 md:grid-cols-3 lg:grid-cols-4",
+    featuredGridClass: "grid grid-cols-2 gap-5 md:grid-cols-4",
+    cardClass: "rounded-[var(--radius-xl)] border border-amber-100 bg-[var(--surface)] shadow-[var(--shadow-card)]",
+    cardImageWrapClass: "",
+    cardBodyClass: "space-y-1.5 p-4 text-[var(--ink-body)]",
+    cardPriceClass: "text-base font-extrabold text-[var(--brand)]",
+    sectionTitleClass: "text-xl font-black text-amber-950",
+  },
+  // OU8: token-native "ocean" — deep-teal dark header + hero,
+  // tighter 3-column desktop grid, squared-off cards.
+  ocean: {
+    headerDark: true,
+    heroClass: "rounded-[var(--radius-lg)] bg-cyan-950 p-8 text-center shadow-[var(--shadow-card)] border border-cyan-900 text-white",
+    heroTitleClass: "text-3xl font-black text-white sm:text-4xl",
+    gridClass: "grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-3",
+    featuredGridClass: "grid grid-cols-2 gap-4 md:grid-cols-3",
+    cardClass: "rounded-[var(--radius-lg)] border border-cyan-100 bg-[var(--surface)] shadow-[var(--shadow-card)]",
+    cardImageWrapClass: "",
+    cardBodyClass: "space-y-1.5 p-4 text-[var(--ink-body)]",
+    cardPriceClass: "text-base font-extrabold text-cyan-700",
+    sectionTitleClass: "text-xl font-black text-cyan-950",
+  },
 };
 
 export const THEME_ID_LIST: ShopThemeId[] = [
@@ -324,6 +356,8 @@ export const THEME_ID_LIST: ShopThemeId[] = [
   "sports",
   "jewelry",
   "v2",
+  "warm",
+  "ocean",
 ];
 
 export function themeOf(id: unknown): ShopTheme {

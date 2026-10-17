@@ -15,6 +15,7 @@ export interface NavItem {
 export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: "overview", ready: true },
   { label: "এজেন্সি পোর্টফোলিও", href: "/dashboard/portfolio", icon: "portfolio", ready: true },
+  { label: "এজেন্সি কনসোল", href: "/dashboard/agency", icon: "portfolio", ready: true },
   { label: "AI Assistant", href: "/dashboard/ai", icon: "aiAssistant", ready: true },
   { label: "Business Knowledge", href: "/dashboard/knowledge", icon: "knowledge", ready: true },
   { label: "Products", href: "/dashboard/products", icon: "products", ready: true },
@@ -23,6 +24,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "কানেক্ট সেন্টার", href: "/dashboard/connections", icon: "connectCenter", ready: true },
   { label: "Orders", href: "/dashboard/orders", icon: "orders", ready: true },
   { label: "POS / কাউন্টার বিক্রি", href: "/dashboard/pos", icon: "pos", ready: true },
+  { label: "লাইভ কমার্স", href: "/dashboard/live-commerce", icon: "socialPosts", ready: true },
+  { label: "সার্ভিস", href: "/dashboard/services", icon: "storefront", ready: true },
+  { label: "বুকিং", href: "/dashboard/bookings", icon: "orders", ready: true },
+  { label: "প্রমোশন (গেমিফাইড)", href: "/dashboard/promotions", icon: "campaigns", ready: true },
+  { label: "রাইডার লাইভ (GPS)", href: "/dashboard/delivery", icon: "dispatch", ready: true },
   { label: "Advertising Accounts", href: "/dashboard/ad-accounts", icon: "adAccounts", ready: true },
   { label: "Campaigns", href: "/dashboard/campaigns", icon: "campaigns", ready: true },
   { label: "ইনফ্লুয়েন্সার ও পার্টনার", href: "/dashboard/influencers", icon: "influencers", ready: true },
@@ -32,6 +38,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Audiences", href: "/dashboard/audiences", icon: "audiences", ready: true },
   { label: "Campaign Builder", href: "/dashboard/campaign-builder", icon: "campaignBuilder", ready: true },
   { label: "AI Creative Studio", href: "/dashboard/creative-studio", icon: "creativeStudio", ready: true },
+  { label: "ভিডিও স্টুডিও", href: "/dashboard/video-studio", icon: "creativeStudio", ready: true },
   { label: "AI সেলস ফানেল", href: "/dashboard/funnels", icon: "funnels", ready: true },
   { label: "Analytics", href: "/dashboard/analytics", icon: "analytics", ready: true },
   { label: "Attribution", href: "/dashboard/attribution", icon: "attribution", ready: true },
@@ -54,6 +61,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "আপডেটসমূহ", href: "/dashboard/changelog", icon: "changelog", ready: true },
   { label: "Setup Guide", href: "/dashboard/setup", icon: "setup", ready: true },
   { label: "Team Settings", href: "/dashboard/team", icon: "team", ready: true },
+  { label: "মানবসম্পদ (HR)", href: "/dashboard/hr", icon: "team", ready: true },
   { label: "Organization Settings", href: "/dashboard/settings", icon: "orgSettings", ready: true },
   { label: "Webhooks", href: "/dashboard/settings/webhooks", icon: "webhooks", ready: true },
 ] as const;
@@ -88,6 +96,7 @@ export const COMMERCE_NAV_ITEMS: readonly NavItem[] = [
   { label: "কিস্তি (Installments)", href: "/dashboard/commerce/installments", icon: "installments", ready: true },
   { label: "সাবস্ক্রিপশন", href: "/dashboard/commerce/subscriptions", icon: "subscriptions", ready: true },
   { label: "ক্রয় (Purchasing)", href: "/dashboard/commerce/purchasing", icon: "purchasing", ready: true },
+  { label: "ড্রপশিপ (Dropship)", href: "/dashboard/commerce/dropship", icon: "affiliates", ready: true },
   { label: "হিসাব (Accounting)", href: "/dashboard/commerce/accounting", icon: "accounting", ready: true },
   { label: "অ্যাফিলিয়েট", href: "/dashboard/commerce/affiliates", icon: "affiliates", ready: true },
   { label: "রিভিউ", href: "/dashboard/commerce/reviews", icon: "reviews", ready: true },
@@ -99,10 +108,10 @@ export const COMMERCE_NAV_ITEMS: readonly NavItem[] = [
 
 /** Task-grouped commerce sections (ED12). `hrefs` order = render order. */
 export const COMMERCE_NAV_SECTIONS: readonly { id: string; title: string; hrefs: readonly string[] }[] = [
-  { id: "commerce-sell", title: "কমার্স — বিক্রি", hrefs: ["/dashboard/orders", "/dashboard/pos", "/dashboard/commerce/quotes"] },
+  { id: "commerce-sell", title: "কমার্স — বিক্রি", hrefs: ["/dashboard/orders", "/dashboard/pos", "/dashboard/live-commerce", "/dashboard/services", "/dashboard/bookings", "/dashboard/commerce/quotes"] },
   { id: "commerce-catalog", title: "কমার্স — ক্যাটালগ", hrefs: ["/dashboard/products", "/dashboard/commerce/bundles", "/dashboard/commerce/feeds", "/dashboard/commerce/reviews", "/dashboard/commerce/questions"] },
   { id: "commerce-customers", title: "কমার্স — গ্রাহক", hrefs: ["/dashboard/customers", "/dashboard/commerce/loyalty", "/dashboard/commerce/gift-cards"] },
-  { id: "commerce-ops", title: "কমার্স — অপারেশন", hrefs: ["/dashboard/commerce/dispatch", "/dashboard/commerce/warehouse", "/dashboard/commerce/returns", "/dashboard/commerce/reconciliation", "/dashboard/commerce/inventory-intelligence", "/dashboard/commerce/sync", "/dashboard/commerce/print"] },
+  { id: "commerce-ops", title: "কমার্স — অপারেশন", hrefs: ["/dashboard/commerce/dispatch", "/dashboard/delivery", "/dashboard/commerce/warehouse", "/dashboard/commerce/returns", "/dashboard/commerce/reconciliation", "/dashboard/commerce/inventory-intelligence", "/dashboard/commerce/sync", "/dashboard/commerce/print", "/dashboard/commerce/dropship"] },
   { id: "commerce-growth", title: "কমার্স — বৃদ্ধি", hrefs: ["/dashboard/commerce/promotions", "/dashboard/commerce/discounts", "/dashboard/commerce/landings", "/dashboard/commerce/abandoned"] },
   { id: "commerce-money", title: "কমার্স — টাকা", hrefs: ["/dashboard/commerce/finance", "/dashboard/commerce/reports", "/dashboard/commerce/installments", "/dashboard/commerce/subscriptions", "/dashboard/commerce/purchasing", "/dashboard/commerce/accounting", "/dashboard/commerce/affiliates"] },
   { id: "commerce-shop", title: "কমার্স — দোকান", hrefs: ["/dashboard/commerce", "/dashboard/commerce/storefront"] },

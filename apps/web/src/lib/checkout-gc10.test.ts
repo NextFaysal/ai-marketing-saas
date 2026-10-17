@@ -40,6 +40,13 @@ describe("GC10 online selection values", () => {
       .toBe("অনলাইনে পেমেন্ট — aamarPay");
   });
 
+  it("OU5 own stripe selection round-trips with its card label", () => {
+    expect(parseOnlineSelection(onlineSelectionValue({ provider: "stripe", source: "own", sandbox: false })))
+      .toEqual({ provider: "stripe", source: "own" });
+    expect(onlineOptionLabel({ provider: "stripe", source: "own", sandbox: false }))
+      .toBe("অনলাইনে পেমেন্ট — Stripe (কার্ড)");
+  });
+
   it("legacy / malformed values are not online selections", () => {
     expect(parseOnlineSelection("cod")).toBeNull();
     expect(parseOnlineSelection("bkash")).toBeNull();

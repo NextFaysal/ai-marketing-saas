@@ -14,6 +14,85 @@ interface OrgDetail {
   subscription?: { plan: string; status: string; currentPeriodEnd?: string | null } | null;
   counts: { products: number; orders: number; conversations: number; campaigns: number };
   aiDailyLimitOverride?: number | null; broadcastCapOverride?: number | null; seatLimit?: number | null;
+  // AB8 (AX24): white-label — platform branding fully hidden for this org.
+  whiteLabel?: boolean;
+  // GC21 (GB9): merchant verification + recorded storage usage.
+  verificationStatus?: string; verificationNote?: string | null; verificationSubmittedAt?: string | null;
+  businessProfile?: {
+    tradeLicenseNo?: string | null; businessAddress?: string | null; address?: string | null;
+    contactPhone?: string | null; contactEmail?: string | null; city?: string | null;
+  } | null;
+  storageBytes?: string; storageAssetCount?: number; storageMeteredFrom?: string;
+  // ORG13 (OB4): admin-only classification tags — never shown tenant-side.
+  tags?: string[];
+}
+
+function formatBytes(bytesStr?: string): string {
+  const n = Number(bytesStr ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0 বাইট";
+  const units = ["বাইট", "KB", "MB", "GB", "TB"];
+  let v = n; let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toLocaleString("bn-BD", { maximumFractionDigits: 2 })} ${units[i]}`;
+}
+
+/**
+ * ORG13 (Organization Next OB4): the org's admin-only tags,
+ * edited as a chip list. Saving PATCHes the WHOLE list to
+ * /admin/orgs/:id/tags (SUPER tier; the API normalizes — trim,
+ * dedupe, case preserved — enforces max 20 × 40 chars, and
+ * audits). Tags are internal classification only: tenants never
+ * see them anywhere.
+ */
+function OrgTagsCard({ orgId, initial }: { orgId: string; initial: string[] }) {
+  const [tags, setTags] = React.useState<string[]>(initial);
+  const [draft, setDraft] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => { setTags(initial); }, [initial]);
+  const add = () => {
+    const t = draft.trim();
+    if (!t) return;
+    if (t.length > 40) { toast("একটি Tag সর্বোচ্চ ৪০ অক্ষরের হতে পারে।", "error"); return; }
+    if (tags.includes(t)) { toast("এই Tag ইতিমধ্যে আছে।", "error"); return; }
+    if (tags.length >= 20) { toast("সর্বোচ্চ ২০টি Tag রাখা যায়।", "error"); return; }
+    setTags([...tags, t]);
+    setDraft("");
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      const out = await apiFetch<{ tags: string[] }>(`/admin/orgs/${orgId}/tags`, { method: "PATCH", body: JSON.stringify({ tags }) });
+      setTags(out.tags);
+      toast("Tag সংরক্ষিত হয়েছে (Audit-এ রেকর্ড আছে)।");
+    } catch (e) { toast(e instanceof Error ? e.message : "Tag সেভ ব্যর্থ হয়েছে", "error"); }
+    setBusy(false);
+  };
+  const dirty = JSON.stringify(tags) !== JSON.stringify(initial);
+  return (
+    <div className="acard space-y-3">
+      <div className="font-semibold">🏷 Tags (শুধু অ্যাডমিনদের জন্য)</div>
+      <p className="text-xs leading-relaxed text-slate-400">
+        প্ল্যাটফর্ম টিমের অভ্যন্তরীণ শ্রেণিবিন্যাস — Tenant কখনোই এগুলো দেখে না। Organization তালিকায় Tag দিয়ে ছাঁকা যায়।
+        সর্বোচ্চ ২০টি, প্রতিটি সর্বোচ্চ ৪০ অক্ষর; যেভাবে লিখবেন হুবহু সেভাবে থাকবে (বড়/ছোট হাতের হরফ বদলায় না)।
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {tags.map((t) => (
+          <span key={t} className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">
+            🏷 {t}
+            <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label={`${t} Tag মুছুন`} onClick={() => setTags(tags.filter((x) => x !== t))}>✕</button>
+          </span>
+        ))}
+        {tags.length === 0 ? <span className="text-xs text-slate-500">কোনো Tag নেই।</span> : null}
+      </div>
+      <div className="flex gap-2">
+        <input className="ainput" placeholder="নতুন Tag লিখুন…" value={draft} maxLength={60}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+        <button type="button" className="abtn-secondary" onClick={add}>যোগ</button>
+      </div>
+      <button type="button" className="abtn" disabled={busy || !dirty} onClick={save}>{busy ? "সেভ হচ্ছে…" : "Tag সেভ করুন"}</button>
+    </div>
+  );
 }
 
 /** ADX6 tabs — every tab's content already existed on this page;
@@ -35,6 +114,7 @@ export default function OrgDetailPage() {
   const [data, setData] = React.useState<OrgDetail | null>(null);
   const [notes, setNotes] = React.useState<{ id: string; body: string; createdAt: string }[]>([]);
   const [note, setNote] = React.useState("");
+  const [verificationNote, setVerificationNote] = React.useState("");
   const [msg, setMsg] = React.useState("");
   const [tab, setTab] = React.useState("summary");
   const [limits, setLimits] = React.useState<{ aiDailyLimitOverride: string; broadcastCapOverride: string; seatLimit: string }>({ aiDailyLimitOverride: "", broadcastCapOverride: "", seatLimit: "" });
@@ -99,6 +179,7 @@ export default function OrgDetailPage() {
 
       {tab === "summary" ? (
         <div className="atab-panel grid gap-4 lg:grid-cols-2">
+          <div className="space-y-4">
           <div className="acard space-y-2 text-sm">
             <div><span className="text-slate-400">Slug:</span> {data.slug} · <span className="text-slate-400">দেশ:</span> {data.country} · <span className="text-slate-400">মুদ্রা:</span> {data.currency}</div>
             <div><span className="text-slate-400">অবস্থা:</span> <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span></div>
@@ -114,6 +195,8 @@ export default function OrgDetailPage() {
             <div className="pt-2 font-medium">Integrations (শুধু অবস্থা — গোপন তথ্য কখনো দেখানো হয় না)</div>
             {data.integrations.map((i) => <div key={i.id} className="rounded-lg bg-slate-800 px-3 py-2">{i.provider} — {i.status}</div>)}
             {data.integrations.length === 0 ? <p className="text-slate-400">কোনো Integration নেই।</p> : null}
+          </div>
+          <OrgTagsCard orgId={id} initial={data.tags ?? []} />
           </div>
           <div className="acard space-y-3">
             <div className="font-semibold">অ্যাকশন (কারণসহ Audit হবে)</div>
@@ -149,6 +232,50 @@ export default function OrgDetailPage() {
                 ) : null}
               </div>
               <p className="mt-1 text-xs text-slate-400">স্থায়ী Deletion শুধু DELETED অবস্থার Org এর জন্য, নাম হুবহু লিখে নিশ্চিত করতে হয়। Deletion Certificate (কোন Table থেকে কত Row) Platform Audit Log এ থেকে যায়।</p>
+            </div>
+            <div className="border-t border-slate-800 pt-3">
+              <div className="mb-2 font-semibold">🏅 Merchant Verification (GC21)</div>
+              <div className="space-y-1.5 text-sm">
+                <div><span className="text-slate-400">অবস্থা:</span>{" "}
+                  {data.verificationStatus === "verified" ? <span className="abadge-green">verified · যাচাইকৃত</span>
+                    : data.verificationStatus === "pending" ? <span className="abadge-amber">pending · রিভিউ বাকি</span>
+                    : data.verificationStatus === "rejected" ? <span className="abadge-amber">rejected · ফিরিয়ে দেওয়া</span>
+                    : <span className="abadge-amber">{data.verificationStatus ?? "unverified"}</span>}
+                  {data.verificationSubmittedAt ? <span className="ml-2 text-xs text-slate-500">জমা: {fmtDateTime(data.verificationSubmittedAt)}</span> : null}
+                </div>
+                <div><span className="text-slate-400">ট্রেড লাইসেন্স নম্বর:</span> {data.businessProfile?.tradeLicenseNo ?? "—"}</div>
+                <div><span className="text-slate-400">ব্যবসার ঠিকানা:</span> {data.businessProfile?.businessAddress ?? data.businessProfile?.address ?? "—"}</div>
+                <div><span className="text-slate-400">যোগাযোগ:</span> {data.businessProfile?.contactPhone ?? "—"} · {data.businessProfile?.contactEmail ?? "—"}</div>
+                {data.verificationNote ? <div><span className="text-slate-400">শেষ নোট (মার্চেন্ট দেখেন):</span> “{data.verificationNote}”</div> : null}
+                <div><span className="text-slate-400">স্টোরেজ ব্যবহার:</span> {formatBytes(data.storageBytes)} · {data.storageAssetCount ?? 0}টি ফাইল <span className="text-xs text-slate-500">({data.storageMeteredFrom ?? "মিডিয়া লাইব্রেরিতে রেকর্ডকৃত আপলোড থেকে হিসাব"})</span></div>
+              </div>
+              {data.verificationStatus === "pending" ? (
+                <div className="mt-3 space-y-2">
+                  <input className="ainput w-full" placeholder="নোট — Reject করলে আবশ্যক, মার্চেন্ট এটি দেখতে পাবেন" value={verificationNote} onChange={(e) => setVerificationNote(e.target.value)} />
+                  <div className="flex flex-wrap gap-2">
+                    <button className="abtn" onClick={async () => {
+                      try {
+                        await apiFetch(`/admin/organizations/${id}/verification`, { method: "POST", body: JSON.stringify({ decision: "approve", note: verificationNote.trim() || undefined }) });
+                        setMsg("প্রতিষ্ঠানটি যাচাইকৃত (verified) করা হয়েছে।");
+                        setVerificationNote("");
+                        await load();
+                      } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+                    }}>✅ Approve — যাচাইকৃত করুন</button>
+                    <button className="abtn-danger" onClick={async () => {
+                      if (!verificationNote.trim()) { setMsg("Reject করতে নোট লিখুন — মার্চেন্ট সেই কারণ দেখে ঠিক করে আবার জমা দেবেন।"); return; }
+                      try {
+                        await apiFetch(`/admin/organizations/${id}/verification`, { method: "POST", body: JSON.stringify({ decision: "reject", note: verificationNote.trim() }) });
+                        setMsg("আবেদন Reject করা হয়েছে — নোটসহ মার্চেন্টের কাছে পৌঁছেছে।");
+                        setVerificationNote("");
+                        await load();
+                      } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+                    }}>✗ Reject — ফিরিয়ে দিন</button>
+                  </div>
+                  <p className="text-xs text-slate-500">সিদ্ধান্ত Admin Audit Log এ রেকর্ড হয়। শুধু pending আবেদনই রিভিউ করা যায়।</p>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">রিভিউ করার মতো pending আবেদন নেই।</p>
+              )}
             </div>
           </div>
         </div>
@@ -211,6 +338,22 @@ export default function OrgDetailPage() {
             })}
             {flags.knownFlags.length === 0 ? <EmptyState title="কোনো Feature Flag নেই।" sub="এই Org-এর জন্য কোনো Flag সংজ্ঞায়িত নেই।" /> : null}
             <p className="text-xs text-slate-400">Flag বন্ধ থাকলে ওই Org এ সংশ্লিষ্ট Beta ফিচার দেখাবে না (Tenant অ্যাপ ফ্ল্যাগ পড়ে যেখানে প্রযোজ্য)।</p>
+          </div>
+          <div className="acard space-y-2">
+            <div className="font-semibold">🏷 White-label (AX24)</div>
+            <label className="flex items-center justify-between gap-3 text-sm">White-label
+              <input type="checkbox" checked={data.whiteLabel ?? false} onChange={async (e) => {
+                const next = e.target.checked;
+                try {
+                  // whiteLabel persists via the org-update PATCH this page already
+                  // uses for limits (LimitsDto) — there is no PATCH /admin/orgs/:id route.
+                  await apiFetch(`/admin/orgs/${id}/limits`, { method: "PATCH", body: JSON.stringify({ whiteLabel: next }) });
+                  setMsg(next ? "White-label চালু হয়েছে — এই প্রতিষ্ঠানের দোকান/ইমেইলে প্ল্যাটফর্মের চিহ্ন আর থাকবে না।" : "White-label বন্ধ করা হয়েছে।");
+                  await load();
+                } catch (err) { setMsg(err instanceof Error ? err.message : "White-label আপডেট ব্যর্থ হয়েছে"); }
+              }} />
+            </label>
+            <p className="text-xs text-slate-500">White-label — চালু থাকলে এই প্রতিষ্ঠানের দোকান/ইমেইলে প্ল্যাটফর্মের কোনো চিহ্ন থাকবে না</p>
           </div>
         </div>
       ) : null}

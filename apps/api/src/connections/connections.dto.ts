@@ -45,6 +45,14 @@ export class PutPaymentGatewayDto {
   @IsOptional() @IsString() @MaxLength(100) prefix?: string;
   // aamarpay (GC11) — storeId above is shared with sslcommerz.
   @IsOptional() @IsString() @MaxLength(500) signatureKey?: string;
+  // stripe (OU5) — the tenant's OWN Stripe account: secret key
+  // + webhook signing secret are both required by the service
+  // (a session whose completion could not be signature-verified
+  // must never be creatable); the publishable key is a
+  // non-secret identifier.
+  @IsOptional() @IsString() @MaxLength(500) secretKey?: string;
+  @IsOptional() @IsString() @MaxLength(500) webhookSecret?: string;
+  @IsOptional() @IsString() @MaxLength(200) publishableKey?: string;
   @IsOptional() @IsBoolean() sandbox?: boolean;
   // GC12: the merchant's OWN gateway-contract fee numbers —
   // plain columns on the gateway row, NOT part of the sealed
@@ -124,9 +132,12 @@ export class InitiateOrderPaymentDto {
 export class PublicInitiatePaymentDto {
   @IsString() @MinLength(1) @MaxLength(100) orderId!: string;
   @IsString() @MinLength(1) @MaxLength(60) orderNumber!: string;
-  @IsString() @IsIn(["sslcommerz", "bkash", "shurjopay", "aamarpay"]) provider!: string;
+  @IsString() @IsIn(["sslcommerz", "bkash", "shurjopay", "aamarpay", "stripe"]) provider!: string;
   /** CC10: "platform" pays through the platform gateway (wallet
-   * credit); omitted/"own" is the CC9 tenant-gateway path. */
+   * credit); omitted/"own" is the CC9 tenant-gateway path.
+   * OU5: stripe exists ONLY as an own gateway — the pair is
+   * re-validated against publicPaymentOptions, which never
+   * offers stripe on the platform path. */
   @IsOptional() @IsString() @IsIn(["own", "platform"]) source?: string;
   /** AB4 (AX5a): which slice this initiation collects —
    * "deposit" prices from the org's deposit config, "balance"
@@ -182,6 +193,23 @@ export class CreatePayoutRequestDto {
 export class InitiateRefundDto {
   @IsOptional() @IsString() @MaxLength(30) amountMinor?: string;
   @IsOptional() @IsString() @MaxLength(200) reason?: string;
+}
+
+/** OU5 — Refund Center: open a MANUAL refund request for a
+ * provider without a refund API (or a gateway-manual case).
+ * Same amount/reason shape as the gateway initiation. */
+export class CreateManualRefundDto {
+  @IsOptional() @IsString() @MaxLength(30) amountMinor?: string;
+  @IsOptional() @IsString() @MaxLength(200) reason?: string;
+}
+
+/** OU5 — record the provider-dashboard action for a manual
+ * refund: the dashboard's own reference is required (a manual
+ * refund without a provider reference is not recordable); the
+ * proof note is the staff member's attestation detail. */
+export class RecordManualRefundDto {
+  @IsString() @MinLength(1) @MaxLength(200) providerRef!: string;
+  @IsOptional() @IsString() @MaxLength(500) proofNote?: string;
 }
 
 /** CC25 — import a gateway settlement CSV for reconciliation.
@@ -265,6 +293,8 @@ export class OnlinePaymentSelectionDto {
   // publicPaymentOptions, which never offers the new providers
   // on the platform path — a platform+shurjopay/aamarpay pair
   // is refused there, not here.
-  @IsString() @IsIn(["sslcommerz", "bkash", "shurjopay", "aamarpay"]) provider!: string;
+  // OU5: stripe joins the OWN path the same way (never offered
+  // on the platform path for shop orders).
+  @IsString() @IsIn(["sslcommerz", "bkash", "shurjopay", "aamarpay", "stripe"]) provider!: string;
   @IsString() @IsIn(["own", "platform"]) source!: string;
 }

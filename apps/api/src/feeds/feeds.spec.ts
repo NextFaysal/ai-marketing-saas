@@ -1,9 +1,11 @@
 import { NotFoundException } from "@nestjs/common";
 import {
   buildFeedItems,
+  serializeDarazCsv,
   serializeFeedCsv,
   serializeFeedXml,
   stripHtmlToText,
+  DARAZ_FEED_TEMPLATE_WARNING,
   type FeedProductInput,
 } from "./feed-generator";
 import { FeedsService } from "./feeds.service";
@@ -282,5 +284,81 @@ describe("EC14 FeedsService", () => {
     const served = await svc.serveByToken(feed.token, "csv");
     expect(served.contentType).toContain("text/csv");
     expect(served.body.split("\n")[0]).toContain("google_product_category");
+  });
+});
+
+// ---------- OU3: Daraz feed export ----------
+
+describe("OU3 Daraz CSV serializer", () => {
+  it("generates rows from real catalog data with the required fields", () => {
+    const { items, skipped } = buildFeedItems(
+      [product({ id: "p-1", priceMinor: 80000n, compareAtMinor: 100000n, stockQuantity: 7 })],
+      OPTS,
+    );
+    expect(skipped).toHaveLength(0);
+    const csv = serializeDarazCsv(items);
+    const [header, row] = csv.split("\n");
+    expect(header).toBe(
+      "seller_sku,name,description,price,special_price,currency,availability,quantity,image_url,additional_image_urls,product_url,brand,category",
+    );
+    const cells = row.split(",");
+    expect(cells[0]).toBe("WAL-1"); // seller_sku from the real SKU
+    expect(cells[3]).toBe("1000.00"); // regular price, plain decimal
+    expect(cells[4]).toBe("800.00"); // special (sale) price
+    expect(cells[5]).toBe("BDT");
+    expect(cells[6]).toBe("in_stock");
+    expect(cells[7]).toBe("7"); // real stock count
+    expect(row).toContain("https://cdn.example.com/wallet.jpg");
+    expect(row).toContain("https://shop.example.com/shop/shop-one/products/leather-wallet");
+  });
+
+  it("leaves quantity blank when the stock count is unknown — never invents one", () => {
+    const { items } = buildFeedItems([product({ id: "p-1", stockQuantity: null })], OPTS);
+    const row = serializeDarazCsv(items).split("\n")[1];
+    const cells = row.split(",");
+    expect(cells[7]).toBe("");
+    expect(cells[4]).toBe(""); // no sale → no special_price
+  });
+
+  it("keeps the EC14 exclusion discipline: no slug / no image / no description ⇒ skipped, not exported", () => {
+    const { items, skipped } = buildFeedItems(
+      [
+        product({ id: "p-1", slug: null }),
+        product({ id: "p-2", imageUrl: null }),
+        product({ id: "p-3", description: null, seoDescription: null }),
+      ],
+      OPTS,
+    );
+    expect(items).toHaveLength(0);
+    expect(skipped).toHaveLength(3);
+    expect(serializeDarazCsv(items).split("\n")).toHaveLength(1); // header only
+  });
+});
+
+describe("OU3 FeedsService daraz channel", () => {
+  it("defaults to CSV, serves Daraz columns from the real catalog, and refuses XML", async () => {
+    const prisma = makePrisma();
+    seedFeedPrisma(prisma);
+    const svc = new FeedsService(prisma, auditStub);
+    const { feed } = await svc.create("org-1", "u1", { channel: "daraz" } as any);
+    expect(feed.format).toBe("csv");
+    const served = await svc.serveByToken(feed.token, "csv");
+    expect(served.contentType).toContain("text/csv");
+    expect(served.body.split("\n")[0]).toContain("seller_sku");
+    expect(served.body).toContain("WAL-1");
+    expect(served.body).not.toContain("Draft Product");
+    await expect(
+      svc.create("org-1", "u1", { channel: "daraz", format: "xml" } as any),
+    ).rejects.toThrow(/CSV/);
+  });
+
+  it("preview carries the honest unverified-template warning for daraz", async () => {
+    const prisma = makePrisma();
+    seedFeedPrisma(prisma);
+    const svc = new FeedsService(prisma, auditStub);
+    const { feed } = await svc.create("org-1", "u1", { channel: "daraz" } as any);
+    const prev: any = await svc.preview("org-1", feed.id);
+    expect(prev.itemCount).toBe(1);
+    expect(prev.warnings).toContain(DARAZ_FEED_TEMPLATE_WARNING);
   });
 });

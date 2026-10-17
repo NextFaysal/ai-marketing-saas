@@ -5,7 +5,7 @@ import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, E
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
-interface OrgRow { id: string; name: string; slug: string; status: string; country: string; createdAt: string; memberCount: number; orderCount: number; subscription?: { plan: string; status: string } | null }
+interface OrgRow { id: string; name: string; slug: string; status: string; country: string; createdAt: string; memberCount: number; orderCount: number; tags?: string[]; subscription?: { plan: string; status: string } | null }
 
 interface TombstoneRow { id: string; slug: string; deletedOrgName: string | null; deletedAt: string; expiresAt: string; releasedAt: string | null; releasedById: string | null; active: boolean }
 
@@ -69,6 +69,10 @@ export default function OrgsPage() {
   // server param is invented here.
   const [statusFilter, setStatusFilter] = React.useState("");
   const [planFilter, setPlanFilter] = React.useState("");
+  // ORG13 (OB4): the tag filter is different — it is a REAL server
+  // param (GET /admin/orgs?tag=..., exact-match on the org's
+  // admin-only tags array), so it rides the load() URL.
+  const [tagFilter, setTagFilter] = React.useState("");
   const [sortKey, setSortKey] = React.useState("created");
   const [sortDir, setSortDir] = React.useState<SortDir>("desc");
   const [quick, setQuick] = React.useState<OrgRow | null>(null);
@@ -79,14 +83,14 @@ export default function OrgsPage() {
   const [error, setError] = React.useState("");
   const load = React.useCallback(async () => {
     setLoading(true); setError("");
-    setRows(await apiFetch<OrgRow[]>(`/admin/orgs?take=50${q ? `&q=${encodeURIComponent(q)}` : ""}`).catch((e) => { setError(e instanceof Error ? e.message : "লোড ব্যর্থ হয়েছে"); return []; }));
+    setRows(await apiFetch<OrgRow[]>(`/admin/orgs?take=50${q ? `&q=${encodeURIComponent(q)}` : ""}${tagFilter ? `&tag=${encodeURIComponent(tagFilter)}` : ""}`).catch((e) => { setError(e instanceof Error ? e.message : "লোড ব্যর্থ হয়েছে"); return []; }));
     setLoading(false);
-  }, [q]);
+  }, [q, tagFilter]);
   React.useEffect(() => { load(); }, [load]);
   // ADNX15: one apply function for saved views AND last-used
   // filter persistence (restored on mount, stored on change).
-  const applyFilters = (s: Record<string, string>) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setPlanFilter(s.planFilter ?? ""); };
-  useLastFilters("orgs", { q, statusFilter, planFilter }, applyFilters);
+  const applyFilters = (s: Record<string, string>) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setPlanFilter(s.planFilter ?? ""); setTagFilter(s.tagFilter ?? ""); };
+  useLastFilters("orgs", { q, statusFilter, planFilter, tagFilter }, applyFilters);
 
   const bulk = async (status: string) => {
     const reason = await askInput({ title: `Bulk ${status} — ${selected.length}টি Org`, description: "কারণ (প্রতিটির Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
@@ -128,8 +132,9 @@ export default function OrgsPage() {
       ) : null}
       {error ? <div className="mb-3"><ErrorState message={error} onRetry={load} /></div> : null}
       <div className="acard overflow-hidden p-0">
-        <FilterBar collapsible activeCount={(q ? 1 : 0) + (statusFilter ? 1 : 0) + (planFilter ? 1 : 0)}>
+        <FilterBar collapsible activeCount={(q ? 1 : 0) + (statusFilter ? 1 : 0) + (planFilter ? 1 : 0) + (tagFilter ? 1 : 0)}>
           <input className="ainput max-w-sm" placeholder="নাম বা slug দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="ainput max-w-[11rem]" placeholder="🏷 Tag দিয়ে ছাঁকুন…" aria-label="Tag দিয়ে ছাঁকুন" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
           <select className="ainput" aria-label="অবস্থা দিয়ে ছাঁকুন" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="">সব অবস্থা</option>
@@ -144,19 +149,20 @@ export default function OrgsPage() {
         {/* ADNX8: active-filter chips — visible even while the
             mobile FilterBar is collapsed; each chip clears only
             its own filter (same state setters as the bar). */}
-        {(q || statusFilter || planFilter) ? (
+        {(q || statusFilter || planFilter || tagFilter) ? (
           <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800 px-4 py-2">
             {q ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">খোঁজ: {q}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="খোঁজ মুছুন" onClick={() => setQ("")}>✕</button></span> : null}
             {statusFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">অবস্থা: {statusFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="অবস্থা ফিল্টার মুছুন" onClick={() => setStatusFilter("")}>✕</button></span> : null}
             {planFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">Plan: {planFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="Plan ফিল্টার মুছুন" onClick={() => setPlanFilter("")}>✕</button></span> : null}
-            <button type="button" className="text-xs font-medium text-indigo-300 hover:text-indigo-200" onClick={() => { setQ(""); setStatusFilter(""); setPlanFilter(""); }}>সব ফিল্টার মুছুন</button>
+            {tagFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">🏷 Tag: {tagFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="Tag ফিল্টার মুছুন" onClick={() => setTagFilter("")}>✕</button></span> : null}
+            <button type="button" className="text-xs font-medium text-indigo-300 hover:text-indigo-200" onClick={() => { setQ(""); setStatusFilter(""); setPlanFilter(""); setTagFilter(""); }}>সব ফিল্টার মুছুন</button>
           </div>
         ) : null}
         {/* ADX14: saved views over this page's existing filter state */}
         <div className="border-b border-slate-800">
           <SavedViewsBar
             page="orgs"
-            current={{ q, statusFilter, planFilter }}
+            current={{ q, statusFilter, planFilter, tagFilter }}
             onApply={applyFilters}
           />
         </div>
@@ -173,7 +179,13 @@ export default function OrgsPage() {
           <tbody>{sorted.map((o) => (
             <tr key={o.id} className="arow border-t border-slate-800 hover:bg-slate-800/40">
               <td className="atd"><input type="checkbox" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td>
-              <td data-label="Organization" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-400">{o.slug} · {o.country}</div></td>
+              <td data-label="Organization" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-400">{o.slug} · {o.country}</div>
+                {o.tags && o.tags.length ? (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {o.tags.map((t) => <button key={t} type="button" title="এই Tag দিয়ে ছাঁকুন" className="rounded-full border border-slate-700 bg-slate-800/70 px-2 py-0.5 text-[11px] text-slate-300 hover:border-indigo-500 hover:text-indigo-200" onClick={() => setTagFilter(t)}>🏷 {t}</button>)}
+                  </div>
+                ) : null}
+              </td>
               <td data-label="Plan" className="atd">{o.subscription ? `${o.subscription.plan} (${o.subscription.status})` : "—"}</td>
               <td data-label="সদস্য" className="atd">{o.memberCount}</td>
               <td data-label="Order" className="atd">{o.orderCount}</td>

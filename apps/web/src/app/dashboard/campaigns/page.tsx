@@ -136,6 +136,13 @@ export default function CampaignsPage() {
   const [listLoading, setListLoading] = useState(true);
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkReport, setBulkReport] = useState("");
+  const [bulkPct, setBulkPct] = useState("10");
+  // Campaign Builder Advanced CA11: the multi-plan budget
+  // allocator (proposal first, human-confirmed apply second).
+  const [allocOpen, setAllocOpen] = useState(false);
+  const [allocTotal, setAllocTotal] = useState("5000");
+  const [allocProposal, setAllocProposal] = useState<any>(null);
+  const [allocResult, setAllocResult] = useState<any>(null);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [calCursor, setCalCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
 
@@ -157,6 +164,13 @@ export default function CampaignsPage() {
   // draft form/result.
   const [simForm, setSimForm] = useState({ objective: "OUTCOME_SALES", dailyBudget: "1000", days: "30" });
   const [simResult, setSimResult] = useState<any>(null);
+  // CA22 (CB5): builder inbox — signals + counter-drafts.
+  type InboxSignal = { id: string; source: string; text: string; productId: string | null; status: string; draftPlanId: string | null; createdAt: string };
+  type ImportableRow = { source: string; sourceRefId: string; competitorName: string | null; label: string };
+  const [inbox, setInbox] = useState<{ note: string; signals: InboxSignal[]; importable: { insights: ImportableRow[]; prices: ImportableRow[]; ads: ImportableRow[] } } | null>(null);
+  const [signalText, setSignalText] = useState("");
+  const [draftBudget, setDraftBudget] = useState("1000");
+  const [draftAccount, setDraftAccount] = useState("");
   const [respForm, setRespForm] = useState({ competitorId: "", productId: "", adAccountId: "" });
   const [respLists, setRespLists] = useState<{ competitors: { id: string; name: string }[]; products: { id: string; name: string }[] } | null>(null);
   const [respResult, setRespResult] = useState<any>(null);
@@ -195,6 +209,27 @@ export default function CampaignsPage() {
       setListLoading(false);
     }
   }, [page, activeTab, statusFilter, objectiveFilter, searchQuery]);
+
+  // CA22 (CB5): builder inbox load + actions.
+  const loadInbox = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    const res = await apiFetch<typeof inbox>(`/organizations/${orgId}/campaign-plans/builder-inbox`).catch(() => null);
+    if (res) setInbox(res);
+  }, []);
+  useEffect(() => { void loadInbox(); }, [loadInbox]);
+  const inboxAction = async (key: string, fn: () => Promise<unknown>, okMsg: string) => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setBusy(key); setError(""); setNotice("");
+    try {
+      await fn();
+      setNotice(okMsg);
+      await loadInbox();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "কাজটি সম্পন্ন হয়নি");
+    } finally { setBusy(""); }
+  };
 
   // Accounts / blueprints / portfolio / saved views load once —
   // they are not part of the paged plan flow.
@@ -538,11 +573,10 @@ export default function CampaignsPage() {
   // (see loadPlans); the loaded page IS the filtered result.
   const filteredPlans = plans;
 
-  // CN10 bulk actions: ONLY endpoints that exist — duplicate and
-  // status-sync, run sequentially with a truthful per-plan tally.
-  // (There is NO archive endpoint, so no archive action is shown.)
+  // CN10 bulk actions: status-sync has no bulk endpoint and
+  // stays a sequential client loop with a truthful tally.
   const toggleSelect = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
-  async function bulkRun(kind: "duplicate" | "status-sync") {
+  async function bulkRun(kind: "status-sync") {
     const orgId = getOrganizationId();
     if (!orgId || selected.length === 0) return;
     const names = new Map(plans.map((p) => [p.id, p.name]));
@@ -552,15 +586,70 @@ export default function CampaignsPage() {
     setError("");
     for (const id of selected) {
       try {
-        if (kind === "duplicate") await apiFetch(`/organizations/${orgId}/campaign-plans/${id}/duplicate`, { method: "POST", body: JSON.stringify({}) });
-        else await apiFetch(`/organizations/${orgId}/campaign-plans/${id}/status-sync`, { method: "POST" });
+        await apiFetch(`/organizations/${orgId}/campaign-plans/${id}/status-sync`, { method: "POST" });
         ok++;
       } catch { failed.push(names.get(id) ?? id); }
     }
     setBusy("");
-    setBulkReport(`${kind === "duplicate" ? "কপি" : "Status Sync"}: ${ok}টি সফল${failed.length ? ` · ${failed.length}টি ব্যর্থ: ${failed.join(", ")}` : ""}`);
+    setBulkReport(`Status Sync: ${ok}টি সফল${failed.length ? ` · ${failed.length}টি ব্যর্থ: ${failed.join(", ")}` : ""}`);
     setSelected(failed.map((n) => plans.find((p) => p.name === n)?.id ?? "").filter(Boolean));
     await load();
+  }
+
+  // CA14: pause/activate/budget/duplicate run through the
+  // SERVER bulk endpoint — one call, per-item results back;
+  // the tally shown is the server's own (partial failure is
+  // never dressed up as full success).
+  async function bulkServer(action: "pause" | "activate" | "budget_percent" | "duplicate") {
+    const orgId = getOrganizationId();
+    if (!orgId || selected.length === 0) return;
+    const names = new Map(plans.map((p) => [p.id, p.name]));
+    const labels: Record<string, string> = { pause: "Pause", activate: "সক্রিয়", budget_percent: "বাজেট %", duplicate: "কপি" };
+    if (action === "pause" && !window.confirm(`${selected.length}টি Plan Meta-তে Pause হবে। নিশ্চিত?`)) return;
+    if (action === "activate" && !window.confirm(`${selected.length}টি Plan Meta-তে সক্রিয় হবে — খরচ শুরু হতে পারে। নিশ্চিত?`)) return;
+    if (action === "budget_percent" && !window.confirm(`${selected.length}টি Plan-এর লাইভ Ad Set বাজেট ${bulkPct}% বদলাবে (Meta-তে)। নিশ্চিত?`)) return;
+    setBusy(`bulk-${action}`);
+    setError("");
+    try {
+      const res = await apiFetch<{ results: { planId: string; ok: boolean; error?: string }[]; succeeded: number; failed: number }>(`/organizations/${orgId}/campaign-plans/bulk`, {
+        method: "POST",
+        body: JSON.stringify({ planIds: selected, action, percent: action === "budget_percent" ? Number(bulkPct) : undefined }),
+      });
+      const failedLines = res.results.filter((r) => !r.ok).map((r) => `${names.get(r.planId) ?? r.planId} (${r.error ?? "ব্যর্থ"})`);
+      setBulkReport(`${labels[action]}: ${res.succeeded}টি সফল${res.failed ? ` · ${res.failed}টি ব্যর্থ: ${failedLines.join(", ")}` : ""}`);
+      setSelected(res.results.filter((r) => !r.ok).map((r) => r.planId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bulk action ব্যর্থ হয়েছে");
+    }
+    setBusy("");
+    await load();
+  }
+
+  // CA11 allocator: proposal from stored rows (applies
+  // NOTHING), then a separate confirmed apply.
+  async function allocPropose() {
+    const orgId = getOrganizationId();
+    if (!orgId || selected.length === 0) return;
+    const totalMinor = Math.round(Number(allocTotal) * 100);
+    if (!Number.isFinite(totalMinor) || totalMinor <= 0) { setError("মোট অতিরিক্ত দৈনিক বাজেট একটি ধনাত্মক সংখ্যা হতে হবে"); return; }
+    setAllocResult(null);
+    const res = await wrap("alloc-propose", () => apiFetch<any>(`/organizations/${orgId}/campaign-plans/budget-allocator/proposal`, { method: "POST", body: JSON.stringify({ planIds: selected, totalShiftMinor: String(totalMinor) }) }));
+    if (res) setAllocProposal(res);
+  }
+  async function allocApply() {
+    const orgId = getOrganizationId();
+    if (!orgId || !allocProposal) return;
+    if (!confirm(`Allocator প্রস্তাব প্রয়োগ করবেন? ${allocProposal.allocations.length}টি Plan-এর দৈনিক বাজেট মোট ${fmtMoneyBn(allocProposal.allocatedMinor)} বাড়বে — Meta-তে সত্যিই বদলাবে।`)) return;
+    const res = await wrap("alloc-apply", () => apiFetch<any>(`/organizations/${orgId}/campaign-plans/budget-allocator/apply`, {
+      method: "POST",
+      body: JSON.stringify({ allocations: allocProposal.allocations.map((a: any) => ({ planId: a.planId, amountMinor: a.amountMinor, expectedDailyTotalMinor: a.currentDailyTotalMinor })) }),
+    }));
+    if (res) {
+      setAllocResult(res);
+      setAllocProposal(null);
+      setNotice(`Allocator: ${res.appliedCount}টি Plan-এ বাজেট বেড়েছে${res.failedCount ? ` · ${res.failedCount}টি হয়নি (নিচে কারণসহ)` : ""}`);
+      await load();
+    }
   }
 
   // CN10 saved views (CN11 API): the hub filter state, verbatim.
@@ -1082,10 +1171,66 @@ export default function CampaignsPage() {
           {selected.length > 0 && (
             <div className="cbx-rail flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold text-slate-800">{selected.length}টি Campaign বাছাই করা হয়েছে</span>
-              <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => bulkRun("duplicate")}>📋 সবগুলোর কপি (Duplicate)</button>
+              <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => bulkServer("duplicate")}>📋 সবগুলোর কপি (Duplicate)</button>
+              <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => bulkServer("pause")}>⏸ সব Pause</button>
+              <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => bulkServer("activate")}>▶ সব সক্রিয়</button>
+              <span className="flex items-center gap-1">
+                <input className="w-16 rounded-lg border px-2 py-1 text-sm" value={bulkPct} onChange={(e) => setBulkPct(e.target.value)} aria-label="বাজেট শতাংশ" />
+                <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => bulkServer("budget_percent")}>💰 বাজেট % প্রয়োগ</button>
+              </span>
               <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => bulkRun("status-sync")}>🔄 Status Sync</button>
+              <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => { setAllocOpen((o) => !o); setAllocProposal(null); setAllocResult(null); }}>💰 বাজেট Allocator</button>
               <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => { setSelected([]); setBulkReport(""); }}>বাছাই পরিষ্কার করুন</button>
               {bulkReport ? <span className="text-xs font-medium text-slate-600">{bulkReport}</span> : null}
+            </div>
+          )}
+
+          {/* CA11 allocator panel — proposal first, confirmed apply second */}
+          {allocOpen && selected.length > 0 && (
+            <div className="card mt-3 border-violet-200 bg-violet-50/60 p-4">
+              <p className="text-sm font-bold text-slate-900">💰 বাজেট Allocator — বাছাই করা {selected.length}টি Plan-এ অতিরিক্ত দৈনিক বাজেট বণ্টন</p>
+              <p className="mt-0.5 text-xs text-slate-600">হিসাব গত ৩০ দিনের আসল Spend/Conversion থেকে: Median CPA-র চেয়ে খারাপ CPA-র Plan বাদ, ওজন = Conversion সংখ্যা, Plan প্রতি সর্বোচ্চ বৃদ্ধি = তার বর্তমান দৈনিক মোট বাজেট। প্রস্তাব নিজে থেকে কিছুই বদলায় না — প্রয়োগ আলাদা নিশ্চিতকরণে।</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <label className="text-xs font-semibold text-slate-700">মোট অতিরিক্ত দৈনিক বাজেট (৳)</label>
+                <input className="input w-40" type="number" min="1" value={allocTotal} onChange={(e) => setAllocTotal(e.target.value)} />
+                <button type="button" className="btn-primary btn-sm font-semibold" disabled={busy !== ""} onClick={allocPropose}>প্রস্তাব দেখুন</button>
+              </div>
+              {allocProposal ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  {allocProposal.allocations.length === 0 ? <p className="text-xs text-slate-600">কোনো Plan-এ বণ্টন হয়নি — নিচে প্রতিটি বাদ পড়া Plan-এর কারণ দেখুন।</p> : allocProposal.allocations.map((a: any) => (
+                    <div key={a.planId} className="flex flex-wrap items-center gap-x-3 rounded-lg bg-white/80 px-3 py-2 text-xs text-slate-700">
+                      <b className="text-slate-900">{a.name}</b>
+                      <span>+{fmtMoneyBn(a.amountMinor)}/দিন</span>
+                      <span>দৈনিক মোট: {fmtMoneyBn(a.currentDailyTotalMinor)} → {fmtMoneyBn(a.newDailyTotalMinor)}</span>
+                      <span>লক্ষ্য Ad Set: {a.targetAdSetName} ({a.targetBasis === "lowest_cpa" ? "সেরা CPA" : "সবচেয়ে বড় বাজেট"})</span>
+                      <span>প্রমাণ: খরচ {fmtMoneyBn(a.evidence.spendMinor)} · {fmtNumBn(a.evidence.conversions)} conv · CPA {a.evidence.cpaMinor ? fmtMoneyBn(a.evidence.cpaMinor) : "—"}</span>
+                    </div>
+                  ))}
+                  {allocProposal.excluded.map((x: any) => (
+                    <p key={x.planId} className="text-xs text-slate-500">বাদ: <b>{x.name ?? x.planId}</b> — {
+                      x.reason === "no_evidence" ? "গত ৩০ দিনে কোনো Conversion প্রমাণ নেই" :
+                      x.reason === "below_efficiency" ? `CPA Median-এর চেয়ে খারাপ (CPA ${x.evidence?.cpaMinor ? fmtMoneyBn(x.evidence.cpaMinor) : "—"})` :
+                      x.reason === "cbo_no_live_budget_path" ? "CBO Plan — Campaign-level বাজেটের Live Edit পথ নেই" :
+                      x.reason === "not_published" ? "Published নয়" :
+                      x.reason === "no_daily_budget" ? "Live দৈনিক বাজেট নেই" :
+                      x.reason === "cap_reached_by_others" ? "অন্য Plan-দের Cap-এ বণ্টন শেষ" :
+                      x.reason}</p>
+                  ))}
+                  <p className="text-xs font-medium text-slate-700">বণ্টন হয়েছে {fmtMoneyBn(allocProposal.allocatedMinor)} · বণ্টন হয়নি {fmtMoneyBn(allocProposal.unallocatedMinor)}</p>
+                  {allocProposal.allocations.length > 0 ? (
+                    <button type="button" className="btn-primary btn-sm font-semibold" disabled={busy !== ""} onClick={allocApply}>নিশ্চিত — প্রস্তাব প্রয়োগ করুন (Meta-তে বদলাবে)</button>
+                  ) : null}
+                </div>
+              ) : null}
+              {allocResult ? (
+                <div className="mt-3 space-y-1 text-xs">
+                  {allocResult.results.map((r: any) => (
+                    <p key={r.planId} className={r.ok ? "text-emerald-800" : "text-rose-700"}>
+                      {r.ok ? `✓ ${plans.find((p) => p.id === r.planId)?.name ?? r.planId}: ${fmtMoneyBn(r.beforeDailyMinor)} → ${fmtMoneyBn(r.afterDailyMinor)} (${r.targetAdSetId})${r.verified ? " · যাচাই হয়েছে" : " · যাচাই মেলেনি"}` : `✗ ${plans.find((p) => p.id === r.planId)?.name ?? r.planId}: হয়নি — ${r.error}${r.currentDailyTotalMinor ? ` (বর্তমান দৈনিক মোট ${fmtMoneyBn(r.currentDailyTotalMinor)})` : ""}`}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -1398,6 +1543,65 @@ export default function CampaignsPage() {
           </div>
         </div>
       )}
+        {/* CA22 (CB5): Builder Inbox — signals -> counter-drafts */}
+        <div className="card mt-4 p-4">
+          <h3 className="text-sm font-bold text-slate-900">📥 Builder Inbox — প্রতিযোগীর সিগন্যাল → জবাবি Draft (CA22)</h3>
+          <p className="mt-1 text-xs leading-[1.7] text-slate-500">{inbox?.note ?? "সিগন্যাল মানে একটি পর্যবেক্ষণ — Manual এন্ট্রি অথবা সংরক্ষিত Competitor রেকর্ড থেকে Import। প্রতিটি সিগন্যাল থেকে শুধু একটি DRAFT তৈরি হয় — কখনো Publish হয় না। স্বয়ংক্রিয় Competitor Feed NOT BUILT (Smart AI C1–C2 ধারায় আছে)।"}</p>
+          <div className="mt-3 flex flex-wrap items-start gap-2">
+            <textarea className="input min-h-[44px] flex-1 text-sm" maxLength={500} placeholder="যেমন: প্রতিযোগী X এই অফার দিচ্ছে — পাঞ্জাবিতে ৩০% ছাড়" value={signalText} onChange={(e) => setSignalText(e.target.value)} aria-label="নতুন সিগন্যাল" />
+            <button type="button" className="btn-primary btn-sm font-semibold" disabled={busy !== "" || signalText.trim().length < 3} onClick={() => {
+              const orgId = getOrganizationId(); if (!orgId) return;
+              void inboxAction("signal-add", () => apiFetch(`/organizations/${orgId}/campaign-plans/builder-inbox`, { method: "POST", body: JSON.stringify({ text: signalText.trim() }) }), "সিগন্যাল যোগ হয়েছে").then(() => setSignalText(""));
+            }}>+ সিগন্যাল যোগ করুন</button>
+          </div>
+          {inbox && (inbox.importable.insights.length + inbox.importable.prices.length + inbox.importable.ads.length) > 0 ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-bold text-slate-700">সংরক্ষিত Competitor রেকর্ড থেকে Import (আসল ডেটা — Creative টেক্সট কপি হয় না):</p>
+              <div className="mt-2 grid gap-1">
+                {[...inbox.importable.insights, ...inbox.importable.prices, ...inbox.importable.ads].map((r) => (
+                  <div key={`${r.source}:${r.sourceRefId}`} className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                    <span>🏷️ {r.competitorName ?? "প্রতিযোগী"} — {r.label} <span className="text-slate-400">({r.source === "competitor_insight" ? "Insight" : r.source === "competitor_price" ? "Price" : "দীর্ঘমেয়াদি বিজ্ঞাপন"})</span></span>
+                    <button type="button" className="btn-secondary btn-sm font-semibold" disabled={busy !== ""} onClick={() => {
+                      const orgId = getOrganizationId(); if (!orgId) return;
+                      void inboxAction(`imp-${r.sourceRefId}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/builder-inbox/import`, { method: "POST", body: JSON.stringify({ source: r.source, sourceRefId: r.sourceRefId }) }), "সিগন্যাল Import হয়েছে");
+                    }}>Inbox-এ আনুন</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div className="mt-3 grid gap-2">
+            {(inbox?.signals ?? []).length === 0 ? <p className="text-xs text-slate-400">কোনো সিগন্যাল নেই — উপরে Manual এন্ট্রি দিন অথবা সংরক্ষিত Competitor রেকর্ড Import করুন।</p> : null}
+            {(inbox?.signals ?? []).map((s) => (
+              <div key={s.id} className="rounded-xl border border-slate-200 p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className={`rounded-full px-2 py-0.5 font-bold ${s.status === "new" ? "bg-amber-100 text-amber-800" : s.status === "drafted" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500"}`}>{s.status === "new" ? "নতুন" : s.status === "drafted" ? "Draft তৈরি" : "Dismissed"}</span>
+                  <span className="text-slate-400">{s.source === "manual" ? "Manual" : s.source === "competitor_insight" ? "Competitor Insight" : s.source === "competitor_price" ? "Competitor Price" : "Competitor Ad"} · {new Date(s.createdAt).toLocaleDateString("bn-BD")}</span>
+                  {s.productId ? <span className="text-slate-400">· Product যুক্ত আছে</span> : null}
+                </div>
+                <p className="mt-1 leading-[1.7] text-slate-700">{s.text}</p>
+                {s.status === "drafted" ? <p className="mt-1 text-xs text-emerald-700">✅ Draft Plan তৈরি হয়েছে (ID: {s.draftPlanId}) — Campaign Builder-এ খুলে যাচাই করুন; Publish হয়নি।</p> : null}
+                {s.status === "new" ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select className="input w-auto text-xs" value={draftAccount} onChange={(e) => setDraftAccount(e.target.value)} aria-label="Ad Account">
+                      <option value="">Ad Account বাছুন…</option>
+                      {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                    <input className="input w-28 text-xs" inputMode="decimal" value={draftBudget} onChange={(e) => setDraftBudget(e.target.value)} aria-label="দৈনিক বাজেট (টাকা)" placeholder="দৈনিক ৳" />
+                    <button type="button" className="btn-primary btn-sm font-semibold" disabled={busy !== "" || !draftAccount} onClick={() => {
+                      const orgId = getOrganizationId(); if (!orgId) return;
+                      void inboxAction(`draft-${s.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/builder-inbox/${s.id}/draft`, { method: "POST", body: JSON.stringify({ adAccountId: draftAccount, totalDailyBudget: draftBudget }) }), "Counter-Draft তৈরি হয়েছে — Builder-এ যাচাই করুন (Publish হয়নি)").then(() => void loadPlans());
+                    }}>⚔️ Counter-Draft তৈরি করুন</button>
+                    <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => {
+                      const orgId = getOrganizationId(); if (!orgId) return;
+                      void inboxAction(`dismiss-${s.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/builder-inbox/${s.id}/dismiss`, { method: "POST", body: "{}" }), "সিগন্যাল Dismiss হয়েছে");
+                    }}>Dismiss</button>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
         </>
       )}
 

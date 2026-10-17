@@ -65,6 +65,15 @@ export interface CheckoutEvaluation {
   giftCardDiscountMinor?: bigint;
   giftCardId?: string | null;
   giftCardCodeLast4?: string | null;
+  /** NF7 (FB3): the store-credit discount line — applied AFTER
+   * the gift card (step 3d), BEFORE tax, and included in
+   * totalDiscountMinor exactly like its neighbours. The credit
+   * itself is spent by the CALLER at placement
+   * (StoreCreditService.postPlacementSpend); the evaluator only
+   * prices it from the caller-supplied snapshot. Optional:
+   * evaluations built by pre-NF7 callers/specs lack both. */
+  storeCreditDiscountMinor?: bigint;
+  storeCreditCustomerId?: string | null;
   /** promotion + coupon + referral + loyalty + gift card — what lands in Order.discountMinor. */
   totalDiscountMinor: bigint;
   /** EC23: VAT computed LAST (after promotions/coupon/referral) on
@@ -117,6 +126,13 @@ export interface EvaluateCheckoutInput {
    * Null/absent ⇒ no gift-card line, and the evaluation totals
    * are identical to the pre-AB2 result. */
   giftCard?: { giftCardId: string; balanceMinor: bigint; codeLast4: string } | null;
+  /** NF7 (FB3): store-credit redemption snapshot, supplied by
+   * the caller (the GB7 / AB1 / AB2 pattern — the evaluator
+   * itself reads no credit tables and never throws for credit
+   * reasons). requestedMinor null/absent ⇒ apply as much as
+   * fits. Null/absent ⇒ no credit line, and the evaluation
+   * totals are identical to the pre-NF7 result. */
+  storeCredit?: { customerId: string; balanceMinor: bigint; requestedMinor?: bigint | null } | null;
 }
 
 /** AB1 (AX1): everything evaluateCheckout needs to price a
@@ -569,6 +585,31 @@ export class PromotionsService {
       }
     }
 
+    // 3d) NF7 (FB3): store-credit redemption — its own discount
+    // line AFTER the gift card, priced ONLY from the
+    // caller-supplied snapshot. The applied amount is
+    // min(balance, requested when given, payableAfterGiftCard),
+    // floored at 0 — credit can never exceed what the customer
+    // has or what the order still owes. The customer id is
+    // echoed ONLY when value actually applied.
+    let storeCreditDiscountMinor = 0n;
+    let storeCreditCustomerId: string | null = null;
+    const sc = input.storeCredit ?? null;
+    if (sc) {
+      const payableAfterGiftRaw =
+        postPromotionSubtotal - couponDiscountMinor - referralDiscountMinor - loyaltyDiscountMinor - giftCardDiscountMinor;
+      const payableAfterGift = payableAfterGiftRaw > 0n ? payableAfterGiftRaw : 0n;
+      const balance = sc.balanceMinor ?? 0n;
+      let applied = balance <= 0n ? 0n : balance < payableAfterGift ? balance : payableAfterGift;
+      if (sc.requestedMinor !== null && sc.requestedMinor !== undefined && sc.requestedMinor < applied) {
+        applied = sc.requestedMinor > 0n ? sc.requestedMinor : 0n;
+      }
+      if (applied > 0n) {
+        storeCreditDiscountMinor = applied;
+        storeCreditCustomerId = sc.customerId ?? null;
+      }
+    }
+
     // 4) EC23 tax — LAST, on post-discount merchandise bases.
     const tax = await this.computeCheckoutTax(orgId, {
       lines: input.lines,
@@ -579,6 +620,7 @@ export class PromotionsService {
       referralDiscountMinor,
       loyaltyDiscountMinor,
       giftCardDiscountMinor,
+      storeCreditDiscountMinor,
     });
 
     return {
@@ -598,12 +640,15 @@ export class PromotionsService {
       giftCardDiscountMinor,
       giftCardId,
       giftCardCodeLast4,
+      storeCreditDiscountMinor,
+      storeCreditCustomerId,
       totalDiscountMinor:
         promotionDiscountMinor +
         couponDiscountMinor +
         referralDiscountMinor +
         loyaltyDiscountMinor +
-        giftCardDiscountMinor,
+        giftCardDiscountMinor +
+        storeCreditDiscountMinor,
       taxMinor: tax.taxMinor,
       taxAddedMinor: tax.taxAddedMinor,
       taxBreakdown: tax.breakdown,
@@ -674,6 +719,9 @@ export class PromotionsService {
        * like coupon + referral. */
       loyaltyDiscountMinor: bigint;
       giftCardDiscountMinor: bigint;
+      /** NF7: the store-credit line shrinks the taxable base
+       * the same way (optional — pre-NF7 callers omit it). */
+      storeCreditDiscountMinor?: bigint;
     },
   ): Promise<{ taxMinor: bigint; taxAddedMinor: bigint; breakdown: TaxBreakdownEntry[] }> {
     const zero = { taxMinor: 0n, taxAddedMinor: 0n, breakdown: [] as TaxBreakdownEntry[] };
@@ -708,7 +756,8 @@ export class PromotionsService {
         ctx.couponDiscountMinor -
         ctx.referralDiscountMinor -
         ctx.loyaltyDiscountMinor -
-        ctx.giftCardDiscountMinor;
+        ctx.giftCardDiscountMinor -
+        (ctx.storeCreditDiscountMinor ?? 0n);
       const payable = merchandisePayable > 0n ? merchandisePayable : 0n;
       const scale = (amount: bigint): bigint =>
         ctx.postPromotionSubtotal > 0n ? (amount * payable) / ctx.postPromotionSubtotal : 0n;

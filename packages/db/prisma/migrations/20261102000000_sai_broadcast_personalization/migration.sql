@@ -1,0 +1,15 @@
+-- SA-B20 (Smart AI Phase 5, G2): per-broadcast personalisation
+-- config for Broadcast Personalised.
+--
+-- Broadcast gains `personalization` (nullable Json): the
+-- staff-chosen config { enabled: true, tier2AiHook?: boolean }
+-- validated by messaging/broadcast-personalization.service.ts.
+-- It MUST live on the row: prepareBroadcast can run long after
+-- create (schedule / broadcast_send_sweep), and the send must
+-- apply exactly the config the staff previewed — a
+-- request-scoped config would let preview and send diverge.
+-- Null (every pre-G2 row) = personalisation off, byte-identical
+-- legacy behaviour. Per-recipient rendered data needs NO new
+-- column: it rides the existing recipientSnapshot Json (vars +
+-- a personalTier stamp per entry).
+ALTER TABLE "Broadcast" ADD COLUMN "personalization" JSONB;

@@ -3,7 +3,7 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { KnowledgeService } from "./knowledge.service";
 import { MAX_FILE_BYTES } from "./extract";
 import { MulterErrorFilter } from "./multer-error.filter";
-import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
+import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, UpdateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -54,6 +54,13 @@ export class KnowledgeController {
   @Post("knowledge-documents/ingest") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   ingestDoc(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: IngestKnowledgeFileDto) {
     return this.knowledge.ingestFile(orgId, user.userId, dto);
+  }
+
+  // SA-B1 (P3): partial update — new route, exists so a document's
+  // visibility (or text/kind) can be corrected without recreating it.
+  @Patch("knowledge-documents/:docId") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  updateDoc(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("docId") id: string, @Body() dto: UpdateKnowledgeDocDto) {
+    return this.knowledge.updateDoc(orgId, user.userId, id, dto);
   }
 
   @Delete("knowledge-documents/:docId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")

@@ -14,6 +14,9 @@ interface Member {
 }
 interface AreaDef { key: string; labelBn: string; label?: string; noteBn: string; minRole: string }
 interface Invitation { id: string; email: string; role: string; status: string; expiresAt: string; emailSent: boolean; createdAt: string }
+// ORG9/ORG10 (Organization Next OB3): shareable invite links + join-request queue.
+interface InviteLink { id: string; role: string; maxUses: number; usedCount: number; expiresAt: string; revokedAt: string | null; status: string; createdAt: string }
+interface JoinRequest { id: string; status: string; message: string | null; rejectReason: string | null; createdAt: string; decidedAt: string | null; inviteLinkId: string | null; linkRole: string | null; user: { id: string; name: string; email: string } }
 interface SeatUsage { limit: number | null; activeMembers: number; suspendedMembers: number; pendingInvites: number; available: number | null }
 
 const ROLES = ["ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER"];
@@ -34,7 +37,11 @@ interface FeedRow { id: string; actorName: string; action: string; entityType: s
 const ACTION_LABELS: Record<string, string> = {
   "org.member_role_updated": "ভূমিকা বদলেছেন", "org.member_suspended": "সদস্য সাময়িক বন্ধ করেছেন",
   "org.member_reactivated": "সদস্য আবার চালু করেছেন", "org.member_removed": "সদস্য সরিয়ে দিয়েছেন",
+  "org.ownership_transferred": "মালিকানা হস্তান্তর করেছেন", "org.member_left": "Organization ছেড়ে গেছেন",
+  "org.archived": "Organization আর্কাইভ করেছেন", "org.restored": "Organization Restore করেছেন",
   "org.member_invited": "সদস্য আমন্ত্রণ জানিয়েছেন", "org.member_access_updated": "কাস্টম অ্যাক্সেস বদলেছেন", "inbox.agent_schedule_updated": "কর্মঘণ্টা বদলেছেন",
+  "org.invite_link_created": "Invite link তৈরি করেছেন", "org.invite_link_revoked": "Invite link বাতিল করেছেন",
+  "org.join_requested": "যোগদানের অনুরোধ পাঠিয়েছেন", "org.join_request_approved": "যোগদানের অনুরোধ অনুমোদন করেছেন", "org.join_request_rejected": "যোগদানের অনুরোধ ফিরিয়ে দিয়েছেন",
   "inbox.agent_schedule_cleared": "কর্মঘণ্টা সরিয়েছেন", "inbox.conversation_assigned": "কথোপকথন Assign করেছেন",
   "integration.messaging.connected": "মেসেজিং Channel যুক্ত করেছেন", "order.created": "অর্ডার তৈরি করেছেন",
 };
@@ -88,6 +95,16 @@ export default function TeamPage() {
   const [loginHistory, setLoginHistory] = useState<LoginHistoryRow[]>([]);
   const [memberSessions, setMemberSessions] = useState<MemberSession[]>([]);
   const [panelError, setPanelError] = useState("");
+  // ORG1/ORG2 (Organization Next OB1): lifecycle — transfer
+  // needs the org's exact name for the type-to-confirm step.
+  const [orgName, setOrgName] = useState("");
+  const [transferTarget, setTransferTarget] = useState("");
+  const [transferStep, setTransferStep] = useState(0);
+  const [transferConfirmText, setTransferConfirmText] = useState("");
+  // ORG9/ORG10: invite links + join-request queue state.
+  const [inviteLinks, setInviteLinks] = useState<InviteLink[]>([]);
+  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
+  const [newJoinLink, setNewJoinLink] = useState("");
 
   // Milestone 69: the live board refreshes itself every 30s.
   const refreshActivity = useCallback((orgId: string) => {
@@ -105,17 +122,21 @@ export default function TeamPage() {
         apiFetch<Member[]>(`/organizations/${orgId}/members`),
         apiFetch<Invitation[]>(`/organizations/${orgId}/members/invitations`).catch(() => [] as Invitation[]),
         apiFetch<SeatUsage>(`/organizations/${orgId}/members/usage`).catch(() => null),
-        apiFetch<{ id: string; myRole: string }[]>(`/organizations`).catch(() => [] as { id: string; myRole: string }[]),
+        apiFetch<{ id: string; myRole: string; name: string }[]>(`/organizations`).catch(() => [] as { id: string; myRole: string; name: string }[]),
       ]);
       setMembers(m);
       setInvitations(inv);
       setUsage(u);
-      const mine = (orgs as { id: string; myRole: string }[]).find((o) => o.id === orgId);
-      if (mine) setMyRole(mine.myRole);
+      const mine = (orgs as { id: string; myRole: string; name: string }[]).find((o) => o.id === orgId);
+      if (mine) { setMyRole(mine.myRole); setOrgName(mine.name ?? ""); }
       // GB6 (GC16): custom roles + preset profiles + the real area catalog.
       apiFetch<CustomRolesResponse>(`/organizations/${orgId}/custom-roles`)
         .then((r) => { setCustomRoles(r.roles ?? []); setPresetProfiles(r.presetProfiles ?? []); })
         .catch(() => { setCustomRoles([]); setPresetProfiles([]); });
+      // ORG9/ORG10: invite links + join-request queue (OWNER/ADMIN
+      // endpoints — a non-admin caller simply gets empty lists).
+      apiFetch<InviteLink[]>(`/organizations/${orgId}/invite-links`).then(setInviteLinks).catch(() => setInviteLinks([]));
+      apiFetch<JoinRequest[]>(`/organizations/${orgId}/join-requests`).then(setJoinRequests).catch(() => setJoinRequests([]));
       apiFetch<AreaDef[]>(`/organizations/${orgId}/access-catalog`).then(setAreaCatalog).catch(() => setAreaCatalog([]));
       apiFetch<ScheduleRow[]>(`/organizations/${orgId}/inbox/agent-schedules`).then(setSchedules).catch(() => setSchedules([]));
       apiFetch<{ id: string }>("/auth/me").then((me) => setMyUserId(me.id)).catch(() => undefined);
@@ -194,6 +215,43 @@ export default function TeamPage() {
       const out = await apiFetch<{ handedOver: number }>(`/organizations/${orgId}/members/${m.user.id}`, { method: "DELETE" });
       setNotice(`${m.user.name} কে সরিয়ে দেওয়া হয়েছে (${out.handedOver}টি খোলা কথোপকথন হস্তান্তর হয়েছে)।`);
       await load();
+    });
+  }
+
+  // ORG1: ownership transfer — two steps; the second requires
+  // typing the organization's exact name (the server re-checks
+  // everything; this is the fat-finger guard). Immediate: the
+  // chosen ADMIN becomes OWNER and I stay on as ADMIN.
+  const transferCandidates = members.filter((m) => m.role === "ADMIN" && m.status === "ACTIVE" && m.user.id !== myUserId);
+  async function doTransfer() {
+    const orgId = getOrganizationId(); if (!orgId || !transferTarget) return;
+    const target = members.find((m) => m.user.id === transferTarget);
+    await wrap("transfer", async () => {
+      await apiFetch(`/organizations/${orgId}/transfer-ownership`, {
+        method: "POST", body: JSON.stringify({ targetUserId: transferTarget }),
+      });
+      setTransferStep(0); setTransferTarget(""); setTransferConfirmText("");
+      setNotice(`মালিকানা ${target?.user.name ?? ""} এর কাছে হস্তান্তর হয়েছে — আপনি এখন এই Organization এ ADMIN। দুই পক্ষকেই ইমেইলে জানানো হয়েছে (SMTP চালু থাকলে)।`);
+      await load();
+    });
+  }
+
+  // ORG2: self-leave. Afterwards the org disappears from my
+  // switcher; the app flow moves me to another of my orgs, or
+  // to onboarding when none remain.
+  async function doLeave() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm(`আপনি সত্যিই ${orgName || "এই Organization"} ছেড়ে যাবেন? আপনার খোলা কথোপকথন Pool এ ফেরত যাবে এবং এই ওয়ার্কস্পেসে আপনার প্রবেশ বন্ধ হয়ে যাবে। আবার ঢুকতে হলে টিমের কাউকে আমন্ত্রণ পাঠাতে হবে।`)) return;
+    await wrap("leave", async () => {
+      await apiFetch(`/organizations/${orgId}/leave`, { method: "POST" });
+      const remaining = await apiFetch<{ id: string }[]>(`/organizations`).catch(() => [] as { id: string }[]);
+      if (remaining.length > 0) {
+        localStorage.setItem("organizationId", remaining[0].id);
+        window.location.href = "/dashboard";
+      } else {
+        localStorage.removeItem("organizationId");
+        window.location.href = "/onboarding";
+      }
     });
   }
 
@@ -407,6 +465,71 @@ export default function TeamPage() {
       const out = await apiFetch<{ inviteUrl: string; emailSent: boolean }>(`/organizations/${orgId}/members/invitations/${id}/resend`, { method: "POST" });
       setLastLink(out.inviteUrl);
       setNotice(out.emailSent ? "আমন্ত্রণ আবার পাঠানো হয়েছে (নতুন লিংক)।" : "নতুন লিংক তৈরি হয়েছে; ইমেইল যায়নি — লিংকটি কপি করে পাঠান।");
+      await load();
+    });
+  }
+
+  // ORG9: shareable invite links — the raw URL is shown ONCE
+  // (the server stores only its hash), so keep it in state until
+  // the admin copies it away.
+  async function createLink() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const role = (document.getElementById("link-role") as HTMLSelectElement).value;
+    const maxUses = Number((document.getElementById("link-max") as HTMLInputElement).value) || 10;
+    const expiresInDays = Number((document.getElementById("link-days") as HTMLSelectElement).value) || 7;
+    await wrap("link-create", async () => {
+      const out = await apiFetch<{ inviteUrl: string }>(`/organizations/${orgId}/invite-links`, {
+        method: "POST", body: JSON.stringify({ role, maxUses, expiresInDays }),
+      });
+      setNewJoinLink(out.inviteUrl);
+      setNotice("Invite link তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন, পরে আর দেখা যাবে না (সার্ভারে শুধু এর hash থাকে)।");
+      await load();
+    });
+  }
+
+  async function copyJoinLink() {
+    try {
+      await navigator.clipboard.writeText(newJoinLink);
+      setNotice("লিংক কপি হয়েছে।");
+    } catch {
+      setError("কপি করা যায়নি — লিংকটি হাতে সিলেক্ট করে কপি করুন।");
+    }
+  }
+
+  async function revokeLink(id: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm("এই Invite link টি বাতিল করবেন? লিংকটি দিয়ে আর কেউ অনুরোধ পাঠাতে পারবে না (আগের অনুরোধগুলো থেকে যাবে)।")) return;
+    await wrap(`link-revoke-${id}`, async () => {
+      await apiFetch(`/organizations/${orgId}/invite-links/${id}`, { method: "DELETE" });
+      setNotice("Invite link বাতিল হয়েছে।");
+      await load();
+    });
+  }
+
+  // ORG10: queue decisions. Approve takes the role from the
+  // row's select (defaulting to the link's role); the seat guard
+  // runs on the server at this exact moment.
+  async function approveRequest(id: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const role = (document.getElementById(`jr-role-${id}`) as HTMLSelectElement | null)?.value;
+    await wrap(`jr-approve-${id}`, async () => {
+      const out = await apiFetch<{ alreadyMember: boolean; role: string }>(`/organizations/${orgId}/join-requests/${id}/approve`, {
+        method: "POST", body: JSON.stringify(role ? { role } : {}),
+      });
+      setNotice(out.alreadyMember ? "তিনি ইতিমধ্যে সদস্য ছিলেন — অনুরোধটি বন্ধ করে দেওয়া হয়েছে।" : `অনুমোদিত — তিনি এখন ${out.role} ভূমিকায় সক্রিয় সদস্য।`);
+      await load();
+    });
+  }
+
+  async function rejectRequest(id: string, name: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const reason = window.prompt(`${name} এর যোগদানের অনুরোধ ফিরিয়ে দেবেন? চাইলে একটি কারণ লিখুন (তিনি দেখতে পাবেন) — না লিখলেও চলবে।`, "");
+    if (reason === null) return;
+    await wrap(`jr-reject-${id}`, async () => {
+      await apiFetch(`/organizations/${orgId}/join-requests/${id}/reject`, {
+        method: "POST", body: JSON.stringify(reason.trim() ? { reason: reason.trim() } : {}),
+      });
+      setNotice("অনুরোধ ফিরিয়ে দেওয়া হয়েছে।");
       await load();
     });
   }
@@ -795,6 +918,107 @@ export default function TeamPage() {
         )}
       </div>
 
+      {/* ORG9 (Organization Next OB3): shareable invite links — OWNER/ADMIN only. */}
+      {canManage ? (
+        <div className="card p-5">
+          <h2 className="mb-1 font-semibold">🔗 Invite Link (শেয়ার করা যায়)</h2>
+          <p className="mb-3 text-sm text-slate-500">
+            এই লিংক যাকে পাঠাবেন, তিনি লগইন করে <b>যোগদানের অনুরোধ</b> পাঠাতে পারবেন — সরাসরি সদস্য হয়ে যাবেন না।
+            অনুরোধ নিচের তালিকা থেকে অনুমোদন করলেই তিনি সদস্য হবেন (সেই মুহূর্তে Seat সীমা যাচাই হবে)।
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-sm">ভূমিকা
+              <select id="link-role" className="input ml-2 w-44" defaultValue="VIEWER">{ROLES.map((r) => <option key={r} value={r}>{r}</option>)}</select>
+            </label>
+            <label className="text-sm">সর্বোচ্চ অনুরোধ
+              <input id="link-max" type="number" min={1} max={1000} defaultValue={10} className="input ml-2 w-24" />
+            </label>
+            <label className="text-sm">মেয়াদ
+              <select id="link-days" className="input ml-2 w-32" defaultValue={7}>
+                <option value={1}>১ দিন</option>
+                <option value={7}>৭ দিন</option>
+                <option value={30}>৩০ দিন</option>
+                <option value={90}>৯০ দিন</option>
+              </select>
+            </label>
+            <button className="btn-primary" disabled={busy === "link-create"} onClick={createLink}>Link তৈরি করুন</button>
+          </div>
+          {newJoinLink ? (
+            <div className="mt-3 rounded-lg bg-slate-50 p-3">
+              <div className="mb-1 text-xs text-slate-500">নতুন লিংক (শুধু এই একবারই দেখা যাচ্ছে — কপি করে রাখুন):</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="block flex-1 overflow-x-auto whitespace-nowrap text-xs">{newJoinLink}</code>
+                <button className="btn-secondary" onClick={copyJoinLink}>কপি করুন</button>
+              </div>
+            </div>
+          ) : null}
+          {inviteLinks.length === 0 ? <p className="mt-3 text-sm text-slate-500">কোনো Invite link নেই।</p> : (
+            <table className="mt-3 w-full text-sm">
+              <thead><tr className="text-left text-slate-500"><th className="py-2">ভূমিকা</th><th>ব্যবহার</th><th>অবস্থা</th><th>মেয়াদ শেষ</th><th></th></tr></thead>
+              <tbody>
+                {inviteLinks.map((l) => (
+                  <tr key={l.id} className="border-t">
+                    <td className="py-2">{l.role}</td>
+                    <td>{l.usedCount} / {l.maxUses}টি অনুরোধ</td>
+                    <td>{l.status === "active" ? "সক্রিয়" : l.status === "revoked" ? "বাতিল" : l.status === "expired" ? "মেয়াদ শেষ" : "সীমা শেষ"}</td>
+                    <td>{new Date(l.expiresAt).toLocaleDateString("bn-BD")}</td>
+                    <td className="text-right">
+                      {!l.revokedAt ? (
+                        <button className="btn-secondary" disabled={busy === `link-revoke-${l.id}`} onClick={() => revokeLink(l.id)}>বাতিল করুন</button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : null}
+
+      {/* ORG10 (Organization Next OB3): join-request approval queue — OWNER/ADMIN only. */}
+      {canManage ? (
+        <div className="card p-5">
+          <h2 className="mb-1 font-semibold">📥 যোগদানের অনুরোধ</h2>
+          <p className="mb-3 text-sm text-slate-500">
+            Invite link দিয়ে আসা অনুরোধ। অনুমোদন করলে তিনি সঙ্গে সঙ্গে সক্রিয় সদস্য হবেন — Seat পূর্ণ থাকলে অনুমোদন আটকে যাবে।
+          </p>
+          {joinRequests.length === 0 ? <p className="text-sm text-slate-500">কোনো অনুরোধ নেই।</p> : (
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-slate-500"><th className="py-2">নাম / ইমেইল</th><th>বার্তা</th><th>অবস্থা</th><th>ভূমিকা (অনুমোদনে)</th><th></th></tr></thead>
+              <tbody>
+                {joinRequests.map((r) => (
+                  <tr key={r.id} className="border-t align-top">
+                    <td className="py-2">
+                      <div className="font-medium">{r.user.name || "—"}</div>
+                      <div className="text-xs text-slate-500">{r.user.email}</div>
+                      <div className="text-xs text-slate-400">{new Date(r.createdAt).toLocaleDateString("bn-BD")}</div>
+                    </td>
+                    <td className="max-w-xs py-2 text-slate-600">{r.message ?? "—"}</td>
+                    <td className="py-2">
+                      {r.status === "PENDING" ? "অপেক্ষমাণ" : r.status === "APPROVED" ? "অনুমোদিত" : "ফিরিয়ে দেওয়া"}
+                      {r.status === "REJECTED" && r.rejectReason ? <div className="text-xs text-slate-400">{r.rejectReason}</div> : null}
+                    </td>
+                    <td className="py-2">
+                      {r.status === "PENDING" ? (
+                        <select id={`jr-role-${r.id}`} className="input w-44" defaultValue={r.linkRole ?? "VIEWER"}>{ROLES.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+                      ) : (r.linkRole ?? "—")}
+                    </td>
+                    <td className="space-x-2 whitespace-nowrap py-2 text-right">
+                      {r.status === "PENDING" ? (
+                        <>
+                          <button className="btn-primary" disabled={busy === `jr-approve-${r.id}`} onClick={() => approveRequest(r.id)}>অনুমোদন</button>
+                          <button className="btn-secondary" disabled={busy === `jr-reject-${r.id}`} onClick={() => rejectRequest(r.id, r.user.name || r.user.email)}>ফিরিয়ে দিন</button>
+                        </>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : null}
+
       {feed.length ? (
         <div className="card p-5">
           <h2 className="mb-3 font-semibold">সাম্প্রতিক কার্যকলাপ</h2>
@@ -807,6 +1031,72 @@ export default function TeamPage() {
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {/* ORG1 (Organization Next OB1): ownership transfer — OWNER only. */}
+      {myRole === "OWNER" ? (
+        <div className="card border-amber-200 p-5">
+          <h2 className="mb-1 font-semibold">👑 মালিকানা হস্তান্তর</h2>
+          <p className="mb-3 text-sm text-slate-500">
+            এই Organization এর মালিকানা একজন <b>সক্রিয় ADMIN</b> সদস্যের কাছে হস্তান্তর করতে পারবেন। হস্তান্তরের পর তিনি OWNER হবেন,
+            আর আপনি ADMIN হিসেবে টিমে থাকবেন। কাজটি <b>সঙ্গে সঙ্গে কার্যকর</b> হয় — ভুল হলে নতুন মালিক ফিরিয়ে দিতে পারবেন।
+          </p>
+          {transferCandidates.length === 0 ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              এখন হস্তান্তর করার মতো কেউ নেই — আগে একজন সদস্যকে ADMIN ভূমিকা দিন এবং তিনি সক্রিয় (ACTIVE) আছেন কিনা নিশ্চিত করুন।
+            </p>
+          ) : transferStep === 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <select className="input w-64" value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} aria-label="নতুন মালিক বেছে নিন">
+                <option value="">— নতুন মালিক বেছে নিন —</option>
+                {transferCandidates.map((m) => (
+                  <option key={m.user.id} value={m.user.id}>{m.user.name} ({m.user.email})</option>
+                ))}
+              </select>
+              <button className="btn-secondary" disabled={!transferTarget} onClick={() => setTransferStep(1)}>এগিয়ে যান →</button>
+            </div>
+          ) : (
+            <div className="space-y-3 rounded-xl bg-amber-50 p-4">
+              <p className="text-sm text-amber-900">
+                আপনি <b>{members.find((m) => m.user.id === transferTarget)?.user.name}</b> কে <b>{orgName}</b> এর নতুন মালিক করতে যাচ্ছেন।
+                নিশ্চিত করতে Organization এর নামটি হুবহু লিখুন:
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input className="input w-64" value={transferConfirmText} onChange={(e) => setTransferConfirmText(e.target.value)} placeholder={orgName} aria-label="Organization এর নাম লিখে নিশ্চিত করুন" />
+                <button className="btn-primary" disabled={busy === "transfer" || transferConfirmText !== orgName || !orgName} onClick={doTransfer}>
+                  {busy === "transfer" ? "হস্তান্তর হচ্ছে…" : "মালিকানা হস্তান্তর করুন"}
+                </button>
+                <button className="btn-secondary" disabled={busy === "transfer"} onClick={() => { setTransferStep(0); setTransferConfirmText(""); }}>পেছনে</button>
+              </div>
+              {orgName && transferConfirmText !== orgName ? (
+                <p className="text-xs text-amber-700">নামটি হুবহু <b>{orgName}</b> হতে হবে।</p>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* ORG2: self-leave — every member; the OWNER is pointed at transfer first. */}
+      {myRole ? (
+        <div className="card border-rose-100 p-5">
+          <h2 className="mb-1 font-semibold">🚪 Organization ছাড়ুন</h2>
+          {myRole === "OWNER" ? (
+            <p className="text-sm text-slate-500">
+              আপনি এই Organization এর <b>মালিক</b> — মালিক সরাসরি ছাড়তে পারেন না, তাহলে Organization টি মালিকহীন হয়ে যাবে।
+              আগে ওপরের অংশ থেকে একজন ADMIN কে মালিকানা হস্তান্তর করুন, তারপর এখান থেকে ছাড়তে পারবেন।
+            </p>
+          ) : (
+            <>
+              <p className="mb-3 text-sm text-slate-500">
+                এই Organization ছেড়ে গেলে আপনার খোলা কথোপকথন Pool এ ফেরত যাবে এবং এই ওয়ার্কস্পেসে প্রবেশ বন্ধ হয়ে যাবে।
+                আবার যোগ দিতে হলে টিমের OWNER/ADMIN কে নতুন আমন্ত্রণ পাঠাতে হবে।
+              </p>
+              <button className="btn-secondary text-rose-700" disabled={busy === "leave"} onClick={doLeave}>
+                {busy === "leave" ? "অপেক্ষা করুন…" : "Organization ছেড়ে যান"}
+              </button>
+            </>
+          )}
         </div>
       ) : null}
     </div>

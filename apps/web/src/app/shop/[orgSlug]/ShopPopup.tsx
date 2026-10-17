@@ -12,6 +12,12 @@ interface PopupConfig {
   imageUrl: string | null;
   ctaText: string | null;
   ctaUrl: string | null;
+  // OU8: lead-capture mode (absent on older API builds = promo).
+  mode?: string;
+  captureName?: boolean;
+  capturePhone?: boolean;
+  captureEmail?: boolean;
+  successMessage?: string | null;
   trigger: "delay_seconds" | "scroll_percent" | "exit_intent" | string;
   delaySeconds: number;
   scrollPercent: number;
@@ -54,6 +60,11 @@ export function ShopPopup({ orgSlug, locale = "bn" }: { orgSlug: string; locale?
   const pathname = usePathname();
   const [popup, setPopup] = useState<PopupConfig | null>(null);
   const [visible, setVisible] = useState(false);
+  // OU8 lead form state.
+  const [leadName, setLeadName] = useState("");
+  const [leadPhone, setLeadPhone] = useState("");
+  const [leadEmail, setLeadEmail] = useState("");
+  const [leadState, setLeadState] = useState<"idle" | "sending" | "done" | "error">("idle");
   // ED9: route through the overlay queue (top priority — the
   // modal is fixed inset-0, covers everything incl. the bottom
   // nav, so it takes no bottom lift).
@@ -164,6 +175,25 @@ export function ShopPopup({ orgSlug, locale = "bn" }: { orgSlug: string; locale?
     } catch { /* swallowed */ }
   };
 
+  // OU8: submit the lead form to the public popup-lead endpoint;
+  // success is shown ONLY on a real 2xx (the Lead row exists then).
+  async function submitLead(e: React.FormEvent) {
+    e.preventDefault();
+    if (leadState === "sending" || leadState === "done") return;
+    setLeadState("sending");
+    try {
+      const res = await fetch(`${API_URL}/public/shop/${encodeURIComponent(orgSlug)}/popup-lead`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: leadName.trim() || undefined, phone: leadPhone.trim() || undefined, email: leadEmail.trim() || undefined }),
+      });
+      if (!res.ok) throw new Error("bad");
+      setLeadState("done");
+    } catch {
+      setLeadState("error");
+    }
+  }
+
   function close() {
     try {
       if (popupRef.current) setFrequencyMarker(orgSlug, popupRef.current.frequencyDays ?? 0);
@@ -196,7 +226,27 @@ export function ShopPopup({ orgSlug, locale = "bn" }: { orgSlug: string; locale?
           <div className="space-y-3 p-6 text-center">
             {popup.title ? <h2 className="text-xl font-black text-slate-900">{popup.title}</h2> : null}
             {popup.body ? <p className="whitespace-pre-line text-sm leading-relaxed text-slate-600">{popup.body}</p> : null}
-            {popup.ctaUrl && popup.ctaText ? (
+            {popup.mode === "lead" ? (
+              leadState === "done" ? (
+                <p className="rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{popup.successMessage || t.popup.leadThanks}</p>
+              ) : (
+                <form onSubmit={submitLead} className="space-y-2 text-left">
+                  {popup.captureName !== false ? (
+                    <input required className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm" placeholder={t.popup.leadName} value={leadName} onChange={(e) => setLeadName(e.target.value)} />
+                  ) : null}
+                  {popup.capturePhone !== false ? (
+                    <input required type="tel" className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm" placeholder={t.popup.leadPhone} value={leadPhone} onChange={(e) => setLeadPhone(e.target.value)} />
+                  ) : null}
+                  {popup.captureEmail ? (
+                    <input required type="email" className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm" placeholder={t.popup.leadEmail} value={leadEmail} onChange={(e) => setLeadEmail(e.target.value)} />
+                  ) : null}
+                  {leadState === "error" ? <p className="text-xs font-semibold text-red-600">{t.popup.leadError}</p> : null}
+                  <button type="submit" disabled={leadState === "sending"} className="w-full rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                    {leadState === "sending" ? t.popup.leadSending : popup.ctaText || t.popup.leadSubmit}
+                  </button>
+                </form>
+              )
+            ) : popup.ctaUrl && popup.ctaText ? (
               <a
                 href={popup.ctaUrl}
                 onClick={fireClick}

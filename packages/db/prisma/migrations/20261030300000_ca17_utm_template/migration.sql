@@ -1,0 +1,14 @@
+-- CB4 (Campaign Builder Advanced, CA17) — migration claim
+-- 20261030300000 (CB4's single migration; CB1 used
+-- 20261030000000, CB2 used 20261030100000, CB3 used
+-- 20261030200000). CA15 and CA16 needed no migration.
+--
+-- CA17: CampaignPlan.utmTemplate — the plan-level UTM
+-- template (JSON object over the keys source / medium /
+-- campaign / content / term; values may carry the tokens
+-- {platform} {campaign} {adset} {ad}). Null = the built-in
+-- default tagging scheme (per-platform source, medium cpc,
+-- campaign = plan-name slug, content = ad-set slug,
+-- term = ad slug). Additive + nullable: every pre-CA17
+-- plan keeps the default behaviour byte-for-byte.
+ALTER TABLE "CampaignPlan" ADD COLUMN "utmTemplate" JSONB;

@@ -18,6 +18,37 @@ export interface TenantSmsConfig {
   apiKey: string;
   senderId: string;
   apiUrl?: string;
+  /** MX2: failover priority (lower sends first) + the stable
+   * breaker key for this gateway within a run. */
+  priority?: number;
+  gatewayKey?: string;
+}
+
+/** MX2: the stable circuit-breaker / dedupe key of one SMS
+ * gateway config. */
+export function smsGatewayKey(cfg: { gateway: string; senderId: string }): string {
+  return `${cfg.gateway}:${cfg.senderId}`;
+}
+
+/** MX2: a MessagingSmsGatewayConfig row (an ADDITIONAL tenant
+ * SMS gateway) → runtime config, same "fully configured or
+ * null" discipline as tenantSmsFromRow. Disabled rows read as
+ * not configured — kept in storage, never sent through. */
+export function tenantSmsFromGatewayRow(row: any): TenantSmsConfig | null {
+  if (!row || row.isEnabled === false) return null;
+  if (!row.smsGateway || !(SMS_GATEWAYS as readonly string[]).includes(row.smsGateway)) return null;
+  if (!row.smsSenderId || !row.smsApiKeyEncrypted) return null;
+  const apiKey = unseal(row.smsApiKeyEncrypted);
+  if (!apiKey) return null;
+  const cfg: TenantSmsConfig = {
+    gateway: row.smsGateway as SmsGatewayId,
+    apiKey,
+    senderId: String(row.smsSenderId),
+    apiUrl: row.smsApiUrl ? String(row.smsApiUrl) : undefined,
+    priority: Number.isInteger(row.priority) ? row.priority : 10,
+  };
+  cfg.gatewayKey = smsGatewayKey(cfg);
+  return cfg;
 }
 
 export const SMS_GATEWAYS: readonly SmsGatewayId[] = ["sslwireless", "bulksmsbd", "alphasms"];
@@ -50,12 +81,15 @@ export function tenantSmsFromRow(row: any): TenantSmsConfig | null {
   if (!row.smsSenderId || !row.smsApiKeyEncrypted) return null;
   const apiKey = unseal(row.smsApiKeyEncrypted);
   if (!apiKey) return null;
-  return {
+  const cfg: TenantSmsConfig = {
     gateway: row.smsGateway as SmsGatewayId,
     apiKey,
     senderId: String(row.smsSenderId),
     apiUrl: row.smsApiUrl ? String(row.smsApiUrl) : undefined,
+    priority: Number.isInteger(row.smsPriority) ? row.smsPriority : 0,
   };
+  cfg.gatewayKey = smsGatewayKey(cfg);
+  return cfg;
 }
 
 /** The ONLY outward view of a sender-config row: non-secret
@@ -88,6 +122,10 @@ export function senderConfigSafeView(row: any, platform: { emailConfigured: bool
     rates: {
       smsCostPerPartMinor: row?.smsCostPerPartMinor ?? null,
       whatsappCostPerMessageMinor: row?.whatsappCostPerMessageMinor ?? null,
+      // MX9: org-entered per-category WhatsApp rates (null = not set).
+      whatsappMarketingCostPerMessageMinor: row?.whatsappMarketingCostPerMessageMinor ?? null,
+      whatsappUtilityCostPerMessageMinor: row?.whatsappUtilityCostPerMessageMinor ?? null,
+      whatsappAuthenticationCostPerMessageMinor: row?.whatsappAuthenticationCostPerMessageMinor ?? null,
       emailCostPerMessageMinor: row?.emailCostPerMessageMinor ?? null,
     },
   };

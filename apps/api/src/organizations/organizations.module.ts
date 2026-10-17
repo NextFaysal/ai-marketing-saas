@@ -3,5 +3,5 @@ import { OrganizationsController, PublicBrandingController } from "./organizatio
 import { InvitationsController } from "./invitations.controller";
 import { OrganizationsService } from "./organizations.service";
 import { StorageModule } from "../storage/storage.module";
-@Module({ imports: [StorageModule], controllers: [OrganizationsController, InvitationsController, PublicBrandingController], providers: [OrganizationsService] })
+@Module({ imports: [StorageModule], controllers: [OrganizationsController, InvitationsController, PublicBrandingController], providers: [OrganizationsService], exports: [OrganizationsService] })
 export class OrganizationsModule {}

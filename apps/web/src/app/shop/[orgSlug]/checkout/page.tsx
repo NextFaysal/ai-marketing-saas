@@ -141,6 +141,15 @@ export default function ShopCheckoutPage() {
   // quote itself as `giftCard`.
   const [giftCardInput, setGiftCardInput] = useState("");
   const [giftCardApplied, setGiftCardApplied] = useState("");
+  // NF7: store credit — mirrors the loyalty pattern. The
+  // balance is learned from a probe quote (the quote carries
+  // the storeCredit object only when credit use was asked);
+  // `creditApplied` is the shopper's opt-in sent with
+  // quote/checkout. Credit belongs to the phone-identified
+  // customer only — no code exists to share or steal.
+  const [creditApplied, setCreditApplied] = useState(false);
+  const [creditBalanceMinor, setCreditBalanceMinor] = useState<string | null>(null);
+  const creditProbedPhone = useRef("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const quoteSeq = useRef(0);
@@ -341,6 +350,7 @@ export default function ShopCheckoutPage() {
         ...(deliveryMethod === "pickup" && pickupPointId ? { pickupPointId } : {}),
         ...(loyaltyApplied > 0 ? { loyaltyPoints: loyaltyApplied } : {}),
         ...(giftCardApplied ? { giftCardCode: giftCardApplied } : {}),
+        ...(creditApplied ? { useStoreCredit: true } : {}),
       });
       if (seq !== quoteSeq.current) return;
       setQuote(q);
@@ -352,7 +362,7 @@ export default function ShopCheckoutPage() {
     } finally {
       if (seq === quoteSeq.current) setQuoteLoading(false);
     }
-  }, [orgSlug, district, couponCode, referralCode, phone, locale, giftWrap, deliveryMethod, pickupPointId, loyaltyApplied, giftCardApplied]);
+  }, [orgSlug, district, couponCode, referralCode, phone, locale, giftWrap, deliveryMethod, pickupPointId, loyaltyApplied, giftCardApplied, creditApplied]);
 
   useEffect(() => {
     if (loading || !cart || (cart.items.length === 0 && (cart.bundleItems ?? []).length === 0)) return;
@@ -401,6 +411,33 @@ export default function ShopCheckoutPage() {
       }
     })();
   }, [orgSlug, phone, loading, cart, district, loyaltyApplied]);
+
+  // NF7: store-credit balance discovery probe — once per phone,
+  // exactly like the loyalty probe: ask a quote WITH credit use
+  // and read ONLY its balance; the displayed quote is never
+  // replaced by the probe's totals. No credit object (no
+  // balance / unknown phone) records "0" so no control shows.
+  useEffect(() => {
+    const buyerPhone = phone.trim();
+    if (loading || !cart || creditApplied) return;
+    if (buyerPhone.length < 11 || creditProbedPhone.current === buyerPhone) return;
+    const token = getCartToken(orgSlug);
+    if (!token || !district) return;
+    creditProbedPhone.current = buyerPhone;
+    (async () => {
+      try {
+        const q = await requestQuote(orgSlug, {
+          cartToken: token,
+          district,
+          buyerPhone,
+          useStoreCredit: true,
+        });
+        setCreditBalanceMinor(q.storeCredit?.balanceMinor ?? "0");
+      } catch {
+        setCreditBalanceMinor("0");
+      }
+    })();
+  }, [orgSlug, phone, loading, cart, district, creditApplied]);
 
   function applyLoyalty() {
     const balance = quote?.loyalty?.balance ?? loyaltyBalance ?? 0;
@@ -488,6 +525,8 @@ export default function ShopCheckoutPage() {
         ...(loyaltyApplied > 0 ? { loyaltyPoints: loyaltyApplied } : {}),
         // AB2: the same gift-card code the last quote priced.
         ...(giftCardApplied ? { giftCardCode: giftCardApplied } : {}),
+        // NF7: the same store-credit opt-in the last quote priced.
+        ...(creditApplied ? { useStoreCredit: true } : {}),
         // EC32: a stored partner ref (the window governs; the
         // server re-validates) — not cleared after purchase.
         affiliateCode: currentAffiliateCode(orgSlug) || undefined,
@@ -962,6 +1001,31 @@ export default function ShopCheckoutPage() {
                 </div>
               ) : null}
             </div>
+
+            {/* NF7: store credit — only with a positive balance
+                for THIS buyer (learned by the probe quote);
+                toggling re-quotes with useStoreCredit and the
+                priced amount comes back on the quote itself. */}
+            {creditBalanceMinor !== null && creditBalanceMinor !== "0" ? (
+              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+                <p className="text-xs font-bold text-amber-900">💰 স্টোর ক্রেডিট</p>
+                <p className="text-xs text-slate-600">
+                  আপনার ব্যালেন্স: <b className="text-slate-900">{money(creditBalanceMinor)}</b>
+                  {creditApplied && quote?.storeCredit ? (
+                    <> · ছাড় পেয়েছেন: <b className="text-emerald-700">− {money(quote.storeCredit.discountMinor)}</b></>
+                  ) : null}
+                </p>
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={creditApplied}
+                    onChange={(e) => setCreditApplied(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  এই অর্ডারে স্টোর ক্রেডিট ব্যবহার করুন (ব্যালেন্স বা অর্ডারের বাকি পরিমাণ — যেটি কম, ততটুকুই কাটবে)
+                </label>
+              </div>
+            ) : null}
 
             {quoteLoading && !quote ? <p className="text-xs font-semibold text-slate-500">{t.checkout.quoteLoading}</p> : null}
             {quoteError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{quoteError}</p> : null}

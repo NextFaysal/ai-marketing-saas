@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { encryptJson, decryptJson } from "../../integrations/crypto";
 import { InboxService } from "../inbox.service";
+import { MessagingService } from "../../messaging/messaging.service";
 import type { ChannelAdapter, VerifiedChannelAccount } from "./channel-adapter";
 
 /** Telegram Bot API client (official API, bot accounts only —
@@ -45,8 +46,12 @@ export class TelegramClient {
   setWebhook(url: string, secretToken: string) {
     return this.call<boolean>("setWebhook", { url, secret_token: secretToken, allowed_updates: ["message"] });
   }
-  sendMessage(chatId: string, text: string) {
-    return this.call<{ message_id: number }>("sendMessage", { chat_id: chatId, text });
+  sendMessage(chatId: string, text: string, replyMarkup?: { inline_keyboard: { text: string; url: string }[][] }) {
+    // MX13: optional inline URL buttons — the Bot API's
+    // reply_markup.inline_keyboard (documented Bot API
+    // behaviour; URL buttons need an https URL, which
+    // messaging's validateTelegramButtons enforces upstream).
+    return this.call<{ message_id: number }>("sendMessage", { chat_id: chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
   }
   sendPhotoUpload(chatId: string, bytes: Buffer, contentType: string, fileName: string, caption?: string) {
     return this.callMultipart<{ message_id: number }>("sendPhoto", { chat_id: chatId, ...(caption ? { caption } : {}) }, "photo", bytes, fileName, contentType);
@@ -96,12 +101,76 @@ export class TelegramAdapter implements ChannelAdapter {
 interface TelegramSecrets { botToken: string; webhookSecret: string }
 
 @Injectable()
-export class TelegramService {
+export class TelegramService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inbox: InboxService,
+    // MX13: MessagingService is OPTIONAL so existing constructor
+    // shapes (specs building TelegramService directly) keep
+    // working; Nest resolves it in production (InboxModule
+    // imports MessagingModule — no cycle, the MX12 WebPush
+    // precedent).
+    @Optional() private readonly messaging?: MessagingService,
   ) {}
+
+  /** MX13 — register the telegram send port Messaging consumes
+   * (the registered-port discipline: messaging never imports
+   * inbox code and never touches the sealed bot credentials).
+   * Defensive like the webpush registration: a messaging
+   * service built without the register method (an older test
+   * double) is skipped, never a boot crash. */
+  onModuleInit() {
+    const m = this.messaging as any;
+    if (m && typeof m.registerTelegramSendPort === "function") {
+      m.registerTelegramSendPort({
+        sendTelegram: (organizationId: string, input: { chatId: string; text: string; buttons?: { label: string; url: string }[] | null }) =>
+          this.sendForMessaging(organizationId, input),
+      });
+    }
+  }
+
+  /**
+   * MX13 — the Messaging broadcast send path for telegram. The
+   * org's connected bot (the earliest CONNECTED telegram
+   * Integration — the same row the inbox channel sends through)
+   * delivers the message via the Bot API. The outcome mirrors
+   * Telegram's real result: "sent" ONLY with a real message_id;
+   * anything else is "failed" with Telegram's real description
+   * (403 "bot was blocked by the user", 400 "chat not found",
+   * …) or the honest local reason (no connected bot). This
+   * method NEVER throws — the port contract carries failures
+   * as values, so messaging records them per recipient.
+   */
+  async sendForMessaging(organizationId: string, input: {
+    chatId: string; text: string; buttons?: { label: string; url: string }[] | null;
+  }): Promise<{ outcome: "sent" | "failed"; messageId?: string; error?: string }> {
+    try {
+      const integration = await (this.prisma as any).integration.findFirst({
+        where: { organizationId, provider: "telegram", status: "CONNECTED" },
+        orderBy: { createdAt: "asc" },
+        include: { credential: true },
+      });
+      if (!integration?.credential) {
+        return { outcome: "failed", error: "No connected Telegram bot for this organization (connect one in the Inbox first)" };
+      }
+      const secrets = decryptJson<TelegramSecrets>(integration.credential.encryptedData);
+      if (!secrets?.botToken) {
+        return { outcome: "failed", error: "The connected Telegram bot's credentials could not be read" };
+      }
+      const buttons = Array.isArray(input.buttons) ? input.buttons : [];
+      const replyMarkup = buttons.length
+        ? { inline_keyboard: buttons.map((b) => [{ text: String(b.label), url: String(b.url) }]) }
+        : undefined;
+      const sent = await new TelegramClient(String(secrets.botToken)).sendMessage(String(input.chatId), input.text, replyMarkup);
+      if (!sent?.message_id) {
+        return { outcome: "failed", error: "Telegram accepted the request without returning a message_id" };
+      }
+      return { outcome: "sent", messageId: String(sent.message_id) };
+    } catch (e) {
+      return { outcome: "failed", error: e instanceof Error ? e.message : "Telegram send failed" };
+    }
+  }
 
   /**
    * Connect a tenant's Telegram bot: the token is verified with

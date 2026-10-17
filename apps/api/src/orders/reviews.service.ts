@@ -1,10 +1,42 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { createHash, randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { SmsProvider, normalizeBdPhone as normalizeSmsPhone } from "../messaging/sms.provider";
 import { EmailProvider } from "../messaging/email.provider";
 import { newTrackingToken, webBaseUrl } from "../courier/tracking-token";
+import { StorageService } from "../storage/storage.service";
+import { StorageRegistryService } from "../storage/storage-registry.service";
+import { imageExtForContentType } from "../storage/media-url";
+import { detectMediaKind } from "../inbox/media-sniff";
+import {
+  CREATIVE_IMAGE_UPLOAD_MAX_BYTES,
+  CREATIVE_UPLOAD_CONTENT_TYPES,
+  CREATIVE_VIDEO_UPLOAD_MAX_BYTES,
+} from "../creatives/creatives.service";
+
+/** NF8: at most this many photo/video attachments per review. */
+export const REVIEW_MEDIA_MAX_ITEMS = 4;
+
+export interface ReviewMediaItem {
+  key: string;
+  kind: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+/** The stored media shape on an OrderReview row (Json column):
+ * private-bucket KEYS only — never URLs (see schema note). */
+export function reviewMediaOf(row: any): ReviewMediaItem[] {
+  const v = row?.media;
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (m: any) =>
+      m && typeof m.key === "string" && typeof m.kind === "string" &&
+      typeof m.contentType === "string" && Number.isFinite(Number(m.sizeBytes)),
+  ).map((m: any) => ({ key: m.key, kind: m.kind, contentType: m.contentType, sizeBytes: Number(m.sizeBytes) }));
+}
 
 /** The one inbox capability the sweep needs — typed structurally
  * so this service never imports InboxService (InboxModule imports
@@ -73,6 +105,13 @@ export class ReviewsService {
     @Optional() private readonly sms?: SmsProvider,
     @Optional() private readonly email?: EmailProvider,
     @Optional() private readonly audit?: AuditService,
+    // NF8: the EXISTING storage machinery for review media
+    // (RB3 quarantine pattern). Optional + last so positional
+    // spec constructions keep working; absent (or local storage
+    // mode) the media endpoints refuse honestly, exactly like
+    // the creative / media-library surfaces do.
+    @Optional() private readonly storage?: StorageService,
+    @Optional() private readonly storageRegistry?: StorageRegistryService,
   ) {
     if (this.events) {
       this.events.on("order.delivered", (p) => { void this.noteDelivered(p?.organizationId, p?.context?.orderId); });
@@ -297,7 +336,206 @@ export class ReviewsService {
         primaryColor: org?.primaryColor ?? null,
       },
       rewardCoupon,
+      // NF8: media COUNT only — the token page learns its own
+      // attachments exist; keys/URLs are never served here (the
+      // review is not public yet, and may never be).
+      mediaCount: reviewMediaOf(row).length,
+      // NF8: the Google offer (see googleReviewOffer) — non-null
+      // only for an already-submitted 4–5 star review when the
+      // org configured its link. The thank-you screen renders it
+      // as a plain link the customer may choose to open.
+      googleReviewOffer: await this.googleReviewOffer(row.organizationId, row.rating ?? null),
     };
+  }
+
+  /**
+   * NF8 — the happy-customer Google route. An OFFER, never a
+   * redirect and never a reward: it exists only when BOTH the
+   * customer's own already-submitted rating is 4–5 AND the org
+   * pasted its own Google review link in Settings
+   * (Organization.googleReviewUrl). Every other combination —
+   * rating < 4, no rating yet, link unconfigured — offers
+   * nothing (null). Nothing about the offer is conditioned on
+   * the customer actually reviewing on Google, and NF8 attaches
+   * no incentive to any rating anywhere.
+   */
+  async googleReviewOffer(organizationId: string, rating: number | null | undefined): Promise<{ url: string } | null> {
+    if (!rating || !Number.isInteger(rating) || rating < 4) return null;
+    const org = await this.p().organization?.findFirst({
+      where: { id: organizationId }, select: { googleReviewUrl: true },
+    }).catch(() => null);
+    const url = typeof org?.googleReviewUrl === "string" ? org.googleReviewUrl.trim() : "";
+    return url ? { url } : null;
+  }
+
+  // ---------- NF8: review photo/video upload ----------
+  //
+  // The EXISTING upload machinery, no new path: the RB3 pattern
+  // every media surface uses — presign a quarantine PUT through
+  // StorageService -> the browser PUTs straight to R2 ->
+  // complete verifies (HEAD size + magic-byte sniff via
+  // detectMediaKind) -> copy to the final key -> register in the
+  // StoredFile registry. The type/size GUARDS are the creative
+  // upload guards, imported from CreativesService (image
+  // png/jpeg/webp ≤10MB, video mp4/mov/webm ≤50MB) — enforced
+  // identically at presign AND complete, never relaxed.
+  //
+  // Differences from the staff surfaces, by design:
+  // - the credential is the reviewToken (same as the review page
+  //   itself), and the quarantine prefix binds the upload to the
+  //   token's OWN org;
+  // - the final object lands in the PRIVATE bucket and only its
+  //   KEY is stored on the review row — a review and its media
+  //   are never public before EC15's visibility rules say so;
+  //   public/staff reads mint short-lived signed URLs at read
+  //   time (ProductReviewsService).
+
+  private reviewStorageOr400(): StorageService {
+    if (!this.storage || this.storage.mode !== "s3") {
+      throw new BadRequestException(
+        "সরাসরি ফাইল আপলোড এখন চালু নেই — সার্ভারে object storage (Cloudflare R2) সেটআপ হয়নি।",
+      );
+    }
+    return this.storage;
+  }
+
+  /** The creative-upload guard, shared verbatim: kind allow-list,
+   * declared content type inside the kind's list, per-kind cap. */
+  private normalizeReviewUpload(kind: unknown, contentType: unknown, sizeBytes: unknown) {
+    const k = String(kind ?? "");
+    const allowed = CREATIVE_UPLOAD_CONTENT_TYPES[k];
+    if (!allowed) throw new BadRequestException("kind must be image or video");
+    const ct = String(contentType ?? "").split(";")[0].trim().toLowerCase();
+    if (!allowed.includes(ct)) {
+      throw new BadRequestException(
+        k === "image"
+          ? "শুধু PNG, JPEG অথবা WebP ছবি আপলোড করা যাবে।"
+          : "শুধু MP4, MOV অথবা WebM ভিডিও আপলোড করা যাবে।",
+      );
+    }
+    const size = Number(sizeBytes);
+    if (!Number.isInteger(size) || size < 1) {
+      throw new BadRequestException("ফাইলের আকার (sizeBytes) সঠিক নয়।");
+    }
+    const cap = k === "image" ? CREATIVE_IMAGE_UPLOAD_MAX_BYTES : CREATIVE_VIDEO_UPLOAD_MAX_BYTES;
+    if (size > cap) {
+      throw new BadRequestException(
+        k === "image"
+          ? "ছবিটি অনেক বড় — সর্বোচ্চ ১০ MB পর্যন্ত আপলোড করা যাবে।"
+          : "ভিডিওটি অনেক বড় — সরাসরি আপলোডে সর্বোচ্চ ৫০ MB পর্যন্ত আপলোড করা যাবে।",
+      );
+    }
+    return { kind: k, contentType: ct, sizeBytes: size };
+  }
+
+  private async reviewRowByToken(token: string) {
+    const row = await this.p().orderReview?.findFirst({ where: { reviewToken: token } });
+    if (!row) throw new NotFoundException("এই রিভিউ লিংকটি পাওয়া যায়নি");
+    return row;
+  }
+
+  /** Media attaches only BEFORE the review is submitted: once a
+   * rating exists the record is what staff moderate, and the
+   * token holder cannot silently change it afterwards. */
+  private assertMediaAttachable(row: any) {
+    if (row.rating != null) {
+      throw new BadRequestException("রিভিউ ইতিমধ্যে জমা হয়ে গেছে — এখন আর ছবি/ভিডিও যোগ করা যাবে না।");
+    }
+    if (reviewMediaOf(row).length >= REVIEW_MEDIA_MAX_ITEMS) {
+      throw new BadRequestException(`সর্বোচ্চ ${REVIEW_MEDIA_MAX_ITEMS}টি ছবি/ভিডিও যোগ করা যাবে।`);
+    }
+  }
+
+  async presignReviewMedia(token: string, dto: { kind?: string; contentType?: string; sizeBytes?: number }) {
+    const row = await this.reviewRowByToken(token);
+    this.assertMediaAttachable(row);
+    const { contentType, sizeBytes } = this.normalizeReviewUpload(dto?.kind, dto?.contentType, dto?.sizeBytes);
+    const storage = this.reviewStorageOr400();
+    const key = `_quarantine/${row.organizationId}/review/${randomUUID()}`;
+    const uploadUrl = storage.presignedPutUrl("private", key);
+    if (!uploadUrl) {
+      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+    }
+    return { uploadUrl, key, contentType, sizeBytes, expiresInSeconds: 600 };
+  }
+
+  async completeReviewMedia(token: string, dto: { key?: string; kind?: string; contentType?: string; sizeBytes?: number }) {
+    const row = await this.reviewRowByToken(token);
+    this.assertMediaAttachable(row);
+    const { kind, contentType, sizeBytes } = this.normalizeReviewUpload(dto?.kind, dto?.contentType, dto?.sizeBytes);
+    const storage = this.reviewStorageOr400();
+    const key = String(dto?.key ?? "");
+    const quarantinePrefix = `_quarantine/${row.organizationId}/review/`;
+    if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
+      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+    }
+    const dropQuarantine = () => storage.delete("private", key).catch(() => undefined);
+
+    const head = await storage.head("private", key).catch(() => null);
+    if (!head) {
+      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+    }
+    if (head.sizeBytes !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+    }
+    const bytes = await storage.get("private", key).catch(() => null);
+    if (!bytes || bytes.length !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+    }
+    // Magic bytes decide, never the declaration — the same sniff
+    // discipline as the creative / library completes.
+    const detected = detectMediaKind(bytes, contentType);
+    if (!detected || detected.kind !== kind || detected.contentType !== contentType) {
+      await dropQuarantine();
+      const what = detected ? detected.contentType : "অচেনা ফরম্যাটের ডেটা";
+      throw new BadRequestException(`আপলোড করা ফাইলের আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না (পাওয়া গেছে ${what}) — ফাইলটি মোছা হয়েছে।`);
+    }
+
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const ext = kind === "video"
+      ? (contentType === "video/quicktime" ? "mov" : contentType === "video/webm" ? "webm" : "mp4")
+      : imageExtForContentType(detected.contentType);
+    const finalKey = `${row.organizationId}/review/${randomUUID()}.${ext}`;
+    try {
+      await storage.copy({ visibility: "private", key }, { visibility: "private", key: finalKey });
+      // Re-read before appending: the cap is judged on the
+      // CURRENT row, so a burst of completes cannot exceed it.
+      const fresh = await this.reviewRowByToken(token);
+      this.assertMediaAttachable(fresh);
+      const media = [...reviewMediaOf(fresh), { key: finalKey, kind, contentType: detected.contentType, sizeBytes: bytes.length }];
+      const updated = await this.p().orderReview.update({ where: { id: fresh.id }, data: { media } });
+      // Registry AFTER the row points at the object (the creative
+      // discipline): a registry failure must not orphan the row's
+      // media — best-effort bookkeeping only.
+      if (this.storageRegistry) {
+        await this.storageRegistry.register({
+          organizationId: row.organizationId,
+          bucket: storage.bucketFor("private"),
+          key: finalKey,
+          visibility: "private",
+          surface: "review",
+          contentType: detected.contentType,
+          sizeBytes: bytes.length,
+          sha256,
+          status: "active",
+          createdById: null,
+          sourceRef: `orderReview:${row.id}`,
+        }).catch(() => undefined);
+      }
+      await dropQuarantine();
+      await this.audit?.log({
+        organizationId: row.organizationId, userId: "system", action: "review.media_attached",
+        entityType: "OrderReview", entityId: row.id,
+        metadata: { kind, contentType: detected.contentType, sizeBytes: bytes.length },
+      }).catch(() => undefined);
+      return { ok: true, media: reviewMediaOf(updated) };
+    } catch (e) {
+      await storage.delete("private", finalKey).catch(() => undefined);
+      await dropQuarantine();
+      throw e;
+    }
   }
 
   /** Public review submit: one rating per link — a second submit

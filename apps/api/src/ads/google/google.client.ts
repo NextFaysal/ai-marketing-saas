@@ -109,6 +109,152 @@ export class GoogleAdsClient {
     } while (pageToken);
     return rows;
   }
+
+  /** OU4 management companion (status/lifecycle/Customer Match),
+   * sharing this client's secrets, fetch and OAuth token cache. */
+  campaignManage(): GoogleCampaignManage {
+    return new GoogleCampaignManage(this.secrets, this.fetchFn, this.version, () => this.getAccessToken());
+  }
+}
+
+export interface GoogleCampaignStatus {
+  campaignExternalId: string;
+  name?: string;
+  /** Verbatim Google enum: ENABLED | PAUSED | REMOVED (or whatever Google sends). */
+  status: string;
+}
+
+/**
+ * OU4: campaign status read + lifecycle mutate + Customer Match.
+ * Same auth/header discipline as the reporting paths above; Google's
+ * own errors surface verbatim. Status changes use the documented
+ * campaigns:mutate update operation with an explicit updateMask —
+ * nothing is reported changed unless Google accepts the mutate.
+ */
+export class GoogleCampaignManage {
+  constructor(
+    private readonly secrets: GoogleAdsSecrets,
+    private readonly fetchFn: FetchFn,
+    private readonly version: string,
+    private readonly tokenProvider: () => Promise<string>,
+  ) {}
+
+  private async headers(): Promise<Record<string, string>> {
+    const token = await this.tokenProvider();
+    return {
+      Authorization: `Bearer ${token}`,
+      "developer-token": this.secrets.developerToken,
+      "Content-Type": "application/json",
+      ...(this.secrets.loginCustomerId ? { "login-customer-id": this.secrets.loginCustomerId.replace(/-/g, "") } : {}),
+    };
+  }
+
+  async getCampaignStatus(customerId: string, campaignId: string): Promise<GoogleCampaignStatus | null> {
+    const id = customerId.replace(/-/g, "");
+    const query = `SELECT campaign.id, campaign.name, campaign.status FROM campaign WHERE campaign.id = ${campaignId}`;
+    const res = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/customers/${id}/googleAds:search`, {
+      method: "POST", headers: await this.headers(), body: JSON.stringify({ query }),
+    });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = body?.error?.details?.[0]?.errors?.[0]?.message ?? body?.error?.message ?? "unknown error";
+      throw new Error(`Google Ads campaign status failed (${res.status}): ${detail}`);
+    }
+    const row = body.results?.[0];
+    if (!row) return null;
+    return { campaignExternalId: String(row.campaign?.id ?? campaignId), name: row.campaign?.name ?? undefined, status: String(row.campaign?.status ?? "") };
+  }
+
+  async setCampaignStatus(customerId: string, campaignId: string, status: "ENABLED" | "PAUSED"): Promise<void> {
+    const id = customerId.replace(/-/g, "");
+    const resourceName = `customers/${id}/campaigns/${campaignId}`;
+    const res = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/customers/${id}/campaigns:mutate`, {
+      method: "POST", headers: await this.headers(),
+      body: JSON.stringify({ operations: [{ update: { resourceName, status }, updateMask: "status" }] }),
+    });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok || body?.error) {
+      throw new Error(`Google Ads campaign status change failed (${res.status}): ${body?.error?.message ?? "unknown error"}`);
+    }
+    if (!body.results?.[0]?.resourceName) throw new Error("Google returned no result for the status change; the change is NOT confirmed");
+  }
+
+  /** Create an empty CRM-based (Customer Match) user list. */
+  async createCustomerMatchList(customerId: string, name: string, description?: string): Promise<{ resourceName: string; userListId: string }> {
+    const id = customerId.replace(/-/g, "");
+    const res = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/customers/${id}/userLists:mutate`, {
+      method: "POST", headers: await this.headers(),
+      body: JSON.stringify({ operations: [{ create: {
+        name, description: description ?? "Built by Qosprey AI Marketing SaaS (Customer Match)",
+        crmBasedUserList: { uploadKeyType: "CONTACT_INFO", dataSourceType: "DATA_SOURCE_TYPE_FIRST_PARTY" },
+      } }] }),
+    });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok || body?.error) throw new Error(`Google Customer Match list creation failed (${res.status}): ${body?.error?.message ?? "unknown error"}`);
+    const resourceName = body.results?.[0]?.resourceName as string | undefined;
+    if (!resourceName) throw new Error("Google returned no user list resource name; creation is NOT confirmed");
+    return { resourceName, userListId: resourceName.split("/").pop() as string };
+  }
+
+  /**
+   * Upload hashed identifiers to a Customer Match list through an
+   * OfflineUserDataJob: create → addOperations (chunks of 5,000
+   * users, Google's recommended size) → run. Identifiers arrive
+   * ALREADY SHA-256 hashed (the audiences service's contactsFor
+   * output — the same hashes Meta receives); raw contacts never
+   * enter this client. The job resource name is returned as the
+   * provider receipt; Google processes asynchronously afterwards.
+   */
+  async uploadCustomerMatch(customerId: string, userListResourceName: string, identifiers: { hashedEmail?: string; hashedPhone?: string }[]): Promise<{ jobResourceName: string; operations: number }> {
+    const id = customerId.replace(/-/g, "");
+    const headers = await this.headers();
+    const jobRes = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/customers/${id}/offlineUserDataJobs`, {
+      method: "POST", headers,
+      body: JSON.stringify({ type: "CUSTOMER_MATCH_USER_LIST", customerMatchUserListMetadata: { userList: userListResourceName } }),
+    });
+    const jobBody: any = await jobRes.json().catch(() => ({}));
+    if (!jobRes.ok || jobBody?.error) throw new Error(`Google offline job creation failed (${jobRes.status}): ${jobBody?.error?.message ?? "unknown error"}`);
+    const jobResourceName = jobBody.resourceName as string | undefined;
+    if (!jobResourceName) throw new Error("Google returned no offline job resource name; upload is NOT confirmed");
+    let operations = 0;
+    for (let i = 0; i < identifiers.length; i += 5000) {
+      const chunk = identifiers.slice(i, i + 5000);
+      const ops = chunk.map((u) => ({ create: { userIdentifiers: [
+        ...(u.hashedEmail ? [{ hashedEmail: u.hashedEmail }] : []),
+        ...(u.hashedPhone ? [{ hashedPhoneNumber: u.hashedPhone }] : []),
+      ] } }));
+      const addRes = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/${jobResourceName}:addOperations`, {
+        method: "POST", headers, body: JSON.stringify({ operations: ops }),
+      });
+      const addBody: any = await addRes.json().catch(() => ({}));
+      if (!addRes.ok || addBody?.error) throw new Error(`Google offline job addOperations failed (${addRes.status}): ${addBody?.error?.message ?? "unknown error"}`);
+      operations += ops.length;
+    }
+    const runRes = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/${jobResourceName}:run`, {
+      method: "POST", headers, body: JSON.stringify({}),
+    });
+    const runBody: any = await runRes.json().catch(() => ({}));
+    if (!runRes.ok || runBody?.error) throw new Error(`Google offline job run failed (${runRes.status}): ${runBody?.error?.message ?? "unknown error"}`);
+    return { jobResourceName, operations };
+  }
+
+  /** Provider-reported list info (GAQL on user_list). size_for_display
+   * is Google's display range string — returned verbatim; a plain
+   * numeric value is also parsed for approximateCount when present. */
+  async getUserList(customerId: string, userListId: string): Promise<{ name?: string; sizeForDisplay?: string; approximateCount: number | null }> {
+    const id = customerId.replace(/-/g, "");
+    const query = `SELECT user_list.id, user_list.name, user_list.size_for_display FROM user_list WHERE user_list.id = ${userListId}`;
+    const res = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/customers/${id}/googleAds:search`, {
+      method: "POST", headers: await this.headers(), body: JSON.stringify({ query }),
+    });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`Google user list read failed (${res.status}): ${body?.error?.message ?? "unknown error"}`);
+    const row = body.results?.[0]?.userList;
+    if (!row) throw new Error("Google returned no such user list");
+    const size = row.sizeForDisplay != null ? String(row.sizeForDisplay) : undefined;
+    const parsed = size && /^\d+$/.test(size.replace(/,/g, "")) ? Number(size.replace(/,/g, "")) : null;
+    return { name: row.name ?? undefined, sizeForDisplay: size, approximateCount: parsed };
+  }
 }
 
 export function microsToMinor(micros: string | number): bigint {

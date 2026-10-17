@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsNumber, IsObject, IsOptional, IsString, MaxLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength } from "class-validator";
 
 // Campaign Builder Next CN1: a targeting entry is either a
 // legacy free-text name (stored as a plain string, flagged
@@ -12,6 +12,9 @@ export class CreatePlanDto {
   @IsString() @MaxLength(200) name!: string;
   @IsString() objective!: string;
   @IsString() adAccountId!: string;
+  // CA13: opt in to the org naming template for this
+  // create (a typed name is otherwise never overwritten).
+  @IsOptional() @IsBoolean() useNamingTemplate?: boolean;
   // Campaign Builder Next CN2: true campaign budget —
   // budgetMode "abo" (ad-set budgets, default) or "cbo"
   // (campaign budgets below; taka strings).
@@ -84,8 +87,14 @@ export class AddAdSetDto {
   // digits back from Meta).
   @IsOptional() @IsString() destinationType?: string;
   @IsOptional() @IsString() whatsappIntegrationId?: string;
+  // CA23: app promotion (OUTCOME_APP_PROMOTION plans) —
+  // Meta application_id + object_store_url, merchant-typed.
+  @IsOptional() @IsString() @MaxLength(100) appId?: string;
+  @IsOptional() @IsString() @MaxLength(1000) appStoreUrl?: string;
   @IsOptional() @IsString() startTime?: string;
   @IsOptional() @IsString() endTime?: string;
+  // CA13: naming-template opt-in for this create.
+  @IsOptional() @IsBoolean() useNamingTemplate?: boolean;
 }
 export class UpdateAdSetDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
@@ -130,6 +139,9 @@ export class UpdateAdSetDto {
   // CN13 (see AddAdSetDto). "" clears the destination.
   @IsOptional() @IsString() destinationType?: string;
   @IsOptional() @IsString() whatsappIntegrationId?: string;
+  // CA23 (see AddAdSetDto). "" clears.
+  @IsOptional() @IsString() @MaxLength(100) appId?: string;
+  @IsOptional() @IsString() @MaxLength(1000) appStoreUrl?: string;
   @IsOptional() @IsString() startTime?: string;
   @IsOptional() @IsString() endTime?: string;
 }
@@ -226,6 +238,8 @@ export class AddAdDto {
   @IsOptional() @IsString() format?: string;
   @IsOptional() @IsString() imageAssetId?: string;
   @IsOptional() @IsString() videoAssetId?: string;
+  // CA13: naming-template opt-in for this create.
+  @IsOptional() @IsBoolean() useNamingTemplate?: boolean;
   @IsOptional() @IsArray() carouselCards?: CarouselCardDto[];
   // CN5 creative v2 (see UpdateAdDto).
   @IsOptional() @IsObject() textOptions?: { primaryTexts?: string[]; headlines?: string[]; descriptions?: string[] };
@@ -265,10 +279,44 @@ export class InstantiateBlueprintDto {
   @IsString() blueprintKey!: string;
   @IsString() adAccountId!: string;
   @IsOptional() @IsString() productId?: string;
+  /** CA26: exact blueprint ROW to instantiate (platform
+   * or the org's own clone) when the list offered rows. */
+  @IsOptional() @IsString() blueprintId?: string;
+}
+export class CloneBlueprintDto {
+  @IsString() @MaxLength(100) key!: string;
+}
+export class AssembleCarouselDto {
+  @IsOptional() @IsString() productSetId?: string;
+  @IsOptional() @IsBoolean() replace?: boolean;
+  @IsOptional() @IsNumber() limit?: number;
+}
+export class CreatePlanLandingDto {
+  @IsOptional() @IsString() adId?: string;
+  @IsOptional() @IsString() productId?: string;
+  @IsOptional() @IsBoolean() publish?: boolean;
+}
+export class ApplyLandingDto {
+  @IsString() landingId!: string;
+}
+export class UpdateBlueprintDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(2000) description?: string;
+  @IsOptional() @IsString() @MaxLength(60) objective?: string;
+  @IsOptional() @IsBoolean() advantagePlus?: boolean;
+  @IsOptional() @IsObject() adSet?: Record<string, unknown>;
+  @IsOptional() @IsObject() ad?: Record<string, unknown>;
+  @IsOptional() @IsString() @MaxLength(100) category?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
 }
 export class RejectDto { @IsString() @MaxLength(500) reason!: string; }
 export class CommentDto { @IsString() @MaxLength(2000) body!: string; }
 export class ScheduleLaunchDto { @IsOptional() @IsString() publishAt?: string | null; }
+export class PlanScheduleDto {
+  // CA12: both null (or absent) clears the window.
+  @IsOptional() @IsString() pauseAt?: string | null;
+  @IsOptional() @IsString() resumeAt?: string | null;
+}
 export class CrossPlatformDto {
   @IsString() platform!: string;
   @IsString() targetAdAccountId!: string;
@@ -279,6 +327,31 @@ export class CrossPlatformDto {
   @IsOptional() @IsString() objectiveType?: string;
   @IsOptional() @IsString() pixelId?: string;
   @IsOptional() @IsString() optimizationEvent?: string;
+}
+export class UtmTemplateDto {
+  // CA17 (CB4): the plan-level UTM template — an object
+  // over source/medium/campaign/content/term, or null
+  // to clear back to the built-in defaults. Keys,
+  // tokens and lengths are service-validated.
+  @IsOptional() @IsObject() template?: Record<string, string> | null;
+}
+export class XDraftStatusDto {
+  // CA16 (CB4): post-publish control of a created draft.
+  @IsString() target!: string; // ACTIVE | PAUSED (service-validated)
+}
+export class XDraftBudgetDto {
+  @IsString() dailyBudget!: string;
+}
+export class FanoutDto {
+  // CA15 (CB4): one-click fan-out — at least one target
+  // account is required (service-checked, so the error
+  // is Bengali and names both options).
+  @IsOptional() @IsString() googleAccountId?: string;
+  @IsOptional() @IsString() googleKind?: string; // search | pmax
+  @IsOptional() @IsString() tiktokAccountId?: string;
+  @IsOptional() @IsString() tiktokObjectiveType?: string;
+  @IsOptional() @IsString() tiktokPixelId?: string;
+  @IsOptional() @IsString() tiktokOptimizationEvent?: string;
 }
 export class SuggestPlanDto {
   @IsString() adAccountId!: string;
@@ -291,10 +364,53 @@ export class GenerateCopyDto {
   @IsString() productId!: string;
   @IsOptional() @IsString() linkUrl?: string;
 }
+// Campaign Builder Advanced CA1: AI image generation from
+// inside the builder (asset lands in the Creative Library).
+export class GenerateImageDto {
+  @IsString() prompt!: string;
+  @IsOptional() @IsString() productId?: string;
+  @IsOptional() @IsString() adAccountId?: string;
+}
+// Campaign Builder Advanced CA2: AI slideshow video from the
+// product's own photos (script fact-checked server-side).
+export class GenerateVideoDto {
+  @IsString() productId!: string;
+  @IsOptional() @IsString() adAccountId?: string;
+}
+// Campaign Builder Advanced CA4: per-ad copy localization
+// (numbers locked to the source; real LLM required).
+export class LocalizeAdDto {
+  @IsIn(["bn", "en"]) targetLocale!: string;
+}
 // Campaign Builder Next NB4 (CN7/CN8/CN9).
 export class ApplyRecommendationDto {
   @IsString() kind!: string;
   @IsOptional() @IsString() adId?: string;
+  // CA11: kind "budget_shift" carries back the proposal the
+  // human was shown; the server regenerates and refuses on
+  // any drift (see applyBudgetShiftRecommendation).
+  @IsOptional() proposal?: { fromAdSetId: string; toAdSetId: string; shiftMinor: string; fromDailyAfterMinor: string; toDailyAfterMinor: string };
+}
+export class BudgetAllocatorProposalDto {
+  @IsArray() @IsString({ each: true }) planIds!: string[];
+  @IsString() totalShiftMinor!: string;
+}
+export class BudgetAllocatorApplyDto {
+  @IsArray() allocations!: { planId: string; amountMinor: string; expectedDailyTotalMinor: string }[];
+}
+export class NamingTemplateDto {
+  // CA13: null (or empty) clears the convention.
+  @IsOptional() @IsString() @MaxLength(200) template?: string | null;
+}
+export class ApplyNamingDto {
+  @IsArray() items!: { level: string; id: string; newName: string }[];
+}
+export class BulkPlansDto {
+  // CA14: server-side bulk over the single-item services.
+  @IsArray() planIds!: string[];
+  @IsString() action!: string; // pause | activate | budget_percent | budget_fixed | duplicate
+  @IsOptional() @IsNumber() percent?: number;
+  @IsOptional() @IsString() fixedMinor?: string;
 }
 export class GuardrailLinkDto {
   @IsString() ruleId!: string;
@@ -314,6 +430,11 @@ export class ClonePlanToAccountDto {
 }
 export class UpdateCrossPlatformDraftDto {
   @IsObject() fields!: Record<string, unknown>;
+}
+// OU4: cross-platform draft lifecycle — pause/resume only
+// (no delete: TikTok v1.3 has no campaign delete).
+export class CrossPlatformDraftLifecycleDto {
+  @IsIn(["pause", "resume"]) action!: "pause" | "resume";
 }
 // Campaign Builder Next CN11 (NB5): governance.
 // Snapshot/restore take no meaningful body — the version
@@ -394,4 +515,17 @@ export class CompetitorResponseDto {
   @IsString() competitorId!: string;
   @IsString() productId!: string;
   @IsString() adAccountId!: string;
+}
+// CA22 (CB5): builder inbox signals + the counter-draft.
+export class CreateBuilderSignalDto {
+  @IsString() @MaxLength(600) text!: string;
+  @IsOptional() @IsString() productId?: string;
+}
+export class ImportBuilderSignalDto {
+  @IsString() source!: string;
+  @IsString() sourceRefId!: string;
+}
+export class DraftFromSignalDto {
+  @IsString() adAccountId!: string;
+  @IsString() totalDailyBudget!: string;
 }

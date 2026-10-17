@@ -119,6 +119,10 @@ export class SubmitWhatsAppTemplateDto {
   @IsOptional() @IsString() @MaxLength(200) headerExample?: string;
   @IsOptional() @IsString() @MaxLength(500) headerHandle?: string;
   @IsOptional() @IsArray() buttons?: { type: "url" | "quick_reply"; text: string; url?: string }[];
+  // MX9: carousel cards (2–10). Shape-only here — the service
+  // validates every card strictly (media header handle, body
+  // examples, ≤2 buttons) BEFORE any Meta call.
+  @IsOptional() @IsArray() carouselCards?: { headerFormat: "image" | "video"; headerHandle: string; bodyText: string; exampleValues?: string[]; buttons?: { type: "url" | "quick_reply"; text: string; url?: string }[] }[];
 }
 export class SendTemplateDto {
   @IsString() templateId!: string;

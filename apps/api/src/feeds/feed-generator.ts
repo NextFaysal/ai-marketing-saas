@@ -58,6 +58,9 @@ export interface FeedItem {
   imageLink: string;
   additionalImageLinks: string[];
   inStock: boolean;
+  /** OU3: raw stock count when known (null = unknown — the
+   * Daraz CSV leaves quantity blank rather than inventing one). */
+  stockQuantity: number | null;
   /** Regular price (minor). On sale: the compare-at price. */
   priceMinor: bigint;
   /** Current selling price when on sale, else null. */
@@ -223,6 +226,7 @@ export function buildFeedItems(
         imageLink: absoluteUrl(webBase, primary),
         additionalImageLinks: additional.slice(0, 10),
         inStock,
+        stockQuantity: row.stock,
         priceMinor: onSale ? (compareAt as bigint) : row.price,
         salePriceMinor: onSale ? row.price : null,
         currency,
@@ -359,6 +363,66 @@ export function serializeFeedCsv(items: FeedItem[]): string {
       item_group_id: it.itemGroupId ?? "",
     };
     lines.push(CSV_COLUMNS.map((c) => csvCell(row[c] ?? "")).join(","));
+  }
+  return lines.join("\n");
+}
+
+// ---------- OU3: Daraz CSV ----------
+
+/**
+ * OU3 — Daraz product feed (CSV). HONESTY: no official Daraz
+ * Seller Center bulk-upload template could be evidenced
+ * (docs/one-umbrella-ou3-daraz-spike.md §4), so this file is a
+ * Daraz-LABELLED export of the canonical catalog fields — NOT a
+ * verified Seller Center import template and NOT an API
+ * integration. Prices are plain decimals with a separate
+ * currency column; quantity is blank when the stock count is
+ * unknown (a number is never invented).
+ */
+export const DARAZ_FEED_TEMPLATE_WARNING =
+  "Daraz ফিডটি আপনার আসল ক্যাটালগ থেকে তৈরি CSV এক্সপোর্ট — তবে Daraz Seller Center-এর বর্তমান bulk-upload টেমপ্লেটের কলাম অফিসিয়ালভাবে যাচাই করা যায়নি। Seller Center-এ আপলোডের আগে Daraz-এর হালনাগাদ টেমপ্লেটের সঙ্গে কলাম মিলিয়ে নিন; মিল না থাকলে ফাইলটি রেফারেন্স হিসেবে ব্যবহার করুন।";
+
+const DARAZ_CSV_COLUMNS = [
+  "seller_sku",
+  "name",
+  "description",
+  "price",
+  "special_price",
+  "currency",
+  "availability",
+  "quantity",
+  "image_url",
+  "additional_image_urls",
+  "product_url",
+  "brand",
+  "category",
+] as const;
+
+function formatPlainPrice(minor: bigint): string {
+  const neg = minor < 0n;
+  const abs = neg ? -minor : minor;
+  return `${neg ? "-" : ""}${(abs / 100n).toString()}.${(abs % 100n).toString().padStart(2, "0")}`;
+}
+
+export function serializeDarazCsv(items: FeedItem[]): string {
+  const lines: string[] = [DARAZ_CSV_COLUMNS.join(",")];
+  for (const it of items) {
+    const row: Record<string, string> = {
+      seller_sku: it.id,
+      name: it.title,
+      description: it.description,
+      price: formatPlainPrice(it.priceMinor),
+      special_price: it.salePriceMinor !== null ? formatPlainPrice(it.salePriceMinor) : "",
+      currency: it.currency,
+      availability: it.inStock ? "in_stock" : "out_of_stock",
+      quantity: it.stockQuantity !== null && it.stockQuantity !== undefined ? String(it.stockQuantity) : "",
+      image_url: it.imageLink,
+      additional_image_urls: it.additionalImageLinks.join(","),
+      product_url: it.link,
+      brand: it.brand,
+      category: it.productType ?? "",
+    };
+    lines.push(DARAZ_CSV_COLUMNS.map((c) => csvCell(row[c] ?? "")).join(","));
   }
   return lines.join("\n");
 }

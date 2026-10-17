@@ -16,6 +16,19 @@ interface Tracking {
   lastCheckedAt: string | null;
   business: string;
   branding?: { name: string; logoUrl: string | null; primaryColor: string | null };
+  // NF9 (FB4): the own-rider's latest fix — present ONLY while
+  // the parcel is out for delivery AND the rider is sharing
+  // (server-decided); null/absent renders nothing at all.
+  riderLocation?: {
+    riderName: string | null;
+    lat: number;
+    lng: number;
+    accuracy: number | null;
+    recordedAt: string;
+    ageMs: number | null;
+    stale: boolean;
+    mapsUrl: string;
+  } | null;
 }
 
 /**
@@ -87,6 +100,22 @@ export default function PublicTrackingPage() {
               <p className="text-sm text-slate-600">কুরিয়ারের স্ট্যাটাস: <b>{data.status}</b></p>
             )}
           </section>
+          {data.riderLocation ? (
+            <section className="rounded-2xl border bg-white p-4 shadow-sm">
+              <h2 className="mb-2 text-sm font-semibold text-slate-500">🛵 রাইডারের অবস্থান</h2>
+              <p className="text-sm text-slate-700">
+                {data.riderLocation.riderName ? <>রাইডার <b>{data.riderLocation.riderName}</b> · </> : null}
+                <span className="font-mono font-semibold">{data.riderLocation.lat}, {data.riderLocation.lng}</span>
+                {data.riderLocation.stale ? (
+                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">পুরনো অবস্থান</span>
+                ) : null}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                অবস্থানের সময়: {fmt(data.riderLocation.recordedAt)} ·{" "}
+                <a href={data.riderLocation.mapsUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">মানচিত্রে দেখুন</a>
+              </p>
+            </section>
+          ) : null}
           <section className="rounded-2xl border bg-white p-4 shadow-sm">
             <h2 className="mb-2 text-sm font-semibold text-slate-500">টাইমলাইন</h2>
             <ul className="space-y-2 text-sm">

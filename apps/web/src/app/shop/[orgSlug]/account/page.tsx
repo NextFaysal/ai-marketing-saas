@@ -9,7 +9,11 @@ import {
   createAddress,
   deleteAddress,
   fetchAccountLoyalty,
+  fetchAccountStoreCredit,
   fetchAddresses,
+  fetchNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
   fetchMe,
   fetchMyOrder,
   fetchMyOrders,
@@ -23,14 +27,17 @@ import {
   updateProfile,
   verifyOtp,
   type AccountLoyalty,
+  type AccountStoreCredit,
   type MyOrder,
   type MyOrderDetail,
   type ReferralRewardCoupon,
   type ShopAddress,
   type ShopCustomer,
+  type ShopNotification,
   type WishlistItem,
 } from "@/lib/storefront-account";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { creditReasonLabel } from "@/lib/membership";
 import { captchaSiteKeyFor, type CheckoutTrust } from "@/lib/orders-gb3";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { priceText, stockBadge } from "../ProductCard";
@@ -71,7 +78,7 @@ function referralCouponState(c: ReferralRewardCoupon): { label: string; cls: str
   return { label: "সক্রিয়", cls: "bg-emerald-100 text-emerald-700" };
 }
 
-type Tab = "orders" | "wishlist" | "addresses" | "profile";
+type Tab = "orders" | "wishlist" | "addresses" | "profile" | "notifications";
 
 function AccountInner() {
   const params = useParams();
@@ -128,6 +135,14 @@ function AccountInner() {
   // / signed out — the page then renders exactly as before).
   const [loyalty, setLoyalty] = useState<AccountLoyalty | null>(null);
   const [refCopied, setRefCopied] = useState(false);
+  // NF7: own store credit + tier (best-effort like loyalty —
+  // a failed load just hides the card).
+  const [storeCredit, setStoreCredit] = useState<AccountStoreCredit | null>(null);
+
+  // MX14: on-site notification center (best-effort like loyalty —
+  // a failed fetch hides the tab's contents, never the page).
+  const [notifications, setNotifications] = useState<ShopNotification[]>([]);
+  const [notifUnread, setNotifUnread] = useState(0);
 
   const [error, setError] = useState("");
 
@@ -193,6 +208,25 @@ function AccountInner() {
     }
   }, [orgSlug]);
 
+  const loadNotifications = useCallback(async () => {
+    try {
+      const out = await fetchNotifications(orgSlug);
+      setNotifications(out.items);
+      setNotifUnread(out.unreadCount);
+    } catch {
+      setNotifications([]);
+      setNotifUnread(0);
+    }
+  }, [orgSlug]);
+
+  const loadStoreCredit = useCallback(async () => {
+    try {
+      setStoreCredit(await fetchAccountStoreCredit(orgSlug));
+    } catch {
+      setStoreCredit(null);
+    }
+  }, [orgSlug]);
+
   const loadAccount = useCallback(async () => {
     if (!getShopSession(orgSlug)) {
       setCustomer(null);
@@ -204,13 +238,13 @@ function AccountInner() {
       setCustomer(me.customer);
       setProfName(me.customer.name ?? "");
       setProfEmail(me.customer.email ?? "");
-      await Promise.all([loadOrders(1), loadWishlist(), loadAddresses(), loadLoyalty()]);
+      await Promise.all([loadOrders(1), loadWishlist(), loadAddresses(), loadLoyalty(), loadNotifications(), loadStoreCredit()]);
     } catch {
       setCustomer(null);
     } finally {
       setReady(true);
     }
-  }, [orgSlug, loadOrders, loadWishlist, loadAddresses, loadLoyalty]);
+  }, [orgSlug, loadOrders, loadWishlist, loadAddresses, loadLoyalty, loadNotifications, loadStoreCredit]);
 
   useEffect(() => { loadAccount(); }, [loadAccount]);
 
@@ -263,6 +297,35 @@ function AccountInner() {
     setWishItems([]);
     setAddresses([]);
     setLoyalty(null);
+    setNotifications([]);
+    setNotifUnread(0);
+  }
+
+  // MX14: opening a notification stamps it read (the real read
+  // signal the broadcast report counts), then follows its
+  // shop-relative URL verbatim when one was set.
+  async function openNotification(n: ShopNotification) {
+    if (!n.isRead) {
+      try {
+        const saved = await markNotificationRead(orgSlug, n.id);
+        setNotifications((prev) => prev.map((x) => (x.id === n.id ? saved : x)));
+        setNotifUnread((c) => Math.max(0, c - 1));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t.account.genericError);
+        return;
+      }
+    }
+    if (n.url) router.push(n.url);
+  }
+
+  async function markAllRead() {
+    try {
+      await markAllNotificationsRead(orgSlug);
+      setNotifications((prev) => prev.map((x) => (x.isRead ? x : { ...x, isRead: true, readAt: new Date().toISOString() })));
+      setNotifUnread(0);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t.account.genericError);
+    }
   }
 
   async function copyReferralCode() {
@@ -504,6 +567,7 @@ function AccountInner() {
     { key: "wishlist", label: t.account.tabsWishlist },
     { key: "addresses", label: t.account.tabsAddresses },
     { key: "profile", label: t.account.tabsProfile },
+    { key: "notifications", label: notifUnread > 0 ? `🔔 নোটিফিকেশন (${notifUnread})` : "🔔 নোটিফিকেশন" },
   ];
 
   return (
@@ -560,6 +624,46 @@ function AccountInner() {
             </ul>
           ) : (
             <p className="border-t pt-3 text-sm font-semibold text-slate-500">এখনো কোনো পয়েন্ট লেনদেন নেই।</p>
+          )}
+        </div>
+      ) : null}
+
+      {/* --- NF7: store credit + membership tier card --- */}
+      {storeCredit && (storeCredit.balanceMinor !== "0" || storeCredit.entries.length > 0 || storeCredit.tier?.tierName) ? (
+        <div className="space-y-4 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-black text-slate-900">💰 স্টোর ক্রেডিট</h2>
+              <p className="text-xs text-slate-500">আপনার ক্রেডিট — চেকআউটে নিজে থেকে খরচ করতে পারবেন। শুধু আপনারই; অন্য কেউ এটি দেখতে বা খরচ করতে পারবে না।</p>
+              {storeCredit.tier?.tierName ? (
+                <p className="mt-1 text-xs font-bold text-amber-700">🏅 আপনার টিয়ার: {storeCredit.tier.tierName} · সারা জীবনের সম্পন্ন খরচ: {money(storeCredit.tier.lifetimeSpendMinor)}</p>
+              ) : null}
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-black text-amber-700">{money(storeCredit.balanceMinor)}</p>
+              <p className="text-xs font-semibold text-slate-500">বর্তমান ব্যালেন্স</p>
+            </div>
+          </div>
+          {storeCredit.entries.length > 0 ? (
+            <ul className="divide-y border-t">
+              {storeCredit.entries.map((e) => (
+                <li key={e.id} className="flex items-start justify-between gap-3 py-2.5 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-800">{creditReasonLabel(e.reason)}</p>
+                    <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-slate-500">
+                      {e.createdAt ? <span>{dateFmt(e.createdAt)}</span> : null}
+                      <span>ব্যালেন্স: {money(e.balanceAfter)}</span>
+                    </p>
+                    {e.note ? <p className="mt-0.5 text-xs text-slate-500">{e.note}</p> : null}
+                  </div>
+                  <span className={`shrink-0 font-black ${e.deltaMinor.startsWith("-") ? "text-rose-600" : "text-emerald-600"}`}>
+                    {e.deltaMinor.startsWith("-") ? `−${money(e.deltaMinor.slice(1))}` : `+${money(e.deltaMinor)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="border-t pt-3 text-sm font-semibold text-slate-500">এখনো কোনো ক্রেডিট লেনদেন নেই।</p>
           )}
         </div>
       ) : null}
@@ -726,6 +830,45 @@ function AccountInner() {
                 </div>
               ) : null}
             </>
+          )}
+        </div>
+      ) : null}
+
+      {/* --- MX14: Notifications tab --- */}
+      {tab === "notifications" ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-black text-slate-900">🔔 নোটিফিকেশন</h2>
+            {notifUnread > 0 ? (
+              <button type="button" onClick={markAllRead} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
+                সব পড়া হয়েছে হিসেবে চিহ্নিত করুন
+              </button>
+            ) : null}
+          </div>
+          {notifications.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+              <p className="text-3xl">🔔</p>
+              <p className="mt-2 text-sm font-semibold text-slate-600">এখনো কোনো নোটিফিকেশন নেই।</p>
+            </div>
+          ) : (
+            notifications.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => openNotification(n)}
+                className={`block w-full rounded-2xl border p-4 text-left shadow-sm transition hover:shadow-md ${n.isRead ? "border-slate-200 bg-white" : "border-indigo-200 bg-indigo-50/60"}`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-slate-900">{n.title}</span>
+                  {!n.isRead ? <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">নতুন</span> : null}
+                </div>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{n.body}</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {n.createdAt ? new Date(n.createdAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD") : ""}
+                  {n.url ? " · খুলতে ক্লিক করুন →" : ""}
+                </p>
+              </button>
+            ))
           )}
         </div>
       ) : null}

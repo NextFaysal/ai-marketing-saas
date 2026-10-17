@@ -9,6 +9,9 @@ import { ResponsiveTable } from "@repo/ui";
 // EC24c — গ্রাহক সাবস্ক্রিপশন (শুধুমাত্র স্টাফ তৈরি করে; দোকানে
 // self-serve সাইনআপ নেই)। নবায়ন হলে sweep একটি COD অর্ডার তৈরি
 // করে — কোনো স্বয়ংক্রিয় পেমেন্ট চার্জ হয় না।
+// OU12 — তৈরি করার সময় গ্রাহকের অটো-চার্জ সম্মতি রেকর্ড করা
+// যায় (পদ্ধতি + সময়সহ), কিন্তু চার্জিং চালু নয়: সম্মতি থাকলেও
+// নবায়ন আগের মতোই COD। ব্যাজে সেটাই স্পষ্ট লেখা থাকে।
 
 interface SubscriptionRow {
   id: string;
@@ -25,7 +28,23 @@ interface SubscriptionRow {
   nextRunAt: string | null;
   lastOrderId: string | null;
   failureCount: number;
+  autoChargeConsentAt?: string | null;
+  autoChargeConsentMethod?: string | null;
+  autoCharge?: {
+    consentGiven: boolean;
+    consentAt: string | null;
+    method: string | null;
+    chargingActive: boolean;
+    statusLabel: string;
+  } | null;
 }
+
+const CONSENT_METHOD_LABEL: Record<string, string> = {
+  phone_call: "ফোন কল",
+  in_person: "সরাসরি",
+  written: "লিখিত",
+  message: "মেসেজ",
+};
 interface CustomerRow { id: string; name: string | null; phone: string | null }
 interface ProductRow {
   id: string; name: string;
@@ -51,6 +70,10 @@ export default function SubscriptionsPage() {
   const [qty, setQty] = useState("1");
   const [variantSku, setVariantSku] = useState("");
   const [createdFromOrderId, setCreatedFromOrderId] = useState("");
+  // OU12: auto-charge consent capture (record only — no charging).
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [consentMethod, setConsentMethod] = useState("phone_call");
+  const [consentNote, setConsentNote] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createMsg, setCreateMsg] = useState("");
@@ -89,15 +112,64 @@ export default function SubscriptionsPage() {
           qty: Math.max(1, parseInt(qty, 10) || 1),
           ...(variantSku.trim() ? { variantSku: variantSku.trim() } : {}),
           ...(createdFromOrderId.trim() ? { createdFromOrderId: createdFromOrderId.trim() } : {}),
+          ...(consentGiven ? {
+            autoChargeConsentGiven: true,
+            autoChargeConsentMethod: consentMethod,
+            ...(consentNote.trim() ? { autoChargeConsentNote: consentNote.trim() } : {}),
+          } : {}),
         }),
       });
-      setCreateMsg("সাবস্ক্রিপশন তৈরি হয়েছে");
+      setCreateMsg(consentGiven
+        ? "সাবস্ক্রিপশন তৈরি হয়েছে — অটো-চার্জ সম্মতি রেকর্ড হয়েছে (চার্জিং এখনো চালু নয়, নবায়ন COD-ই থাকবে)"
+        : "সাবস্ক্রিপশন তৈরি হয়েছে");
       setVariantSku(""); setCreatedFromOrderId(""); setQty("1");
+      setConsentGiven(false); setConsentMethod("phone_call"); setConsentNote("");
       await load();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "তৈরি করা যায়নি");
     } finally { setCreating(false); }
   }
+
+  // OU12: withdraw a recorded consent (clears the record via the
+  // API). Recording later is API-only for now; creation-time
+  // capture above is the dashboard flow.
+  async function withdrawConsent(id: string) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setBusyId(id); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/subscriptions/${id}/auto-charge-consent`, {
+        method: "POST",
+        body: JSON.stringify({ autoChargeConsentGiven: false }),
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "সম্মতি প্রত্যাহার করা যায়নি");
+    } finally { setBusyId(""); }
+  }
+
+  // OU12: the ONLY claim the UI makes from a consent record —
+  // ready, NOT charging. No consent → a plain "none" note.
+  const renderAutoChargeBadge = (s: SubscriptionRow) => {
+    const consent = s.autoCharge?.consentGiven ?? Boolean(s.autoChargeConsentAt);
+    if (!consent) {
+      return <span className="block text-xs text-slate-400">অটো-চার্জ সম্মতি নেই</span>;
+    }
+    const method = s.autoCharge?.method ?? s.autoChargeConsentMethod;
+    return (
+      <span className="mt-1 block">
+        <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-800">
+          auto-charge ready — চার্জিং এখনো চালু নয়
+        </span>
+        <span className="block text-xs text-slate-500">
+          সম্মতি: {method ? (CONSENT_METHOD_LABEL[method] ?? method) : "—"}
+          {s.autoCharge?.consentAt || s.autoChargeConsentAt
+            ? ` · ${new Date((s.autoCharge?.consentAt ?? s.autoChargeConsentAt) as string).toLocaleString("bn-BD")}`
+            : ""}
+        </span>
+      </span>
+    );
+  };
 
   async function act(id: string, action: "pause" | "resume" | "cancel") {
     const orgId = getOrganizationId();
@@ -123,6 +195,9 @@ export default function SubscriptionsPage() {
       ) : null}
       {s.status !== "cancelled" ? (
         <button type="button" disabled={busyId === s.id} onClick={() => act(s.id, "cancel")} className="inline-flex min-h-[44px] items-center rounded-lg bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-800 disabled:opacity-50">বাতিল</button>
+      ) : null}
+      {(s.autoCharge?.consentGiven ?? Boolean(s.autoChargeConsentAt)) && s.status !== "cancelled" ? (
+        <button type="button" disabled={busyId === s.id} onClick={() => withdrawConsent(s.id)} className="inline-flex min-h-[44px] items-center rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 disabled:opacity-50">সম্মতি প্রত্যাহার</button>
       ) : null}
     </div>
   );
@@ -173,6 +248,35 @@ export default function SubscriptionsPage() {
             <input value={createdFromOrderId} onChange={(e) => setCreatedFromOrderId(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm" />
           </label>
         </div>
+        <div className="rounded-xl bg-amber-50 px-3.5 py-3 ring-1 ring-inset ring-amber-100">
+          <label className="flex cursor-pointer items-start gap-2.5 text-sm font-medium text-slate-700">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-600" checked={consentGiven}
+              onChange={(e) => setConsentGiven(e.target.checked)} aria-label="গ্রাহক ভবিষ্যৎ অটো-চার্জে সম্মতি দিয়েছেন" />
+            <span>
+              গ্রাহক ভবিষ্যৎ অটো-চার্জে সম্মতি দিয়েছেন — সম্মতিটি রেকর্ড করুন
+              <span className="block text-xs font-normal text-amber-800">
+                ⚠️ সম্মতি রেকর্ড হলেও চার্জিং এখনো চালু নয় — টোকেনাইজড অটো-চার্জ চালু না হওয়া পর্যন্ত প্রতিটি নবায়ন আগের মতোই COD অর্ডার হবে, কোনো টাকা স্বয়ংক্রিয়ভাবে কাটা হবে না।
+              </span>
+            </span>
+          </label>
+          {consentGiven ? (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-bold text-slate-700">
+                সম্মতির পদ্ধতি (আবশ্যক)
+                <select value={consentMethod} onChange={(e) => setConsentMethod(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm">
+                  <option value="phone_call">ফোন কল</option>
+                  <option value="in_person">সরাসরি</option>
+                  <option value="written">লিখিত</option>
+                  <option value="message">মেসেজ</option>
+                </select>
+              </label>
+              <label className="block text-xs font-bold text-slate-700">
+                নোট (ঐচ্ছিক)
+                <input value={consentNote} onChange={(e) => setConsentNote(e.target.value)} maxLength={500} className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm" placeholder="যেমন: কল রেকর্ডিংয়ের তারিখ" />
+              </label>
+            </div>
+          ) : null}
+        </div>
         {createError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{createError}</p> : null}
         {createMsg ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">{createMsg}</p> : null}
         <button type="submit" disabled={creating} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
@@ -208,7 +312,7 @@ export default function SubscriptionsPage() {
                 <td className="p-3">{s.qty}</td>
                 <td className="p-3">{formatMinorTaka(s.unitPriceMinor)}{s.discountPercent ? <span className="block text-xs text-slate-500">ছাড় {s.discountPercent}%</span> : null}</td>
                 <td className="p-3">{s.nextRunAt ? new Date(s.nextRunAt).toLocaleString("bn-BD") : "—"}</td>
-                <td className="p-3">{STATUS_LABEL[s.status] ?? s.status}</td>
+                <td className="p-3">{STATUS_LABEL[s.status] ?? s.status}{renderAutoChargeBadge(s)}</td>
                 <td className="p-3">{s.failureCount}</td>
                 <td className="p-3">
                   {renderSubActions(s)}
@@ -232,7 +336,7 @@ export default function SubscriptionsPage() {
                 <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিমাণ</dt><dd className="text-right">{s.qty}</dd></div>
                 <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দাম (স্ন্যাপশট)</dt><dd className="text-right">{formatMinorTaka(s.unitPriceMinor)}{s.discountPercent ? <span className="block text-xs text-slate-500">ছাড় {s.discountPercent}%</span> : null}</dd></div>
                 <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরবর্তী নবায়ন</dt><dd className="text-right">{s.nextRunAt ? new Date(s.nextRunAt).toLocaleString("bn-BD") : "—"}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right">{STATUS_LABEL[s.status] ?? s.status}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right">{STATUS_LABEL[s.status] ?? s.status}{renderAutoChargeBadge(s)}</dd></div>
                 <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ব্যর্থতা</dt><dd className="text-right">{s.failureCount}</dd></div>
               </dl>
               <div className="mt-2">{renderSubActions(s)}</div>

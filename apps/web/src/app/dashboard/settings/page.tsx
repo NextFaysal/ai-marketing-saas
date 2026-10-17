@@ -5,24 +5,40 @@ import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
 import {
   MERCHANT_API_SCOPES, canDownloadExport, dataExportKindLabel, dataExportStatusLabel,
-  dataExportsFromPayload, exportDownloadFilename,
+  dataExportsFromPayload, dataImportErrorLabel, dataImportJobStatusLabel,
+  dataImportSkipReasonLabel, dataImportTableLabel, exportDownloadFilename,
   formatExportSize, formatMerchantKeyPrefix, merchantApiKeyStatusLabel, merchantApiScopeLabel,
   merchantKeysFromPayload,
   validateMerchantKeyDraft, type CreatedMerchantApiKey, type DataExportRow,
-  type MerchantApiKeyRecord,
+  type DataImportJob, type DataImportReport, type MerchantApiKeyRecord,
 } from "@/lib/ab8";
 import {
   NOTIFICATION_CATEGORIES, canRevokeOwnSession, isCategoryEnabled, toggleMutedCategory,
   type LoginHistoryRow, type OwnSession,
 } from "@/lib/gb6-team";
 import { BusinessKnowledgeSection } from "./knowledge-section";
+import { AiLearningSection } from "./ai-learning-section";
+import { AiControlCenterSection } from "./ai-control-section";
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
 
 interface OrgBranding {
   name: string; brandName: string | null; logoUrl: string | null;
   primaryColor: string | null; customDomain: string | null;
+  // MX7: brand-kit font (allowlist key) + secondary color — used
+  // by the Messaging email builder's brand kit.
+  brandFont?: string | null; brandSecondaryColor?: string | null;
+  // NF8: the org's own Google review link (see the branding card).
+  googleReviewUrl: string | null;
 }
+
+const BRAND_FONT_OPTIONS: { key: string; labelBn: string }[] = [
+  { key: "hind-siliguri", labelBn: "Hind Siliguri (বাংলা)" },
+  { key: "noto-sans-bengali", labelBn: "Noto Sans Bengali (বাংলা)" },
+  { key: "arial", labelBn: "Arial" },
+  { key: "georgia", labelBn: "Georgia" },
+  { key: "verdana", labelBn: "Verdana" },
+];
 
 /**
  * Milestone 59 — Agency White-Label v1 settings. Everything here
@@ -33,7 +49,11 @@ interface OrgBranding {
 function BrandingCard() {
   const [org, setOrg] = useState<OrgBranding | null>(null);
   const [brandName, setBrandName] = useState("");
+  const [googleReviewUrl, setGoogleReviewUrl] = useState("");
   const [color, setColor] = useState("#4F46E5");
+  const [font, setFont] = useState("");
+  const [color2, setColor2] = useState("#B45309");
+  const [domain, setDomain] = useState("");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,7 +64,11 @@ function BrandingCard() {
       const o = await apiFetch<OrgBranding>(`/organizations/${orgId}`);
       setOrg(o);
       setBrandName(o.brandName ?? "");
+      setGoogleReviewUrl(o.googleReviewUrl ?? "");
       setColor(o.primaryColor ?? "#4F46E5");
+      setFont(o.brandFont ?? "");
+      setColor2(o.brandSecondaryColor ?? "#B45309");
+      setDomain(o.customDomain ?? "");
     } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -55,7 +79,7 @@ function BrandingCard() {
     try {
       await apiFetch(`/organizations/${orgId}/branding`, {
         method: "PATCH",
-        body: JSON.stringify({ brandName, primaryColor: color }),
+        body: JSON.stringify({ brandName, primaryColor: color, brandFont: font, brandSecondaryColor: color2, customDomain: domain, googleReviewUrl: googleReviewUrl.trim() }),
       });
       setMsg("✅ ব্র্যান্ডিং সংরক্ষিত হয়েছে। সাইডবার, ইনভয়েস/লেবেল PDF আর ক্লায়েন্ট রিপোর্টে এখন থেকে এই ব্র্যান্ডিং দেখাবে।");
       await load();
@@ -140,7 +164,46 @@ function BrandingCard() {
               </span>
               <span className="mt-1 block text-xs text-slate-400">ড্যাশবোর্ডের প্রধান বাটন ও PDF অ্যাকসেন্টে ব্যবহার হয়।</span>
             </label>
+            <label className="block text-sm text-slate-600">সেকেন্ডারি রঙ (MX7 — ইমেইল বিল্ডার)
+              <span className="mt-1 flex items-center gap-2">
+                <input type="color" className="h-10 w-14 cursor-pointer rounded-lg border bg-white p-1" value={color2} onChange={(e) => setColor2(e.target.value)} />
+                <input className="input w-28" value={color2} onChange={(e) => setColor2(e.target.value)} placeholder="#B45309" maxLength={20} />
+              </span>
+              <span className="mt-1 block text-xs text-slate-400">Messaging-এর Email Builder-এ কুপন ব্লক ও পণ্যের লিংকে ব্যবহার হয়।</span>
+            </label>
+            <label className="block text-sm text-slate-600">ব্র্যান্ড ফন্ট (MX7 — ইমেইল বিল্ডার)
+              <select className="input mt-1" value={font} onChange={(e) => setFont(e.target.value)}>
+                <option value="">— ডিফল্ট —</option>
+                {BRAND_FONT_OPTIONS.map((f) => <option key={f.key} value={f.key}>{f.labelBn}</option>)}
+              </select>
+              <span className="mt-1 block text-xs text-slate-400">Builder-এ বানানো ইমেইলের লেখায় এই ফন্ট ব্যবহার হয়।</span>
+            </label>
           </div>
+
+          {/* NF14 (FB5): how the shop's installable-app icon is
+              actually chosen — stated exactly as shop-pwa.ts
+              buildShopManifest does it, nothing more claimed. */}
+          <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+            <p className="font-medium text-slate-700">দোকানের অ্যাপ আইকন যেভাবে ঠিক হয়</p>
+            <p className="mt-1 text-xs leading-relaxed">
+              আপনার দোকানটি ক্রেতারা নিজের নাম ও রঙে মোবাইলে ইনস্টল করতে পারেন — দোকানের পেজে থাকা ইনস্টল বার থেকে।
+              নিজের লোগো থাকলে সেই লোগোটিই অ্যাপের আইকন হবে। লোগো না থাকলে white-label দোকানের জন্য দোকানের নামের
+              প্রথম অক্ষর দিয়ে একটি আইকন স্বয়ংক্রিয়ভাবে তৈরি হয়, আর অন্য দোকানের ক্ষেত্রে প্ল্যাটফর্মের ডিফল্ট
+              আইকন ব্যবহৃত হয় — আলাদা করে কোনো অ্যাপ আইকন আপলোডের ব্যবস্থা নেই।
+            </p>
+          </div>
+
+          {/* NF8: the org's own Google review link. Offered (never
+              auto-redirected, no reward attached) on the review
+              thank-you screen only after a 4–5 star review. */}
+          <label className="block text-sm text-slate-600">Google রিভিউ লিংক
+            <input className="input mt-1" value={googleReviewUrl} onChange={(e) => setGoogleReviewUrl(e.target.value)} placeholder="https://g.page/r/…/review" maxLength={2048} inputMode="url" />
+            <span className="mt-1 block text-xs leading-relaxed text-slate-400">
+              আপনার ব্যবসার Google রিভিউ পেজের লিংকটি এখানে বসান (Google Business Profile থেকে “Ask for reviews” লিংক)।
+              ক্রেতা ৪–৫ তারার রিভিউ জমা দিলে ধন্যবাদ-পেজে এই লিংকটি <b>প্রস্তাব</b> হিসেবে দেখানো হবে — কখনোই নিজে থেকে Google-এ পাঠিয়ে দেওয়া হবে না,
+              আর রেটিংয়ের বিনিময়ে কোনো পুরস্কার/ছাড়ের প্রলোভন দেওয়া হয় না। খালি রাখলে কিছুই দেখানো হবে না।
+            </span>
+          </label>
 
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-4 text-sm">
             <span className="font-medium text-slate-700">কাস্টম ডোমেইন:</span>
@@ -315,6 +378,76 @@ function DataToolsCard() {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  // OU12: backup verification (restore-readiness check) state.
+  const [orgSlug, setOrgSlug] = useState("");
+  const [verifyRowId, setVerifyRowId] = useState("");
+  const [verifySlug, setVerifySlug] = useState("");
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; problems: string[]; truncatedTables: string[] } | null>(null);
+  // ORG16: bundle import/restore is OWNER-only (the API enforces
+  // it too) — the section renders its controls only for the owner.
+  const [myRole, setMyRole] = useState("");
+  const [importFileName, setImportFileName] = useState("");
+  const [importText, setImportText] = useState("");
+  const [importReport, setImportReport] = useState<DataImportReport | null>(null);
+  const [importJob, setImportJob] = useState<DataImportJob | null>(null);
+
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<{ id: string; myRole: string }[]>(`/organizations`)
+      .then((mine) => setMyRole((mine ?? []).find((x) => x.id === orgId)?.myRole ?? ""))
+      .catch(() => undefined);
+  }, []);
+
+  async function pickImportFile(file: File | null) {
+    setImportReport(null); setImportJob(null); setError(""); setMsg("");
+    if (!file) { setImportFileName(""); setImportText(""); return; }
+    setImportFileName(file.name);
+    try {
+      const text = await file.text();
+      if (text.length > 2_800_000) {
+        setImportText("");
+        setError("ফাইলটি এই আপলোড পদ্ধতির সীমার (প্রায় ২.৮ MB) চেয়ে বড় — এই পদ্ধতিতে ইমপোর্ট করা যাবে না।");
+        return;
+      }
+      setImportText(text);
+    } catch {
+      setImportText("");
+      setError("ফাইলটি পড়া যায়নি।");
+    }
+  }
+
+  async function validateImport() {
+    const orgId = getOrganizationId(); if (!orgId || !importText) return;
+    setBusy("import-validate"); setMsg(""); setError(""); setImportJob(null);
+    try {
+      const report = await apiFetch<DataImportReport>(`/organizations/${orgId}/data-imports/validate`, {
+        method: "POST",
+        body: JSON.stringify({ fileName: importFileName || undefined, bundleJson: importText }),
+      });
+      setImportReport(report);
+      if (!report.valid && report.errors.length === 0) setError("Bundle-টি যাচাইয়ে উত্তীর্ণ হয়নি।");
+    } catch (e) { setError(e instanceof Error ? e.message : "যাচাই করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function runImport() {
+    const orgId = getOrganizationId(); if (!orgId || !importText) return;
+    setBusy("import-run"); setMsg(""); setError("");
+    try {
+      const job = await apiFetch<DataImportJob>(`/organizations/${orgId}/data-imports`, {
+        method: "POST",
+        body: JSON.stringify({ fileName: importFileName || undefined, bundleJson: importText }),
+      });
+      setImportJob(job);
+      setImportReport(null);
+      if (job.status === "completed") {
+        setMsg(`✅ ইমপোর্ট সম্পন্ন — মোট ${(job.report?.totalImportRows ?? 0).toLocaleString("bn-BD")}টি রেকর্ড ফিরিয়ে আনা হয়েছে।`);
+      } else if (job.status === "failed") {
+        setError(`ইমপোর্ট ব্যর্থ হয়েছে — কোনো ডেটাই লেখা হয়নি। কারণ: ${job.error ?? "অজানা ত্রুটি"}`);
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : "ইমপোর্ট শুরু করা যায়নি"); }
+    finally { setBusy(""); }
+  }
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) { setLoaded(true); return; }
@@ -326,6 +459,9 @@ function DataToolsCard() {
       setItems(out.items);
       setBackupEnabled(out.backupPreference.enabled);
       setLastBackupAt(out.backupPreference.lastBackupAt);
+      // OU12: the slug is the verification confirm text.
+      const org = await apiFetch<{ slug?: string }>(`/organizations/${orgId}`).catch(() => null);
+      if (org?.slug) setOrgSlug(org.slug);
     } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
     finally { setLoaded(true); }
   }, []);
@@ -357,6 +493,27 @@ function DataToolsCard() {
     finally { setBusy(""); }
   }
 
+  // OU12: run the read-only backup verification for one ready
+  // export. OWNER-only on the API; the slug must be typed
+  // exactly. This is NOT a restore — see the note in the card.
+  async function verifyBackup(row: DataExportRow) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`verify-${row.id}`); setMsg(""); setError(""); setVerifyResult(null);
+    try {
+      const out = await apiFetch<{ verification: { ok: boolean; problems: string[]; truncatedTables: string[] } }>(
+        `/organizations/${orgId}/data-exports/${row.id}/verify-backup`,
+        { method: "POST", body: JSON.stringify({ confirmSlug: verifySlug.trim() }) },
+      );
+      setVerifyResult(out.verification);
+      setMsg(out.verification.ok
+        ? "✅ ব্যাকআপ ফাইল যাচাই সম্পন্ন — ফাইলটি অক্ষত ও পাঠযোগ্য। (এটি restore নয়।)"
+        : "⚠️ ব্যাকআপ যাচাইয়ে সমস্যা পাওয়া গেছে — বিস্তারিত নিচে। ফলাফলটি রেকর্ড করা হয়েছে।");
+      setVerifyRowId(""); setVerifySlug("");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "যাচাই করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
   async function downloadExport(row: DataExportRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy(`download-${row.id}`); setMsg(""); setError("");
@@ -382,6 +539,7 @@ function DataToolsCard() {
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
       <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">⚠️ এক্সপোর্টে এই প্রতিষ্ঠানের সম্পূর্ণ রেকর্ড থাকে — ফাইলটি যত্নে নিরাপদ জায়গায় সংরক্ষণ করুন এবং অপরিচিত কারও সঙ্গে শেয়ার করবেন না।</p>
+      <p className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">ℹ️ <strong>ব্যাকআপ যাচাই মানে restore নয়:</strong> এক্সপোর্ট ফাইল থেকে সরাসরি restore করার সুবিধা নেই — ফাইলটি ডেটা বহনযোগ্যতা ও নিরীক্ষার জন্য তৈরি (সংযোগের ক্রেডেনশিয়াল এতে থাকে না, মিডিয়ার শুধু তথ্য থাকে)। যাচাই শুধু নিশ্চিত করে ফাইলটি অক্ষত ও পাঠযোগ্য আছে কিনা।</p>
       {!loaded ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
         <div className="space-y-5">
           <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-100">
@@ -415,15 +573,132 @@ function DataToolsCard() {
                         {row.expiresAt ? ` · মেয়াদ: ${new Date(row.expiresAt).toLocaleString("bn-BD")}` : ""}
                       </span>
                       {row.status === "failed" && row.error ? <span className="block text-xs text-red-600">{row.error}</span> : null}
+                      {row.backupVerifiedAt ? (
+                        <span className={`block text-xs ${row.backupVerification?.ok ? "text-emerald-600" : "text-red-600"}`}>
+                          সর্বশেষ ব্যাকআপ যাচাই: {new Date(row.backupVerifiedAt).toLocaleString("bn-BD")} — {row.backupVerification?.ok ? "✅ ফাইল অক্ষত" : `❌ সমস্যা: ${(row.backupVerification?.problems ?? []).join(", ") || "অজানা"}`}
+                          {row.backupVerification?.truncatedTables?.length ? ` · ছাঁটা টেবিল: ${row.backupVerification.truncatedTables.join(", ")}` : ""}
+                        </span>
+                      ) : null}
                     </span>
-                    {canDownloadExport(row) ? (
-                      <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => downloadExport(row)}>
-                        {busy === `download-${row.id}` ? "ডাউনলোড হচ্ছে…" : "ডাউনলোড"}
-                      </button>
+                    <span className="flex flex-wrap gap-1.5">
+                      {canDownloadExport(row) ? (
+                        <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => downloadExport(row)}>
+                          {busy === `download-${row.id}` ? "ডাউনলোড হচ্ছে…" : "ডাউনলোড"}
+                        </button>
+                      ) : null}
+                      {row.status === "ready" ? (
+                        <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""}
+                          onClick={() => { setVerifyRowId(verifyRowId === row.id ? "" : row.id); setVerifySlug(""); setVerifyResult(null); }}>
+                          ব্যাকআপ যাচাই
+                        </button>
+                      ) : null}
+                    </span>
+                    {verifyRowId === row.id ? (
+                      <span className="block w-full rounded-lg bg-white px-3 py-2.5 ring-1 ring-inset ring-slate-200">
+                        <span className="block text-xs text-slate-600">
+                          যাচাইটি শুধুমাত্র পড়া-ভিত্তিক (read-only) — কোনো ডেটা বদলাবে না। নিশ্চিত করতে প্রতিষ্ঠানের slug
+                          {orgSlug ? <> (<strong>{orgSlug}</strong>)</> : null} হুবহু লিখুন:
+                        </span>
+                        <span className="mt-2 flex flex-wrap gap-2">
+                          <input value={verifySlug} onChange={(e) => setVerifySlug(e.target.value)} className="min-h-[40px] flex-1 rounded-lg border border-slate-300 px-2.5 text-sm" placeholder="org slug" aria-label="নিশ্চিত করতে org slug লিখুন" />
+                          <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== "" || !verifySlug.trim()} onClick={() => verifyBackup(row)}>
+                            {busy === `verify-${row.id}` ? "যাচাই হচ্ছে…" : "যাচাই করুন"}
+                          </button>
+                        </span>
+                        {verifyResult ? (
+                          <span className={`mt-2 block text-xs ${verifyResult.ok ? "text-emerald-600" : "text-red-600"}`}>
+                            {verifyResult.ok ? "✅ ফাইল অক্ষত ও পাঠযোগ্য।" : `❌ সমস্যা: ${verifyResult.problems.join(", ")}`}
+                            {verifyResult.truncatedTables.length ? ` · ছাঁটা টেবিল: ${verifyResult.truncatedTables.join(", ")}` : ""}
+                          </span>
+                        ) : null}
+                      </span>
                     ) : null}
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+
+          <div className="border-t border-slate-100 pt-4">
+            <h3 className="mb-1 text-sm font-semibold text-slate-700">ডেটা ইমপোর্ট (Restore)</h3>
+            <p className="mb-3 text-sm text-slate-500">
+              আগে এক্সপোর্ট করা bundle ফাইল থেকে এই প্রতিষ্ঠানের ডেটা ফিরিয়ে আনুন। ইমপোর্ট শুধু <b>একদম নতুন, খালি</b> প্রতিষ্ঠানে
+              করা যায় — যেসব টেবিল bundle থেকে ফিরিয়ে আনা যায় না (সদস্য, বিলিং, সংযোগ, বার্তা, মিডিয়া ফাইল) তা যাচাই প্রতিবেদনে
+              কারণসহ দেখানো হয়, চুপচাপ বাদ যায় না।
+            </p>
+            {myRole !== "OWNER" ? (
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
+                ডেটা ইমপোর্ট শুধু প্রতিষ্ঠানের মালিক (OWNER) করতে পারেন।
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    aria-label="Bundle ফাইল বাছুন"
+                    className="text-sm text-slate-600 file:mr-2 file:min-h-[40px] file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700"
+                    onChange={(e) => pickImportFile(e.target.files?.[0] ?? null)}
+                  />
+                  <button type="button" className="btn-secondary btn-sm min-h-[40px]" disabled={busy !== "" || !importText} onClick={validateImport}>
+                    {busy === "import-validate" ? "যাচাই হচ্ছে…" : "যাচাই করুন"}
+                  </button>
+                </div>
+
+                {importReport ? (
+                  <div className="rounded-xl bg-slate-50 px-3.5 py-3 text-sm">
+                    {importReport.source?.organizationName ? (
+                      <p className="mb-2 text-slate-600">
+                        উৎস প্রতিষ্ঠান: <b>{importReport.source.organizationName}</b>
+                        {importReport.source.exportedAt ? ` · এক্সপোর্ট: ${new Date(importReport.source.exportedAt).toLocaleString("bn-BD")}` : ""}
+                      </p>
+                    ) : null}
+                    {importReport.errors.length > 0 ? (
+                      <ul className="mb-2 list-inside list-disc space-y-1 text-red-600">
+                        {importReport.errors.map((e) => <li key={e}>{dataImportErrorLabel(e)}</li>)}
+                      </ul>
+                    ) : null}
+                    {importReport.tables.length > 0 ? (
+                      <ul className="space-y-1">
+                        {importReport.tables.map((t) => (
+                          <li key={t.table} className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span className="text-slate-700">{dataImportTableLabel(t.table)}</span>
+                            {t.action === "import" ? (
+                              <span className="text-emerald-700">ফিরিয়ে আনা হবে · {t.rows.toLocaleString("bn-BD")}টি</span>
+                            ) : (
+                              <span className="text-slate-400">বাদ · {dataImportSkipReasonLabel(t.reason)}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {importReport.strippedSensitiveFields.length > 0 ? (
+                      <p className="mt-2 text-xs text-amber-700">
+                        নিরাপত্তা: bundle-এর {importReport.strippedSensitiveFields.join(", ")} ফিরিয়ে আনা হবে না — ওগুলো নতুন প্রতিষ্ঠানে আলাদাভাবে সেট করতে হবে।
+                      </p>
+                    ) : null}
+                    {importReport.warnings.includes("duplicate_product_slugs") ? (
+                      <p className="mt-2 text-xs text-amber-700">সতর্কতা: কিছু পণ্যের slug একই — উৎসেও এমনই ছিল, ইমপোর্ট তবু চলবে।</p>
+                    ) : null}
+                    {importReport.valid ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="text-slate-600">মোট {(importReport.totalImportRows).toLocaleString("bn-BD")}টি রেকর্ড ফিরিয়ে আনা হবে।</span>
+                        <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={runImport}>
+                          {busy === "import-run" ? "ইমপোর্ট হচ্ছে…" : "নিশ্চিত করে ইমপোর্ট করুন"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {importJob ? (
+                  <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    সর্বশেষ ইমপোর্ট: <b>{dataImportJobStatusLabel(importJob.status)}</b>
+                    {importJob.sourceOrgName ? ` · উৎস: ${importJob.sourceOrgName}` : ""}
+                    {importJob.completedAt ? ` · ${new Date(importJob.completedAt).toLocaleString("bn-BD")}` : ""}
+                  </p>
+                ) : null}
+              </div>
             )}
           </div>
 
@@ -433,6 +708,360 @@ function DataToolsCard() {
           </p>
         </div>
       )}
+    </section>
+  );
+}
+
+const ORG_CURRENCIES = [
+  "BDT", "USD", "EUR", "GBP", "INR", "PKR", "LKR", "NPR", "AED", "SAR", "QAR", "KWD", "OMR",
+  "MYR", "SGD", "THB", "VND", "IDR", "PHP", "CNY", "JPY", "KRW", "AUD", "CAD", "CHF",
+  "SEK", "NOK", "DKK", "TRY", "ZAR", "NGN", "KES", "EGP",
+] as const;
+
+function orgTimezones(current: string): string[] {
+  let list: string[] = [];
+  try {
+    const sv = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
+    if (typeof sv === "function") list = sv("timeZone");
+  } catch { list = []; }
+  if (!list.length) list = ["Asia/Dhaka", "Asia/Kolkata", "Asia/Karachi", "Asia/Dubai", "UTC"];
+  return list.includes(current) ? list : [current, ...list];
+}
+
+interface OrgIdentity {
+  name: string; slug: string; currency: string; timezone: string; country: string;
+}
+
+/**
+ * ORG5 (Organization Next OB2): the organization's legal name
+ * and regional defaults. Until now these four fields could only
+ * be set at create time — this card writes them through
+ * PATCH /organizations/:id/identity (OWNER/ADMIN; the card hides
+ * for everyone else, and the API refuses them anyway). The slug
+ * is shown read-only: TD decided slugs are immutable, so there
+ * is deliberately no edit affordance for it here. The currency
+ * warning is part of the semantics, not decoration: a change
+ * moves only the default going forward.
+ */
+function OrgIdentityCard() {
+  const [org, setOrg] = useState<OrgIdentity | null>(null);
+  const [myRole, setMyRole] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [name, setName] = useState("");
+  const [currency, setCurrency] = useState("BDT");
+  const [timezone, setTimezone] = useState("Asia/Dhaka");
+  const [country, setCountry] = useState("BD");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) { setLoaded(true); return; }
+    try {
+      const [o, mine] = await Promise.all([
+        apiFetch<OrgIdentity>(`/organizations/${orgId}`),
+        apiFetch<{ id: string; myRole: string }[]>(`/organizations`).catch(() => [] as { id: string; myRole: string }[]),
+      ]);
+      setOrg(o);
+      setName(o.name ?? "");
+      setCurrency(o.currency ?? "BDT");
+      setTimezone(o.timezone ?? "Asia/Dhaka");
+      setCountry(o.country ?? "BD");
+      setMyRole((mine as { id: string; myRole: string }[]).find((x) => x.id === orgId)?.myRole ?? "");
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    finally { setLoaded(true); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(true); setMsg(""); setError("");
+    try {
+      const out = await apiFetch<{ changedFields?: string[]; unchanged?: boolean }>(`/organizations/${orgId}/identity`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: name.trim(), currency, timezone, country: country.trim().toUpperCase() }),
+      });
+      if (out.unchanged || !out.changedFields?.length) {
+        setMsg("কোনো বদল হয়নি — সব মান আগের মতোই আছে।");
+      } else {
+        setMsg("✅ Organization-এর তথ্য সংরক্ষিত হয়েছে।");
+      }
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    finally { setBusy(false); }
+  }
+
+  if (!loaded) return null;
+  if (myRole !== "OWNER" && myRole !== "ADMIN") return null;
+  if (!org) return null;
+  const currencies = ORG_CURRENCIES.includes(currency as (typeof ORG_CURRENCIES)[number]) ? [...ORG_CURRENCIES] : [currency, ...ORG_CURRENCIES];
+
+  return (
+    <section id="hub-org-identity" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="🏢" title="Organization তথ্য" hint="প্রতিষ্ঠানের আইনি নাম ও আঞ্চলিক ডিফল্ট — এগুলো তৈরি করার সময় বসে, এখন এখান থেকে বদলানো যায়।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-4">
+          <label className="block min-w-56 flex-1 text-sm text-slate-600">প্রতিষ্ঠানের নাম (আইনি নাম)
+            <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="যেমন: Acme Trading Ltd" />
+            <span className="mt-1 block text-xs text-slate-400">এটা প্রতিষ্ঠানের আসল নাম — ব্র্যান্ড/প্রদর্শন নাম উপরের ব্র্যান্ডিং অংশে আলাদা করে বদলানো যায়।</span>
+          </label>
+          <label className="block text-sm text-slate-600">দোকানের ঠিকানা (Slug)
+            <input className="input mt-1 bg-slate-50 font-mono" value={org.slug} readOnly disabled />
+            <span className="mt-1 block text-xs text-slate-400">{org.slug}.qosprey.com — slug তৈরি হওয়ার পর বদলানো যায় না।</span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <label className="block text-sm text-slate-600">Currency (ডিফল্ট মুদ্রা)
+            <select className="input mt-1" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="block min-w-56 flex-1 text-sm text-slate-600">Timezone
+            <select className="input mt-1" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+              {orgTimezones(timezone).map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+            </select>
+          </label>
+          <label className="block text-sm text-slate-600">দেশ (কোড)
+            <input className="input mt-1 w-24 uppercase" value={country} onChange={(e) => setCountry(e.target.value)} maxLength={2} placeholder="BD" />
+          </label>
+        </div>
+        <div className="rounded-xl bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">
+          ⚠️ <b>Currency বদলালে</b> শুধু এখন থেকে তৈরি হওয়া হিসাবের ডিফল্ট বদলাবে — আগের অর্ডার, পেমেন্ট ও সাবস্ক্রিপশনের হিসাব <b>আগের currency-তেই</b> থাকবে, কিছুই নিজে থেকে রূপান্তর হবে না।
+        </div>
+        <button className="btn-primary" disabled={busy} onClick={save}>{busy ? "অপেক্ষা করুন…" : "তথ্য সংরক্ষণ করুন"}</button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * ORG3 (Organization Next OB1): organization lifecycle — the
+ * OWNER can archive the workspace (work pauses, data intact,
+ * TenantGuard enforces it) and restore it from the dashboard's
+ * archived screen or here. Permanent close is deliberately NOT
+ * self-serve: the card explains the honest path — export first,
+ * then the platform team performs the deletion (which also
+ * places the slug on its 180-day hold).
+ */
+interface OrgSecurityPolicy {
+  requireMfa: boolean;
+  sessionMaxAgeHours: number | null;
+  myTotpEnabled: boolean;
+  myMfaBlocked: boolean;
+  mySessionBlocked: boolean;
+}
+
+/**
+ * ORG11 (Organization Next OB4): the organization's security
+ * policy — an MFA requirement for every member and a cap on how
+ * old a member's session may be inside THIS org. Reading the
+ * policy is open to every member (GET), changing it is OWNER-only
+ * (PATCH; the API refuses everyone else), so non-owners see this
+ * card read-only. The self-lockout rule is enforced by the API
+ * and mirrored in the copy: the owner must have their own MFA on
+ * before the requirement can be switched on.
+ */
+function OrgSecurityPolicyCard() {
+  const [policy, setPolicy] = useState<OrgSecurityPolicy | null>(null);
+  const [myRole, setMyRole] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [requireMfa, setRequireMfa] = useState(false);
+  const [capText, setCapText] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) { setLoaded(true); return; }
+    try {
+      const [pol, mine] = await Promise.all([
+        apiFetch<OrgSecurityPolicy>(`/organizations/${orgId}/security-policy`),
+        apiFetch<{ id: string; myRole: string }[]>(`/organizations`).catch(() => [] as { id: string; myRole: string }[]),
+      ]);
+      setPolicy(pol);
+      setRequireMfa(pol.requireMfa);
+      setCapText(pol.sessionMaxAgeHours === null ? "" : String(pol.sessionMaxAgeHours));
+      setMyRole((mine as { id: string; myRole: string }[]).find((x) => x.id === orgId)?.myRole ?? "");
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    finally { setLoaded(true); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const capTrim = capText.trim();
+    let cap: number | null = null;
+    if (capTrim !== "") {
+      cap = Number(capTrim);
+      if (!Number.isInteger(cap) || cap < 1 || cap > 720) {
+        setError("Session-এর সর্বোচ্চ বয়স ১–৭২০ ঘণ্টার মধ্যে হতে হবে (বা সীমা তুলতে ঘর খালি রাখুন)।");
+        return;
+      }
+    }
+    setBusy(true); setMsg(""); setError("");
+    try {
+      const out = await apiFetch<OrgSecurityPolicy & { changedFields?: string[]; unchanged?: boolean }>(`/organizations/${orgId}/security-policy`, {
+        method: "PATCH",
+        body: JSON.stringify({ requireMfa, sessionMaxAgeHours: cap }),
+      });
+      setMsg(out.unchanged || !out.changedFields?.length ? "কোনো বদল হয়নি — নীতি আগের মতোই আছে।" : "✅ নিরাপত্তা নীতি সংরক্ষিত হয়েছে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    finally { setBusy(false); }
+  }
+
+  if (!loaded || !policy) return null;
+  const isOwner = myRole === "OWNER";
+  return (
+    <section id="hub-org-security-policy" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="🛡️" title="Organization-এর নিরাপত্তা নীতি" hint="এই Organization-এর সব সদস্যের জন্য প্রযোজ্য নিয়ম — শুধু মালিক (OWNER) বদলাতে পারেন।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+      <div className="space-y-4">
+        <label className="flex items-start justify-between gap-4 text-sm text-slate-600">
+          <span>
+            <b className="text-slate-800">সব সদস্যের MFA (2FA) বাধ্যতামূলক</b>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-400">
+              চালু থাকলে যার অ্যাকাউন্টে দ্বি-স্তর যাচাই (2FA) চালু নেই, সে এই Organization-এ ঢুকতেই পারবে না —
+              আগে তাকে ওপরের <a className="font-medium underline" href="#hub-my-security">নিরাপত্তা (2FA)</a> অংশ থেকে চালু করতে হবে।
+              {isOwner && !policy.myTotpEnabled ? <span className="mt-1 block font-medium text-amber-600">আপনার নিজের 2FA এখন বন্ধ — এই নীতি চালু করার আগে নিজের 2FA চালু করুন, নইলে সার্ভার সক্রিয় করতে দেবে না (আপনি নিজেই আটকে যাবেন বলে)।</span> : null}
+            </span>
+          </span>
+          <input type="checkbox" className="mt-1 h-5 w-5 shrink-0" checked={requireMfa} disabled={!isOwner || busy} onChange={(e) => setRequireMfa(e.target.checked)} />
+        </label>
+        <label className="block text-sm text-slate-600">Session-এর সর্বোচ্চ বয়স (ঘণ্টা) — এই Organization-এর জন্য
+          <input className="input mt-1 w-44" inputMode="numeric" placeholder="খালি = কোনো সীমা নেই" value={capText} disabled={!isOwner || busy} onChange={(e) => setCapText(e.target.value)} />
+          <span className="mt-1 block text-xs leading-relaxed text-slate-400">
+            সীমা দিলে তার চেয়ে পুরনো লগইন-সেশন দিয়ে এই Organization-এ কাজ করা যাবে না — সদস্যকে আবার লগইন করতে হবে।
+            অন্য Organization-এ এর কোনো প্রভাব নেই। সর্বোচ্চ ৭২০ ঘণ্টা (৩০ দিন)।
+          </span>
+        </label>
+        {isOwner ? (
+          <button type="button" className="btn-primary min-h-[44px] px-5" disabled={busy} onClick={save}>{busy ? "সংরক্ষণ হচ্ছে…" : "নীতি সংরক্ষণ করুন"}</button>
+        ) : (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
+            বর্তমান অবস্থা: MFA বাধ্যতামূলক — <b>{policy.requireMfa ? "চালু" : "বন্ধ"}</b> · Session সীমা — <b>{policy.sessionMaxAgeHours === null ? "নেই" : `${policy.sessionMaxAgeHours} ঘণ্টা`}</b>।
+            বদলাতে হলে Organization-এর মালিককে বলুন।
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OrgLifecycleCard() {
+  const [org, setOrg] = useState<{ name: string; status: string; archivedAt: string | null } | null>(null);
+  const [myRole, setMyRole] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) { setLoaded(true); return; }
+    try {
+      const [o, mine] = await Promise.all([
+        apiFetch<{ name: string; status: string; archivedAt: string | null }>(`/organizations/${orgId}`),
+        apiFetch<{ id: string; myRole: string }[]>(`/organizations`).catch(() => [] as { id: string; myRole: string }[]),
+      ]);
+      setOrg(o);
+      setMyRole((mine as { id: string; myRole: string }[]).find((x) => x.id === orgId)?.myRole ?? "");
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    finally { setLoaded(true); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function archive() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("archive"); setMsg(""); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/archive`, { method: "POST" });
+      // The dashboard gate takes over from here (archived screen).
+      window.location.reload();
+    } catch (e) { setError(e instanceof Error ? e.message : "আর্কাইভ করা যায়নি"); setBusy(""); }
+  }
+
+  async function restore() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("restore"); setMsg(""); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/restore`, { method: "POST" });
+      setConfirming(false);
+      setMsg("✅ Organization Restore হয়েছে — টিম আবার কাজ করতে পারবে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Restore করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  if (!loaded) return null;
+  if (myRole !== "OWNER" && myRole !== "ADMIN") return null;
+  const archived = Boolean(org?.archivedAt);
+
+  return (
+    <section id="hub-org-lifecycle" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="🗄️" title="Organization আর্কাইভ ও বন্ধ করা" hint="কাজ সাময়িকভাবে থামাতে আর্কাইভ করুন — সব তথ্য অক্ষত থাকবে। স্থায়ীভাবে বন্ধ করার আগে এক্সপোর্ট করে রাখুন।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+
+      <div className="space-y-5">
+        <div>
+          <h3 className="mb-1 text-sm font-semibold text-slate-700">আর্কাইভ (সাময়িক বন্ধ)</h3>
+          {archived ? (
+            <>
+              <p className="mb-3 text-sm text-slate-600">
+                এই Organization টি এখন <b>আর্কাইভ করা</b> আছে ({org?.archivedAt ? new Date(org.archivedAt).toLocaleString("bn-BD") : ""}) — টিমের কেউ কাজ করতে পারছে না, তবে সব তথ্য অক্ষত আছে।
+              </p>
+              {myRole === "OWNER" ? (
+                <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={restore}>
+                  {busy === "restore" ? "অপেক্ষা করুন…" : "♻️ Restore করুন"}
+                </button>
+              ) : <p className="text-sm text-slate-500">Restore শুধু মালিক (OWNER) করতে পারবেন।</p>}
+            </>
+          ) : (
+            <>
+              <p className="mb-3 text-sm leading-relaxed text-slate-600">
+                আর্কাইভ করলে এই ওয়ার্কস্পেসে <b>সব কাজ সঙ্গে সঙ্গে বন্ধ</b> হয়ে যাবে — টিমের কেউ কোনো পেজ বা API ব্যবহার করতে পারবে না।
+                কোনো তথ্য <b>মুছবে না</b>; মালিক যেকোনো সময় Restore করে আবার চালু করতে পারবেন। শুধু মালিক (OWNER) আর্কাইভ করতে পারেন।
+              </p>
+              {myRole === "OWNER" ? (
+                !confirming ? (
+                  <button type="button" className="btn-secondary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={() => setConfirming(true)}>
+                    Organization আর্কাইভ করুন
+                  </button>
+                ) : (
+                  <div className="space-y-3 rounded-xl bg-amber-50 p-4">
+                    <p className="text-sm text-amber-900">
+                      নিশ্চিত তো? <b>{org?.name}</b> আর্কাইভ হলে টিমের সবার কাজ এখনই বন্ধ হয়ে যাবে। Restore না করা পর্যন্ত কেউ ঢুকতে পারবে না (ডেটা এক্সপোর্ট ও Restore মালিকের জন্য খোলা থাকবে)।
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={archive}>
+                        {busy === "archive" ? "আর্কাইভ হচ্ছে…" : "হ্যাঁ, আর্কাইভ করুন"}
+                      </button>
+                      <button type="button" className="btn-secondary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={() => setConfirming(false)}>থাক, বাতিল</button>
+                    </div>
+                  </div>
+                )
+              ) : <p className="text-sm text-slate-500">আপনি ADMIN — আর্কাইভ করার অধিকার শুধু মালিকের (OWNER)।</p>}
+            </>
+          )}
+        </div>
+
+        <div className="border-t border-slate-100 pt-4">
+          <h3 className="mb-1 text-sm font-semibold text-slate-700">স্থায়ীভাবে বন্ধ করা (Close)</h3>
+          <p className="text-sm leading-relaxed text-slate-600">
+            Organization স্থায়ীভাবে মোছা এই পেজ থেকে করা যায় না — ভুল করে মুছে ফেলার ঝুঁকি এড়াতেই এই সিদ্ধান্ত।
+            বন্ধ করতে চাইলে ধাপগুলো এমন:
+          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-slate-600">
+            <li>আগে <a href="#hub-data-tools" className="font-semibold text-indigo-700 hover:underline">ডেটা ও ব্যাকআপ</a> অংশ থেকে পুরো ডেটা এক্সপোর্ট করে নিজের কাছে সংরক্ষণ করুন — মোছার পর আর ফেরত পাওয়া যাবে না।</li>
+            <li>তারপর প্ল্যাটফর্ম সাপোর্টে যোগাযোগ করে স্থায়ীভাবে বন্ধের অনুরোধ জানান — টিম যাচাই করে মুছে দেবে।</li>
+            <li>মোছার পর এই Organization এর নাম (slug) <b>১৮০ দিন</b> সংরক্ষিত থাকে — ওই সময়ে অন্য কেউ একই নামে নতুন দোকান খুলতে পারবে না।</li>
+          </ol>
+        </div>
+      </div>
     </section>
   );
 }
@@ -451,6 +1080,9 @@ const HUB_NAV = [
   { id: "hub-payment", icon: "💳", label: "পেমেন্ট" },
   { id: "hub-ai", icon: "🤖", label: "AI এর আচরণ" },
   { id: "hub-knowledge", icon: "📚", label: "Business Knowledge" },
+  { id: "hub-ai-learning", icon: "🧠", label: "AI শিখন" },
+  { id: "hub-ai-control", icon: "🎛️", label: "AI নিয়ন্ত্রণ" },
+  { id: "hub-org-identity", icon: "🏢", label: "Organization তথ্য" },
   { id: "hub-branding", icon: "🎨", label: "ব্র্যান্ডিং" },
   { id: "hub-org-verification", icon: "🏅", label: "প্রতিষ্ঠান যাচাইকরণ" },
   { id: "hub-verification", icon: "✅", label: "যাচাইকরণ (ইমেইল/ফোন)" },
@@ -458,6 +1090,7 @@ const HUB_NAV = [
   { id: "hub-my-security", icon: "🖥️", label: "আমার সেশন ও নোটিফিকেশন" },
   { id: "hub-developer-api", icon: "🔑", label: "ডেভেলপার API" },
   { id: "hub-data-tools", icon: "💾", label: "ডেটা ও ব্যাকআপ" },
+  { id: "hub-org-lifecycle", icon: "🗄️", label: "আর্কাইভ ও বন্ধ করা" },
 ] as const;
 
 /**
@@ -1451,6 +2084,10 @@ export default function SettingsPage() {
           <OrgVerificationCard />
           <BusinessKnowledgeSection />
 
+          <AiLearningSection />
+
+          <AiControlCenterSection />
+
           <section id="hub-security" className="card scroll-mt-24 p-5 sm:p-6">
             <SectionHead icon="🔐" title="আমার অ্যাকাউন্টের নিরাপত্তা — দ্বি-স্তর যাচাই (2FA)" hint={`চালু করলে লগইনে পাসওয়ার্ডের পর ফোনের Authenticator অ্যাপের ৬ সংখ্যার কোড লাগবে। অবস্থা: ${status === null ? "লোড হচ্ছে…" : status.totpEnabled ? "চালু আছে" : `বন্ধ${status.enrolmentInProgress ? " (Enrol শুরু হয়েছে, নিশ্চিত করা বাকি)" : ""}`}`} />
             {status && !status.totpEnabled ? (
@@ -1501,11 +2138,15 @@ export default function SettingsPage() {
           <MySecurityCard />
 
           <AccountVerificationCard />
+          <OrgIdentityCard />
+          <OrgSecurityPolicyCard />
           <BrandingCard />
 
           <DeveloperApiCard />
 
           <DataToolsCard />
+
+          <OrgLifecycleCard />
         </div>
       </div>
     </div>

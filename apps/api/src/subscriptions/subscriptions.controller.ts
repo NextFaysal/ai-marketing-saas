@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { SubscriptionsService } from "./subscriptions.service";
-import { CreateSubscriptionDto } from "./subscriptions.dto";
+import { AutoChargeConsentDto, CreateSubscriptionDto } from "./subscriptions.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -49,6 +49,14 @@ export class SubscriptionsController {
   @Roles(...WRITE_ROLES)
   resume(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("subscriptionId") id: string) {
     return this.subscriptions.resume(orgId, user.userId, id);
+  }
+
+  /** OU12: record/withdraw the customer's auto-charge consent.
+   * Consent ONLY — charging is not active; see the service. */
+  @Post(":subscriptionId/auto-charge-consent")
+  @Roles(...WRITE_ROLES)
+  setAutoChargeConsent(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("subscriptionId") id: string, @Body() dto: AutoChargeConsentDto) {
+    return this.subscriptions.setAutoChargeConsent(orgId, user.userId, id, dto);
   }
 
   @Post(":subscriptionId/cancel")

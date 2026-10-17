@@ -2,6 +2,7 @@
 import React from "react";
 import { FRAUD_RULE_ACTION_LABEL, fraudAttemptKindLabel, identifierKindLabel, type FraudRuleDraft } from "@/lib/orders-gb3";
 import type { BlockedPhoneRow, FraudAttemptRow, FraudRuleRow, FraudSettings, IdentifierRow } from "./types";
+import { FraudNetworkCard } from "./FraudNetworkCard";
 
 export interface FraudSettingsPanelProps {
   fraudPanelOpen: boolean;
@@ -137,6 +138,10 @@ export function FraudSettingsPanel({ fraudPanelOpen, setFraudPanelOpen, fraudPan
                 </button>
               </div>
             )}
+            {/* NF13 (FB5): platform fraud network opt-in card —
+                self-contained; renders its honest explainer
+                before the OWNER-only toggle. */}
+            <FraudNetworkCard />
             <div className="mt-6 space-y-3 border-t pt-4">
               <div className="flex flex-wrap gap-2" role="tablist" aria-label="শনাক্তকারী তালিকা">
                 {([["phone", "ফোন ব্লক (আগের তালিকা)"], ["blocked", "ইমেইল/IP/ডিভাইস ব্লক"], ["trusted", "বিশ্বস্ত তালিকা"]] as const).map(([key, label]) => (

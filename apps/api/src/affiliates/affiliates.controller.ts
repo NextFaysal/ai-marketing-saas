@@ -1,7 +1,10 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { AffiliatesService } from "./affiliates.service";
 import {
+  ConfirmAffiliatePayoutExecutionDto,
   CreateAffiliatePartnerDto,
+  CreateAffiliatePayoutExecutionDto,
+  FailAffiliatePayoutExecutionDto,
   RecordAffiliatePayoutDto,
   UpdateAffiliatePartnerDto,
 } from "./affiliates.dto";
@@ -67,6 +70,46 @@ export class AffiliatesController {
     @Body() dto: RecordAffiliatePayoutDto,
   ) {
     return this.affiliates.recordPayout(orgId, user.userId, partnerId, dto);
+  }
+
+  // OU11 — affiliate payout executions on the legal-gated
+  // bank-instruction rail (issue → execute at bank → confirm
+  // with the bank reference / fail with a reason). The EC32
+  // recordPayout route above stays the ungated manual
+  // bookkeeping path, unchanged.
+  @Post("affiliates/partners/:partnerId/payout-executions") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createPayoutExecution(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("partnerId") partnerId: string,
+    @Body() dto: CreateAffiliatePayoutExecutionDto,
+  ) {
+    return this.affiliates.createAffiliatePayoutExecution(orgId, user.userId, partnerId, dto);
+  }
+
+  @Get("affiliates/partners/:partnerId/payout-executions")
+  listPayoutExecutions(@Param("organizationId") orgId: string, @Param("partnerId") partnerId: string) {
+    return this.affiliates.listAffiliatePayoutExecutions(orgId, partnerId);
+  }
+
+  @Post("affiliates/payout-executions/:executionId/confirm") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  confirmPayoutExecution(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("executionId") executionId: string,
+    @Body() dto: ConfirmAffiliatePayoutExecutionDto,
+  ) {
+    return this.affiliates.confirmAffiliatePayoutExecution(orgId, user.userId, executionId, dto);
+  }
+
+  @Post("affiliates/payout-executions/:executionId/fail") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  failPayoutExecution(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("executionId") executionId: string,
+    @Body() dto: FailAffiliatePayoutExecutionDto,
+  ) {
+    return this.affiliates.failAffiliatePayoutExecution(orgId, user.userId, executionId, dto);
   }
 
   @Get("affiliates/entries")

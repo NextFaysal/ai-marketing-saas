@@ -10,6 +10,7 @@ import { fetchCart, getCartToken, patchCartLine } from "@/lib/storefront-cart";
 import { trackShopEvent } from "@/lib/shop-tracking";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
+import { displayPriceCaption } from "@/lib/translations";
 import { WishlistHeart } from "../../WishlistHeart";
 import { StockAlertForm } from "../../StockAlertForm";
 import {
@@ -644,6 +645,12 @@ export function ProductDetailClient({
               <span className="rounded-full bg-pink-100 px-2 py-0.5 text-[11px] font-bold text-pink-700">🎁 গিফট কার্ড</span>
             ) : null}
           </div>
+          {/* NF5: converted DISPLAY price for the base price
+              (server-sent, honestly labelled; hidden when a
+              variant with its own price is selected). */}
+          {!variant && displayPriceCaption(product) ? (
+            <p className="mt-1 text-xs text-slate-500">{displayPriceCaption(product)}</p>
+          ) : null}
           {product.sku ? <p className="mt-1 text-[11px] text-slate-400">SKU: {product.sku}</p> : null}
           {product.brand ? (
             <p className="mt-1 text-xs text-slate-500">

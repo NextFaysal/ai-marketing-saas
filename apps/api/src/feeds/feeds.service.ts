@@ -11,14 +11,16 @@ import { AuditService } from "../audit/audit.service";
 import {
   buildFeedItems,
   previewFeedItem,
+  serializeDarazCsv,
   serializeFeedCsv,
   serializeFeedXml,
+  DARAZ_FEED_TEMPLATE_WARNING,
   FEED_SKIP_MESSAGES,
   type FeedProductInput,
 } from "./feed-generator";
 import type { CreateFeedDto, UpdateFeedDto } from "./feeds.dto";
 
-const CHANNELS = ["meta", "google", "tiktok"] as const;
+const CHANNELS = ["meta", "google", "tiktok", "daraz"] as const;
 
 function apiPublicBase(): string {
   return (process.env.API_PUBLIC_URL ?? "http://localhost:4000").replace(/\/+$/, "");
@@ -85,9 +87,14 @@ export class FeedsService {
 
   async create(orgId: string, actorId: string, dto: CreateFeedDto) {
     if (!(CHANNELS as readonly string[]).includes(dto.channel)) {
-      throw new BadRequestException("চ্যানেল সঠিক নয় (meta | google | tiktok)");
+      throw new BadRequestException("চ্যানেল সঠিক নয় (meta | google | tiktok | daraz)");
     }
-    const format = dto.format ?? (dto.channel === "tiktok" ? "csv" : "xml");
+    // OU3: the Daraz export exists only as CSV (no XML form is
+    // claimed for a Seller Center upload file).
+    if (dto.channel === "daraz" && dto.format !== undefined && dto.format !== "csv") {
+      throw new BadRequestException("Daraz ফিড শুধু CSV ফরম্যাটে হয়");
+    }
+    const format = dto.format ?? (dto.channel === "tiktok" || dto.channel === "daraz" ? "csv" : "xml");
     const row = await this.table().create({
       data: {
         organizationId: orgId,
@@ -219,6 +226,7 @@ export class FeedsService {
         ...(feed.channel === "meta" && !feed.defaultGoogleCategory
           ? ["Meta ক্যাটালগে google_product_category প্রত্যাশা করে — এই ফিডে সেটি সেট করা হয়নি, আইটেমে ক্যাটাগরি যাবে না।"]
           : []),
+        ...(feed.channel === "daraz" ? [DARAZ_FEED_TEMPLATE_WARNING] : []),
       ],
     };
   }
@@ -247,6 +255,9 @@ export class FeedsService {
         description: `${setting?.shopName ?? org?.name ?? "Shop"} product feed`,
       });
       contentType = "application/xml; charset=utf-8";
+    } else if (feed.channel === "daraz") {
+      body = serializeDarazCsv(items);
+      contentType = "text/csv; charset=utf-8";
     } else {
       body = serializeFeedCsv(items);
       contentType = "text/csv; charset=utf-8";

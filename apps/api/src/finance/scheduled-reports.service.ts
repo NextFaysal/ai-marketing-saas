@@ -4,6 +4,7 @@ import { EmailProvider } from "../messaging/email.provider";
 import { OrderProfitService } from "../orders/order-profit.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { FinanceReportsService, REPORT_LABELS_BN } from "./finance-reports.service";
+import { aggregateFunnels, ASSOCIATION_LABEL_BN, type BroadcastFunnelShape } from "../messaging/analytics";
 import {
   buildFileFromSections,
   dhakaDateKey,
@@ -40,7 +41,7 @@ import {
  * never ran).
  */
 
-export const SCHEDULED_REPORT_TYPES = ["discounts", "refunds", "payment_sales", "category_sales", "shipping_cost", "profit"] as const;
+export const SCHEDULED_REPORT_TYPES = ["discounts", "refunds", "payment_sales", "category_sales", "shipping_cost", "profit", "messaging_summary"] as const;
 const CADENCES = ["daily", "weekly"] as const;
 const FORMATS = ["csv", "xlsx"] as const;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -193,6 +194,137 @@ export class ScheduledReportsService {
     return buildFileFromSections(`profit-${from}-to-${to}`, sections, format, summary, [`লাভের রিপোর্ট · সময়সীমা: ${from} থেকে ${to} (ঢাকা) · ভিত্তি: পণ্যের লাইন-মোট (ছাড়ের আগে)`]);
   }
 
+  /**
+   * MX16 — the scheduled MESSAGING summary, plugged into this
+   * existing system as a new reportType (the integration point
+   * the MB6 Step-0 audit named — no second scheduler was
+   * built). Figures come from the messaging records themselves
+   * (Broadcast / MessageDelivery / MessageLinkClick rows of
+   * the period, judged by sentAt), with the same funnel
+   * capability rule as the broadcast report: a stage a channel
+   * cannot report stays EMPTY (null), never 0. Orders are the
+   * labelled ASSOCIATION figure (recipient customers'
+   * non-cancelled, non-practice orders in the 7 days after
+   * each broadcast was sent) — there is no honest
+   * AttributionCredit join for messaging, so no attribution
+   * figure appears anywhere in this file.
+   */
+  private async buildMessagingFile(organizationId: string, from: string, to: string, format: "csv" | "xlsx"): Promise<BuiltFile> {
+    const fromDate = new Date(`${from}T00:00:00+06:00`);
+    const toDate = new Date(`${to}T23:59:59.999+06:00`);
+    const allBroadcasts: any[] = await this.t("broadcast").findMany({
+      where: { organizationId }, orderBy: { createdAt: "desc" }, take: 500,
+    }).catch(() => []);
+    const broadcasts = (allBroadcasts ?? []).filter((b: any) => {
+      if (!b.sentAt) return false;
+      const t = new Date(b.sentAt).getTime();
+      return t >= fromDate.getTime() && t <= toDate.getTime();
+    });
+    const rows: {
+      broadcast: any; funnel: BroadcastFunnelShape; assocOrders: number; assocTotal: bigint;
+    }[] = [];
+    for (const b of broadcasts) {
+      const deliveries: any[] = await this.t("messageDelivery").findMany({
+        where: { organizationId, broadcastId: b.id }, take: 20000,
+      }).catch(() => []);
+      let sent = 0, failed = 0, skipped = 0;
+      const deliveredKeys = new Set<string>();
+      const readKeys = new Set<string>();
+      const openedKeys = new Set<string>();
+      for (const d of deliveries ?? []) {
+        if (d.status === "sent") sent++;
+        else if (d.status === "failed") failed++;
+        else if (d.status === "skipped") skipped++;
+        if (d.status !== "sent") continue;
+        const key = d.recipientId ? `${d.recipientType}:${d.recipientId}` : `${d.recipientType}:${d.address}`;
+        if (d.deliveryStatus === "delivered" || d.deliveryStatus === "read" || d.deliveredAt) deliveredKeys.add(key);
+        if (d.deliveryStatus === "read" || d.readAt) readKeys.add(key);
+        if (d.openedAt) openedKeys.add(key);
+      }
+      const clicks: any[] = await this.t("messageLinkClick").findMany({
+        where: { organizationId, broadcastId: b.id }, take: 20000,
+      }).catch(() => []);
+      const channel = String(b.channel);
+      const funnel: BroadcastFunnelShape = {
+        audience: sent + failed + skipped,
+        sent, failed, skipped,
+        delivered: channel === "whatsapp" || channel === "onsite" ? deliveredKeys.size : null,
+        read: channel === "whatsapp" || channel === "onsite" ? readKeys.size : null,
+        opened: channel === "email" && b.htmlBody ? openedKeys.size : null,
+        clickedRecipients: ["whatsapp", "push", "telegram", "onsite"].includes(channel) ? null : new Set((clicks ?? []).map((c: any) => c.recipientKey)).size,
+        totalClicks: ["whatsapp", "push", "telegram", "onsite"].includes(channel) ? null : (clicks ?? []).length,
+      };
+      // Association: recipient customers (snapshot entries or
+      // BroadcastRecipient rows) → their orders in the 7 days
+      // after this broadcast was sent.
+      const customerIds = new Set<string>();
+      const snapshot: any[] = Array.isArray(b.recipientSnapshot) ? b.recipientSnapshot : [];
+      for (const e of snapshot) if (e?.type === "customer" && e?.id) customerIds.add(String(e.id));
+      if (!snapshot.length) {
+        const recips: any[] = await this.t("broadcastRecipient").findMany({
+          where: { broadcastId: b.id, recipientType: "customer" }, take: 20000,
+        }).catch(() => []);
+        for (const r of recips ?? []) if (r.recipientId) customerIds.add(String(r.recipientId));
+      }
+      const start = new Date(b.sentAt);
+      const end = new Date(start.getTime() + 7 * 24 * 3600 * 1000);
+      let assocOrders = 0;
+      let assocTotal = BigInt(0);
+      const ids = [...customerIds];
+      for (let s = 0; s < ids.length; s += 500) {
+        const orders: any[] = await this.t("order").findMany({
+          where: {
+            organizationId, customerId: { in: ids.slice(s, s + 500) },
+            createdAt: { gte: start, lt: end }, status: { not: "cancelled" }, isPractice: false,
+          },
+          select: { totalMinor: true },
+        }).catch(() => []);
+        for (const o of orders ?? []) {
+          assocOrders++;
+          try { assocTotal += BigInt(o.totalMinor ?? 0); } catch { /* malformed stored figure contributes nothing */ }
+        }
+      }
+      rows.push({ broadcast: b, funnel, assocOrders, assocTotal });
+    }
+    const channels = aggregateFunnels(rows.map((r) => ({ channel: String(r.broadcast.channel), funnel: r.funnel })));
+    const totSent = rows.reduce((s, r) => s + r.funnel.sent, 0);
+    const totFailed = rows.reduce((s, r) => s + r.funnel.failed, 0);
+    const totSkipped = rows.reduce((s, r) => s + r.funnel.skipped, 0);
+    const totAssocOrders = rows.reduce((s, r) => s + r.assocOrders, 0);
+    const totAssocTotal = rows.reduce((s, r) => s + r.assocTotal, BigInt(0));
+    const cell = (v: number | null) => (v === null ? "" : v);
+    const sections: ReportSection[] = [
+      { title: "সারসংক্ষেপ", headers: ["বিবরণ", "পরিমাণ"], rows: [
+        ["এই সময়ে পাঠানো Broadcast", rows.length],
+        ["মোট Sent (Delivery রেকর্ড থেকে)", totSent],
+        ["মোট Failed", totFailed],
+        ["মোট Skipped", totSkipped],
+        ["সম্পর্কিত অর্ডার (Association — কারণের প্রমাণ নয়)", totAssocOrders],
+        ["সম্পর্কিত অর্ডারের মোট (টাকা)", takaCell(totAssocTotal)],
+      ] },
+      { title: "Channel অনুযায়ী Funnel", headers: ["Channel", "Broadcast", "Sent", "Failed", "Skipped", "Delivered", "Read", "Opened", "Clicked (প্রাপক)", "মোট Click"], rows: channels.map((c) => [
+        c.channel, c.broadcasts, c.sent, c.failed, c.skipped,
+        cell(c.delivered), cell(c.read), cell(c.opened), cell(c.clickedRecipients), cell(c.totalClicks),
+      ]) },
+      { title: "Broadcast অনুযায়ী", headers: ["Broadcast", "Channel", "Status", "Sent", "Failed", "Skipped", "Delivered", "Read", "Opened", "Clicked (প্রাপক)", "সম্পর্কিত অর্ডার", "সম্পর্কিত মোট (টাকা)"], rows: rows.map((r) => [
+        String(r.broadcast.name ?? ""), String(r.broadcast.channel), String(r.broadcast.status),
+        r.funnel.sent, r.funnel.failed, r.funnel.skipped,
+        cell(r.funnel.delivered), cell(r.funnel.read), cell(r.funnel.opened), cell(r.funnel.clickedRecipients),
+        r.assocOrders, takaCell(r.assocTotal),
+      ]) },
+    ];
+    const summary = [
+      `মেসেজিং সারসংক্ষেপ · ${from} — ${to}`,
+      `Broadcast: ${rows.length}টি · Sent: ${totSent} · Failed: ${totFailed} · Skipped: ${totSkipped}`,
+      `সম্পর্কিত অর্ডার (Association): ${totAssocOrders}টি · ${takaText(totAssocTotal)}`,
+    ].join("\n");
+    return buildFileFromSections(`messaging_summary-${from}-to-${to}`, sections, format, summary, [
+      `মেসেজিং সারসংক্ষেপ · সময়সীমা: ${from} থেকে ${to} (ঢাকা) · ভিত্তি: Broadcast-এর sentAt + MessageDelivery/MessageLinkClick রেকর্ড`,
+      `অর্ডারের সংখ্যা: ${ASSOCIATION_LABEL_BN}`,
+      "যে ধাপ কোনো Channel রিপোর্ট করতে পারে না, সেই ঘর খালি (null) — কখনো বানানো ০ নয়।",
+    ]);
+  }
+
   private async buildFile(organizationId: string, config: any, now: Date): Promise<{ file: BuiltFile; periodLabel: string }> {
     const range = String(config.cadence) === "weekly"
       ? FinanceReportsService.lastWeekRange(now)
@@ -202,7 +334,9 @@ export class ScheduledReportsService {
     const type = String(config.reportType);
     const file = type === "profit"
       ? await this.buildProfitFile(organizationId, range.from, range.to, format)
-      : await this.reports.buildReportFile(organizationId, type, range.from, range.to, format);
+      : type === "messaging_summary"
+        ? await this.buildMessagingFile(organizationId, range.from, range.to, format)
+        : await this.reports.buildReportFile(organizationId, type, range.from, range.to, format);
     return { file, periodLabel };
   }
 

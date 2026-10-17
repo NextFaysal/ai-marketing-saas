@@ -14,6 +14,9 @@ import { LinkedInClient } from "./linkedin.client";
 import { PublicMediaService } from "../storage/public-media.service";
 import { TelegramClient, TELEGRAM_CAPTION_MAX, TELEGRAM_TEXT_MAX } from "./telegram.client";
 import { ThreadsClient, ThreadsPublisher } from "./threads.client";
+import { GoogleBusinessClient } from "./google-business.client";
+import { GBP_API_ACCESS_GATE_MSG, GBP_PLATFORM } from "./social.constants";
+import { effectiveGbpApiAccessApproved } from "../common/platform-config";
 import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialLinkService } from "./social-link.service";
@@ -95,6 +98,9 @@ export class SocialPublishService {
   // SN7: Threads container publisher + raw client (permalink).
   private readonly threadsPublisher: ThreadsPublisher;
   private readonly threadsClient: ThreadsClient;
+  // OU9: GBP LocalPost client (gate + create live in
+  // publishToGoogleBusiness below).
+  private readonly gbpClient: GoogleBusinessClient;
   // RB4/RM5: public-media seam (CDN URL for publish).
   private readonly publicMedia?: PublicMediaService;
 
@@ -129,6 +135,8 @@ export class SocialPublishService {
     // either line constructs it positionally (production DI
     // resolves it by type), so it sits after the SN clients.
     @Optional() publicMedia?: PublicMediaService,
+    // OU9: appended after publicMedia for the same reason.
+    @Optional() gbpClient?: GoogleBusinessClient,
   ) {
     this.links = links;
     this.youtubeClient = youtubeClient ?? new YouTubeClient();
@@ -136,6 +144,7 @@ export class SocialPublishService {
     this.telegramClient = telegramClient ?? new TelegramClient();
     this.threadsClient = threadsClient ?? new ThreadsClient();
     this.threadsPublisher = threadsPublisher ?? new ThreadsPublisher(this.threadsClient);
+    this.gbpClient = gbpClient ?? new GoogleBusinessClient();
     this.publicMedia = publicMedia;
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
@@ -331,6 +340,13 @@ export class SocialPublishService {
       await ensurePlatformConfig(prisma as any).catch(() => undefined);
       tiktokAudited = effectiveTiktokAppConfig()?.audited === true;
     }
+    // OU9: the GBP gate reads the same snapshot — refresh it
+    // for a GBP post so a just-declared approval is honoured
+    // (a refresh failure keeps the last snapshot, and the gate
+    // below fails closed on an unreadable state).
+    if (account.platform === GBP_PLATFORM) {
+      await ensurePlatformConfig(prisma as any).catch(() => undefined);
+    }
 
     // SU1: full platform pre-flight, right after account
     // resolution and BEFORE any platform dispatch — content that
@@ -373,6 +389,12 @@ export class SocialPublishService {
     // refresh-aware one (60-day long-lived tokens).
     if (account.platform === "threads") {
       return this.publishToThreads(post, account);
+    }
+
+    // OU9: GBP takes its own dispatch — the API-access gate is
+    // enforced inside it, BEFORE any token or platform call.
+    if (account.platform === GBP_PLATFORM) {
+      return this.publishToGoogleBusiness(post, account);
     }
 
     const assetRows: any[] = [];
@@ -606,6 +628,59 @@ export class SocialPublishService {
    * never from the possibly-stale snapshot resolveAccountToken
    * decrypted on the way in.
    */
+  /**
+   * OU9 — Google Business Profile LocalPost publish.
+   *
+   * THE GATE COMES FIRST: while the operator has not declared
+   * Google's Business Profile API access approved for the
+   * platform Google project (platform-config
+   * gbpApiAccessApproved, default false), publishing REFUSES
+   * with the gate message as a PermanentPublishError — no
+   * token is resolved, no Google call is made, no retry is
+   * burned, and nothing pretends the post went anywhere. When
+   * the gate is declared open, the flow is: refresh-aware
+   * token (ensureAccessToken, the Google grant) → the optional
+   * single image resolved to a public URL (Google fetches it —
+   * the SP1 path, with the PP1 SVG→PNG raster like the Meta
+   * flow) → ONE documented v4 localPosts create. The result
+   * stores Google's returned resource name as the platform id
+   * and its searchUrl as the URL (null when Google returned
+   * none — never fabricated). Google's own errors propagate
+   * verbatim through the SP5 retry path.
+   */
+  private async publishToGoogleBusiness(post: any, account: any): Promise<SocialPublishResult> {
+    if (!effectiveGbpApiAccessApproved()) {
+      throw new PermanentPublishError(GBP_API_ACCESS_GATE_MSG);
+    }
+    const prisma = this.prisma as any;
+    const accessToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+    const refs = (Array.isArray(post.mediaRefs) ? post.mediaRefs : []) as { assetId: string; kind: string }[];
+    let imageUrl: string | null = null;
+    if (refs.length === 1 && refs[0]?.kind === "image") {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id: refs[0].assetId, organizationId: post.organizationId },
+      });
+      if (!asset) {
+        throw new PermanentPublishError("পোস্টের একটি মিডিয়া পাওয়া যাচ্ছে না — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+      }
+      let resolved = asset;
+      if (String(asset.contentType ?? "").includes("svg")) {
+        try {
+          resolved = await this.raster.ensurePngAsset(post.organizationId, post.createdById, asset);
+        } catch (e) {
+          throw new PermanentPublishError(`SVG থেকে PNG তৈরি করা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      imageUrl = await this.publicUrlForAsset(post, resolved);
+    }
+    const created = await this.gbpClient.createLocalPost(accessToken, String(account.externalId), {
+      summary: String(post.caption ?? ""),
+      linkUrl: typeof post.linkUrl === "string" && post.linkUrl ? post.linkUrl : null,
+      imageUrl,
+    });
+    return { platformPostId: created.name, platformUrl: created.searchUrl, outcome: "published" };
+  }
+
   /**
    * SN7 — Threads publish (spike doc §১.২): resolve the media to
    * public URLs (Meta fetches them — the SP1 path, with the PP1

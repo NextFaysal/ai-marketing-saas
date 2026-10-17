@@ -43,6 +43,13 @@ export class UpdateRefundPushDto {
   @IsBoolean() enabled!: boolean;
 }
 
+/** NF7 (FB3): the per-store refund-to-credit opt-in toggle —
+ * the same shape as UpdateRefundPushDto, its neighbour in the
+ * per-store refund settings area. Default OFF. */
+export class UpdateRefundToCreditDto {
+  @IsBoolean() enabled!: boolean;
+}
+
 /** EC7: create/update a StoreDiscount. minOrderMinor is minor units
  *  as a decimal string (BigInt over the wire), same as channel price. */
 export class DiscountDto {
@@ -64,6 +71,9 @@ export class DiscountDto {
   @IsOptional() @IsString() maxOrderMinor?: string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) excludedProductIds?: string[] | null;
   @IsOptional() @IsArray() @IsString({ each: true }) excludedCategoryIds?: string[] | null;
+  // NF14 (FB5): app-only offer — display rule only (the code
+  // still redeems normally everywhere; see DiscountsService).
+  @IsOptional() @IsBoolean() appOnly?: boolean;
 }
 
 /** GB7: per-org abandoned-cart recovery coupon template. */

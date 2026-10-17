@@ -32,9 +32,13 @@ import { WebhooksOutgoingModule } from "../webhooks-outgoing/webhooks-outgoing.m
 import { CatalogsModule } from "../catalogs/catalogs.module";
 import { WebpushModule } from "../webpush/webpush.module";
 import { DataToolsModule } from "../data-tools/data-tools.module";
+import { OrgBrainModule } from "../ai/org-brain.module";
+import { VideoStudioModule } from "../video-studio/video-studio.module";
+import { BookingModule } from "../booking/booking.module";
+import { FraudNetworkModule } from "../fraud-network/fraud-network.module";
 
 @Module({
-  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule, OrdersModule, CommerceModule, SubscriptionsModule, StorefrontModule, InstallmentsModule, ConnectionsModule, FulfillmentModule, OrderAutomationModule, StorageModule, ProductsModule, FinanceModule, WebhooksOutgoingModule, CatalogsModule, WebpushModule, DataToolsModule],
+  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule, OrdersModule, CommerceModule, SubscriptionsModule, StorefrontModule, InstallmentsModule, ConnectionsModule, FulfillmentModule, OrderAutomationModule, StorageModule, ProductsModule, FinanceModule, WebhooksOutgoingModule, CatalogsModule, WebpushModule, DataToolsModule, OrgBrainModule, VideoStudioModule, BookingModule, FraudNetworkModule],
   controllers: [AutomationController, InternalJobsController],
   providers: [AutomationService, InventoryAdGuardService, PredictiveReplenishmentService],
   exports: [AutomationService, InventoryAdGuardService, PredictiveReplenishmentService],

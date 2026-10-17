@@ -5,7 +5,7 @@ import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
 
 interface Account { id: string; name: string; platform: string; integrationId?: string | null }
-interface Audience { id: string; name: string; kind: string; source: string; sourceDetail?: string | null; externalAudienceId?: string | null; approximateCount?: number | null; status: string; error?: string | null; lastMembershipSyncAt?: string | null; lastMembershipCount?: number | null }
+interface Audience { id: string; adAccountId?: string; name: string; kind: string; source: string; sourceDetail?: string | null; externalAudienceId?: string | null; approximateCount?: number | null; status: string; error?: string | null; lastMembershipSyncAt?: string | null; lastMembershipCount?: number | null }
 interface Saved { id: string; name: string; targeting: Record<string, unknown> }
 interface Catalog {
   id: string; name: string; externalCatalogId: string; status: string; lastSyncAt?: string | null;
@@ -79,9 +79,15 @@ export default function AudiencesPage() {
   const load = useCallback(async () => {
     if (!orgId) return;
     const list = await apiFetch<Account[]>(`/organizations/${orgId}/ad-accounts`).catch(() => []);
-    const meta = list.filter((a) => a.platform === "meta" && a.integrationId);
-    setAccounts(meta);
-    if (meta[0]) { setCustom((f) => ({ ...f, adAccountId: f.adAccountId || meta[0].id })); setLook((f) => ({ ...f, adAccountId: f.adAccountId || meta[0].id })); }
+    // OU4: Custom Audience এখন Meta + Google (Customer Match) +
+    // TikTok — তিন প্ল্যাটফর্মের Connected অ্যাকাউন্টই বেছে নেওয়া যায়।
+    const connected = list.filter((a) => ["meta", "google", "tiktok"].includes(a.platform) && a.integrationId);
+    setAccounts(connected);
+    if (connected[0]) { setCustom((f) => ({ ...f, adAccountId: f.adAccountId || connected[0].id })); }
+    // Lookalike শুধু Meta + TikTok-এ API দিয়ে তৈরি হয় — Google
+    // অ্যাকাউন্ট Lookalike-এর ডিফল্ট হিসেবে কখনো বসবে না।
+    const lookDefault = connected.find((a) => a.platform === "meta" || a.platform === "tiktok");
+    if (lookDefault) { setLook((f) => ({ ...f, adAccountId: f.adAccountId || lookDefault.id })); }
     setAudiences(await apiFetch<Audience[]>(`/organizations/${orgId}/audiences`).catch(() => []));
     setSaved(await apiFetch<Saved[]>(`/organizations/${orgId}/audiences/saved/list`).catch(() => []));
     const cats = await apiFetch<Catalog[]>(`/organizations/${orgId}/catalogs`).catch(() => []);
@@ -102,24 +108,32 @@ export default function AudiencesPage() {
     finally { setBusy(""); }
   }
 
+  // OU4: AudienceRecord-এ Platform কলাম নেই — Record-এর Ad
+  // Account থেকেই Platform জানা যায় (পেজে লোড করা Accounts দিয়ে Join)।
+  const platformLabel = (p?: string) => (p === "google" ? "Google" : p === "tiktok" ? "TikTok" : p === "meta" ? "Meta" : "—");
+  const accountPlatform = (id?: string) => accounts.find((a) => a.id === id)?.platform;
+  const lookPlatform = accountPlatform(look.adAccountId);
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="page-title">👥 Audiences ও Catalog</h1>
-        <p className="text-sm text-slate-500">নিজের Customer/Lead ডেটা থেকে Meta Custom Audience বানান (কন্টাক্ট শুধু SHA-256 হ্যাশ হয়ে যায়), Lookalike তৈরি করুন, Targeting প্রিসেট সেভ রাখুন এবং প্রোডাক্ট Catalog এ পাঠান। Audience এর সাইজ Meta র নিজের <b>approximate_count</b> — আমরা অনুমান করি না।</p>
+        <p className="text-sm text-slate-500">নিজের Customer/Lead ডেটা থেকে Meta Custom Audience, Google Customer Match ও TikTok Custom Audience বানান (কন্টাক্ট শুধু SHA-256 হ্যাশ হয়ে যায়), Meta ও TikTok-এ Lookalike তৈরি করুন, Targeting প্রিসেট সেভ রাখুন এবং প্রোডাক্ট Catalog এ পাঠান। Audience এর সাইজ প্রতিটি প্ল্যাটফর্মের নিজের <b>approximate_count</b> — আমরা অনুমান করি না।</p>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <form className="card space-y-3 p-5" onSubmit={(e) => { e.preventDefault(); run("custom", () => apiFetch(`/organizations/${orgId}/audiences/custom`, { method: "POST", body: JSON.stringify({ ...custom, segment: custom.source === "rfm_segment" ? custom.segment : undefined }) }), "Custom Audience তৈরির অনুরোধ Meta গ্রহণ করেছে। Status Refresh করে সাইজ দেখুন।"); }}>
+        <form className="card space-y-3 p-5" onSubmit={(e) => { e.preventDefault(); run("custom", () => apiFetch(`/organizations/${orgId}/audiences/custom`, { method: "POST", body: JSON.stringify({ ...custom, segment: custom.source === "rfm_segment" ? custom.segment : undefined }) }), "Custom Audience তৈরির অনুরোধ প্ল্যাটফর্ম গ্রহণ করেছে। Status Refresh করে সাইজ দেখুন।"); }}>
           <div className="font-semibold">নতুন Custom Audience</div>
           <label className="block text-sm">নাম<input className="input mt-1" value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} required placeholder="যেমন: All Buyers 2026" /></label>
           <label className="block text-sm">Ad Account
             <select className="input mt-1" value={custom.adAccountId} onChange={(e) => setCustom({ ...custom, adAccountId: e.target.value })}>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({platformLabel(a.platform)})</option>)}
             </select>
           </label>
+          {accountPlatform(custom.adAccountId) === "google" ? <p className="text-xs text-slate-500">Google-এ এটি Customer Match লিস্ট হিসেবে তৈরি হবে।</p> : null}
+          {accountPlatform(custom.adAccountId) === "tiktok" ? <p className="text-xs text-slate-500">TikTok-এ এটি DMP Custom Audience হিসেবে তৈরি হবে — ফাইলে একবারে এক ধরনের Identifier-ই যায় (Email থাকলে Email Hash, নাহলে Phone Hash)।</p> : null}
           <label className="block text-sm">সূত্র
             <select className="input mt-1" value={custom.source} onChange={(e) => setCustom({ ...custom, source: e.target.value })}>
               <option value="customers">সব Customer</option>
@@ -140,34 +154,47 @@ export default function AudiencesPage() {
         <form className="card space-y-3 p-5" onSubmit={(e) => { e.preventDefault(); run("look", () => apiFetch(`/organizations/${orgId}/audiences/lookalike`, { method: "POST", body: JSON.stringify({ ...look, ratio: Number(look.ratio) }) }), "Lookalike তৈরির অনুরোধ পাঠানো হয়েছে।"); }}>
           <div className="font-semibold">নতুন Lookalike Audience</div>
           <label className="block text-sm">নাম<input className="input mt-1" value={look.name} onChange={(e) => setLook({ ...look, name: e.target.value })} required placeholder="যেমন: Buyers Lookalike 1% BD" /></label>
+          <label className="block text-sm">Ad Account
+            <select className="input mt-1" value={look.adAccountId} onChange={(e) => setLook({ ...look, adAccountId: e.target.value })}>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({platformLabel(a.platform)})</option>)}
+            </select>
+          </label>
+          {lookPlatform === "google" ? (
+            <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700">⚠️ Google Ads-এ API দিয়ে Lookalike তৈরি করা যায় না — Google তার Customer Match লিস্ট থেকে Similar Audience স্বয়ংক্রিয়ভাবে তৈরি করে। Lookalike-এর জন্য Meta বা TikTok অ্যাকাউন্ট বেছে নিন।</p>
+          ) : null}
+          {lookPlatform === "tiktok" ? (
+            <p className="text-xs text-slate-500">TikTok-এ Lookalike-এর আকার Ratio থেকে টিয়ারে ম্যাপ হয়: ০.০৫ পর্যন্ত NARROW, ০.১০ পর্যন্ত BALANCED, এর বেশি BROAD।</p>
+          ) : null}
           <label className="block text-sm">Source Audience
             <select className="input mt-1" value={look.sourceAudienceRecordId} onChange={(e) => setLook({ ...look, sourceAudienceRecordId: e.target.value })} required>
               <option value="">— বেছে নিন —</option>
-              {audiences.filter((a) => a.externalAudienceId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {audiences.filter((a) => a.externalAudienceId).map((a) => <option key={a.id} value={a.id}>{a.name} ({platformLabel(accountPlatform(a.adAccountId))})</option>)}
             </select>
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block text-sm">দেশ<input className="input mt-1" value={look.country} onChange={(e) => setLook({ ...look, country: e.target.value })} placeholder="BD" /></label>
             <label className="block text-sm">Ratio (0.01–0.20)<input className="input mt-1" value={look.ratio} onChange={(e) => setLook({ ...look, ratio: e.target.value })} placeholder="0.01" /></label>
           </div>
-          <button className="btn-primary" disabled={busy !== "" || accounts.length === 0}>{busy === "look" ? "তৈরি হচ্ছে..." : "Lookalike তৈরি করুন"}</button>
+          <button className="btn-primary" disabled={busy !== "" || accounts.length === 0 || lookPlatform === "google"}>{busy === "look" ? "তৈরি হচ্ছে..." : "Lookalike তৈরি করুন"}</button>
         </form>
       </div>
+
+      <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">ℹ️ TikTok-এ Lookalike-এর আকার Ratio থেকে NARROW/BALANCED/BROAD টিয়ারে ম্যাপ হয়। Google-এর Audience সাইজ অনেক সময় Range হিসেবে ফেরত আসে — তখন নির্দিষ্ট Count দেখানো হয় না, আগের নিশ্চিত Count-ই থাকে।</p>
 
       {audiences.length === 0 ? (
         <EmptyState title="এখনো কোনো Audience নেই" description="উপরের ফর্ম দিয়ে প্রথম Custom Audience বানান।" />
       ) : (
         <div className="overflow-hidden card">
           <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">নাম</th><th className="px-4 py-3">ধরন / সূত্র</th><th className="px-4 py-3">Meta ID</th><th className="px-4 py-3">আকার (Meta)</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr></thead>
+            <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">নাম</th><th className="px-4 py-3">ধরন / সূত্র</th><th className="px-4 py-3">Platform ID</th><th className="px-4 py-3">আকার (Platform)</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr></thead>
             <tbody>{audiences.map((a) => (
               <tr key={a.id} className="border-t">
-                <td className="px-4 py-3 font-medium">{a.name}</td>
+                <td className="px-4 py-3 font-medium">{a.name}<span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-600">{platformLabel(accountPlatform(a.adAccountId))}</span></td>
                 <td className="px-4 py-3">{a.kind} · {a.source}{a.sourceDetail ? ` (${a.sourceDetail})` : ""}</td>
                 <td className="px-4 py-3">{a.externalAudienceId ?? "—"}</td>
                 <td className="px-4 py-3">{a.approximateCount != null ? a.approximateCount.toLocaleString() : "—"}</td>
                 <td className="px-4 py-3">{a.status}{a.error ? <span className="block text-xs text-red-600">{a.error}</span> : null}</td>
-                <td className="px-4 py-3">{a.externalAudienceId ? <span className="flex flex-wrap gap-1"><button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => run(`ref-${a.id}`, () => apiFetch(`/organizations/${orgId}/audiences/${a.id}/refresh`, { method: "POST" }), "Status হালনাগাদ হয়েছে।")}>Refresh</button>{a.kind === "custom" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => run(`mem-${a.id}`, () => apiFetch(`/organizations/${orgId}/audiences/${a.id}/refresh-members`, { method: "POST" }), "সদস্য তালিকা Meta তে আপডেট পাঠানো হয়েছে।")}>👥 সদস্য আপডেট{a.lastMembershipSyncAt ? ` (${a.lastMembershipCount ?? "?"}টি · ${new Date(a.lastMembershipSyncAt).toLocaleDateString("bn-BD")})` : ""}</button> : null}</span> : null}</td>
+                <td className="px-4 py-3">{a.externalAudienceId ? <span className="flex flex-wrap gap-1"><button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => run(`ref-${a.id}`, () => apiFetch(`/organizations/${orgId}/audiences/${a.id}/refresh`, { method: "POST" }), "Status হালনাগাদ হয়েছে।")}>Refresh</button>{a.kind === "custom" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => run(`mem-${a.id}`, () => apiFetch(`/organizations/${orgId}/audiences/${a.id}/refresh-members`, { method: "POST" }), "সদস্য তালিকা প্ল্যাটফর্মে আপডেট পাঠানো হয়েছে।")}>👥 সদস্য আপডেট{a.lastMembershipSyncAt ? ` (${a.lastMembershipCount ?? "?"}টি · ${new Date(a.lastMembershipSyncAt).toLocaleDateString("bn-BD")})` : ""}</button> : null}</span> : null}</td>
               </tr>
             ))}</tbody>
           </table>
