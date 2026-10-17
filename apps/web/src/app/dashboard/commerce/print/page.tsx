@@ -3,6 +3,7 @@ import React, { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { getStoredReceiptSettings, generateBarcodeSvg, type ReceiptCustomizationSettings } from "@/lib/pos-receipt";
 
 // Shape mirrors the API's pubOrder (orders.service.ts getOne): the
 // raw order row with every *Minor money field stringified, plus
@@ -77,6 +78,7 @@ function PrintInner() {
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
   const [org, setOrg] = useState<OrgInfo | null>(null);
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
+  const [receiptSettings, setReceiptSettings] = useState<ReceiptCustomizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -86,6 +88,7 @@ function PrintInner() {
       if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
       if (!orderId) { setError("অর্ডার আইডি পাওয়া যায়নি — orderId query param দরকার।"); setLoading(false); return; }
       try {
+        setReceiptSettings(getStoredReceiptSettings(orgId));
         // EC23: an invoice prints from the invoice endpoint, which
         // ensures the fiscal invoice number and returns the seller's
         // legal identity (TaxSetting). The packing slip keeps the
@@ -118,10 +121,20 @@ function PrintInner() {
   const orderDate = order?.placedAt ?? order?.createdAt ?? null;
   const taxMinor = Number(order?.taxMinor ?? 0);
 
+  const paperWidth = receiptSettings?.paperWidth === "58mm" ? "58mm" : "80mm";
+  const storeDisplayName = receiptSettings?.storeName || businessName;
+  const storeTagline = receiptSettings?.tagline || "";
+  const storeAddress = receiptSettings?.address || businessAddress;
+  const storePhone = receiptSettings?.phone || profile?.contactPhone;
+  const returnPolicy = receiptSettings?.returnPolicy || "";
+  const footerGreeting = receiptSettings?.footerGreeting || "ধন্যবাদ! আবার আসবেন 🙏";
+  const showBarcode = receiptSettings?.showBarcode !== false;
+  const orderBarcodeSvg = showBarcode && order ? generateBarcodeSvg(order.externalNumber ?? order.id, 34) : "";
+
   return (
     <div className="mx-auto max-w-3xl bg-white p-6 text-slate-900">
       <div className="mb-6 flex items-center justify-between print:hidden">
-        <h1 className="page-title">{isReceipt ? "রসিদ" : isSlip ? "প্যাকিং স্লিপ" : "ইনভয়েস"}</h1>
+        <h1 className="page-title">{isReceipt ? `রসিদ (${paperWidth})` : isSlip ? "প্যাকিং স্লিপ" : "ইনভয়েস"}</h1>
         <button type="button" className="btn-primary" onClick={() => window.print()} disabled={!order}>
           প্রিন্ট করুন
         </button>
@@ -131,15 +144,16 @@ function PrintInner() {
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
       {order && isReceipt ? (
-        <div className="pos-receipt mx-auto bg-white text-slate-900" style={{ width: "80mm" }}>
+        <div className="pos-receipt mx-auto bg-white text-slate-900" style={{ width: paperWidth }}>
           {/* EC34: narrow thermal-style receipt. Paid/due come
               from getOne's EC19 fields (amountDueMinor is the sum
               of APPROVED verifications netted off the total). */}
-          <style>{`@media print { .pos-receipt { width: 80mm !important; margin: 0 auto; } @page { margin: 4mm; } }`}</style>
+          <style>{`@media print { .pos-receipt { width: ${paperWidth} !important; margin: 0 auto; } @page { margin: 4mm; } }`}</style>
           <header className="border-b border-dashed pb-3 text-center">
-            <div className="text-xl font-bold">{businessName}</div>
-            {businessAddress ? <p className="mt-1 text-xs text-slate-600">{businessAddress}</p> : null}
-            {profile?.contactPhone ? <p className="text-xs text-slate-600">ফোন: {profile.contactPhone}</p> : null}
+            <div className="text-xl font-bold">{storeDisplayName}</div>
+            {storeTagline ? <p className="mt-0.5 text-xs text-slate-500 font-medium">{storeTagline}</p> : null}
+            {storeAddress ? <p className="mt-1 text-xs text-slate-600">{storeAddress}</p> : null}
+            {storePhone ? <p className="text-xs text-slate-600">ফোন: {storePhone}</p> : null}
             <p className="mt-2 text-xs">
               রসিদ নং: <span className="font-semibold">{order.externalNumber ?? order.id}</span>
               {orderDate ? <span> · {new Date(orderDate).toLocaleString("bn-BD")}</span> : null}
@@ -184,7 +198,25 @@ function PrintInner() {
             ) : null}
           </div>
 
-          <p className="mt-4 border-t border-dashed pt-3 text-center text-sm font-semibold">ধন্যবাদ! আবার আসবেন 🙏</p>
+          {returnPolicy ? (
+            <div className="mt-3 border-t border-dotted pt-2 text-center text-[10px] text-slate-500 whitespace-pre-wrap">
+              {returnPolicy}
+            </div>
+          ) : null}
+
+          {orderBarcodeSvg ? (
+            <div className="mt-3 flex flex-col items-center justify-center border-t border-dashed pt-2">
+              <div
+                className="[&>svg]:max-w-full [&>svg]:h-auto"
+                dangerouslySetInnerHTML={{ __html: orderBarcodeSvg }}
+              />
+              <span className="mt-1 text-[10px] font-mono tracking-wider text-slate-500">
+                {order.externalNumber ?? order.id}
+              </span>
+            </div>
+          ) : null}
+
+          <p className="mt-4 border-t border-dashed pt-3 text-center text-sm font-semibold">{footerGreeting}</p>
         </div>
       ) : null}
 

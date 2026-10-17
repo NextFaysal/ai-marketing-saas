@@ -9,6 +9,20 @@ import {
 import {
   ScanDebouncer, barcodeDetectorSupported, normalizeScanCode,
 } from "@/lib/pos-scan";
+import {
+  DEFAULT_RECEIPT_SETTINGS,
+  getStoredReceiptSettings,
+  saveStoredReceiptSettings,
+  generateBarcodeSvg,
+  calculateLabelGrid,
+  type ReceiptCustomizationSettings,
+  type BarcodeLabelData,
+} from "@/lib/pos-receipt";
+import {
+  calculateDrawerReconciliation,
+  buildZReportText,
+  type DrawerReconciliationResult,
+} from "@/lib/pos-closing";
 
 // AB4: lib/api.ts surfaces a network failure (non-GET) as this
 // exact message; an HTTP error carries the server's message
@@ -166,6 +180,151 @@ export default function PosPage() {
   const [syncError, setSyncError] = useState("");
   const [ledger, setLedger] = useState<OfflineSyncRow[] | null>(null);
   const [ledgerBusy, setLedgerBusy] = useState<string | null>(null);
+
+  // POS Receipt Customizer State
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  const [receiptSettings, setReceiptSettings] = useState<ReceiptCustomizationSettings>(DEFAULT_RECEIPT_SETTINGS);
+  const [receiptSavedFeedback, setReceiptSavedFeedback] = useState(false);
+
+  // Barcode & Price Tag Label Printing State
+  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
+  const [barcodeLabelData, setBarcodeLabelData] = useState<BarcodeLabelData>({
+    productName: "প্রিমিয়াম ক্যাজুয়াল শার্ট",
+    skuOrBarcode: "SHIRT-BLK-L",
+    priceFormatted: "১২৫০",
+    category: "পোশাক",
+  });
+  const [barcodeLayout, setBarcodeLayout] = useState<"single_sticker" | "a4_sheet_24">("single_sticker");
+  const [barcodeQty, setBarcodeQty] = useState(1);
+
+  // Shift Closing & Cash Drawer (Z-Report) State
+  const [zReportModalOpen, setZReportModalOpen] = useState(false);
+  const [openingFloat, setOpeningFloat] = useState("2000");
+  const [cashierName, setCashierName] = useState("কাউন্টার ১");
+  const [shiftName, setShiftName] = useState("সকালের শিফট");
+  const [cashPayouts, setCashPayouts] = useState("0");
+  const [actualCashCounted, setActualCashCounted] = useState("");
+  const [shiftStartTime] = useState(() => new Date().toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" }));
+
+  useEffect(() => {
+    const orgId = getOrganizationId();
+    if (orgId) {
+      setReceiptSettings(getStoredReceiptSettings(orgId));
+    }
+  }, []);
+
+  const handleSaveReceiptSettings = (updated: ReceiptCustomizationSettings) => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    const saved = saveStoredReceiptSettings(orgId, updated);
+    setReceiptSettings(saved);
+    setReceiptSavedFeedback(true);
+    setTimeout(() => setReceiptSavedFeedback(false), 2500);
+  };
+
+  const openBarcodePrint = (
+    productName: string,
+    skuOrBarcode: string,
+    price: string,
+    count: number,
+    layout: "single_sticker" | "a4_sheet_24"
+  ) => {
+    const svg = generateBarcodeSvg(skuOrBarcode || "12345678", 36);
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const itemsHtml = Array.from({ length: count })
+      .map(() => {
+        if (layout === "single_sticker") {
+          return `
+            <div class="sticker single">
+              <div class="store-name">${receiptSettings.storeName || "আমাদের শপ"}</div>
+              <div class="name">${productName}</div>
+              <div class="barcode">${svg}</div>
+              <div class="sku">${skuOrBarcode}</div>
+              <div class="price">৳${price}</div>
+            </div>
+          `;
+        }
+        return `
+          <div class="sticker grid-item">
+            <div class="store-name">${receiptSettings.storeName || "আমাদের শপ"}</div>
+            <div class="name">${productName}</div>
+            <div class="barcode">${svg}</div>
+            <div class="sku">${skuOrBarcode}</div>
+            <div class="price">৳${price}</div>
+          </div>
+        `;
+      })
+      .join("");
+
+    const pageCss =
+      layout === "single_sticker"
+        ? `@page { size: 50mm 30mm; margin: 0; }
+           body { margin: 0; padding: 2mm; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
+           .sticker.single { width: 46mm; height: 26mm; text-align: center; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; }
+           .store-name { font-size: 8px; font-weight: bold; color: #475569; text-transform: uppercase; }
+           .name { font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+           .barcode svg { width: 100%; max-height: 12mm; }
+           .sku { font-size: 8px; font-family: monospace; }
+           .price { font-size: 11px; font-weight: 800; }`
+        : `@page { size: A4; margin: 10mm; }
+           body { margin: 0; font-family: system-ui, sans-serif; }
+           .grid-container { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; }
+           .sticker.grid-item { border: 1px dashed #cbd5e1; padding: 4mm; text-align: center; border-radius: 4px; box-sizing: border-box; page-break-inside: avoid; }
+           .store-name { font-size: 9px; font-weight: bold; color: #475569; text-transform: uppercase; }
+           .name { font-size: 11px; font-weight: 700; margin: 1mm 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+           .barcode svg { width: 100%; max-height: 14mm; }
+           .sku { font-size: 9px; font-family: monospace; color: #64748b; }
+           .price { font-size: 13px; font-weight: 800; color: #0f172a; margin-top: 1mm; }`;
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>বারকোড লেবেল প্রিন্ট - ${productName}</title>
+<style>
+${pageCss}
+</style>
+</head>
+<body>
+  ${layout === "a4_sheet_24" ? `<div class="grid-container">${itemsHtml}</div>` : itemsHtml}
+  <script>
+    window.onload = function() { window.print(); };
+  </script>
+</body>
+</html>`;
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  };
+
+  const openZReportPrint = (slipText: string) => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Z-Report শিফট রিপোর্ট</title>
+<style>
+  @page { size: ${receiptSettings.paperWidth} auto; margin: 4mm; }
+  body { font-family: monospace, monospace; font-size: 11px; width: ${
+    receiptSettings.paperWidth === "58mm" ? "48mm" : "72mm"
+  }; margin: 0 auto; padding: 4px; line-height: 1.35; color: #000; }
+  pre { white-space: pre-wrap; font-family: inherit; font-size: 11px; margin: 0; }
+</style>
+</head>
+<body>
+  <pre>${slipText}</pre>
+  <script>
+    window.onload = function() { window.print(); };
+  </script>
+</body>
+</html>`;
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  };
 
   // AB4: camera scanning.
   const [scanOpen, setScanOpen] = useState(false);
@@ -522,7 +681,37 @@ export default function PosPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="page-title">🧾 POS / কাউন্টার বিক্রি</h1>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="page-title">🧾 POS / কাউন্টার বিক্রি</h1>
+          <p className="text-xs text-slate-500">
+            দ্রুত ক্যাশ মেমো, থার্মাল রসিদ, স্টিকার প্রিন্টিং এবং দৈনিক ক্যাশ রিকনসিলিয়েশন
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setReceiptModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+          >
+            ⚙️ রসিদ কাস্টমাইজ ({receiptSettings.paperWidth})
+          </button>
+          <button
+            type="button"
+            onClick={() => setBarcodeModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+          >
+            🏷️ বারকোড / স্টিকার প্রিন্ট
+          </button>
+          <button
+            type="button"
+            onClick={() => setZReportModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shadow-sm"
+          >
+            💰 শিফট ক্লোজ (Z-Report)
+          </button>
+        </div>
+      </div>
 
       {/* AB4: connection + outbox strip */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-2.5 text-sm">
@@ -599,6 +788,23 @@ export default function PosPage() {
                         ))}
                       </select>
                     ) : null}
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => {
+                        const price = ((Number(chosenVariant?.priceMinor ?? p.priceMinor) || 0) / 100).toFixed(0);
+                        const code = chosenVariant?.sku || p.barcode || p.sku || p.productId.slice(0, 8);
+                        setBarcodeLabelData({
+                          productName: p.name + (chosenVariant ? ` (${chosenVariant.name})` : ""),
+                          skuOrBarcode: code,
+                          priceFormatted: price,
+                          category: "পণ্য",
+                        });
+                        setBarcodeModalOpen(true);
+                      }}
+                    >
+                      🏷️ বারকোড
+                    </button>
                     <button type="button" className="btn-primary px-3 py-1.5 text-xs" onClick={() => addLine(p, chosenVariant)}>
                       + যোগ করুন
                     </button>
@@ -879,6 +1085,577 @@ export default function PosPage() {
           </div>
         </div>
       ) : null}
+
+      {/* POS Receipt Customizer Modal */}
+      {receiptModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-800">⚙️ থার্মাল রসিদ (Receipt) কাস্টমাইজেশন</h2>
+                <p className="text-xs text-slate-500">দোকানের নাম, ঠিকানা, পলিসি ও বারকোড সাজিয়ে ৮০মিমি ও ৫৮মিমি প্রিন্টারে নিখুঁত রসিদ পান</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                onClick={() => setReceiptModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid flex-1 gap-6 overflow-y-auto p-6 md:grid-cols-2">
+              {/* Form Controls */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">প্রিন্টার পেপার সাইজ</label>
+                  <div className="mt-1.5 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setReceiptSettings((s) => ({ ...s, paperWidth: "80mm" }))}
+                      className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${
+                        receiptSettings.paperWidth === "80mm"
+                          ? "border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      ৮০ মিমি (80mm - স্ট্যান্ডার্ড POS)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReceiptSettings((s) => ({ ...s, paperWidth: "58mm" }))}
+                      className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${
+                        receiptSettings.paperWidth === "58mm"
+                          ? "border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      ৫৮ মিমি (58mm - পোর্টেবল/ব্লুটুথ)
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">দোকান / ব্র্যান্ডের নাম</label>
+                  <input
+                    type="text"
+                    value={receiptSettings.storeName}
+                    onChange={(e) => setReceiptSettings((s) => ({ ...s, storeName: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    placeholder="যেমন: ফ্যাশন গ্যাজেটস বিডি"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">ট্যাগলাইন (স্লোগান)</label>
+                  <input
+                    type="text"
+                    value={receiptSettings.tagline}
+                    onChange={(e) => setReceiptSettings((s) => ({ ...s, tagline: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    placeholder="যেমন: প্রিমিয়াম কোয়ালিটি ও নির্ভরযোগ্য সেবা"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700">হটলাইন / মোবাইল নং</label>
+                    <input
+                      type="text"
+                      value={receiptSettings.phone}
+                      onChange={(e) => setReceiptSettings((s) => ({ ...s, phone: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      placeholder="017XXXXXXXX"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700">ঠিকানা / আউটলেট লোকেশন</label>
+                    <input
+                      type="text"
+                      value={receiptSettings.address}
+                      onChange={(e) => setReceiptSettings((s) => ({ ...s, address: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      placeholder="মিরপুর-১০, ঢাকা-১২১৬"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">পণ্য ফেরত / এক্সচেঞ্জ পলিসি</label>
+                  <textarea
+                    rows={2}
+                    value={receiptSettings.returnPolicy}
+                    onChange={(e) => setReceiptSettings((s) => ({ ...s, returnPolicy: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
+                    placeholder="পণ্য ক্রয়ের ৭ দিনের মধ্যে মেমোসহ পরিবর্তনযোগ্য..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">ফুটার শুভেচ্ছা বার্তা</label>
+                  <input
+                    type="text"
+                    value={receiptSettings.footerGreeting}
+                    onChange={(e) => setReceiptSettings((s) => ({ ...s, footerGreeting: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    placeholder="আমাদের সাথে থাকার জন্য ধন্যবাদ! আবার আসবেন 🙏"
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 pt-1 text-xs font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={receiptSettings.showBarcode}
+                    onChange={(e) => setReceiptSettings((s) => ({ ...s, showBarcode: e.target.checked }))}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  রসিদের নিচে অর্ডারের Code128 বারকোড প্রিন্ট করুন
+                </label>
+              </div>
+
+              {/* Live Preview Column */}
+              <div className="flex flex-col items-center justify-start rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                <span className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  লাইভ প্রিভিউ ({receiptSettings.paperWidth})
+                </span>
+                <div
+                  className="rounded bg-white p-3 text-slate-900 shadow-md transition-all font-mono"
+                  style={{ width: receiptSettings.paperWidth === "58mm" ? "220px" : "280px" }}
+                >
+                  <div className="border-b border-dashed border-slate-400 pb-2 text-center">
+                    <div className="text-sm font-bold">{receiptSettings.storeName || "দোকানের নাম"}</div>
+                    {receiptSettings.tagline ? <div className="text-[10px] text-slate-500">{receiptSettings.tagline}</div> : null}
+                    {receiptSettings.address ? <div className="text-[10px] text-slate-600">{receiptSettings.address}</div> : null}
+                    {receiptSettings.phone ? <div className="text-[10px] text-slate-600">ফোন: {receiptSettings.phone}</div> : null}
+                    <div className="mt-1 text-[10px] text-slate-500">রসিদ নং: POS-SAMPLE-2026</div>
+                  </div>
+
+                  <div className="my-2 space-y-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span>কটন পোলো শার্ট × ১</span>
+                      <span>৳১,২৫০.০০</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>ক্যাজুয়াল জিন্স × ১</span>
+                      <span>৳২,১০০.০০</span>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-dashed border-slate-400 pt-1.5 text-[11px] space-y-0.5">
+                    <div className="flex justify-between"><span>সাবটোটাল</span><span>৳৩,৩৫০.০০</span></div>
+                    <div className="flex justify-between"><span>ছাড়</span><span>-৳১৫০.০০</span></div>
+                    <div className="flex justify-between font-bold border-t border-dashed pt-1">
+                      <span>সর্বমোট</span><span>৳৩,২০০.০০</span>
+                    </div>
+                    <div className="flex justify-between"><span>পরিশোধিত (নগদ)</span><span>৳৩,২০০.০০</span></div>
+                  </div>
+
+                  {receiptSettings.returnPolicy ? (
+                    <div className="mt-2 border-t border-dotted border-slate-300 pt-1.5 text-center text-[9px] text-slate-500">
+                      {receiptSettings.returnPolicy}
+                    </div>
+                  ) : null}
+
+                  {receiptSettings.showBarcode ? (
+                    <div className="mt-2 flex flex-col items-center border-t border-dashed border-slate-300 pt-1">
+                      <div
+                        className="[&>svg]:max-w-full [&>svg]:h-7"
+                        dangerouslySetInnerHTML={{ __html: generateBarcodeSvg("POS-SAMPLE-2026", 28) }}
+                      />
+                      <span className="text-[9px] text-slate-500 font-mono">POS-SAMPLE-2026</span>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-2 border-t border-dashed border-slate-400 pt-1 text-center text-[10px] font-semibold">
+                    {receiptSettings.footerGreeting}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t bg-slate-50 px-6 py-3.5">
+              <div>
+                {receiptSavedFeedback ? (
+                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                    ✓ সেটিংস সফলভাবে সংরক্ষিত হয়েছে!
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500">সব কাউন্টার সেলস ও ইনভয়েস প্রিন্টে এই তথ্য প্রযোজ্য হবে</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  onClick={() => setReceiptModalOpen(false)}
+                >
+                  বন্ধ করুন
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary px-5 py-2 text-xs font-semibold"
+                  onClick={() => handleSaveReceiptSettings(receiptSettings)}
+                >
+                  💾 সংরক্ষণ করুন
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Barcode & Price Tag Label Printing Modal */}
+      {barcodeModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-800">🏷️ বারকোড স্টিকার ও প্রাইস ট্যাগ প্রিন্টিং</h2>
+                <p className="text-xs text-slate-500">সিঙ্গেল থার্মাল স্টিকার (৫০মিমি×৩০মিমি) বা A4 ২৪-স্টিকার শীটে প্রিন্ট করুন</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                onClick={() => setBarcodeModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid flex-1 gap-6 overflow-y-auto p-6 md:grid-cols-2">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">প্রিন্ট লেআউট</label>
+                  <div className="mt-1.5 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setBarcodeLayout("single_sticker"); if (barcodeQty > 24) setBarcodeQty(1); }}
+                      className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${
+                        barcodeLayout === "single_sticker"
+                          ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      🏷️ সিঙ্গেল থার্মাল স্টিকার (50×30mm)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setBarcodeLayout("a4_sheet_24"); setBarcodeQty(24); }}
+                      className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${
+                        barcodeLayout === "a4_sheet_24"
+                          ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      📄 A4 শীট (২৪টি লেবেল - ৩×৮)
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">পণ্যের নাম</label>
+                  <input
+                    type="text"
+                    value={barcodeLabelData.productName}
+                    onChange={(e) => setBarcodeLabelData((d) => ({ ...d, productName: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium"
+                    placeholder="পণ্যের নাম"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700">SKU / বারকোড কোড</label>
+                    <input
+                      type="text"
+                      value={barcodeLabelData.skuOrBarcode}
+                      onChange={(e) => setBarcodeLabelData((d) => ({ ...d, skuOrBarcode: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono"
+                      placeholder="যেমন: PRD-1002"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700">মূল্য (৳)</label>
+                    <input
+                      type="text"
+                      value={barcodeLabelData.priceFormatted}
+                      onChange={(e) => setBarcodeLabelData((d) => ({ ...d, priceFormatted: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
+                      placeholder="১২৫০"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">লেবেল সংখ্যা (Quantity)</label>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    {[1, 6, 12, 24, 48].map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => setBarcodeQty(q)}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                          barcodeQty === q
+                            ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {q} টি
+                      </button>
+                    ))}
+                    <input
+                      type="number"
+                      min="1"
+                      max="240"
+                      value={barcodeQty}
+                      onChange={(e) => setBarcodeQty(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs font-semibold"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6">
+                <span className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  স্টিকার প্রিভিউ (প্রকৃত সাইজ স্কেল)
+                </span>
+                <div className="flex flex-col items-center justify-between rounded-lg border-2 border-slate-800 bg-white p-3 text-center shadow-lg" style={{ width: "220px", height: "135px" }}>
+                  <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">
+                    {receiptSettings.storeName || "আমাদের শপ"}
+                  </div>
+                  <div className="text-xs font-bold text-slate-900 truncate w-full">
+                    {barcodeLabelData.productName || "পণ্য"}
+                  </div>
+                  <div
+                    className="w-full flex justify-center [&>svg]:max-w-[180px] [&>svg]:h-8"
+                    dangerouslySetInnerHTML={{ __html: generateBarcodeSvg(barcodeLabelData.skuOrBarcode || "SAMPLE", 28) }}
+                  />
+                  <div className="text-[10px] font-mono tracking-widest text-slate-600">
+                    {barcodeLabelData.skuOrBarcode || "SAMPLE"}
+                  </div>
+                  <div className="text-sm font-extrabold text-slate-900">
+                    মূল্য: ৳{barcodeLabelData.priceFormatted || "০"}
+                  </div>
+                </div>
+                <p className="mt-3 text-center text-xs text-slate-500">
+                  {barcodeLayout === "single_sticker"
+                    ? `৫০মিমি × ৩০মিমি সাইজের থার্মাল স্টিকার রোল (মোট ${barcodeQty}টি লেবেল)`
+                    : `A4 পেপারে ৩টি কলাম ও ৮টি সারি (মোট ${calculateLabelGrid(barcodeQty).totalPages} পৃষ্ঠা)`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t bg-slate-50 px-6 py-3.5">
+              <span className="text-xs text-slate-500">
+                যেকোনো সাধারণ বা থার্মাল লেবেল প্রিন্টারে সরাসরি প্রিন্ট হবে
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  onClick={() => setBarcodeModalOpen(false)}
+                >
+                  বন্ধ করুন
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary flex items-center gap-1.5 px-5 py-2 text-xs font-semibold"
+                  onClick={() => openBarcodePrint(
+                    barcodeLabelData.productName,
+                    barcodeLabelData.skuOrBarcode,
+                    barcodeLabelData.priceFormatted,
+                    barcodeQty,
+                    barcodeLayout
+                  )}
+                >
+                  🖨️ প্রিন্ট করুন ({barcodeQty}টি লেবেল)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Cash Drawer Reconciliation & Shift Close (Z-Report) Modal */}
+      {zReportModalOpen ? (() => {
+        const todayTotalSalesMinor = today?.totalSalesMinor ? BigInt(today.totalSalesMinor) : 0n;
+        const openingFloatMinor = BigInt(Math.round((Number(openingFloat) || 0) * 100));
+        const cashPayoutsMinor = BigInt(Math.round((Number(cashPayouts) || 0) * 100));
+        const actualCashMinor = BigInt(Math.round((Number(actualCashCounted) || 0) * 100));
+
+        const cashSalesFromOrders = (today?.orders ?? []).reduce((acc, o) => {
+          return acc + BigInt(Number(o.totalMinor) - Number(o.dueMinor));
+        }, 0n);
+
+        const cashSalesMinor = cashSalesFromOrders > 0n ? cashSalesFromOrders : todayTotalSalesMinor;
+        const digitalSalesMinor = todayTotalSalesMinor > cashSalesMinor ? todayTotalSalesMinor - cashSalesMinor : 0n;
+
+        const reconciliation = calculateDrawerReconciliation({
+          openingFloatMinor,
+          cashSalesMinor,
+          digitalSalesMinor,
+          cashPayoutsMinor,
+          actualCashCountedMinor: actualCashMinor,
+        });
+
+        const shiftSlipData = {
+          shopName: receiptSettings.storeName || "আমাদের শপ",
+          cashierName,
+          shiftStartTime,
+          shiftEndTime: new Date().toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" }),
+          orderCount: today?.orderCount ?? 0,
+          totalSalesMinor: todayTotalSalesMinor,
+          reconciliation,
+        };
+
+        const zReportText = buildZReportText(shiftSlipData);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b px-6 py-4">
+                <div>
+                  <h2 className="text-base font-bold text-slate-800">💰 ক্যাশ ড্রয়ার রিকনসিলিয়েশন ও শিফট ক্লোজ (Z-Report)</h2>
+                  <p className="text-xs text-slate-500">কাউন্টারের প্রারম্ভিক ক্যাশ, বিক্রি, খরচ এবং হাতে থাকা নগদ মিলিয়ে চূড়ান্ত হিসাব মিলান</p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                  onClick={() => setZReportModalOpen(false)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid flex-1 gap-6 overflow-y-auto p-6 md:grid-cols-2">
+                <div className="space-y-3.5">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700">ক্যাশিয়ারের নাম</label>
+                      <input
+                        type="text"
+                        value={cashierName}
+                        onChange={(e) => setCashierName(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700">শিফটের নাম</label>
+                      <input
+                        type="text"
+                        value={shiftName}
+                        onChange={(e) => setShiftName(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700">প্রারম্ভিক ক্যাশ ফ্লোট (৳)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={openingFloat}
+                        onChange={(e) => setOpeningFloat(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
+                        placeholder="2000"
+                      />
+                      <span className="text-[10px] text-slate-400">শিফটের শুরুতে ড্রয়ারে থাকা ভাংতি টাকা</span>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700">নগদ খরচ / ভাউচার (৳)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={cashPayouts}
+                        onChange={(e) => setCashPayouts(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
+                        placeholder="0"
+                      />
+                      <span className="text-[10px] text-slate-400">ড্রয়ার থেকে প্রদানকৃত খরচ (যদি থাকে)</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700">
+                      হাতে গোনা নগদ ক্যাশ (Actual Cash Counted) (৳) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={actualCashCounted}
+                      onChange={(e) => setActualCashCounted(e.target.value)}
+                      className="mt-1 w-full rounded-lg border-2 border-indigo-500 px-3 py-2.5 text-base font-bold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="কাউন্ট করে মোট কত টাকা পেয়েছেন লিখুন..."
+                      autoFocus
+                    />
+                    <span className="text-[10px] text-slate-500">ড্রয়ার খুলে ফিজিক্যাল ক্যাশ গুণে মোট পরিমাণ লিখুন</span>
+                  </div>
+
+                  {/* Discrepancy Alert */}
+                  <div
+                    className={`rounded-xl border p-3.5 ${
+                      reconciliation.status === "balanced"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : reconciliation.status === "over"
+                        ? "border-blue-200 bg-blue-50 text-blue-800"
+                        : "border-red-200 bg-red-50 text-red-800"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-bold text-sm">
+                      <span>হিসাবের ফলাফল:</span>
+                      <span className="font-mono text-base">{reconciliation.discrepancyFormatted}</span>
+                    </div>
+                    <p className="mt-1 text-xs font-medium">{reconciliation.summaryBangla}</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-200/60 pt-2 text-xs">
+                      <div>
+                        প্রত্যাশিত ক্যাশ: <strong>৳{(Number(reconciliation.expectedCashInDrawerMinor) / 100).toFixed(2)}</strong>
+                      </div>
+                      <div>
+                        হাতে গোনা ক্যাশ: <strong>৳{(Number(reconciliation.actualCashCountedMinor) / 100).toFixed(2)}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Thermal Z-Report Slip Preview */}
+                <div className="flex flex-col items-center justify-start rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                  <span className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    ৮০মিমি থার্মাল Z-Report স্লিপ প্রিভিউ
+                  </span>
+                  <div className="w-full max-w-[280px] rounded bg-white p-3 font-mono text-[11px] text-slate-800 shadow-md">
+                    <pre className="whitespace-pre-wrap font-mono leading-tight">{zReportText}</pre>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between border-t bg-slate-50 px-6 py-3.5">
+                <span className="text-xs text-slate-500">
+                  শিফট শেষে স্লিপ প্রিন্ট করে ক্যাশ ড্রয়ারে ও ম্যানেজারের ফাইলে রাখুন
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                    onClick={() => setZReportModalOpen(false)}
+                  >
+                    বন্ধ করুন
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary flex items-center gap-1.5 px-5 py-2 text-xs font-semibold"
+                    onClick={() => openZReportPrint(zReportText)}
+                  >
+                    🖨️ থার্মাল Z-Report স্লিপ প্রিন্ট করুন
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
     </div>
   );
 }
