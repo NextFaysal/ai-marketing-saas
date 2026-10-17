@@ -5,6 +5,7 @@ import { getOrganizationId } from "@/lib/org";
 import { smsSegments } from "@/lib/sms-segments";
 import { couponSnippetHtml, couponSnippetText } from "@/lib/composer-blocks";
 import { EmptyState } from "@repo/ui";
+import { FestivalBlastHub } from "./FestivalBlastHub";
 
 interface Template { id: string; name: string; channel: string; subject?: string | null; body: string; htmlBody?: string | null }
 // MS5: composer support types. The variables list is fetched from
@@ -151,6 +152,28 @@ export default function MessagingPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
+  const composerFormRef = useRef<HTMLFormElement>(null);
+  const [storeInfo, setStoreInfo] = useState({ name: "আমাদের শপ", url: "https://yourshop.com" });
+
+  const handleApplyFestivalTemplate = (data: {
+    name: string;
+    channel: "sms" | "whatsapp";
+    body: string;
+    audienceType: string;
+    audienceSegment?: string;
+  }) => {
+    setBcForm((prev) => ({
+      ...prev,
+      name: data.name,
+      channel: data.channel,
+      templateId: "",
+      body: data.body,
+      audienceType: data.audienceSegment ? "segment" : prev.audienceType,
+      audienceSegment: data.audienceSegment || prev.audienceSegment,
+    }));
+    setNotice(`উৎসব ক্যাম্পেইন "${data.name}" ব্রডকাস্ট কম্পোজারে সফলভাবে লোড করা হয়েছে!`);
+    composerFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   // MS1: per-row schedule inputs (datetime-local values).
   const [scheduleInputs, setScheduleInputs] = useState<Record<string, string>>({});
   // MS10: template search (client filter over the loaded list —
@@ -219,6 +242,15 @@ export default function MessagingPage() {
       apiFetch<MessagingSetting>(`/organizations/${orgId}/messaging/settings`).then(setMsgSetting).catch(() => undefined);
       apiFetch<MessagePreference[]>(`/organizations/${orgId}/messaging/preferences`).then(setPreferences).catch(() => undefined);
       apiFetch<SavedAudience[]>(`/organizations/${orgId}/messaging/audiences`).then(setSavedAudiences).catch(() => undefined);
+      apiFetch<{ name?: string; slug?: string; customDomain?: string | null }>(`/organizations/${orgId}`)
+        .then((org) => {
+          if (org) {
+            const origin = typeof window !== "undefined" ? window.location.origin : "https://app.nextcommerce.com";
+            const url = org.customDomain ? `https://${org.customDomain}` : (org.slug ? `${origin}/shop/${org.slug}` : "https://yourshop.com");
+            setStoreInfo({ name: org.name || "আমাদের শপ", url });
+          }
+        })
+        .catch(() => undefined);
       apiFetch<JourneyPreset[]>(`/organizations/${orgId}/messaging/journey-presets`).then(setJourneyPresets).catch(() => undefined);
       apiFetch<SendTimeSuggestion>(`/organizations/${orgId}/messaging/ai/send-time`).then(setSendTime).catch(() => undefined);
       apiFetch<SegmentSuggestion[]>(`/organizations/${orgId}/messaging/ai/segment-suggestion`).then(setSegmentSuggestions).catch(() => undefined);
@@ -578,6 +610,13 @@ export default function MessagingPage() {
         </div>
       ) : null}
 
+      {/* FESTIVAL & MEGA SALE BROADCAST ENGINE */}
+      <FestivalBlastHub
+        storeName={storeInfo.name}
+        storeUrl={storeInfo.url}
+        onApplyTemplate={handleApplyFestivalTemplate}
+      />
+
       <div className="space-y-3 card p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="font-semibold">Templates ({templates.length})</div>
@@ -860,7 +899,7 @@ export default function MessagingPage() {
             ) : null}
           </div>
         ) : null}
-        <form className="grid gap-3 border-t pt-3 lg:grid-cols-3" onSubmit={async (e) => {
+        <form ref={composerFormRef} className="grid gap-3 border-t pt-3 lg:grid-cols-3" onSubmit={async (e) => {
           e.preventDefault(); const orgId = getOrganizationId(); if (!orgId) return;
           // MS6: rich template components — sent ONLY when at
           // least one part is filled, so a plain template send
