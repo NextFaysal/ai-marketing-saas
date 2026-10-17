@@ -359,6 +359,20 @@ export class UpdateStorefrontSettingsDto {
   // GB3 (GC8): checkout terms consent requirement + external terms URL.
   @IsOptional() @IsBoolean() requireTermsConsent?: boolean;
   @IsOptional() @IsString() @MaxLength(1000) termsUrl?: string | null;
+  // GB7 (GC18): merchant tracking ids. Shape validation is
+  // service-enforced via storefront/tracking.ts (Bengali refusal
+  // on a malformed id); these declarations exist so the global
+  // ValidationPipe whitelist admits the fields at all — without
+  // them every settings save that includes a tracking id was
+  // rejected with "property <field> should not exist".
+  @IsOptional() @IsString() @MaxLength(500) ga4MeasurementId?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) gtmContainerId?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) googleAdsId?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) googleAdsConversionLabel?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) searchConsoleVerification?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) metaPixelId?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) tikTokPixelId?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) clarityId?: string | null;
   // AB8 (AX23): merchant custom CSS/JS for the shop. Length
   // (≤50,000) and breakout (</style / <!-- / </script) checks
   // are service-enforced with Bengali errors; null clears.
