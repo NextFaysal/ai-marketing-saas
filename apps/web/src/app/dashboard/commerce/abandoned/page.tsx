@@ -10,6 +10,13 @@ import {
   buildWhatsAppLink,
   isDhakaQuietHour,
 } from "@/lib/abandoned-chase";
+import {
+  DEFAULT_TIER_CONFIG,
+  type TierChaseSequenceConfig,
+  buildTierMessage,
+  determineCurrentChaseTier,
+  calculateSequenceRecoveryRoi,
+} from "@/lib/abandoned-tier-chase";
 
 // Unified abandoned cart & checkout item interface
 interface AbandonedItem {
@@ -138,7 +145,7 @@ export default function AbandonedPage() {
   const [seqBusyId, setSeqBusyId] = useState("");
   const [seqErrorById, setSeqErrorById] = useState<Record<string, string>>({});
 
-  // 1-Click WhatsApp Recovery Generator Modal State
+  // 1-Click WhatsApp Recovery Generator Modal & Multi-Tier Sequence State
   const [waModalOpen, setWaModalOpen] = useState(false);
   const [targetItem, setTargetItem] = useState<{
     id: string;
@@ -146,12 +153,26 @@ export default function AbandonedPage() {
     productName: string;
     checkoutUrl: string;
     totalMinor?: string | null;
+    abandonedAt?: string | null;
+    attemptsCount?: number;
   } | null>(null);
   const [waCouponCode, setWaCouponCode] = useState("VIP50");
   const [waDiscountText, setWaDiscountText] = useState("৫০ টাকা ছাড়");
   const [waCustomMessage, setWaCustomMessage] = useState("");
   const [waGeneratedLink, setWaGeneratedLink] = useState("");
   const [copiedNotice, setCopiedNotice] = useState(false);
+
+  // Multi-tier Chase Sequence Config & Visual Simulator State
+  const [tierConfig, setTierConfig] = useState<TierChaseSequenceConfig>(DEFAULT_TIER_CONFIG);
+  const [showTierSequenceDrawer, setShowTierSequenceDrawer] = useState(false);
+  const [tierNotice, setTierNotice] = useState("");
+  const [selectedTier, setSelectedTier] = useState<1 | 2 | 3>(1);
+  const [targetItemTierInfo, setTargetItemTierInfo] = useState<{
+    nextTier: 1 | 2 | 3 | null;
+    isReady: boolean;
+    minutesElapsed: number;
+    waitMessageBangla: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -264,7 +285,7 @@ export default function AbandonedPage() {
     }
   }
 
-  // Open 1-Click WhatsApp modal with prepopulated Bengali text & custom coupon
+  // Open 1-Click WhatsApp modal with prepopulated Bengali text & custom tier sequence
   const openWhatsAppModal = useCallback((cartOrChase: {
     id: string;
     phone?: string | null;
@@ -272,10 +293,22 @@ export default function AbandonedPage() {
     items?: { name?: string; quantity?: number }[] | null;
     checkoutUrl?: string | null;
     totalMinor?: string | null;
+    abandonedAt?: string | null;
+    attemptsCount?: number;
   }) => {
     const cleanPhone = formatCleanPhone(cartOrChase.phone);
     const itemNames = cartOrChase.productName || (cartOrChase.items || []).map((i) => i.name || "পণ্য").slice(0, 3).join(", ") || "পণ্য";
     const checkoutLink = cartOrChase.checkoutUrl || (typeof window !== "undefined" ? window.location.origin : "");
+
+    const tierInfo = determineCurrentChaseTier(
+      cartOrChase.abandonedAt || new Date().toISOString(),
+      cartOrChase.attemptsCount || 0,
+      tierConfig
+    );
+    setTargetItemTierInfo(tierInfo);
+
+    const initialTier = tierInfo.nextTier || 1;
+    setSelectedTier(initialTier);
 
     setTargetItem({
       id: cartOrChase.id,
@@ -283,18 +316,19 @@ export default function AbandonedPage() {
       productName: itemNames,
       checkoutUrl: checkoutLink,
       totalMinor: cartOrChase.totalMinor,
+      abandonedAt: cartOrChase.abandonedAt,
+      attemptsCount: cartOrChase.attemptsCount,
     });
 
-    const initialCoupon = "VIP50";
-    const initialDiscount = "৫০ টাকা ছাড়";
+    const initialCoupon = initialTier === 2 ? tierConfig.tier2CouponCode : initialTier === 3 ? tierConfig.tier3CouponCode : "VIP50";
+    const initialDiscount = initialTier === 2 ? tierConfig.tier2DiscountText : initialTier === 3 ? tierConfig.tier3DiscountText : "৫০ টাকা ছাড়";
     setWaCouponCode(initialCoupon);
     setWaDiscountText(initialDiscount);
 
-    const initialMsg = buildWhatsAppRecoveryMessage({
+    const initialMsg = buildTierMessage(initialTier, {
       productName: itemNames,
-      couponCode: initialCoupon,
-      discountText: initialDiscount,
       checkoutUrl: checkoutLink,
+      config: tierConfig,
     });
     setWaCustomMessage(initialMsg);
 
@@ -302,7 +336,29 @@ export default function AbandonedPage() {
     setWaGeneratedLink(waUrl);
     setCopiedNotice(false);
     setWaModalOpen(true);
-  }, []);
+  }, [tierConfig]);
+
+  // Switch tier dynamically in WhatsApp modal
+  const applyTierSwitch = (tier: 1 | 2 | 3) => {
+    setSelectedTier(tier);
+    if (!targetItem) return;
+
+    const coupon = tier === 2 ? tierConfig.tier2CouponCode : tier === 3 ? tierConfig.tier3CouponCode : "";
+    const discount = tier === 2 ? tierConfig.tier2DiscountText : tier === 3 ? tierConfig.tier3DiscountText : "";
+    if (coupon) setWaCouponCode(coupon);
+    if (discount) setWaDiscountText(discount);
+
+    const updatedMsg = buildTierMessage(tier, {
+      productName: targetItem.productName,
+      checkoutUrl: targetItem.checkoutUrl,
+      config: tierConfig,
+    });
+    setWaCustomMessage(updatedMsg);
+
+    if (targetItem.phone) {
+      setWaGeneratedLink(buildWhatsAppLink(targetItem.phone, updatedMsg));
+    }
+  };
 
   // Update message when coupon or preset changes
   const applyCouponPreset = (code: string, discountText: string) => {
@@ -419,6 +475,14 @@ export default function AbandonedPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => setShowTierSequenceDrawer(!showTierSequenceDrawer)}
+            className="rounded-xl border border-emerald-500/30 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-xs hover:bg-emerald-100 flex items-center gap-1.5 transition"
+          >
+            <span>⚡</span>
+            <span>মাল্টি-টিয়ার চেজ সিকোয়েন্স</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setShowChaseSettings(!showChaseSettings)}
             className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-xs hover:bg-slate-50"
           >
@@ -468,6 +532,189 @@ export default function AbandonedPage() {
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
+
+      {/* Multi-Tier Sequence & Escalation Simulator Drawer */}
+      {showTierSequenceDrawer && (
+        <div className="card space-y-5 border-2 border-emerald-500/30 bg-emerald-50/15 p-5 transition">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-xl text-white shadow-sm">
+                ⚡
+              </span>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">
+                  মাল্টি-টিয়ার অটো-চেজ সিকোয়েন্স ও কুপন এস্কেলেশন (WhatsApp Bot)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  ১৫ মিনিট (স্টক সতর্কতা) ➔ ১ ঘণ্টা (৳৫০ ক্যাশ ছাড়) ➔ ২৪ ঘণ্টা (৳১০০ ফাইনাল ক্লিয়ারেন্স) সিকোয়েন্সে ড্রপ-অফ সেলস পুনরুদ্ধার করুন।
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowTierSequenceDrawer(false)}
+              className="text-xs font-semibold text-slate-400 hover:text-slate-600"
+            >
+              বন্ধ করুন ✕
+            </button>
+          </div>
+
+          {/* Sequence Timeline Cards */}
+          <div className="grid gap-4 md:grid-cols-3">
+            {/* Tier 1 */}
+            <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-2xs space-y-3">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                  ধাপ ১: {tierConfig.tier1DelayMinutes} মিনিট পর
+                </span>
+                <span className="text-xs font-semibold text-slate-500">মার্জিন সুরক্ষা ✓</span>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">ফ্রেন্ডলি রিমাইন্ডার ও স্টক হোল্ড</h4>
+                <p className="text-xs text-slate-600 mt-1">
+                  কোনো ছাড় বা কুপন ছাড়াই গ্রাহককে জানান যে তার পছন্দের পণ্যটি কার্টে রিজার্ভ রয়েছে এবং স্টক সীমিত।
+                </p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-600">
+                <p className="font-semibold text-slate-700">কৌশল:</p>
+                <p>প্রাথমিক আগ্রহে থাকা shoppers-দের ফুল মার্জিনে কনভার্ট করা।</p>
+              </div>
+            </div>
+
+            {/* Tier 2 */}
+            <div className="rounded-2xl border border-blue-200 bg-white p-4 shadow-2xs space-y-3">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-800">
+                  ধাপ ২: {tierConfig.tier2DelayMinutes} মিনিট (১ ঘণ্টা)
+                </span>
+                <span className="text-xs font-bold text-blue-700">ইনসেন্টিভ বুস্ট 🎁</span>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">৳৫০ ক্যাশ ছাড় কুপন অফার</h4>
+                <p className="text-xs text-slate-600 mt-1">
+                  যারা ১ম ধাপে অর্ডার করেননি, তাদের জন্য সীমিত সময়ের (২ ঘণ্টার) আকর্ষণীয় ছাড় কোড।
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <label className="block font-semibold text-slate-700">
+                  কুপন কোড
+                  <input
+                    type="text"
+                    value={tierConfig.tier2CouponCode}
+                    onChange={(e) => setTierConfig({ ...tierConfig, tier2CouponCode: e.target.value.toUpperCase() })}
+                    className="input mt-1 py-1 font-mono uppercase text-xs"
+                  />
+                </label>
+                <label className="block font-semibold text-slate-700">
+                  ছাড়ের বিবরণ
+                  <input
+                    type="text"
+                    value={tierConfig.tier2DiscountText}
+                    onChange={(e) => setTierConfig({ ...tierConfig, tier2DiscountText: e.target.value })}
+                    className="input mt-1 py-1 text-xs"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Tier 3 */}
+            <div className="rounded-2xl border border-rose-200 bg-white p-4 shadow-2xs space-y-3">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-800">
+                  ধাপ ৩: {Math.round(tierConfig.tier3DelayMinutes / 60)} ঘণ্টা (২৪ ঘণ্টা)
+                </span>
+                <span className="text-xs font-bold text-rose-600">ফাইনাল কল ⏳</span>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">৳১০০ ফাইনাল ক্লিয়ারেন্স অফার</h4>
+                <p className="text-xs text-slate-600 mt-1">
+                  স্টক রিলিজ হওয়ার আগে শেষ সুযোগ। সর্বোচ্চ ছাড়ের মাধ্যমে ড্রপ-অফ অর্ডার পুনরুদ্ধার।
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <label className="block font-semibold text-slate-700">
+                  ফাইনাল কুপন
+                  <input
+                    type="text"
+                    value={tierConfig.tier3CouponCode}
+                    onChange={(e) => setTierConfig({ ...tierConfig, tier3CouponCode: e.target.value.toUpperCase() })}
+                    className="input mt-1 py-1 font-mono uppercase text-xs"
+                  />
+                </label>
+                <label className="block font-semibold text-slate-700">
+                  ছাড়ের বিবরণ
+                  <input
+                    type="text"
+                    value={tierConfig.tier3DiscountText}
+                    onChange={(e) => setTierConfig({ ...tierConfig, tier3DiscountText: e.target.value })}
+                    className="input mt-1 py-1 text-xs"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* ROI Simulator Banner */}
+          {(() => {
+            const sim = calculateSequenceRecoveryRoi(items.length, 1500);
+            return (
+              <div className="rounded-2xl border border-emerald-300 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                      📊 সিকোয়েন্স রিকভারি ও সম্ভাব্য রাজস্ব সিমুলেটর (প্রজেকশন)
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      গড় অর্ডার ভ্যালু ৳১,৫০০ ধরে ১৮.৫% সম্মিলিত পুনরুদ্ধার পূর্বাভাস
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 text-xs font-bold">
+                    <span className="text-slate-600">মোট ড্রপ-অফ: {items.length} টি</span>
+                    <span className="text-emerald-700">সম্ভাব্য পুনরুদ্ধার: ~{sim.recoveredOrders} টি অর্ডার (+{sim.overallRecoveryRatePct}%)</span>
+                    <span className="text-indigo-700">সম্ভাব্য নতুন সেলস: +৳{sim.recoveredRevenueTaka.toLocaleString("bn-BD")}</span>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-2 border-t pt-3 text-center text-xs">
+                  <div className="rounded-xl bg-slate-50 p-2">
+                    <div className="text-slate-500 text-[11px]">টিয়ার ১ রিকভারি</div>
+                    <div className="font-bold text-slate-800">~{sim.tier1Count} টি (৮.৫%)</div>
+                  </div>
+                  <div className="rounded-xl bg-blue-50 p-2">
+                    <div className="text-blue-600 text-[11px]">টিয়ার ২ (৳৫০ ছাড়)</div>
+                    <div className="font-bold text-blue-900">~{sim.tier2Count} টি (৬.২%)</div>
+                  </div>
+                  <div className="rounded-xl bg-rose-50 p-2">
+                    <div className="text-rose-600 text-[11px]">টিয়ার ৩ (৳১০০ ছাড়)</div>
+                    <div className="font-bold text-rose-900">~{sim.tier3Count} টি (৩.৮%)</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Controls & Quiet hours */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <div className="flex items-center gap-2 text-xs text-slate-600">
+              <span className="text-emerald-600 font-bold">✓ শান্ত সময় সক্রিয়:</span>
+              <span>রাত ১০:০০ থেকে সকাল ৮:০০ পর্যন্ত পুশ স্থগিত থাকবে। গ্রাহক স্টপ শব্দ পাঠালে সিকোয়েন্স অফ হবে।</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="btn-primary text-xs"
+                onClick={() => {
+                  setTierNotice("মাল্টি-টিয়ার সিকোয়েন্স ও কুপন এস্কেলেশন কনফিগারেশন সংরক্ষণ করা হয়েছে।");
+                  setTimeout(() => setTierNotice(""), 3500);
+                }}
+              >
+                সিকোয়েন্স কনফিগারেশন সংরক্ষণ করুন
+              </button>
+              {tierNotice && <span className="text-xs font-bold text-emerald-600">{tierNotice}</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chase Rule & Quiet Hours Settings Drawer/Card */}
       {showChaseSettings && (
@@ -813,9 +1060,11 @@ export default function AbandonedPage() {
                               phone: c.phone || "",
                               productName: c.productName,
                               checkoutUrl: "",
+                              abandonedAt: c.lastChasedAt || c.createdAt,
+                              attemptsCount: c.attempts,
                             })}
                           >
-                            <span>💬</span>
+                            <span>⚡</span>
                             <span>WhatsApp চেজ</span>
                           </button>
 
@@ -925,16 +1174,27 @@ export default function AbandonedPage() {
 
                         <td className="py-3">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            {item.phone && !item.recovered ? (
-                              <button
-                                type="button"
-                                className="rounded-lg bg-emerald-600 text-white px-2.5 py-1 text-xs font-bold hover:bg-emerald-700 flex items-center gap-1 shadow-xs transition"
-                                onClick={() => openWhatsAppModal(item)}
-                              >
-                                <span>💬</span>
-                                <span>WhatsApp রিকভারি</span>
-                              </button>
-                            ) : null}
+                            {item.phone && !item.recovered ? (() => {
+                              const tInfo = determineCurrentChaseTier(
+                                item.abandonedAt || new Date().toISOString(),
+                                item.recoverySentAt ? 1 : 0,
+                                tierConfig
+                              );
+                              return (
+                                <button
+                                  type="button"
+                                  className="rounded-lg bg-emerald-600 text-white px-2.5 py-1 text-xs font-bold hover:bg-emerald-700 flex items-center gap-1 shadow-xs transition"
+                                  onClick={() => openWhatsAppModal({
+                                    ...item,
+                                    abandonedAt: item.abandonedAt,
+                                    attemptsCount: item.recoverySentAt ? 1 : 0,
+                                  })}
+                                >
+                                  <span>⚡</span>
+                                  <span>টিয়ার {tInfo.nextTier || 1} চেজ</span>
+                                </button>
+                              );
+                            })() : null}
 
                             {!item.recovered && !item.recoverySentAt && item.email ? (
                               <button
@@ -1060,9 +1320,61 @@ export default function AbandonedPage() {
               </div>
             </div>
 
+            {/* Multi-Tier Sequence Step Selector */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700">⚡ সিকোয়েন্স টিয়ার নির্বাচন করুন:</label>
+                {targetItemTierInfo && (
+                  <span className={`text-[11px] font-semibold ${targetItemTierInfo.isReady ? "text-emerald-700" : "text-amber-700"}`}>
+                    {targetItemTierInfo.waitMessageBangla}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => applyTierSwitch(1)}
+                  className={`rounded-xl border p-2 text-center text-xs font-bold transition ${
+                    selectedTier === 1
+                      ? "border-emerald-600 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-600"
+                      : "border-slate-200 hover:bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  <div>১️⃣ ধাপ ১ (১৫ মি.)</div>
+                  <div className="text-[10px] text-slate-500 font-normal">স্টক রিজার্ভেশন</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => applyTierSwitch(2)}
+                  className={`rounded-xl border p-2 text-center text-xs font-bold transition ${
+                    selectedTier === 2
+                      ? "border-blue-600 bg-blue-50 text-blue-800 ring-2 ring-blue-600"
+                      : "border-slate-200 hover:bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  <div>২️⃣ ধাপ ২ (১ ঘণ্টা)</div>
+                  <div className="text-[10px] text-blue-600 font-normal">{tierConfig.tier2CouponCode} ({tierConfig.tier2DiscountText})</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => applyTierSwitch(3)}
+                  className={`rounded-xl border p-2 text-center text-xs font-bold transition ${
+                    selectedTier === 3
+                      ? "border-rose-600 bg-rose-50 text-rose-800 ring-2 ring-rose-600"
+                      : "border-slate-200 hover:bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  <div>৩️⃣ ধাপ ৩ (২৪ ঘণ্টা)</div>
+                  <div className="text-[10px] text-rose-600 font-normal">{tierConfig.tier3CouponCode} ({tierConfig.tier3DiscountText})</div>
+                </button>
+              </div>
+            </div>
+
             {/* Quick Coupon Presets */}
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">কুপন ডিসকাউন্ট প্রিসেট নির্বাচন করুন:</label>
+              <label className="text-xs font-bold text-slate-700">অথবা অন্যান্য কুপন প্রিসেট নির্বাচন করুন:</label>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <button
                   type="button"
@@ -1162,6 +1474,13 @@ export default function AbandonedPage() {
                 onChange={(e) => handleMessageChange(e.target.value)}
               />
             </div>
+
+            {isDhakaQuietHour(new Date(), tierConfig.quietHoursStart, tierConfig.quietHoursEnd) && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 flex items-center gap-2">
+                <span>🌙</span>
+                <span>এখন শান্ত সময় (রাত ১০টা - সকাল ৮টা)। গ্রাহকের অনুমতি ছাড়া গভীর রাতে বার্তা না পাঠানোর পরামর্শ দেওয়া হচ্ছে।</span>
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
