@@ -1,5 +1,14 @@
-export type AspectRatio = "1:1" | "9:16";
-export type TemplateStyle = "minimal" | "flash_sale" | "cod_trust" | "festive";
+export type AspectRatio = "1:1" | "9:16" | "16:9" | "4:5";
+
+export type TemplateStyle =
+  | "minimal"
+  | "flash_sale"
+  | "cod_trust"
+  | "festive"
+  | "eid_special"
+  | "pohela_boishakh"
+  | "black_friday"
+  | "winter_clearance";
 
 export interface ColorPalette {
   id: string;
@@ -87,6 +96,42 @@ export const BANNER_PALETTES: ColorPalette[] = [
     textMuted: "#a1a1aa",
     glow: "rgba(255, 255, 255, 0.15)",
   },
+  {
+    id: "eid_emerald_gold",
+    name: "🌙 ঈদ রয়্যাল গোল্ড",
+    bgStart: "#064e3b",
+    bgEnd: "#022c22",
+    accent: "#fbbf24",
+    badgeBg: "#b45309",
+    badgeText: "#ffffff",
+    textPrimary: "#ffffff",
+    textMuted: "#fef08a",
+    glow: "rgba(251, 191, 36, 0.35)",
+  },
+  {
+    id: "boishakh_red",
+    name: "🪕 বৈশাখী লাল-সাদা",
+    bgStart: "#7f1d1d",
+    bgEnd: "#991b1b",
+    accent: "#ffffff",
+    badgeBg: "#b91c1c",
+    badgeText: "#ffffff",
+    textPrimary: "#ffffff",
+    textMuted: "#fecaca",
+    glow: "rgba(254, 202, 202, 0.3)",
+  },
+  {
+    id: "cyber_neon",
+    name: "⚡ ব্ল্যাক ফ্রাইডে নিয়ন",
+    bgStart: "#09090b",
+    bgEnd: "#18181b",
+    accent: "#f97316",
+    badgeBg: "#ea580c",
+    badgeText: "#ffffff",
+    textPrimary: "#ffffff",
+    textMuted: "#fed7aa",
+    glow: "rgba(249, 115, 22, 0.35)",
+  },
 ];
 
 export const BANNER_TEMPLATES: { id: TemplateStyle; label: string; icon: string }[] = [
@@ -94,23 +139,53 @@ export const BANNER_TEMPLATES: { id: TemplateStyle; label: string; icon: string 
   { id: "flash_sale", label: "ধামাকা অফার", icon: "⚡" },
   { id: "cod_trust", label: "ক্যাশ অন ডেলিভারি", icon: "🚚" },
   { id: "festive", label: "উৎসবের স্পেশাল", icon: "🎉" },
+  { id: "eid_special", label: "ঈদ মোবারক মেগা সেল", icon: "🌙" },
+  { id: "pohela_boishakh", label: "বৈশাখী মেলা লাল-সাদা", icon: "🪕" },
+  { id: "black_friday", label: "১১.১১ ও ব্ল্যাক ফ্রাইডে", icon: "🔥" },
+  { id: "winter_clearance", label: "উইন্টার ক্লিয়ারেন্স", icon: "❄️" },
 ];
 
 export function getPaletteById(id: string): ColorPalette {
   return BANNER_PALETTES.find((p) => p.id === id) ?? BANNER_PALETTES[0];
 }
 
-export function calculateDiscountPercent(priceMinor: bigint | number, compareAtMinor?: bigint | number | null): number | null {
+export function calculateDiscountPercent(
+  priceMinor: bigint | number | string,
+  compareAtMinor?: bigint | number | string | null
+): number | null {
   if (!compareAtMinor) return null;
   const p = Number(priceMinor);
   const cp = Number(compareAtMinor);
-  if (cp <= 0 || p >= cp) return null;
+  if (isNaN(p) || isNaN(cp) || cp <= 0 || p >= cp) return null;
   return Math.round(((cp - p) / cp) * 100);
 }
 
-export function formatBannerDimensions(ratio: AspectRatio): { width: number; height: number; label: string } {
-  if (ratio === "9:16") {
-    return { width: 1080, height: 1920, label: "রিলস ও স্টোরিজ (1080×1920)" };
+export function generateDiscountBadge(
+  priceMinor: bigint | number | string,
+  compareAtMinor?: bigint | number | string | null
+): { text: string; percent: number } | null {
+  const pct = calculateDiscountPercent(priceMinor, compareAtMinor);
+  if (!pct || pct <= 0) return null;
+  return {
+    text: `ফ্ল্যাট ${pct}% ছাড়`,
+    percent: pct,
+  };
+}
+
+export function formatBannerDimensions(ratio: AspectRatio): {
+  width: number;
+  height: number;
+  label: string;
+} {
+  switch (ratio) {
+    case "9:16":
+      return { width: 1080, height: 1920, label: "রিলস ও স্টোরিজ (1080×1920)" };
+    case "16:9":
+      return { width: 1920, height: 1080, label: "ল্যান্ডস্কেপ ও থাম্বনেইল (1920×1080)" };
+    case "4:5":
+      return { width: 1080, height: 1350, label: "ইনস্টাগ্রাম ও ফেসবুক ফিড (1080×1350)" };
+    case "1:1":
+    default:
+      return { width: 1080, height: 1080, label: "স্কয়ার ও ক্যারোসেল (1080×1080)" };
   }
-  return { width: 1080, height: 1080, label: "ফিড ও ক্যারোসেল (1080×1080)" };
 }

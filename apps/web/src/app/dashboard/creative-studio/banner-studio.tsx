@@ -1,6 +1,15 @@
 "use client";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { formatMinor } from "@repo/contracts";
+import { useRouter } from "next/navigation";
+import {
+  BANNER_PALETTES,
+  BANNER_TEMPLATES,
+  type AspectRatio,
+  type TemplateStyle,
+  formatBannerDimensions,
+  calculateDiscountPercent,
+} from "@/lib/banner-presets";
 
 export interface ProductItem {
   id: string;
@@ -28,21 +37,15 @@ interface BannerStudioProps {
   onDraftWithBanner?: (product: ProductItem, headline: string, primaryText: string) => void;
 }
 
-import {
-  BANNER_PALETTES,
-  BANNER_TEMPLATES,
-  type AspectRatio,
-  type TemplateStyle,
-} from "@/lib/banner-presets";
-
 const QUICK_BADGES = [
-  "🔥 হট অফার",
-  "🚚 ফ্রি ডেলিভারি",
-  "💵 ক্যাশ অন ডেলিভারি",
-  "⚡ ৩০% মেগা ছাড়",
-  "⭐ বেস্ট সেলার",
-  "🎉 উৎসবের বিশেষ ডিল",
-  "📦 সীমিত স্টক",
+  "🌙 ঈদ স্পেশাল কালেকশন",
+  "🪕 শুভ নববর্ষ ১৪৩৩",
+  "🔥 ফ্ল্যাট ৫০% মেগা ছাড়",
+  "🚚 ফ্রি হোম ডেলিভারি",
+  "💵 শতভাগ ক্যাশ অন ডেলিভারি",
+  "⚡ সীমিত সময়ের ধামাকা অফার",
+  "📦 পার্সেল খুলে দেখে পেমেন্ট",
+  "⭐ বেস্ট সেলার কালেকশন",
 ];
 
 export function BannerStudio({
@@ -51,23 +54,24 @@ export function BannerStudio({
   selectedAdAccountId,
   onDraftWithBanner,
 }: BannerStudioProps) {
+  const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [selectedProductId, setSelectedProductId] = useState<string>(
     products[0]?.id ?? ""
   );
   const [ratio, setRatio] = useState<AspectRatio>("1:1");
-  const [template, setTemplate] = useState<TemplateStyle>("minimal");
-  const [paletteId, setPaletteId] = useState<string>("navy");
+  const [template, setTemplate] = useState<TemplateStyle>("eid_special");
+  const [paletteId, setPaletteId] = useState<string>("eid_emerald_gold");
 
-  const [badgeText, setBadgeText] = useState("🔥 স্পেশাল অফার");
+  const [badgeText, setBadgeText] = useState("🌙 ঈদ মেগা ছাড়");
   const [headline, setHeadline] = useState("");
   const [subtext, setSubtext] = useState("");
   const [priceText, setPriceText] = useState("");
   const [comparePriceText, setComparePriceText] = useState("");
   const [brandText, setBrandText] = useState("NEXT COMMERCE");
   const [ctaText, setCtaText] = useState("অর্ডার করতে ক্লিক করুন");
-  const [trustTag, setTrustTag] = useState("✓ ১০০% আসল পণ্য  ✓ দ্রুত ডেলিভারি  ✓ সহজ রিটার্ন");
+  const [trustTag, setTrustTag] = useState("✓ ১০০% আসল পণ্য  ✓ দ্রুত ডেলিভারি  ✓ পার্সেল দেখে পেমেন্ট");
 
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -113,8 +117,9 @@ export function BannerStudio({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const width = 1080;
-    const height = ratio === "1:1" ? 1080 : 1920;
+    const dims = formatBannerDimensions(ratio);
+    const width = dims.width;
+    const height = dims.height;
     canvas.width = width;
     canvas.height = height;
 
@@ -125,11 +130,38 @@ export function BannerStudio({
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
 
-    // 2. Background Radial Spotlight behind product
-    const prodCenterX = width / 2;
-    const prodCenterY = ratio === "1:1" ? 480 : 750;
-    const spotRad = ratio === "1:1" ? 420 : 550;
+    // 2. Geometry according to Aspect Ratio
+    let prodCenterX = width / 2;
+    let prodCenterY = 480;
+    let imgSize = 540;
+    let bottomStartY = 790;
+    let bottomHeight = height - bottomStartY - 50;
+    let headerY = 70;
 
+    if (ratio === "9:16") {
+      prodCenterY = 750;
+      imgSize = 660;
+      bottomStartY = 1150;
+      bottomHeight = height - bottomStartY - 60;
+      headerY = 100;
+    } else if (ratio === "16:9") {
+      prodCenterX = 1350;
+      prodCenterY = 540;
+      imgSize = 640;
+      bottomStartY = 240;
+      bottomHeight = height - bottomStartY - 100;
+      headerY = 100;
+    } else if (ratio === "4:5") {
+      prodCenterY = 580;
+      imgSize = 600;
+      bottomStartY = 920;
+      bottomHeight = height - bottomStartY - 50;
+      headerY = 80;
+    }
+
+    const spotRad = ratio === "16:9" ? 450 : ratio === "9:16" ? 550 : 420;
+
+    // Background Radial Spotlight behind product
     const spot = ctx.createRadialGradient(
       prodCenterX,
       prodCenterY,
@@ -145,45 +177,68 @@ export function BannerStudio({
     ctx.arc(prodCenterX, prodCenterY, spotRad, 0, Math.PI * 2);
     ctx.fill();
 
-    // 3. Subtle background grid or festive sparkles
-    if (template === "festive") {
+    // 3. Festival Sparkles & Themed Motifs
+    if (template === "festive" || template === "eid_special") {
       ctx.fillStyle = selectedPalette.accent;
       ctx.globalAlpha = 0.35;
-      for (let i = 0; i < 20; i++) {
-        const sx = ((i * 137) % width);
-        const sy = ((i * 189) % (height * 0.7));
+      for (let i = 0; i < 28; i++) {
+        const sx = (i * 137) % width;
+        const sy = (i * 189) % (height * 0.7);
         ctx.beginPath();
         ctx.arc(sx, sy, (i % 3) + 2, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1.0;
+
+      if (template === "eid_special") {
+        ctx.font = "60px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("🌙", 60, headerY + 15);
+      }
+    } else if (template === "black_friday") {
+      // Dark High-Voltage Corner Ribbons
+      ctx.fillStyle = selectedPalette.accent;
+      ctx.globalAlpha = 0.2;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(200, 0);
+      ctx.lineTo(0, 200);
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+    } else if (template === "winter_clearance") {
+      ctx.fillStyle = "#e0f2fe";
+      ctx.globalAlpha = 0.4;
+      for (let i = 0; i < 22; i++) {
+        const sx = (i * 163) % width;
+        const sy = (i * 149) % height;
+        ctx.font = "24px sans-serif";
+        ctx.fillText("❄️", sx, sy);
+      }
+      ctx.globalAlpha = 1.0;
     }
 
     // 4. Header Bar: Brand Name & Badge
-    const headerY = ratio === "1:1" ? 70 : 100;
+    const brandX = template === "eid_special" ? 140 : 70;
     ctx.font = "bold 32px 'Hind Siliguri', Inter, sans-serif";
     ctx.fillStyle = selectedPalette.accent;
     ctx.textAlign = "left";
-    ctx.fillText(brandText.toUpperCase(), 70, headerY + 10);
+    ctx.fillText(brandText.toUpperCase(), brandX, headerY + 10);
 
     // Badge Pill at top right
     if (badgeText.trim()) {
       ctx.font = "bold 28px 'Hind Siliguri', Inter, sans-serif";
       const badgeMetrics = ctx.measureText(badgeText);
       const bPadX = 28;
-      const bPadY = 14;
       const bW = badgeMetrics.width + bPadX * 2;
       const bH = 50;
       const bX = width - 70 - bW;
       const bY = headerY - 26;
 
-      // Draw rounded pill
       ctx.fillStyle = selectedPalette.badgeBg;
       ctx.beginPath();
       ctx.roundRect(bX, bY, bW, bH, 25);
       ctx.fill();
 
-      // Border glow
       ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -194,7 +249,6 @@ export function BannerStudio({
     }
 
     // 5. Draw Product Image (with Drop Shadow & Border)
-    const imgSize = ratio === "1:1" ? 540 : 660;
     const imgX = prodCenterX - imgSize / 2;
     const imgY = prodCenterY - imgSize / 2;
 
@@ -216,11 +270,9 @@ export function BannerStudio({
       ctx.clip();
 
       if (imgElem && imgElem.complete && imgElem.naturalWidth > 0) {
-        // Draw white or light translucent backdrop inside container
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(imgX, imgY, imgSize, imgSize);
 
-        // Aspect fit product image
         const imgRatio = imgElem.naturalWidth / imgElem.naturalHeight;
         let dw = imgSize;
         let dh = imgSize;
@@ -236,7 +288,6 @@ export function BannerStudio({
         }
         ctx.drawImage(imgElem, dx + 10, dy + 10, dw - 20, dh - 20);
       } else {
-        // Stylized vector placeholder if no product image
         ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
         ctx.fillRect(imgX, imgY, imgSize, imgSize);
 
@@ -260,85 +311,183 @@ export function BannerStudio({
       ctx.stroke();
       ctx.restore();
 
-      // 6. Draw Bottom Content Card / Information Panel
-      const bottomStartY = ratio === "1:1" ? 790 : 1150;
-      const bottomHeight = height - bottomStartY - 50;
+      // Discount % Badge on Product Corner
+      if (activeProduct?.priceMinor && activeProduct?.compareAtMinor) {
+        const discPct = calculateDiscountPercent(activeProduct.priceMinor, activeProduct.compareAtMinor);
+        if (discPct && discPct > 0) {
+          ctx.save();
+          const dBadgeX = imgX + 20;
+          const dBadgeY = imgY + 20;
+          const dBadgeW = 120;
+          const dBadgeH = 46;
 
-      // Card Backdrop
-      ctx.save();
-      ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-      ctx.beginPath();
-      ctx.roundRect(50, bottomStartY, width - 100, bottomHeight, 28);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.restore();
+          ctx.fillStyle = "#dc2626"; // Crimson Red
+          ctx.beginPath();
+          ctx.roundRect(dBadgeX, dBadgeY, dBadgeW, dBadgeH, 12);
+          ctx.fill();
 
-      // Product Title (with smart truncation / Bengali wrap)
-      ctx.font = "bold 44px 'Hind Siliguri', Inter, sans-serif";
-      ctx.fillStyle = selectedPalette.textPrimary;
-      ctx.textAlign = "left";
-      const displayHeadline = headline.length > 34 ? headline.slice(0, 32) + "..." : headline;
-      ctx.fillText(displayHeadline, 85, bottomStartY + 64);
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
 
-      // Subtext / Feature Tag
-      ctx.font = "26px 'Hind Siliguri', Inter, sans-serif";
-      ctx.fillStyle = selectedPalette.textMuted;
-      const displaySubtext = subtext.length > 52 ? subtext.slice(0, 50) + "..." : subtext;
-      ctx.fillText(displaySubtext, 85, bottomStartY + 108);
+          ctx.font = "bold 22px 'Hind Siliguri', Inter, sans-serif";
+          ctx.fillStyle = "#ffffff";
+          ctx.textAlign = "center";
+          ctx.fillText(`-${discPct}% ছাড়`, dBadgeX + dBadgeW / 2, dBadgeY + 31);
+          ctx.restore();
+        }
+      }
 
-      // Price Tag Section
-      const priceY = bottomStartY + 168;
-      ctx.font = "bold 52px 'Hind Siliguri', Inter, sans-serif";
-      ctx.fillStyle = selectedPalette.accent;
-      ctx.fillText(priceText, 85, priceY);
+      // 6. Draw Content Card / Information Panel
+      if (ratio === "16:9") {
+        // Landscape Mode: Left column info panel
+        const cardX = 70;
+        const cardY = 220;
+        const cardW = 900;
+        const cardH = 680;
 
-      const priceMetrics = ctx.measureText(priceText);
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+        ctx.beginPath();
+        ctx.roundRect(cardX, cardY, cardW, cardH, 28);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
 
-      // Old / Strike-through Price if present
-      if (comparePriceText.trim()) {
-        const compX = 85 + priceMetrics.width + 24;
+        ctx.font = "bold 52px 'Hind Siliguri', Inter, sans-serif";
+        ctx.fillStyle = selectedPalette.textPrimary;
+        ctx.textAlign = "left";
+        const displayHeadline = headline.length > 28 ? headline.slice(0, 26) + "..." : headline;
+        ctx.fillText(displayHeadline, cardX + 50, cardY + 90);
+
         ctx.font = "30px 'Hind Siliguri', Inter, sans-serif";
         ctx.fillStyle = selectedPalette.textMuted;
-        ctx.fillText(comparePriceText, compX, priceY - 6);
+        const displaySubtext = subtext.length > 40 ? subtext.slice(0, 38) + "..." : subtext;
+        ctx.fillText(displaySubtext, cardX + 50, cardY + 150);
 
-        const compMetrics = ctx.measureText(comparePriceText);
-        ctx.strokeStyle = "#ef4444";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(compX - 4, priceY - 16);
-        ctx.lineTo(compX + compMetrics.width + 4, priceY - 16);
-        ctx.stroke();
-      }
-
-      // CTA Button Pill at bottom right of card
-      if (ctaText.trim()) {
-        ctx.font = "bold 28px 'Hind Siliguri', Inter, sans-serif";
-        const ctaMetrics = ctx.measureText(ctaText);
-        const ctaPadX = 32;
-        const ctaW = ctaMetrics.width + ctaPadX * 2;
-        const ctaH = 64;
-        const ctaX = width - 85 - ctaW;
-        const ctaY = priceY - 48;
-
+        const priceY = cardY + 250;
+        ctx.font = "bold 64px 'Hind Siliguri', Inter, sans-serif";
         ctx.fillStyle = selectedPalette.accent;
+        ctx.fillText(priceText, cardX + 50, priceY);
+
+        if (comparePriceText.trim()) {
+          const priceM = ctx.measureText(priceText);
+          const compX = cardX + 50 + priceM.width + 24;
+          ctx.font = "36px 'Hind Siliguri', Inter, sans-serif";
+          ctx.fillStyle = selectedPalette.textMuted;
+          ctx.fillText(comparePriceText, compX, priceY - 8);
+
+          const compM = ctx.measureText(comparePriceText);
+          ctx.strokeStyle = "#ef4444";
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.moveTo(compX - 4, priceY - 20);
+          ctx.lineTo(compX + compM.width + 4, priceY - 20);
+          ctx.stroke();
+        }
+
+        // CTA
+        if (ctaText.trim()) {
+          const ctaX = cardX + 50;
+          const ctaY = priceY + 60;
+          const ctaW = 380;
+          const ctaH = 74;
+
+          ctx.fillStyle = selectedPalette.accent;
+          ctx.beginPath();
+          ctx.roundRect(ctaX, ctaY, ctaW, ctaH, 37);
+          ctx.fill();
+
+          ctx.fillStyle = selectedPalette.bgStart;
+          ctx.font = "bold 32px 'Hind Siliguri', Inter, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(ctaText, ctaX + ctaW / 2, ctaY + 48);
+        }
+
+        // Trust
+        ctx.font = "bold 26px 'Hind Siliguri', Inter, sans-serif";
+        ctx.fillStyle = selectedPalette.textMuted;
+        ctx.textAlign = "left";
+        ctx.fillText(trustTag, cardX + 50, cardY + cardH - 50);
+      } else {
+        // Square, Story, Portrait Modes
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
         ctx.beginPath();
-        ctx.roundRect(ctaX, ctaY, ctaW, ctaH, 32);
+        ctx.roundRect(50, bottomStartY, width - 100, bottomHeight, 28);
         ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
 
-        ctx.fillStyle = selectedPalette.bgStart;
-        ctx.textAlign = "center";
-        ctx.fillText(ctaText, ctaX + ctaW / 2, ctaY + 43);
-      }
+        // Product Title
+        ctx.font = "bold 44px 'Hind Siliguri', Inter, sans-serif";
+        ctx.fillStyle = selectedPalette.textPrimary;
+        ctx.textAlign = "left";
+        const displayHeadline = headline.length > 34 ? headline.slice(0, 32) + "..." : headline;
+        ctx.fillText(displayHeadline, 85, bottomStartY + 64);
 
-      // 7. Trust Bar (COD / Delivery Guarantee)
-      if (ratio === "9:16") {
-        const trustY = bottomStartY + bottomHeight - 35;
-        ctx.font = "bold 24px 'Hind Siliguri', Inter, sans-serif";
+        // Subtext / Feature Tag
+        ctx.font = "26px 'Hind Siliguri', Inter, sans-serif";
+        ctx.fillStyle = selectedPalette.textMuted;
+        const displaySubtext = subtext.length > 52 ? subtext.slice(0, 50) + "..." : subtext;
+        ctx.fillText(displaySubtext, 85, bottomStartY + 108);
+
+        // Price Tag Section
+        const priceY = bottomStartY + 168;
+        ctx.font = "bold 52px 'Hind Siliguri', Inter, sans-serif";
         ctx.fillStyle = selectedPalette.accent;
-        ctx.textAlign = "center";
-        ctx.fillText(trustTag, width / 2, trustY);
+        ctx.fillText(priceText, 85, priceY);
+
+        const priceMetrics = ctx.measureText(priceText);
+
+        // Strike-through Price if present
+        if (comparePriceText.trim()) {
+          const compX = 85 + priceMetrics.width + 24;
+          ctx.font = "30px 'Hind Siliguri', Inter, sans-serif";
+          ctx.fillStyle = selectedPalette.textMuted;
+          ctx.fillText(comparePriceText, compX, priceY - 6);
+
+          const compMetrics = ctx.measureText(comparePriceText);
+          ctx.strokeStyle = "#ef4444";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(compX - 4, priceY - 16);
+          ctx.lineTo(compX + compMetrics.width + 4, priceY - 16);
+          ctx.stroke();
+        }
+
+        // CTA Button Pill at bottom right of card
+        if (ctaText.trim()) {
+          ctx.font = "bold 28px 'Hind Siliguri', Inter, sans-serif";
+          const ctaMetrics = ctx.measureText(ctaText);
+          const ctaPadX = 32;
+          const ctaW = ctaMetrics.width + ctaPadX * 2;
+          const ctaH = 64;
+          const ctaX = width - 85 - ctaW;
+          const ctaY = priceY - 48;
+
+          ctx.fillStyle = selectedPalette.accent;
+          ctx.beginPath();
+          ctx.roundRect(ctaX, ctaY, ctaW, ctaH, 32);
+          ctx.fill();
+
+          ctx.fillStyle = selectedPalette.bgStart;
+          ctx.textAlign = "center";
+          ctx.fillText(ctaText, ctaX + ctaW / 2, ctaY + 43);
+        }
+
+        // 7. Trust Bar (COD / Delivery Guarantee)
+        if (ratio === "9:16" || ratio === "4:5") {
+          const trustY = bottomStartY + bottomHeight - 35;
+          ctx.font = "bold 24px 'Hind Siliguri', Inter, sans-serif";
+          ctx.fillStyle = selectedPalette.accent;
+          ctx.textAlign = "center";
+          ctx.fillText(trustTag, width / 2, trustY);
+        }
       }
     };
 
@@ -349,7 +498,6 @@ export function BannerStudio({
         drawProductContent(img);
       };
       img.onerror = () => {
-        // Fallback to stylized vector if CORS blocks
         drawProductContent();
       };
       img.src = activeProduct.imageUrl;
@@ -384,7 +532,7 @@ export function BannerStudio({
       const dataUrl = canvas.toDataURL("image/png");
       const link = document.createElement("a");
       const safeName = (activeProduct?.name ?? "ad-banner").replace(/[^a-zA-Z0-9\u0980-\u09FF]/g, "-");
-      link.download = `${safeName}-${ratio === "1:1" ? "1080x1080" : "1080x1920"}.png`;
+      link.download = `${safeName}-${ratio}.png`;
       link.href = dataUrl;
       link.click();
     } catch (e) {
@@ -408,7 +556,7 @@ export function BannerStudio({
           setCopied(true);
           setTimeout(() => setCopied(false), 2500);
         } catch {
-          alert("ক্লিপবোর্ডে কপি সরাসরি সাপোর্টেড নয়, অনুগ্রহ করে 'ডাউনলোড' বাটন ব্যবহার করুন।");
+          alert("ক্লিপবোর্ডে কপি সরাসরি ব্রাউজারে সাপোর্টেড নয়, অনুগ্রহ করে 'ডাউনলোড' বাটন ব্যবহার করুন।");
         }
       });
     } catch {
@@ -419,17 +567,17 @@ export function BannerStudio({
   return (
     <div className="space-y-6">
       {/* Top Banner Notice */}
-      <div className="rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 to-indigo-50 p-4">
+      <div className="rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 via-amber-50 to-indigo-50 p-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-600 text-xl text-white shadow-sm">
             🎨
           </div>
           <div>
             <h3 className="font-semibold text-slate-900">
-              AI ভিজ্যুয়াল ক্রিয়েটিভ স্টুডিও (Visual Banner Studio)
+              AI ভিজ্যুয়াল ক্রিয়েটিভ স্টুডিও ও ব্যানার জেনারেটর (Visual Banner Studio)
             </h3>
             <p className="text-xs text-slate-600">
-              আপনার স্টোরের আসল পণ্য নিয়ে মাত্র কয়েক ক্লিকে ফেসবুক/ইনস্টাগ্রাম ফিড (১:১) ও স্টোরিজ (৯:১৬) ব্যানার তৈরি করুন। কোনো গ্রাফিক্স ডিজাইনারের প্রয়োজন নেই!
+              আপনার স্টোরের আসল পণ্য নিয়ে মাত্র কয়েক ক্লিকে ফেসবুক/ইনস্টাগ্রাম ফিড (১:১), স্টোরিজ ও রিলস (৯:১৬), ল্যান্ডস্কেপ (১৬:৯) এবং পোর্ট্রেট (৪:৫) ব্যানার তৈরি করুন।
             </p>
           </div>
         </div>
@@ -448,67 +596,74 @@ export function BannerStudio({
               value={selectedProductId}
               onChange={(e) => setSelectedProductId(e.target.value)}
             >
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.priceMinor ? `${p.priceMinor} BDT` : "মূল্য নেই"})
-                </option>
-              ))}
+              {products.length === 0 ? (
+                <option value="">কোনো সক্রিয় পণ্য নেই</option>
+              ) : (
+                products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {p.priceMinor ? `${Number(p.priceMinor) / 100} BDT` : ""}
+                  </option>
+                ))
+              )}
             </select>
-            {activeProduct?.imageUrl ? (
-              <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600">
-                <span>✓ পণ্যের ছবি লোড হয়েছে</span>
-              </div>
-            ) : (
-              <div className="mt-2 text-xs text-amber-600">
-                ⚠️ এই পণ্যে কোনো ছবি নেই; ভেক্টর আইকন ব্যবহার করা হবে।
-              </div>
-            )}
           </div>
 
-          {/* 2. Format & Layout */}
+          {/* 2. Format & Style Selector */}
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-              ২. ব্যানারের সাইজ ও স্টাইল
+              ২. আকার ও উৎসব টেমপ্লেট
             </label>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setRatio("1:1")}
-                className={`rounded-lg border p-2.5 text-center text-xs font-medium transition ${
-                  ratio === "1:1"
-                    ? "border-sky-600 bg-sky-50 text-sky-700 font-semibold"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                📱 ফিড পোস্ট (১:১)
-                <div className="text-[10px] text-slate-500">1080 × 1080 px</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setRatio("9:16")}
-                className={`rounded-lg border p-2.5 text-center text-xs font-medium transition ${
-                  ratio === "9:16"
-                    ? "border-sky-600 bg-sky-50 text-sky-700 font-semibold"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                🎬 রিলস ও স্টোরিজ (৯:১৬)
-                <div className="text-[10px] text-slate-500">1080 × 1920 px</div>
-              </button>
+
+            {/* Aspect ratio */}
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { id: "1:1", label: "১:১ স্কয়ার (Feed)" },
+                { id: "9:16", label: "৯:১৬ রিলস (Story)" },
+                { id: "16:9", label: "১৬:৯ ব্যানার (Wide)" },
+                { id: "4:5", label: "৪:৫ পোর্ট্রেট (FB/IG)" },
+              ].map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setRatio(r.id as AspectRatio)}
+                  className={`rounded-lg border px-2.5 py-2 text-xs font-medium transition ${
+                    ratio === r.id
+                      ? "border-sky-600 bg-sky-50 text-sky-700 shadow-sm"
+                      : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
             </div>
 
             {/* Template presets */}
             <div className="mt-3">
-              <label className="block text-[11px] font-medium text-slate-600">টেমপ্লেট থিম:</label>
+              <label className="block text-[11px] font-medium text-slate-600">উৎসব ও মার্কেটিং টেমপ্লেট:</label>
               <div className="mt-1 grid grid-cols-2 gap-1.5">
                 {BANNER_TEMPLATES.map((t) => (
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => setTemplate(t.id)}
+                    onClick={() => {
+                      setTemplate(t.id);
+                      if (t.id === "eid_special") {
+                        setPaletteId("eid_emerald_gold");
+                        setBadgeText("🌙 ঈদ মেগা সেল");
+                      } else if (t.id === "pohela_boishakh") {
+                        setPaletteId("boishakh_red");
+                        setBadgeText("🪕 বৈশাখী মেলা ১৪৩৩");
+                      } else if (t.id === "black_friday") {
+                        setPaletteId("cyber_neon");
+                        setBadgeText("🔥 ১১.১১ মেগা ফ্ল্যাশ সেল");
+                      } else if (t.id === "winter_clearance") {
+                        setPaletteId("navy");
+                        setBadgeText("❄️ উইন্টার ক্লিয়ারেন্স সেল");
+                      }
+                    }}
                     className={`rounded-md px-2.5 py-1.5 text-xs text-left transition ${
                       template === t.id
-                        ? "bg-slate-900 text-white font-medium"
+                        ? "bg-slate-900 text-white font-medium shadow-xs"
                         : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                     }`}
                   >
@@ -646,7 +801,7 @@ export function BannerStudio({
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-xs font-medium text-slate-300">
-                  লাইভ ক্যানভাস প্রিভিউ ({ratio === "1:1" ? "1080×1080 Feed" : "1080×1920 Story"})
+                  লাইভ ক্যানভাস প্রিভিউ ({ratio === "1:1" ? "1080×1080 Feed" : ratio === "9:16" ? "1080×1920 Story" : ratio === "16:9" ? "1920×1080 Wide" : "1080×1350 Portrait"})
                 </span>
               </div>
               <span className="text-[11px] text-slate-400">Crisp Ultra-HD 300 DPI</span>
@@ -657,11 +812,11 @@ export function BannerStudio({
               <canvas
                 ref={canvasRef}
                 style={{
-                  maxWidth: ratio === "1:1" ? "420px" : "320px",
+                  maxWidth: ratio === "16:9" ? "520px" : ratio === "1:1" ? "420px" : ratio === "4:5" ? "360px" : "320px",
                   maxHeight: "540px",
                   width: "100%",
                   height: "auto",
-                  aspectRatio: ratio === "1:1" ? "1 / 1" : "9 / 16",
+                  aspectRatio: ratio === "1:1" ? "1 / 1" : ratio === "9:16" ? "9 / 16" : ratio === "16:9" ? "16 / 9" : "4 / 5",
                   boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
                 }}
                 className="rounded-lg border border-slate-800"
@@ -670,7 +825,7 @@ export function BannerStudio({
 
             {/* Action Bar */}
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={handleDownload}
@@ -687,6 +842,18 @@ export function BannerStudio({
                 >
                   <span>📋</span>
                   <span>{copied ? "কপি হয়েছে!" : "ক্লিপবোর্ডে কপি"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const caption = `${headline} — ${badgeText}!\n\n${subtext}\nমূল্য: ${priceText} ${comparePriceText ? `(পূর্বে ${comparePriceText})` : ""}\n\n${trustTag}\nঅর্ডার করতে ইনবক্স করুন অথবা লিঙ্কে ক্লিক করুন:`;
+                    navigator.clipboard?.writeText(caption);
+                    router.push("/dashboard/social-posts");
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-indigo-700 bg-indigo-900/60 px-3 py-2.5 text-xs font-medium text-indigo-200 hover:bg-indigo-800 hover:text-white"
+                >
+                  <span>📣</span>
+                  <span>সোশ্যাল পোস্ট করুন</span>
                 </button>
               </div>
 
@@ -714,8 +881,9 @@ export function BannerStudio({
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm text-xs text-slate-600 space-y-1.5">
             <div className="font-semibold text-slate-800">💡 প্রফেশনাল পারফরম্যান্স টিপস:</div>
             <p>• <strong>১:১ ফিড ব্যানার:</strong> ফেসবুক ও ইনস্টাগ্রাম ক্যারোসেল অ্যাড ও ফিড পোস্টের জন্য আদর্শ।</p>
-            <p>• <strong>৯:১৬ স্টোরি ব্যানার:</strong> ইনস্টাগ্রাম রিলস, ফেসবুক স্টোরিজ ও টিকটক ভিডিও কভারের জন্য সেরা কনভার্সন দেয়।</p>
-            <p>• <strong>ক্যাশ অন ডেলিভারি ট্যাগ:</strong> বাংলাদেশে ৮০%+ কাস্টমার COD বিশ্বাস করে, তাই ব্যাজে COD উল্লেখ রাখলে CTR বাড়ে।</p>
+            <p>• <strong>৯:১৬ স্টোরি ও রিলস:</strong> ইনস্টাগ্রাম রিলস, ফেসবুক স্টোরিজ ও টিকটক ভিডিও কভারের জন্য সেরা কনভার্সন দেয়।</p>
+            <p>• <strong>১৬:৯ ল্যান্ডস্কেপ:</strong> ফেসবুক পেজ কভার, ওয়েবসাইট হিরো ব্যানার ও ইউটিউব থাম্বনেইলের জন্য উপযুক্ত।</p>
+            <p>• <strong>৪:৫ পোর্ট্রেট:</strong> মোবাইল স্ক্রিনে সবচেয়ে বেশি জায়গা দখল করে, ফলে অর্গানিক রিচ ও এঙ্গেজমেন্ট বাড়ে।</p>
           </div>
         </div>
       </div>
