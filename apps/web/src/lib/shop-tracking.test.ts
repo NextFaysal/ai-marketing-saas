@@ -9,6 +9,8 @@ import {
   shouldFireAdsConversion,
   TRACKING_SESSION_KEY,
   trackingFromSettings,
+  parseTrackingIds,
+  trackShopEvent,
   type ShopTracking,
 } from "./shop-tracking";
 
@@ -274,7 +276,6 @@ describe("captureFirstTouchAttribution + getAttributionForCheckout (AX19)", () =
 
 describe("parseTrackingIds multi-account parser", () => {
   it("splits comma and whitespace separated IDs into clean array", () => {
-    const { parseTrackingIds } = require("./shop-tracking");
     expect(parseTrackingIds("123456789, 987654321")).toEqual(["123456789", "987654321"]);
     expect(parseTrackingIds("G-111  G-222,  G-333\n G-444")).toEqual(["G-111", "G-222", "G-333", "G-444"]);
     expect(parseTrackingIds(null)).toEqual([]);
@@ -285,7 +286,6 @@ describe("parseTrackingIds multi-account parser", () => {
 
 describe("trackShopEvent broadcast dispatcher", () => {
   it("safely ignores calls when window is not defined or functions absent", () => {
-    const { trackShopEvent } = require("./shop-tracking");
     expect(() => trackShopEvent("PageView")).not.toThrow();
     expect(() => trackShopEvent("ViewContent", { content_name: "T-Shirt", value: 500 })).not.toThrow();
   });

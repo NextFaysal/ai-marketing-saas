@@ -56,7 +56,7 @@ const RULES: Record<
   },
   metaPixelId: {
     pattern: /^\d{9,20}$/,
-    message: "Facebook Pixel ID সঠিক সংখ্যা (৯–২০ ডিজিট) হতে হবে",
+    message: "Facebook Pixel ID-এর ফরম্যাট ঠিক নয় (৯–২০ ডিজিট হতে হবে)",
     allowMultiple: true,
   },
   tikTokPixelId: {
