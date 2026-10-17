@@ -19,7 +19,12 @@ interface PublicForm {
  */
 export default function PublicJoinPage() {
   const params = useParams();
-  const organizationId = String(params.organizationId ?? "");
+  // Route-segment name is [token] for BOTH /join children: Next.js
+  // forbids different slug names at the same path level, and the
+  // sibling /join/[token] page (org invite links) already owned the
+  // name. On THIS two-segment route the first segment carries the
+  // organizationId (URL shape unchanged: /join/<organizationId>/<slug>).
+  const organizationId = String(params.token ?? "");
   const slug = String(params.slug ?? "");
   const [form, setForm] = useState<PublicForm | null>(null);
   const [name, setName] = useState("");
