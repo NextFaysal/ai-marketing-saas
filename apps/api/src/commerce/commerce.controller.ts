@@ -533,8 +533,9 @@ export class CommerceController {
     @Param("organizationId") orgId: string,
     @Param("checkoutId") checkoutId: string,
     @Query("discountCode") discountCode?: string,
+    @Query("discountText") discountText?: string,
   ) {
-    return this.abandoned.getWhatsAppRecoveryData(orgId, checkoutId, discountCode);
+    return this.abandoned.getWhatsAppRecoveryData(orgId, checkoutId, discountCode, discountText);
   }
 
   @Post("abandoned/backfill/:storeId")

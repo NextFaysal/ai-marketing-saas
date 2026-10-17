@@ -1059,7 +1059,7 @@ export class AbandonedCheckoutsService {
     };
   }
 
-  async getWhatsAppRecoveryData(orgId: string, checkoutId: string, customDiscountCode = "SAVE10") {
+  async getWhatsAppRecoveryData(orgId: string, checkoutId: string, customDiscountCode = "SAVE10", customDiscountText?: string) {
     let row = await (this.prisma as any).abandonedStoreCheckout.findFirst({
       where: { id: checkoutId, organizationId: orgId },
     });
@@ -1080,6 +1080,44 @@ export class AbandonedCheckoutsService {
       }
     }
 
+    if (!phone && this.trackerCarts?.list) {
+      try {
+        const trackerPart = await this.trackerCarts.list(orgId);
+        const trackerCart = ((trackerPart as any)?.carts || []).find((c: any) => c.visitorId === checkoutId || c.id === checkoutId);
+        if (trackerCart) {
+          phone = trackerCart.contact?.phone;
+          items = trackerCart.items ?? [];
+          checkoutUrl = trackerCart.storeUrl ?? null;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!phone) {
+      try {
+        const chase = await (this.prisma as any).orderChase?.findFirst({
+          where: { id: checkoutId, organizationId: orgId },
+        });
+        const sessionId = chase?.sessionId || checkoutId;
+        const session = await (this.prisma as any).botSession?.findFirst({
+          where: { id: sessionId, organizationId: orgId },
+        });
+        if (session) {
+          phone = (session.data as any)?.phone || (session.data as any)?.customerPhone || (session.data as any)?.contactPhone;
+          const pid = (session.data as any)?.productId;
+          if (pid) {
+            const prod = await (this.prisma as any).product?.findUnique({ where: { id: pid } });
+            if (prod) items = [{ name: prod.name, quantity: (session.data as any)?.quantity || 1 }];
+          }
+          const org = await (this.prisma as any).organization.findUnique({ where: { id: orgId } });
+          checkoutUrl = org?.slug ? `/shop/${org.slug}` : `/`;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     if (!phone) {
       throw new BadRequestException("এই কার্টে কোনো ফোন নম্বর নেই — WhatsApp রিকভারি সম্ভব নয়");
     }
@@ -1090,7 +1128,8 @@ export class AbandonedCheckoutsService {
 
     const itemNames = items.map((i) => i.name || "পণ্য").slice(0, 3).join(", ");
     const discount = (customDiscountCode || "SAVE10").toUpperCase();
-    const text = `আসসালামু আলাইকুম! আপনার কার্টে থাকা (${itemNames || "পণ্যসমূহ"}) অর্ডার করার জন্য সংরক্ষিত আছে।\n\nএখনই অর্ডার নিশ্চিত করলে পাচ্ছেন বিশেষ ছাড়! চেকআউটে কুপন কোড ব্যবহার করুন: *${discount}*\n\n🛒 অর্ডার সম্পন্ন করার লিংক:\n${checkoutUrl || "আমাদের শপে ভিজিট করুন"}`;
+    const discountPhrase = customDiscountText ? ` (${customDiscountText})` : "";
+    const text = `আসসালামু আলাইকুম! আপনার কার্টে থাকা (${itemNames || "পণ্যসমূহ"}) অর্ডার করার জন্য সংরক্ষিত আছে।\n\nএখনই অর্ডার নিশ্চিত করলে পাচ্ছেন বিশেষ ছাড়! চেকআউটে কুপন কোড ব্যবহার করুন: *${discount}*${discountPhrase}\n\n🛒 অর্ডার সম্পন্ন করার লিংক:\n${checkoutUrl || "আমাদের শপে ভিজিট করুন"}`;
 
     const waLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
 

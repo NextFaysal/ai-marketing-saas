@@ -26,7 +26,7 @@ const GROUPS: NavGroup[] = [
     id: "commerce",
     title: "কমার্স ও সেলস",
     icon: "🛍️",
-    hrefs: ["/dashboard/products", "/dashboard/orders", "/dashboard/order-notifications", "/dashboard/fraud", "/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit"],
+    hrefs: ["/dashboard/products", "/dashboard/orders", "/dashboard/commerce/abandoned", "/dashboard/order-notifications", "/dashboard/fraud", "/dashboard/funnels", "/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit"],
   },
   {
     id: "marketing",
