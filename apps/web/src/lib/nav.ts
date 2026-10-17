@@ -40,6 +40,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Inbox", href: "/dashboard/inbox", icon: "💬", ready: true },
   { label: "AI Instructions", href: "/dashboard/ai-instructions", icon: "⚙️", ready: true },
   { label: "Social Comments AI", href: "/dashboard/comments", icon: "💬", ready: true },
+  { label: "লাইভ সেলিং ও কমেন্ট-টু-অর্ডার", href: "/dashboard/social-selling", icon: "🔴", ready: true },
   { label: "WhatsApp ক্যাটালগ ও বট", href: "/dashboard/whatsapp-bot", icon: "🟢", ready: true },
   { label: "Leads & CRM", href: "/dashboard/leads", icon: "🧲", ready: true },
   { label: "Customers 360", href: "/dashboard/customers", icon: "👤", ready: true },
