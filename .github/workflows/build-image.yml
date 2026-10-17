@@ -1,0 +1,57 @@
+# Build & Publish Image — GitHub Actions builds the Docker image on
+# GitHub's runners and publishes it to GHCR. The production server
+# (Dokploy) only pulls the finished image with
+# docker-compose.image.yml — it never builds, so a small VPS can no
+# longer kill a deploy mid-build (OOM / "cancelled").
+#
+# Triggers: every push to main, plus the manual "Run workflow"
+# button in the repo's Actions tab.
+# Cost: this repo is public, so standard Actions minutes are free.
+name: Build & Publish Image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A production image build must never be cancelled by a newer run.
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          # Image name must be lowercase. `latest` is what Dokploy
+          # pulls; the sha- tag pins every build for rollback.
+          tags: |
+            ghcr.io/nextfaysal/ai-marketing-saas:latest
+            ghcr.io/nextfaysal/ai-marketing-saas:sha-${{ github.sha }}
+          # Layer cache in the Actions cache — repeat builds reuse
+          # unchanged layers instead of starting from zero.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,134 @@
+# AI Marketing SaaS — Dokploy Compose stack (PREBUILT IMAGE mode).
+# The image is built by GitHub Actions (.github/workflows/build-image.yml)
+# and published to GHCR; this server only pulls and runs it — no build
+# happens here. Guide: docs/deployment-github-actions.md
+# Original build-on-server variant: docker-compose.dokploy.yml
+# Variables come from the Dokploy Environment tab (see
+# .env.dokploy.example). Domains are attached per service in the
+# Dokploy Domains tab (web -> 3000, admin -> 3001, api -> 4000);
+# no host ports are published on purpose.
+services:
+  postgres:
+    # SA-B2: pgvector build of the SAME PostgreSQL 16 — same data
+    # volume, same major version; the image only adds the `vector`
+    # extension the KnowledgeEmbedding migration enables. Takes
+    # effect on the next (manual) Dokploy redeploy.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: marketing
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the Dokploy Environment tab}
+      POSTGRES_DB: marketing_saas
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketing -d marketing_saas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  mailpit:
+    # Test inbox for platform SMTP (Admin Console -> SMTP host
+    # "mailpit", port 1025). Optional in real production.
+    image: axllent/mailpit:latest
+
+  api:
+    image: ghcr.io/nextfaysal/ai-marketing-saas:latest
+    pull_policy: always
+    command: >
+      sh -c "pnpm --filter @repo/db exec prisma migrate deploy
+      && node apps/api/dist/main.js"
+    environment:
+      DATABASE_URL: postgresql://marketing:${POSTGRES_PASSWORD}@postgres:5432/marketing_saas?schema=public
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the Dokploy Environment tab}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in the Dokploy Environment tab}
+      # Milestone 57: queue dispatch mode + worker callback secret.
+      REDIS_URL: redis://redis:6379
+      INTERNAL_JOB_SECRET: ${INTERNAL_JOB_SECRET:?Set INTERNAL_JOB_SECRET in the Dokploy Environment tab (must match the worker)}
+      # AA2: the Admin System panel probes the worker's WK2
+      # health endpoint at this address (compose service name).
+      WORKER_HEALTH_URL: http://worker:4100/health
+      API_PORT: "4000"
+      WEB_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in the Dokploy Environment tab}
+      # RM1 (Cloudflare R2 media): values come from the Dokploy
+      # Environment tab. An empty bucket keeps media on the api
+      # container's local disk, which is NOT durable across redeploys.
+      MEDIA_S3_BUCKET: ${MEDIA_S3_BUCKET:-}
+      MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-}
+      MEDIA_S3_REGION: ${MEDIA_S3_REGION:-auto}
+      MEDIA_S3_ACCESS_KEY_ID: ${MEDIA_S3_ACCESS_KEY_ID:-}
+      MEDIA_S3_SECRET_ACCESS_KEY: ${MEDIA_S3_SECRET_ACCESS_KEY:-}
+      # RM2: dedicated R2 buckets. When set, MEDIA_R2_PRIVATE_BUCKET
+      # replaces MEDIA_S3_BUCKET as the private/default bucket and
+      # public-intent media goes to MEDIA_R2_PUBLIC_BUCKET; when
+      # unset, the single MEDIA_S3_BUCKET serves both (RB1 behaviour).
+      MEDIA_R2_PUBLIC_BUCKET: ${MEDIA_R2_PUBLIC_BUCKET:-}
+      MEDIA_R2_PRIVATE_BUCKET: ${MEDIA_R2_PRIVATE_BUCKET:-}
+      # RB6/RM11: optional backup bucket — the media_lifecycle_sweep
+      # job writes a daily StoredFile registry snapshot plus copies
+      # of the last 24h of private objects into it. Empty = backups
+      # off (the sweep reports "not-configured", never a fake run).
+      MEDIA_R2_BACKUP_BUCKET: ${MEDIA_R2_BACKUP_BUCKET:-}
+      # RB6/RM11: lifecycle retention windows (code defaults apply
+      # when empty: trash 30 days, quarantine 24 hours).
+      MEDIA_TRASH_RETENTION_DAYS: ${MEDIA_TRASH_RETENTION_DAYS:-}
+      MEDIA_QUARANTINE_RETENTION_HOURS: ${MEDIA_QUARANTINE_RETENTION_HOURS:-}
+      # RM4: public CDN base for stored media URLs (the public
+      # bucket's custom domain). Empty = the code default
+      # https://media.qosprey.com.
+      MEDIA_CDN_BASE_URL: ${MEDIA_CDN_BASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose: ["4000"]
+
+  web:
+    image: ghcr.io/nextfaysal/ai-marketing-saas:latest
+    pull_policy: always
+    command: pnpm --filter @repo/web exec next start -p 3000
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on: [api]
+    expose: ["3000"]
+
+  admin:
+    image: ghcr.io/nextfaysal/ai-marketing-saas:latest
+    pull_policy: always
+    command: pnpm --filter @repo/admin exec next start -p 3001
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on: [api]
+    expose: ["3001"]
+
+  # Milestone 57: dedicated job worker. The API dispatches due
+  # ScheduledJobs to BullMQ (REDIS_URL set on the api service);
+  # this worker executes them via the API's internal callback
+  # (INTERNAL_JOB_SECRET must match on both sides). Exhausted
+  # jobs land in the DeadLetterJob table (Admin -> System -> DLQ).
+  worker:
+    image: ghcr.io/nextfaysal/ai-marketing-saas:latest
+    pull_policy: always
+    command: node apps/worker/dist/index.js
+    # WK2: the worker drains in-flight jobs on SIGTERM; give
+    # it the full minute before the orchestrator SIGKILLs.
+    stop_grace_period: 60s
+    environment:
+      REDIS_URL: redis://redis:6379
+      API_INTERNAL_URL: http://api:4000
+      INTERNAL_JOB_SECRET: ${INTERNAL_JOB_SECRET:?Set INTERNAL_JOB_SECRET in the Dokploy Environment tab (must match the api)}
+      WORKER_HEALTH_PORT: "4100"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    depends_on: [api, redis]
+
+volumes:
+  postgres_data:
+  redis_data:
