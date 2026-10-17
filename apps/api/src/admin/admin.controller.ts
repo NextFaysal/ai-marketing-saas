@@ -212,6 +212,10 @@ class DeletePermanentDto {
   @IsString() @MinLength(1) confirmName!: string;
   @IsString() @MinLength(3) reason!: string;
 }
+class SlugTombstoneReleaseDto {
+  // TD11: the release reason ("note") — mandatory, audited.
+  @IsString() @MinLength(3) note!: string;
+}
 class BackupInfoDto {
   @IsOptional() @IsString() lastBackupAt?: string;
   @IsOptional() @IsString() location?: string;
@@ -391,6 +395,8 @@ export class AdminController {
   testTiktok() { return this.admin.testTiktok(); }
   @Post("platform-config/test-linkedin") @AdminTier("SUPER")
   testLinkedin() { return this.admin.testLinkedin(); }
+  @Post("platform-config/test-threads") @AdminTier("SUPER")
+  testThreads() { return this.admin.testThreads(); }
   @Post("platform-config/test-google") @AdminTier("SUPER")
   testGoogle() { return this.admin.testGoogle(); }
   @Patch("settings") @AdminTier("SUPER")
@@ -559,6 +565,13 @@ export class AdminController {
   @Post("orgs/:id/delete-permanent") @AdminTier("SUPER")
   deletePermanent(@Req() req: any, @Param("id") id: string, @Body() dto: DeletePermanentDto) {
     return this.admin.deleteOrgPermanent(req.adminUser, id, dto.confirmName, dto.reason, req.ip);
+  }
+
+  // ---- TD11: slug tombstones (180-day slug cooldown) ----
+  @Get("slug-tombstones") slugTombstones() { return this.admin.listSlugTombstones(); }
+  @Post("slug-tombstones/:slug/release") @AdminTier("SUPER")
+  releaseSlugTombstone(@Req() req: any, @Param("slug") slug: string, @Body() dto: SlugTombstoneReleaseDto) {
+    return this.admin.releaseSlugTombstone(req.adminUser, slug, dto.note, req.ip);
   }
 
   // ---- Milestone 42 (Phase A6): reliability panel ----

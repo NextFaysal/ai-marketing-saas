@@ -5,6 +5,7 @@ import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { codBoardRows, coverageLabel, marginTone, type CodBoard, type ProfitReport } from "@/lib/orders-on7";
 import { formatMinor } from "@repo/contracts";
+import { ResponsiveTable } from "@repo/ui";
 
 /** Minor-string display (bad input passes through raw). */
 const fmtM = (minor?: string | null): string => {
@@ -283,8 +284,8 @@ export default function AccountingPage() {
     <div className="mx-auto max-w-4xl space-y-6 p-4">
       <h1 className="page-title">কর ও হিসাব (Tax & Accounting)</h1>
       <div className="flex flex-wrap gap-2">
-        <Link href="/dashboard/commerce/reports" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📑 সব রিপোর্ট</Link>
-        <Link href="/dashboard/commerce/finance" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 ফাইন্যান্স ও লেজার</Link>
+        <Link href="/dashboard/commerce/reports" className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📑 সব রিপোর্ট</Link>
+        <Link href="/dashboard/commerce/finance" className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 ফাইন্যান্স ও লেজার</Link>
       </div>
       {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
       {loadError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{loadError}</p> : null}
@@ -371,7 +372,7 @@ export default function AccountingPage() {
         {codError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{codError}</p> : null}
         {!codBoard && !codError ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
         {codBoard ? (
-          <div className="overflow-x-auto">
+          <ResponsiveTable table={<div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -399,7 +400,14 @@ export default function AccountingPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>} cards={codBoardRows(codBoard).map((r) => (
+  <div key={r.key} className={`rounded-xl border bg-white p-3 shadow-sm ${r.kind === "total" ? "bg-slate-50 font-semibold" : ""}`}>
+    <dl className="space-y-1 text-sm">
+      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কুরিয়ার</dt><dd className="text-right">{r.provider}{r.kind === "unassigned" ? (<span className="block text-xs font-normal text-slate-500">এখনো courier-এ যায়নি — অর্ডারের বকেয়া {fmtM(r.outstandingMinor)} ({r.unassignedOrders}টি)</span>) : null}</dd></div>
+      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পথে আছে</dt><dd className="text-right">{r.kind === "unassigned" ? "—" : fmtM(r.inTransitCodMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ডেলিভারি হয়েছে, টাকা আসেনি</dt><dd className="text-right">{r.kind === "unassigned" ? "—" : fmtM(r.deliveredUncollectedMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গত ৭ দিনে এসেছে</dt><dd className="text-right">{r.kind === "unassigned" ? "—" : fmtM(r.collectedLast7dMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট বকেয়া</dt><dd className="text-right">{fmtM(r.outstandingMinor)}</dd></div>
+    </dl>
+  </div>
+))} />
         ) : null}
       </div>
 
@@ -473,14 +481,14 @@ export default function AccountingPage() {
                 ) : null}
               </div>
             ) : null}
-            {profitReport.perProductBasis ? <p className="text-xs text-slate-400">{profitReport.perProductBasis}</p> : null}
+            {profitReport.perProductBasis ? <p className="text-xs text-slate-500">{profitReport.perProductBasis}</p> : null}
             {profitReport.truncated ? (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">তালিকাটি সীমিত — সব পণ্য দেখানো হয়নি; মোট হিসাব সব অর্ডার মিলিয়েই করা।</p>
             ) : null}
             {profitReport.perProduct.length === 0 ? (
               <p className="text-sm text-slate-400">এই সময়ে কোনো বিক্রি নেই।</p>
             ) : (
-              <div className="overflow-x-auto">
+              <ResponsiveTable table={<div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs text-slate-500">
@@ -494,7 +502,7 @@ export default function AccountingPage() {
                   <tbody>
                     {profitReport.perProduct.map((p) => (
                       <tr key={p.productId} className="border-b last:border-0">
-                        <td className="py-2 pr-2 font-medium">{p.name}{p.sku ? <span className="ml-2 text-xs font-normal text-slate-400">SKU: {p.sku}</span> : null}</td>
+                        <td className="py-2 pr-2 font-medium">{p.name}{p.sku ? <span className="ml-2 text-xs font-normal text-slate-500">SKU: {p.sku}</span> : null}</td>
                         <td className="py-2 pr-2">{p.quantity}</td>
                         <td className="py-2 pr-2">{fmtM(p.revenueMinor)}</td>
                         <td className="py-2 pr-2">{p.costMinor != null ? fmtM(p.costMinor) : <span className="font-semibold text-amber-700">খরচ জানা নেই</span>}</td>
@@ -507,7 +515,7 @@ export default function AccountingPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </div>} cards={profitReport.perProduct.map((p) => (<div key={p.productId} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পণ্য</dt><dd className="text-right"><>{p.name}{p.sku ? <span className="ml-2 text-xs font-normal text-slate-500">SKU: {p.sku}</span> : null}</></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিমাণ</dt><dd className="text-right">{p.quantity}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আয়</dt><dd className="text-right">{fmtM(p.revenueMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">খরচ</dt><dd className="text-right">{p.costMinor != null ? fmtM(p.costMinor) : <span className="font-semibold text-amber-700">খরচ জানা নেই</span>}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">লাভ</dt><dd className="text-right">{p.marginMinor != null ? (<span className={`rounded px-2 py-0.5 font-bold ${marginTone(p.marginMinor) === "negative" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>{fmtM(p.marginMinor)}</span>) : <span className="text-slate-400">—</span>}</dd></div></dl></div>))} />
             )}
           </div>
         ) : null}
@@ -550,7 +558,7 @@ export default function AccountingPage() {
           feeRows.length === 0 ? (
             <p className="text-sm text-slate-400">এই সময়ে কোনো যাচাইকৃত অনলাইন পেমেন্ট নেই।</p>
           ) : (
-            <div className="overflow-x-auto">
+            <ResponsiveTable table={<div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-slate-500">
@@ -575,7 +583,7 @@ export default function AccountingPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </div>} cards={feeRows.map((r) => (<div key={`${r.provider}-${r.source}`} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">প্রোভাইডার</dt><dd className="text-right">{r.provider}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">উৎস</dt><dd className="text-right">{r.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের"}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পেমেন্ট সংখ্যা</dt><dd className="text-right">{r.count}টি</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট (গ্রস)</dt><dd className="text-right">{fmtM(r.grossMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ফি</dt><dd className="text-right">{r.feeMinor != null ? fmtM(r.feeMinor) : <span className="font-semibold text-amber-700">ফি হার সেট করা হয়নি</span>}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">নেট</dt><dd className="text-right">{r.netMinor != null ? fmtM(r.netMinor) : "—"}</dd></div></dl></div>))} />
           )
         ) : null}
 
@@ -586,7 +594,7 @@ export default function AccountingPage() {
             settlementRows.length === 0 ? (
               <p className="text-sm text-slate-400">এই সময়ে নিজের গেটওয়েতে কোনো settlement নেই।</p>
             ) : (
-              <div className="overflow-x-auto">
+              <ResponsiveTable table={<div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs text-slate-500">
@@ -611,7 +619,7 @@ export default function AccountingPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </div>} cards={settlementRows.map((r) => (<div key={`${r.day}-${r.provider}`} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দিন</dt><dd className="text-right">{r.day}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">প্রোভাইডার</dt><dd className="text-right">{r.provider}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পেমেন্ট সংখ্যা</dt><dd className="text-right">{r.count}টি</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট (গ্রস)</dt><dd className="text-right">{fmtM(r.grossMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ফি</dt><dd className="text-right">{r.feeMinor != null ? fmtM(r.feeMinor) : <span className="font-semibold text-amber-700">ফি হার সেট করা হয়নি</span>}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">নেট</dt><dd className="text-right">{r.netMinor != null ? fmtM(r.netMinor) : "—"}</dd></div></dl></div>))} />
             )
           ) : null}
           <p className="text-xs text-slate-500">

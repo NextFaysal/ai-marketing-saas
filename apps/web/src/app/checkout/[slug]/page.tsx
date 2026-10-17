@@ -12,6 +12,7 @@ import {
   type FieldAnswers,
 } from "@/lib/checkout-fields";
 import { CheckoutFieldsSection } from "@/components/CheckoutFieldsSection";
+import { MediaImage } from "@/components/media-image";
 import { captureFirstTouchAttribution, getAttributionForCheckout } from "@/lib/shop-tracking";
 import { getDeviceHashForCheckout } from "@/lib/device-hash";
 
@@ -601,9 +602,11 @@ export default function CheckoutPage() {
 
               <div className="flex gap-3">
                 {product.imageUrl ? (
-                  <img
+                  <MediaImage
                     src={product.imageUrl}
                     alt={product.name}
+                    width={160}
+                    height={160}
                     className="h-20 w-20 rounded-xl object-cover border border-slate-200"
                   />
                 ) : (

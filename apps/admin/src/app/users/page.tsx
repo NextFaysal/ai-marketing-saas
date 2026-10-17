@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, useLastFilters, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -31,6 +31,10 @@ export default function UsersPage() {
     setLoading(false);
   }, [q]);
   React.useEffect(() => { load(); }, [load]);
+  // ADNX15: one apply function for saved views AND last-used
+  // filter persistence (restored on mount, stored on change).
+  const applyFilters = (s: Record<string, string>) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setAdminFilter(s.adminFilter ?? ""); };
+  useLastFilters("users", { q, statusFilter, adminFilter }, applyFilters);
 
   const onSort = (key: string) => {
     if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -49,9 +53,10 @@ export default function UsersPage() {
 
   return (
     <AdminShell title="👤 Users">
+      <PageHead sub="সব User — Admin ক্ষমতা, অবস্থা ও Organization সদস্যতা এক তালিকায়।" />
       {error ? <div className="mb-3"><ErrorState message={error} onRetry={load} /></div> : null}
       <div className="acard overflow-hidden p-0">
-        <FilterBar collapsible>
+        <FilterBar collapsible activeCount={(q ? 1 : 0) + (statusFilter ? 1 : 0) + (adminFilter ? 1 : 0)}>
           <input className="ainput max-w-sm" placeholder="ইমেইল বা নাম দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
           <select className="ainput" aria-label="অবস্থা দিয়ে ছাঁকুন" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -63,17 +68,26 @@ export default function UsersPage() {
             <option value="admin">শুধু Admin</option>
             <option value="normal">সাধারণ User</option>
           </select>
-          <span className="text-xs text-slate-500">{sorted.length}জন দেখাচ্ছে</span>
+          <span className="text-xs text-slate-400">{sorted.length}জন দেখাচ্ছে</span>
         </FilterBar>
+        {/* ADNX8: active-filter chips (same pattern as /orgs) */}
+        {(q || statusFilter || adminFilter) ? (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800 px-4 py-2">
+            {q ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">খোঁজ: {q}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="খোঁজ মুছুন" onClick={() => setQ("")}>✕</button></span> : null}
+            {statusFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">অবস্থা: {statusFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="অবস্থা ফিল্টার মুছুন" onClick={() => setStatusFilter("")}>✕</button></span> : null}
+            {adminFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">{adminFilter === "admin" ? "শুধু Admin" : "সাধারণ User"}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="Admin ফিল্টার মুছুন" onClick={() => setAdminFilter("")}>✕</button></span> : null}
+            <button type="button" className="text-xs font-medium text-indigo-300 hover:text-indigo-200" onClick={() => { setQ(""); setStatusFilter(""); setAdminFilter(""); }}>সব ফিল্টার মুছুন</button>
+          </div>
+        ) : null}
         {/* ADX14: saved views over this page's existing filter state */}
         <div className="border-b border-slate-800">
           <SavedViewsBar
             page="users"
             current={{ q, statusFilter, adminFilter }}
-            onApply={(s) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setAdminFilter(s.adminFilter ?? ""); }}
+            onApply={applyFilters}
           />
         </div>
-        <table className="atable atable-sticky">
+        <DataTable>
           <thead className="bg-slate-900"><tr>
             <SortableTh label="User" sortKey="name" current={sortKey} dir={sortDir} onSort={onSort} />
             <SortableTh label="Org" sortKey="orgs" current={sortKey} dir={sortDir} onSort={onSort} />
@@ -84,17 +98,17 @@ export default function UsersPage() {
           </tr></thead>
           <tbody>{sorted.map((u) => (
             <tr key={u.id} className="arow border-t border-slate-800 hover:bg-slate-800/40">
-              <td className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/users/${u.id}`}>{u.name}</a><div className="text-xs text-slate-500">{u.email}{u.isSuperAdmin ? ` · 🛡 ${u.adminTier ?? "SUPER"}` : ""}</div></td>
-              <td className="atd">{u.organizationCount}</td>
-              <td className="atd"><span className={STATUS_BADGE(u.status)}>{u.status}</span></td>
-              <td className="atd text-slate-400">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "—"}</td>
-              <td className="atd text-slate-400">{fmtDateTime(u.createdAt, "date")}</td>
+              <td data-label="User" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/users/${u.id}`}>{u.name}</a><div className="text-xs text-slate-400">{u.email}{u.isSuperAdmin ? ` · 🛡 ${u.adminTier ?? "SUPER"}` : ""}</div></td>
+              <td data-label="Org" className="atd">{u.organizationCount}</td>
+              <td data-label="অবস্থা" className="atd"><span className={STATUS_BADGE(u.status)}>{u.status}</span></td>
+              <td data-label="শেষ লগইন" className="atd text-slate-400">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "—"}</td>
+              <td data-label="যোগ দিয়েছেন" className="atd text-slate-400">{fmtDateTime(u.createdAt, "date")}</td>
               <td className="atd"><button type="button" className="abtn-secondary atable-row-actions !px-2 !py-1 text-xs" onClick={() => setQuick(u)}>দ্রুত দেখুন</button></td>
             </tr>
           ))}</tbody>
-        </table>
+        </DataTable>
         {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
-        {sorted.length === 0 && !loading ? <EmptyState title="কোনো User পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
+        {sorted.length === 0 && !loading && !error ? <EmptyState title="কোনো User পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
       </div>
 
       <DetailDrawer
@@ -110,7 +124,7 @@ export default function UsersPage() {
             <div><span className="text-slate-400">Organization সদস্যতা:</span> {quick.organizationCount}টি</div>
             <div><span className="text-slate-400">শেষ লগইন:</span> {quick.lastLoginAt ? fmtDateTime(quick.lastLoginAt) : "—"}</div>
             <div><span className="text-slate-400">যোগ দিয়েছেন:</span> {fmtDateTime(quick.createdAt, "date")}</div>
-            <p className="pt-1 text-xs text-slate-500">এটি তালিকার সারির সারসংক্ষেপ — সব তথ্য ও অ্যাকশন সম্পূর্ণ বিবরণ পেজে।</p>
+            <p className="pt-1 text-xs text-slate-400">এটি তালিকার সারির সারসংক্ষেপ — সব তথ্য ও অ্যাকশন সম্পূর্ণ বিবরণ পেজে।</p>
           </div>
         ) : null}
       </DetailDrawer>

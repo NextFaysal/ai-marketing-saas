@@ -7,6 +7,7 @@ import {
   demandBasisLabel, pickStockoutDisplay, trendGrowthDisplay,
   type VelocityV2Fields,
 } from "@/lib/ab7";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC33 — Inventory Intelligence: বিক্রির গতি (velocity), গতি-ভিত্তিক
 // পুনঃঅর্ডার পরামর্শ, dead stock ও গুদামের মোট মূল্যায়ন। সব সংখ্যা
@@ -185,9 +186,21 @@ function ProductCell({ name, variantName, sku }: { name: string; variantName?: s
   return (
     <td className="py-2 pr-3 font-medium">
       {name}
-      {variantName ? <span className="block text-xs font-normal text-slate-400">{variantName}</span> : null}
-      {sku ? <span className="block text-xs font-normal text-slate-400">SKU: {sku}</span> : null}
+      {variantName ? <span className="block text-xs font-normal text-slate-500">{variantName}</span> : null}
+      {sku ? <span className="block text-xs font-normal text-slate-500">SKU: {sku}</span> : null}
     </td>
+  );
+}
+
+// EB6: the mobile-card twin of ProductCell — same name/variant/SKU
+// content, rendered as a card heading instead of a <td>.
+function ProductCardHead({ name, variantName, sku }: { name: string; variantName?: string | null; sku?: string | null }) {
+  return (
+    <div className="font-medium">
+      {name}
+      {variantName ? <span className="block text-xs font-normal text-slate-500">{variantName}</span> : null}
+      {sku ? <span className="block text-xs font-normal text-slate-500">SKU: {sku}</span> : null}
+    </div>
   );
 }
 
@@ -422,7 +435,7 @@ export default function InventoryIntelligencePage() {
   const modeBtn = (key: "simple" | "velocity", label: string) => (
     <button
       type="button" key={key} onClick={() => onModeChange(key)}
-      className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${mode === key ? "bg-slate-900 text-white" : "border bg-white"}`}
+      className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 text-sm font-semibold ${mode === key ? "bg-slate-900 text-white" : "border bg-white"}`}
     >{label}</button>
   );
 
@@ -448,11 +461,11 @@ export default function InventoryIntelligencePage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-48">
             <label className={labelCls}>লিড টাইম (দিন)</label>
-            <input className={inputCls} type="number" min={1} max={180} value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} />
+            <input aria-label="লিড টাইম (দিন)" className={inputCls} type="number" min={1} max={180} value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} />
           </div>
           <div className="w-56">
             <label className={labelCls}>কার্ট রিজার্ভ (মিনিট)</label>
-            <input className={inputCls} type="number" min={0} value={reserveMinutes} onChange={(e) => setReserveMinutes(e.target.value)} />
+            <input aria-label="কার্ট রিজার্ভ (মিনিট)" className={inputCls} type="number" min={0} value={reserveMinutes} onChange={(e) => setReserveMinutes(e.target.value)} />
             <p className="mt-1 text-xs text-slate-500">কার্ট রিজার্ভ: ক্রেতা কার্টে পণ্য রাখলে যত মিনিট স্টক তার জন্য রিজার্ভ থাকবে; ০ = বন্ধ</p>
           </div>
           <button type="submit" className="btn-primary" disabled={savingSettings}>
@@ -494,6 +507,8 @@ export default function InventoryIntelligencePage() {
             {!sugBusy && velocityData && velocityData.items.length === 0 ? (
               <p className="text-sm text-slate-500">বিক্রির গতির ভিত্তিতে এখন কোনো পণ্যের পুনঃঅর্ডার দরকার নেই।</p>
             ) : velocityData ? (
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -518,6 +533,19 @@ export default function InventoryIntelligencePage() {
                   </tbody>
                 </table>
               </div>
+                }
+                cards={velocityData.items.map((s) => (
+                  <div key={`${s.productId}-${s.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <ProductCardHead name={s.productName} variantName={s.variantName} sku={s.sku} />
+                    <dl className="mt-2 space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বর্তমান স্টক</dt><dd className="text-right">{s.currentStock}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দৈনিক গতি</dt><dd className="text-right">{velocityText(s.dailyVelocity)} / দিন</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">৩০ দিনে বিক্রি</dt><dd className="text-right">{s.unitsSold}টি</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরামর্শিত পরিমাণ</dt><dd className="text-right font-semibold">{s.suggestedQty}</dd></div>
+                    </dl>
+                  </div>
+                ))}
+              />
             ) : null}
           </>
         ) : (
@@ -529,6 +557,8 @@ export default function InventoryIntelligencePage() {
             {!sugBusy && sugLoaded && simpleItems.length === 0 ? (
               <p className="text-sm text-slate-500">এখন কোনো পণ্যের পুনঃঅর্ডার দরকার নেই।</p>
             ) : (
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -549,7 +579,7 @@ export default function InventoryIntelligencePage() {
                         <td className="py-2 pr-3 font-semibold">{s.suggestedQty}</td>
                         <td className="py-2">
                           {s.lastSupplier ? (
-                            <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-400">শেষ খরচ: {taka(s.lastUnitCostMinor)}</span> : null}</>
+                            <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">শেষ খরচ: {taka(s.lastUnitCostMinor)}</span> : null}</>
                           ) : <span className="text-slate-400">জানা নেই</span>}
                         </td>
                       </tr>
@@ -557,6 +587,19 @@ export default function InventoryIntelligencePage() {
                   </tbody>
                 </table>
               </div>
+                }
+                cards={simpleItems.map((s) => (
+                  <div key={`${s.productId}-${s.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <ProductCardHead name={s.productName} variantName={s.variantName} sku={s.sku} />
+                    <dl className="mt-2 space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বর্তমান স্টক</dt><dd className="text-right">{s.currentStock}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Threshold</dt><dd className="text-right">{s.threshold}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরামর্শিত পরিমাণ</dt><dd className="text-right font-semibold">{s.suggestedQty}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শেষ সরবরাহকারী / খরচ</dt><dd className="text-right">{s.lastSupplier ? <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">শেষ খরচ: {taka(s.lastUnitCostMinor)}</span> : null}</> : <span className="text-slate-400">জানা নেই</span>}</dd></div>
+                    </dl>
+                  </div>
+                ))}
+              />
             )}
           </>
         )}
@@ -567,6 +610,7 @@ export default function InventoryIntelligencePage() {
           <h2 className="font-semibold">বিক্রির গতি (Velocity)</h2>
           <div className="w-40">
             <select
+              aria-label="বিক্রির গতির সময়সীমা"
               className={inputCls}
               value={windowDays}
               onChange={(e) => { setWindowDays(e.target.value); void loadVelocity(e.target.value); }}
@@ -587,6 +631,8 @@ export default function InventoryIntelligencePage() {
         {!velBusy && velLoaded && velocityItems.length === 0 ? (
           <p className="text-sm text-slate-500">ট্র্যাক করা স্টকসহ কোনো পণ্য নেই।</p>
         ) : (
+          <ResponsiveTable
+            table={
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -618,20 +664,20 @@ export default function InventoryIntelligencePage() {
                         {demandBasisLabel(it.demandBasis)}
                       </span>
                       {it.projectedDailyDemand != null ? (
-                        <span className="block text-xs text-slate-400">আনুমানিক দৈনিক চাহিদা: {velocityText(it.projectedDailyDemand)}</span>
+                        <span className="block text-xs text-slate-500">আনুমানিক দৈনিক চাহিদা: {velocityText(it.projectedDailyDemand)}</span>
                       ) : null}
                     </td>
                     <td className={`py-2 pr-3 font-semibold ${trendCls}`}>{trend.text}</td>
                     <td className="py-2 pr-3">
                       {daysLeftText(it.daysOfStockLeftV2 ?? it.daysOfStockLeft)}
                       {it.daysOfStockLeftV2 != null && it.daysOfStockLeft != null && it.daysOfStockLeftV2 !== it.daysOfStockLeft ? (
-                        <span className="block text-xs font-normal text-slate-400">গতি-ভিত্তিক হিসাবে: {daysLeftText(it.daysOfStockLeft)}</span>
+                        <span className="block text-xs font-normal text-slate-500">গতি-ভিত্তিক হিসাবে: {daysLeftText(it.daysOfStockLeft)}</span>
                       ) : null}
                     </td>
                     <td className="py-2">
                       {stockout.primary ? new Date(stockout.primary).toLocaleDateString("bn-BD") : "—"}
                       {stockout.secondary ? (
-                        <span className="block text-xs text-slate-400">
+                        <span className="block text-xs text-slate-500">
                           গতি-ভিত্তিক হিসাবে: {new Date(stockout.secondary).toLocaleDateString("bn-BD")}
                         </span>
                       ) : null}
@@ -642,6 +688,28 @@ export default function InventoryIntelligencePage() {
               </tbody>
             </table>
           </div>
+          }
+          cards={velocityItems.map((it) => {
+            const trend = trendGrowthDisplay(it.trendGrowthPct);
+            const stockout = pickStockoutDisplay(it.projectedStockoutDate, it.projectedStockoutDateV2);
+            const trendCls = trend.tone === "up" ? "text-emerald-600"
+              : trend.tone === "down" ? "text-rose-600" : "text-slate-500";
+            return (
+              <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
+                <dl className="mt-2 space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বিক্রি (ইউনিট)</dt><dd className="text-right">{it.unitsSold}টি</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দৈনিক গতি</dt><dd className="text-right">{velocityText(it.dailyVelocity)} / দিন</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বর্তমান স্টক</dt><dd className="text-right">{it.currentStock}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পূর্বাভাসের ভিত্তি</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${it.demandBasis === "trend_seasonal" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{demandBasisLabel(it.demandBasis)}</span>{it.projectedDailyDemand != null ? <span className="block text-xs text-slate-500">আনুমানিক দৈনিক চাহিদা: {velocityText(it.projectedDailyDemand)}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ট্রেন্ড</dt><dd className={`text-right font-semibold ${trendCls}`}>{trend.text}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কতদিন চলবে</dt><dd className="text-right">{daysLeftText(it.daysOfStockLeftV2 ?? it.daysOfStockLeft)}{it.daysOfStockLeftV2 != null && it.daysOfStockLeft != null && it.daysOfStockLeftV2 !== it.daysOfStockLeft ? <span className="block text-xs font-normal text-slate-500">গতি-ভিত্তিক হিসাবে: {daysLeftText(it.daysOfStockLeft)}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সম্ভাব্য Stockout তারিখ</dt><dd className="text-right">{stockout.primary ? new Date(stockout.primary).toLocaleDateString("bn-BD") : "—"}{stockout.secondary ? <span className="block text-xs text-slate-500">গতি-ভিত্তিক হিসাবে: {new Date(stockout.secondary).toLocaleDateString("bn-BD")}</span> : null}</dd></div>
+                </dl>
+              </div>
+            );
+          })}
+          />
         )}
       </div>
 
@@ -650,7 +718,7 @@ export default function InventoryIntelligencePage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-40">
             <label className={labelCls}>কত দিন বিক্রি নেই</label>
-            <input className={inputCls} type="number" min={1} max={365} value={deadDays} onChange={(e) => setDeadDays(e.target.value)} />
+            <input aria-label="কত দিন বিক্রি নেই" className={inputCls} type="number" min={1} max={365} value={deadDays} onChange={(e) => setDeadDays(e.target.value)} />
           </div>
           <button type="button" className="btn-primary" disabled={deadBusy} onClick={() => void loadDeadStock(deadDays)}>
             {deadBusy ? "লোড হচ্ছে…" : "দেখুন"}
@@ -667,6 +735,8 @@ export default function InventoryIntelligencePage() {
         {!deadBusy && deadLoaded && deadItems.length === 0 ? (
           <p className="text-sm text-slate-500">এই সময়সীমায় কোনো Dead Stock পণ্য নেই।</p>
         ) : deadItems.length > 0 ? (
+          <ResponsiveTable
+            table={
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -693,6 +763,19 @@ export default function InventoryIntelligencePage() {
               </tbody>
             </table>
           </div>
+            }
+            cards={deadItems.map((it) => (
+              <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
+                <dl className="mt-2 space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টক</dt><dd className="text-right">{it.currentStock}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শেষ বিক্রি</dt><dd className="text-right">{it.lastSaleAt ? new Date(it.lastSaleAt).toLocaleDateString("bn-BD") : <span className="text-amber-700">কখনো বিক্রি হয়নি</span>}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">একক খরচ</dt><dd className="text-right">{taka(it.unitCostMinor)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আটকে থাকা মূল্য</dt><dd className="text-right font-medium">{taka(it.stuckValueMinor)}</dd></div>
+                </dl>
+              </div>
+            ))}
+          />
         ) : null}
       </div>
 
@@ -710,6 +793,8 @@ export default function InventoryIntelligencePage() {
               </p>
             ) : null}
             {valuation.items.length > 0 ? (
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -732,6 +817,18 @@ export default function InventoryIntelligencePage() {
                   </tbody>
                 </table>
               </div>
+                }
+                cards={valuation.items.map((it) => (
+                  <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
+                    <dl className="mt-2 space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টক</dt><dd className="text-right">{it.currentStock}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">একক খরচ</dt><dd className="text-right">{taka(it.unitCostMinor)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মূল্য</dt><dd className="text-right font-medium">{taka(it.valueMinor)}</dd></div>
+                    </dl>
+                  </div>
+                ))}
+              />
             ) : (
               <p className="text-sm text-slate-500">খরচ-জানা কোনো স্টক পণ্য নেই।</p>
             )}
@@ -753,6 +850,8 @@ export default function InventoryIntelligencePage() {
         {availLoaded && availabilityItems.length === 0 ? (
           <p className="text-sm text-slate-500">ট্র্যাক করা স্টকসহ কোনো পণ্য নেই।</p>
         ) : availabilityItems.length > 0 ? (
+          <ResponsiveTable
+            table={
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -775,6 +874,18 @@ export default function InventoryIntelligencePage() {
               </tbody>
             </table>
           </div>
+            }
+            cards={availabilityItems.map((it) => (
+              <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
+                <dl className="mt-2 space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">হাতে আছে</dt><dd className="text-right">{it.onHand}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">রিজার্ভ</dt><dd className="text-right">{it.reserved}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পাওয়া যাবে</dt><dd className="text-right font-semibold">{it.available}</dd></div>
+                </dl>
+              </div>
+            ))}
+          />
         ) : null}
       </div>
 
@@ -783,11 +894,11 @@ export default function InventoryIntelligencePage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-44">
             <label className={labelCls}>শুরুর তারিখ</label>
-            <input className={inputCls} type="date" value={damageFrom} onChange={(e) => setDamageFrom(e.target.value)} />
+            <input aria-label="শুরুর তারিখ" className={inputCls} type="date" value={damageFrom} onChange={(e) => setDamageFrom(e.target.value)} />
           </div>
           <div className="w-44">
             <label className={labelCls}>শেষের তারিখ</label>
-            <input className={inputCls} type="date" value={damageTo} onChange={(e) => setDamageTo(e.target.value)} />
+            <input aria-label="শেষের তারিখ" className={inputCls} type="date" value={damageTo} onChange={(e) => setDamageTo(e.target.value)} />
           </div>
           <button type="button" className="btn-primary" disabled={damageBusy} onClick={() => void loadDamageReport(damageFrom, damageTo)}>
             {damageBusy ? "লোড হচ্ছে…" : "রিপোর্ট দেখুন"}
@@ -803,6 +914,8 @@ export default function InventoryIntelligencePage() {
                 {damageReport.totals.uncostedMovements}টি Movement-এর খরচ রেকর্ড নেই — মোট খরচ মূল্য শুধু খরচ-জানা Movementগুলোর উপর হিসাব করা।
               </p>
             ) : null}
+            <ResponsiveTable
+              table={
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -834,6 +947,28 @@ export default function InventoryIntelligencePage() {
                 </tbody>
               </table>
             </div>
+              }
+              cards={(<>
+                {damageReport.items.map((it, i) => (
+                  <div key={`${it.productId}-${it.variantId ?? ""}-${it.createdAt}-${i}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <ProductCardHead name={it.productName} variantName={it.variantName} sku={null} />
+                    <dl className="mt-2 space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">তারিখ</dt><dd className="text-right">{new Date(it.createdAt).toLocaleDateString("bn-BD")}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কারণ</dt><dd className="text-right">{DAMAGE_REASON_LABELS[it.reason] ?? it.reason}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিমাণ</dt><dd className="text-right">{it.quantity}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আনুমানিক খরচ মূল্য</dt><dd className="text-right">{it.costValueMinor != null ? taka(it.costValueMinor) : "—"}</dd></div>
+                    </dl>
+                  </div>
+                ))}
+                <div className="rounded-xl border bg-slate-50 p-3 text-sm font-semibold shadow-sm">
+                  মোট — নষ্ট {damageReport.totals.damagedQty} · হারানো {damageReport.totals.lostQty} · মেয়াদোত্তীর্ণ {damageReport.totals.expiredQty}
+                  <dl className="mt-2 space-y-1.5">
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিমাণ</dt><dd className="text-right">{damageReport.totals.totalQty}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আনুমানিক খরচ মূল্য</dt><dd className="text-right">{damageReport.totals.costValueMinor != null ? taka(damageReport.totals.costValueMinor) : "—"}</dd></div>
+                  </dl>
+                </div>
+              </>)}
+            />
           </>
         ) : null}
       </div>

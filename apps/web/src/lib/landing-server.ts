@@ -22,10 +22,20 @@ export interface LandingMeta {
   organization: { name?: string | null };
 }
 
+/**
+ * ED5 (EB2): same cache policy as lib/storefront-server.ts.
+ * This fetch is "public": it returns only landing metadata (title,
+ * product name/description/images, org name) for a published landing
+ * slug — identical for every visitor. The per-visitor payload (with
+ * the A/B variant, which needs the visitor token from localStorage)
+ * is NOT fetched here; LandingClient fetches it client-side.
+ * Trade-off: metadata may be up to 60s stale; no on-demand
+ * revalidation (out of scope for ED5).
+ */
 export const fetchLandingMeta = cache(async (slug: string): Promise<LandingMeta | null> => {
   try {
     const res = await fetch(`${apiInternalBase()}/public/landing/${encodeURIComponent(slug)}`, {
-      cache: "no-store",
+      next: { revalidate: 60 },
     });
     if (!res.ok) return null;
     return (await res.json()) as LandingMeta;

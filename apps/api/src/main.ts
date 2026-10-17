@@ -3,6 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import { v1AliasMiddleware } from "./public-docs/v1-alias";
+import { createCorsOriginChecker, prismaVerifiedCustomDomainLookup } from "./common/cors-origins";
 
 async function bootstrap() {
   // rawBody is required to verify WooCommerce webhook HMAC signatures.
@@ -15,7 +16,29 @@ async function bootstrap() {
   // ONLY /v1/public/shop/*, /v1/public/landing/* and /v1/tracking/*
   // to their canonical unversioned routes before Nest routing.
   app.use(v1AliasMiddleware);
-  app.enableCors({ origin: process.env.WEB_URL ?? "http://localhost:3000", credentials: true });
+  // TD6: CORS is an origin DECISION, not a single env string — the
+  // platform's own origins (app + every tenant shop subdomain), the
+  // configured env origins, and VERIFIED merchant custom domains.
+  // The checker borrows the app's own PrismaService (no second
+  // pool); if it cannot be resolved, custom-domain origins simply
+  // fail closed and everything else keeps working.
+  let corsLookup: ((host: string) => Promise<boolean>) | undefined;
+  try {
+    const { PrismaService } = await import("./prisma/prisma.service");
+    corsLookup = prismaVerifiedCustomDomainLookup(app.get(PrismaService) as any);
+  } catch (e) {
+    Logger.warn(
+      `CORS custom-domain lookup unavailable (${e instanceof Error ? e.message : "unknown"}); custom-domain origins will fail closed`,
+      "Bootstrap",
+    );
+  }
+  app.enableCors({
+    origin: createCorsOriginChecker({
+      exactOrigins: [process.env.WEB_URL ?? "http://localhost:3000", process.env.ADMIN_URL],
+      lookupVerifiedCustomDomain: corsLookup,
+    }),
+    credentials: true,
+  });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   const port = Number(process.env.API_PORT ?? 4000);
   await app.listen(port);

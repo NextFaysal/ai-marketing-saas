@@ -1,10 +1,10 @@
-import { ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
-import { SocialService, videoOnlyViolation } from "./social.service";
-import { validateForPlatform } from "./social-preflight";
+import { SocialService, videoOnlyViolation, CLIENT_APPROVAL_PENDING_MSG } from "./social.service";
+import { validateForPlatform, TIKTOK_PHOTO_GATE_MSG } from "./social-preflight";
 import { addInterval } from "./social-queue-helpers";
 import { MetaSocialPublisher, isTokenDeadError } from "./meta-publisher";
 import { SocialOAuthService } from "./social-oauth.service";
@@ -12,6 +12,8 @@ import { TikTokClient, TikTokPublisher } from "./tiktok.client";
 import { YouTubeClient, YouTubePublisher } from "./youtube.client";
 import { LinkedInClient } from "./linkedin.client";
 import { PublicMediaService } from "../storage/public-media.service";
+import { TelegramClient, TELEGRAM_CAPTION_MAX, TELEGRAM_TEXT_MAX } from "./telegram.client";
+import { ThreadsClient, ThreadsPublisher } from "./threads.client";
 import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialLinkService } from "./social-link.service";
@@ -83,6 +85,17 @@ export class SocialPublishService {
   private readonly linkedinClient: LinkedInClient;
   private readonly raster: SocialRasterService;
   private readonly links?: SocialLinkService;
+  // SN1: raw clients for the steps the orchestrating publishers
+  // do not own (YouTube playlists/comments, TikTok photo init).
+  private readonly youtubeClient: YouTubeClient;
+  private readonly tiktokClient: TikTokClient;
+  // SN6: Telegram Bot API client (bot-token platform — the token
+  // comes from resolveAccountToken like Meta's, no OAuth seam).
+  private readonly telegramClient: TelegramClient;
+  // SN7: Threads container publisher + raw client (permalink).
+  private readonly threadsPublisher: ThreadsPublisher;
+  private readonly threadsClient: ThreadsClient;
+  // RB4/RM5: public-media seam (CDN URL for publish).
   private readonly publicMedia?: PublicMediaService;
 
   constructor(
@@ -101,11 +114,28 @@ export class SocialPublishService {
     // SU6: tracked-link builder. LAST param + Optional so every
     // existing positional spec construction keeps working.
     @Optional() links?: SocialLinkService,
+    // SN1: raw YouTube/TikTok clients — appended AFTER links for
+    // the same positional-compat reason; specs inject stub-fetch
+    // clients here, production defaults to real instances.
+    @Optional() youtubeClient?: YouTubeClient,
+    @Optional() tiktokClient?: TikTokClient,
+    // SN6: appended after the SN1 clients for the same reason.
+    @Optional() telegramClient?: TelegramClient,
+    // SN7: appended after the SN6 client for the same reason.
+    @Optional() threadsPublisher?: ThreadsPublisher,
+    @Optional() threadsClient?: ThreadsClient,
     // RB4/RM5: public-bucket ensure + CDN URL for publish.
-    // LAST param + Optional, same discipline as links.
+    // Integration-8 union: LAST param + Optional — no spec on
+    // either line constructs it positionally (production DI
+    // resolves it by type), so it sits after the SN clients.
     @Optional() publicMedia?: PublicMediaService,
   ) {
     this.links = links;
+    this.youtubeClient = youtubeClient ?? new YouTubeClient();
+    this.tiktokClient = tiktokClient ?? new TikTokClient();
+    this.telegramClient = telegramClient ?? new TelegramClient();
+    this.threadsClient = threadsClient ?? new ThreadsClient();
+    this.threadsPublisher = threadsPublisher ?? new ThreadsPublisher(this.threadsClient);
     this.publicMedia = publicMedia;
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
@@ -125,6 +155,26 @@ export class SocialPublishService {
     // CC20: LinkedIn UGC posting (specs inject a stub-fetch
     // client at this seam).
     this.linkedinClient = linkedinClient ?? new LinkedInClient();
+  }
+
+  /**
+   * SN1 — the playlists of a YouTube account's own channel, for
+   * the composer's playlist picker. A non-YouTube account is an
+   * honest Bengali 400 (the picker only asks for YouTube rows,
+   * but the route must not pretend otherwise). The token comes
+   * from the OAuth service's refresh-aware path, like publish.
+   */
+  async listYouTubePlaylists(organizationId: string, accountId: string): Promise<{ playlists: { id: string; title: string }[] }> {
+    const account = await (this.prisma as any).socialAccount.findFirst({
+      where: { id: accountId, organizationId },
+    });
+    if (!account) throw new NotFoundException("Social account not found in this organization");
+    if (account.platform !== "youtube") {
+      throw new BadRequestException("Playlist শুধু YouTube অ্যাকাউন্টের জন্য — এই অ্যাকাউন্টটি YouTube চ্যানেল নয়।");
+    }
+    const accessToken = await this.oauth.ensureAccessToken(organizationId, account);
+    const playlists = await this.youtubeClient.listPlaylists(accessToken);
+    return { playlists };
   }
 
   /** Public base URL of this API (payments.service convention). */
@@ -211,6 +261,48 @@ export class SocialPublishService {
   }
 
   /**
+   * SN2: is this org's CLIENT approval requirement switched on?
+   * The publish-path twin of approvalRequired above (same
+   * defensive read — a lookup problem reads as OFF, so the
+   * publish path keeps its pre-SN2 behaviour whenever the
+   * setting cannot be confirmed).
+   */
+  async clientApprovalRequired(organizationId: string): Promise<boolean> {
+    try {
+      const model = (this.prisma as any).organization;
+      if (!model?.findFirst) return false;
+      const org = await model.findFirst({ where: { id: organizationId } });
+      return org?.socialRequireClientApproval === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * SN2: the post's latest client review, or null. Reviews are
+   * append-only; the latest one is the client's current word
+   * (a newer review supersedes an older one). Failure-isolated:
+   * any read problem reads as "no review" — which, while the
+   * requirement is ON, blocks rather than waves through.
+   */
+  async latestClientReview(organizationId: string, postId: string): Promise<any | null> {
+    try {
+      const model = (this.prisma as any).socialPostClientReview;
+      if (!model?.findMany) return null;
+      const rows = await model.findMany({ where: { organizationId, postId } });
+      let latest: any | null = null;
+      for (const r of Array.isArray(rows) ? rows : []) {
+        if (!latest || new Date(r.createdAt ?? 0).getTime() >= new Date(latest.createdAt ?? 0).getTime()) {
+          latest = r;
+        }
+      }
+      return latest;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Platform dispatch — SP6: the real Meta Page / Instagram
    * publish via MetaSocialPublisher.
    *
@@ -231,13 +323,22 @@ export class SocialPublishService {
 
     const { account, accessToken } = await this.resolveAccountToken(post.organizationId, post.socialAccountId);
 
+    // SN1: a TikTok post's pre-flight needs the audit gate (photo
+    // posts ride it) — resolved fresh here, the same read the
+    // TikTok dispatch below makes. Other platforms skip the read.
+    let tiktokAudited: boolean | undefined;
+    if (account.platform === "tiktok") {
+      await ensurePlatformConfig(prisma as any).catch(() => undefined);
+      tiktokAudited = effectiveTiktokAppConfig()?.audited === true;
+    }
+
     // SU1: full platform pre-flight, right after account
     // resolution and BEFORE any platform dispatch — content that
     // can never succeed fails permanently with the pre-flight
     // message (for OAuth platforms that is the same video-only
     // text the OAuth path itself used).
     const preflightViolation = validateForPlatform(
-      { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory === true }, account.platform ?? "",
+      { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory === true, tiktokAudited }, account.platform ?? "",
     );
     if (preflightViolation) throw new PermanentPublishError(preflightViolation);
 
@@ -256,6 +357,22 @@ export class SocialPublishService {
     // optional public link, no media upload step at all).
     if (account.platform === "linkedin_page") {
       return this.publishToLinkedIn(post, account);
+    }
+
+    // SN6: Telegram takes its own dispatch too — also BEFORE the
+    // Meta flow, reusing the token resolveAccountToken already
+    // decrypted above (the sealed bot token; bot tokens do not
+    // expire, so there is no refresh seam to call).
+    if (account.platform === "telegram") {
+      return this.publishToTelegram(post, account, accessToken);
+    }
+
+    // SN7: Threads takes its own dispatch — the container flow
+    // needs public media URLs (Meta fetches them), but NOT the
+    // Meta publisher; and its token must be the OAuth service's
+    // refresh-aware one (60-day long-lived tokens).
+    if (account.platform === "threads") {
+      return this.publishToThreads(post, account);
     }
 
     const assetRows: any[] = [];
@@ -339,6 +456,7 @@ export class SocialPublishService {
       if (tracked) publishLinkUrl = tracked;
     }
 
+    let published: SocialPublishResult;
     try {
       if (account.platform === "instagram") {
         return await this.publisher.publishToInstagram(accessToken, account.externalId, {
@@ -346,7 +464,7 @@ export class SocialPublishService {
           assets,
         });
       }
-      return await this.publisher.publishToPage(accessToken, account.externalId, {
+      published = await this.publisher.publishToPage(accessToken, account.externalId, {
         caption: post.caption,
         linkUrl: publishLinkUrl,
         assets,
@@ -364,6 +482,70 @@ export class SocialPublishService {
         await this.markAccountTokenDead(account.id, message);
       }
       throw e;
+    }
+
+    // SN1: FB Page video cover — post-publish thumbnails step,
+    // the spike's BUILD path (docs/social-sn1-fb-cover-spike.md
+    // §৫.৩), copying SU8's YouTube cover semantics exactly:
+    // only a meta_page post with exactly ONE video asset and a
+    // coverAssetId reaches here; every other Meta/IG post
+    // returns byte-identical to before (no extra read/call).
+    // The cover asset must be an IMAGE (SU3 stills are images);
+    // a non-image cover, a missing cover, a missing file, or a
+    // cover over Meta's documented 10 MB thumbnail limit is
+    // NOT attempted — the honest reason goes into the note.
+    // A thumbnail failure NEVER unpublishes the video and
+    // NEVER marks the token dead: the post stays published
+    // with `Cover (thumbnail) সেট করা যায়নি: {verbatim}` in
+    // its publishNote. Success leaves the note null, as the
+    // Meta path has always had no note. Both outcomes are
+    // audited (the YouTube-cover step's record-keeping intent:
+    // success and failure both leave a trace alongside the
+    // note).
+    if (
+      account.platform !== "meta_page"
+      || !post.coverAssetId
+      || !(assets.length === 1 && assets[0].kind === "video")
+    ) {
+      return published;
+    }
+    try {
+      const cover = await prisma.mediaAsset.findFirst({
+        where: { id: post.coverAssetId, organizationId: post.organizationId },
+      });
+      if (!cover) throw new Error("Cover asset পাওয়া যায়নি");
+      if (cover.kind !== "image") {
+        throw new Error(`Cover assetটি ছবি নয় (kind: ${cover.kind ?? "unknown"}) — Facebook video cover শুধু ছবি (image) asset দিয়ে সেট করা যায়।`);
+      }
+      const store = MediaStore.fromEnv();
+      const coverSize = await store.size(cover.storageKey).catch(() => null)
+        ?? (typeof cover.sizeBytes === "number" && cover.sizeBytes > 0 ? cover.sizeBytes : null);
+      if (!coverSize) throw new Error("Cover ফাইল Storage-এ পাওয়া যায়নি");
+      if (coverSize > MetaSocialPublisher.VIDEO_THUMBNAIL_MAX_BYTES) {
+        throw new Error(`Cover ছবিটি 10 MB সীমার বেশি (${coverSize} bytes) — Facebook Page video thumbnail সর্বোচ্চ 10 MB হতে পারে।`);
+      }
+      const bytes = await store.readRange(cover.storageKey, 0, coverSize);
+      if (!bytes) throw new Error("Cover-এর bytes পড়া যাচ্ছে না");
+      if (typeof (this.publisher as any).setVideoThumbnail !== "function") {
+        throw new Error("Meta video thumbnail সেট করার publisher method পাওয়া যায়নি");
+      }
+      await this.publisher.setVideoThumbnail(
+        accessToken, published.platformPostId, bytes, cover.contentType, cover.name ?? "cover.jpg",
+      );
+      await this.audit.log({
+        organizationId: post.organizationId, userId: post.createdById, action: "social.fb_video_cover_set",
+        entityType: "SocialPost", entityId: post.id,
+        metadata: { platformPostId: published.platformPostId, coverAssetId: post.coverAssetId },
+      }).catch(() => undefined);
+      return published;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await this.audit.log({
+        organizationId: post.organizationId, userId: post.createdById, action: "social.fb_video_cover_failed",
+        entityType: "SocialPost", entityId: post.id,
+        metadata: { platformPostId: published.platformPostId, coverAssetId: post.coverAssetId, error: msg },
+      }).catch(() => undefined);
+      return { ...published, publishNote: `Cover (thumbnail) সেট করা যায়নি: ${msg}` };
     }
   }
 
@@ -425,6 +607,188 @@ export class SocialPublishService {
    * decrypted on the way in.
    */
   /**
+   * SN7 — Threads publish (spike doc §১.২): resolve the media to
+   * public URLs (Meta fetches them — the SP1 path, with the PP1
+   * SVG→PNG raster for images like the Meta flow), then the
+   * container flow (create → bounded poll → publish) runs in
+   * ThreadsPublisher. The token is the OAuth service's
+   * refresh-aware one. Threads has no link field: a linkUrl is
+   * appended to the text when not already in it — and if that
+   * append would cross the documented 500-char ceiling, the
+   * post fails here with the pre-flight's own message rather
+   * than silently dropping the link or truncating the caption.
+   * The permalink is a best-effort follow-up call: its failure
+   * leaves platformUrl null — the post IS published.
+   */
+  private async publishToThreads(post: any, account: any): Promise<SocialPublishResult> {
+    const prisma = this.prisma as any;
+    const accessToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+    const caption = String(post.caption ?? "");
+    const linkUrl = typeof post.linkUrl === "string" && post.linkUrl ? post.linkUrl : null;
+    let text = caption;
+    if (linkUrl && !caption.includes(linkUrl)) {
+      const withLink = caption ? `${caption}\n\n${linkUrl}` : linkUrl;
+      if (withLink.length > 500) {
+        throw new PermanentPublishError("Threads-এর পোস্ট সর্বোচ্চ ৫০০ অক্ষরের হতে পারবে — ক্যাপশন ছোট করুন অথবা লিংকটি ক্যাপশনের ভিতরে রাখুন।");
+      }
+      text = withLink;
+    }
+    const refs = (Array.isArray(post.mediaRefs) ? post.mediaRefs : []) as { assetId: string; kind: string }[];
+    const media: { kind: "image" | "video"; url: string }[] = [];
+    for (const ref of refs) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id: ref.assetId, organizationId: post.organizationId },
+      });
+      if (!asset) {
+        throw new PermanentPublishError("পোস্টের একটি মিডিয়া পাওয়া যাচ্ছে না — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+      }
+      let resolved = asset;
+      if (ref.kind === "image" && String(asset.contentType ?? "").includes("svg")) {
+        try {
+          resolved = await this.raster.ensurePngAsset(post.organizationId, post.createdById, asset);
+        } catch (e) {
+          throw new PermanentPublishError(`SVG থেকে PNG তৈরি করা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      media.push({
+        kind: ref.kind === "video" ? "video" : "image",
+        url: await this.publicUrlForAsset(post, resolved),
+      });
+    }
+    const { mediaId } = await this.threadsPublisher.publish({
+      accessToken,
+      threadsUserId: String(account.externalId),
+      text,
+      media,
+    });
+    const platformUrl = await this.threadsClient.getPermalink(accessToken, mediaId).catch(() => null);
+    return { platformPostId: mediaId, platformUrl, outcome: "published" };
+  }
+
+  /** Split a long Telegram text at the documented 4096-char
+   * message ceiling, preferring a newline boundary. */
+  private chunkTelegramText(text: string): string[] {
+    const chunks: string[] = [];
+    let rest = text;
+    while (rest.length > TELEGRAM_TEXT_MAX) {
+      let cut = rest.lastIndexOf("\n", TELEGRAM_TEXT_MAX);
+      if (cut < TELEGRAM_TEXT_MAX / 2) cut = TELEGRAM_TEXT_MAX;
+      chunks.push(rest.slice(0, cut));
+      rest = rest.slice(cut).replace(/^\n+/, "");
+    }
+    if (rest) chunks.push(rest);
+    return chunks.length > 0 ? chunks : [""];
+  }
+
+  /**
+   * SN6 — Telegram channel publish (Bot API; spike doc §৩).
+   * Media goes by PUBLIC URL (Telegram fetches it — the SP1
+   * public-link path, same as Meta); there is no byte upload in
+   * this flow, so a media URL Telegram cannot fetch surfaces
+   * Telegram's own verbatim error through the SP5 retry path.
+   * Shapes:
+   * - no media → sendMessage (text over the 4096 ceiling is
+   *   chunked at newline boundaries — Telegram's own rule);
+   * - one image/video → sendPhoto/sendVideo with the caption;
+   * - 2–10 media → sendMediaGroup, caption on the first item.
+   * A caption over the 1024 media-caption ceiling is NOT
+   * truncated: the media goes without it and the FULL caption
+   * follows as its own message(s) — nothing the tenant wrote is
+   * silently dropped. The post's linkUrl (Telegram has no link
+   * field) is appended to the text/caption when not already in
+   * it. Success = Telegram returned a message: the platform id
+   * is "chatId:messageId" and the URL is the public t.me link,
+   * present ONLY when the channel has a public username (a
+   * private channel's posts have no public URL — null, never
+   * fabricated). Telegram client errors propagate verbatim.
+   */
+  private async publishToTelegram(post: any, account: any, botToken: string): Promise<SocialPublishResult> {
+    const prisma = this.prisma as any;
+    const chatId = String(account.externalId);
+    const caption = String(post.caption ?? "");
+    const linkUrl = typeof post.linkUrl === "string" && post.linkUrl ? post.linkUrl : null;
+    const fullText = linkUrl && !caption.includes(linkUrl)
+      ? (caption ? `${caption}\n\n${linkUrl}` : linkUrl)
+      : caption;
+    const refs = (Array.isArray(post.mediaRefs) ? post.mediaRefs : []) as { assetId: string; kind: string }[];
+
+    const toResult = (sent: { messageId: number; chatId: number; chatUsername: string | null }): SocialPublishResult => ({
+      platformPostId: `${sent.chatId}:${sent.messageId}`,
+      platformUrl: sent.chatUsername ? `https://t.me/${sent.chatUsername}/${sent.messageId}` : null,
+      outcome: "published",
+    });
+
+    if (refs.length === 0) {
+      if (!fullText.trim()) {
+        throw new PermanentPublishError("Telegram পোস্টে লেখা (Caption) অথবা মিডিয়া — অন্তত একটি প্রয়োজন।");
+      }
+      let first: { messageId: number; chatId: number; chatUsername: string | null } | null = null;
+      for (const chunk of this.chunkTelegramText(fullText)) {
+        const sent = await this.telegramClient.sendMessage(botToken, chatId, chunk);
+        if (!first) first = sent;
+      }
+      return toResult(first!);
+    }
+
+    // Resolve assets exactly like the Meta flow (missing asset =
+    // the same permanent error; SVG images rasterized to PNG
+    // first, because Telegram renders linked media itself and an
+    // SVG URL is not a photo it can display).
+    const media: { type: "photo" | "video"; url: string }[] = [];
+    for (const ref of refs) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id: ref.assetId, organizationId: post.organizationId },
+      });
+      if (!asset) {
+        throw new PermanentPublishError("পোস্টের একটি মিডিয়া পাওয়া যাচ্ছে না — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+      }
+      let resolved = asset;
+      if (ref.kind === "image" && String(asset.contentType ?? "").includes("svg")) {
+        try {
+          resolved = await this.raster.ensurePngAsset(post.organizationId, post.createdById, asset);
+        } catch (e) {
+          throw new PermanentPublishError(`SVG থেকে PNG তৈরি করা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      media.push({
+        type: ref.kind === "video" ? "video" : "photo",
+        url: await this.publicUrlForAsset(post, resolved),
+      });
+    }
+
+    let mediaCaption: string | undefined;
+    let spill: string | null = null;
+    if (fullText) {
+      if (fullText.length <= TELEGRAM_CAPTION_MAX) mediaCaption = fullText;
+      else spill = fullText;
+    }
+    const sendSpill = async () => {
+      if (!spill) return;
+      for (const chunk of this.chunkTelegramText(spill)) {
+        await this.telegramClient.sendMessage(botToken, chatId, chunk);
+      }
+    };
+
+    if (media.length === 1) {
+      const only = media[0]!;
+      const sent = only.type === "video"
+        ? await this.telegramClient.sendVideo(botToken, chatId, only.url, mediaCaption)
+        : await this.telegramClient.sendPhoto(botToken, chatId, only.url, mediaCaption);
+      await sendSpill();
+      return toResult(sent);
+    }
+
+    const group = await this.telegramClient.sendMediaGroup(
+      botToken, chatId,
+      media.map((m, i) => (i === 0 && mediaCaption ? { ...m, caption: mediaCaption } : m)),
+    );
+    const firstSent = group[0];
+    if (!firstSent) throw new Error("Telegram Media Group-এর কোনো Message ফেরত দেয়নি।");
+    await sendSpill();
+    return toResult(firstSent);
+  }
+
+  /**
    * CC20 — LinkedIn UGC publish. Media rule (ours, honest):
    * text-only posts and link posts (the post's linkUrl rides as
    * an ARTICLE share — LinkedIn builds the preview from the
@@ -439,7 +803,7 @@ export class SocialPublishService {
    * to hold Community Management API approval — LinkedIn's
    * gate, surfaced verbatim when it refuses.
    */
-  private async publishToLinkedIn(post: any, account: any): Promise<SocialPublishResult> {
+  private async publishToLinkedIn(post: any, account: any): Promise<SocialPublishResult & { accessToken?: string }> {
     const refs = Array.isArray(post.mediaRefs) ? post.mediaRefs : [];
     if (refs.length > 0) {
       throw new PermanentPublishError("LinkedIn-এ এই সংস্করণে শুধু টেক্সট ও লিংক পোস্ট হয় — ছবি/ভিডিও আপলোডের ধাপ তৈরি হয়নি। মিডিয়া ছাড়া পোস্টটি আবার প্রকাশ করুন।");
@@ -450,14 +814,61 @@ export class SocialPublishService {
       text: String(post.caption ?? ""),
       linkUrl: post.linkUrl ?? null,
     });
-    return { platformPostId, platformUrl: null, outcome: "published" };
+    // SN1: the fresh token rides along (internal only — never
+    // serialized or stored) so the first-comment step reuses THIS
+    // token instead of resolving a second one: for LinkedIn the
+    // sealed snapshot resolveAccountToken returns can be stale,
+    // while ensureAccessToken's is refresh-aware.
+    return { platformPostId, platformUrl: null, outcome: "published", accessToken };
   }
 
   private async publishToOAuthPlatform(post: any, account: any): Promise<SocialPublishResult> {
     const prisma = this.prisma as any;
     const violation = videoOnlyViolation(account.platform, post.mediaRefs);
     if (violation) throw new PermanentPublishError(violation);
-    const ref = (post.mediaRefs as { assetId: string; kind: string }[])[0];
+    const refs = (post.mediaRefs ?? []) as { assetId: string; kind: string }[];
+
+    // SN1: TikTok PHOTO post — image-only refs take the photo
+    // flow (every referenced asset, not just the first). The
+    // audit gate was already enforced by publishToPlatform's
+    // pre-flight before dispatch; it is re-read here for the
+    // publisher call, exactly like the video path reads it.
+    if (account.platform === "tiktok" && refs.length > 0 && refs.every((r) => r.kind === "image")) {
+      const photoAssets: any[] = [];
+      for (const ref of refs) {
+        const asset = await prisma.mediaAsset.findFirst({
+          where: { id: ref.assetId, organizationId: post.organizationId },
+        });
+        if (!asset) {
+          throw new PermanentPublishError("পোস্টের একটি মিডিয়া পাওয়া যাচ্ছে না — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+        }
+        photoAssets.push(asset);
+      }
+      const accessToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+      const photoUrls: string[] = [];
+      for (const asset of photoAssets) {
+        photoUrls.push(await this.publicUrlForAsset(post, asset));
+      }
+      await ensurePlatformConfig(prisma as any).catch(() => undefined);
+      const audited = effectiveTiktokAppConfig()?.audited === true;
+      if (!audited) {
+        // Unreachable through publishToPlatform (its pre-flight
+        // refuses first with the same message) — kept so a direct
+        // caller of this dispatch can never photo-post ungated.
+        throw new PermanentPublishError(TIKTOK_PHOTO_GATE_MSG);
+      }
+      const outcome = await this.tiktokPublisher.publishPhoto({
+        accessToken, photoUrls, caption: post.caption,
+      });
+      return {
+        platformPostId: outcome.publishId,
+        platformUrl: null,
+        outcome: "published",
+        publishNote: `TikTok-এ সরাসরি ছবির post হয়েছে (Privacy: ${outcome.privacyLevel} — TikTok Creator Info অনুযায়ী নির্ধারিত)।`,
+      };
+    }
+
+    const ref = refs[0];
     const asset = await prisma.mediaAsset.findFirst({
       where: { id: ref.assetId, organizationId: post.organizationId },
     });
@@ -564,6 +975,19 @@ export class SocialPublishService {
           publishNote = `${baseNote} Cover (thumbnail) সেট করা যায়নি: ${msg}`;
         }
       }
+      // SN1: playlist — add the uploaded video to the chosen
+      // playlist (playlistItems.insert) AFTER the successful
+      // upload. The cover semantics apply verbatim: a failure
+      // NEVER unpublishes the video — the post stays published
+      // and the verbatim reason is appended to the publish note.
+      if (typeof post.youtubePlaylistId === "string" && post.youtubePlaylistId) {
+        try {
+          await this.youtubeClient.addToPlaylist(accessToken, post.youtubePlaylistId, outcome.videoId);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          publishNote = `${publishNote} Playlist-এ যোগ করা যায়নি: ${msg}`;
+        }
+      }
       return {
         platformPostId: outcome.videoId,
         platformUrl: `https://www.youtube.com/watch?v=${outcome.videoId}`,
@@ -600,6 +1024,17 @@ export class SocialPublishService {
     // cannot be published by hand either — approval first.
     if ((await this.approvalRequired(organizationId)) && row.approvalStatus !== "approved") {
       throw new ConflictException("পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে প্রকাশের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।");
+    }
+    // SN2 client-approval gate: beside the internal gate above —
+    // while socialRequireClientApproval is on, the post also
+    // needs the client's latest review to be "approved" (never
+    // reviewed and changes_requested both block, with the one
+    // verbatim reason).
+    if (await this.clientApprovalRequired(organizationId)) {
+      const latest = await this.latestClientReview(organizationId, postId);
+      if (latest?.decision !== "approved") {
+        throw new ConflictException(CLIENT_APPROVAL_PENDING_MSG);
+      }
     }
     const claim = await (this.prisma as any).socialPost.updateMany({
       where: { id: postId, organizationId, status: { in: ["draft", "scheduled"] } },
@@ -653,6 +1088,10 @@ export class SocialPublishService {
     // time — an approval revoked (or never given) after scheduling
     // must stop the publish, not ride through on a stale read.
     const approvalOn = await this.approvalRequired(organizationId);
+    // SN2: the client-approval requirement is read ONCE per scan
+    // too; each post's latest client review is re-checked fresh
+    // at claim time, exactly like the internal approval above.
+    const clientApprovalOn = await this.clientApprovalRequired(organizationId);
     for (const row of Array.isArray(dueRows) ? dueRows : []) {
       counts.due++;
       // CC27: the deny-list is re-checked at PUBLISH time against
@@ -691,6 +1130,23 @@ export class SocialPublishService {
             data: {
               status: "draft", scheduledAt: null,
               error: "অনুমোদন না থাকায় পোস্টটি প্রকাশ হয়নি — অনুমোদন ব্যবস্থা চালু থাকলে প্রকাশের আগে অনুমোদন লাগে। পোস্টটি Draft-এ ফিরিয়ে দেওয়া হয়েছে; অনুমোদন নিয়ে আবার শিডিউল করুন।",
+            },
+          }).catch(() => undefined);
+          counts.blocked++;
+          continue;
+        }
+      }
+      if (clientApprovalOn) {
+        const latest = await this.latestClientReview(organizationId, row.id);
+        if (latest?.decision !== "approved") {
+          // Same non-silent pattern as the internal-approval
+          // block above: back to draft with the verbatim reason
+          // on the post, so the team sees why it did not go out.
+          await (this.prisma as any).socialPost.update({
+            where: { id: row.id },
+            data: {
+              status: "draft", scheduledAt: null,
+              error: CLIENT_APPROVAL_PENDING_MSG,
             },
           }).catch(() => undefined);
           counts.blocked++;
@@ -740,7 +1196,10 @@ export class SocialPublishService {
       // extra reads/writes).
       if (!sentToCreator) {
         if (post.firstCommentText) {
-          await this.tryPostFirstComment(post, r.platformPostId).catch(() => undefined);
+          // SN1: LinkedIn's publish result carries its fresh
+          // token for the comment step (see publishToLinkedIn).
+          const publishToken = (r as { accessToken?: string }).accessToken;
+          await this.tryPostFirstComment(post, r.platformPostId, publishToken).catch(() => undefined);
         }
         if (post.recurrenceFrequency && post.seriesId && post.scheduledAt) {
           await this.finalizeRecurrence(post).catch(() => undefined);
@@ -775,15 +1234,57 @@ export class SocialPublishService {
 
   /**
    * SU1 — post the first comment after a successful publish.
-   * Only Meta Page / Instagram support it here; TikTok/YouTube
-   * posts never reach this step's platform call. Failure is
-   * recorded verbatim on the post (firstCommentStatus "failed")
-   * and NEVER rethrown — the post stays published.
+   * Meta Page / Instagram go through MetaSocialPublisher; SN1
+   * extends the same step to YouTube (commentThreads.insert on
+   * the uploaded video) and LinkedIn (socialActions comments on
+   * the post URN). Failure is recorded verbatim on the post
+   * (firstCommentStatus "failed") and NEVER rethrown — the post
+   * stays published. TikTok has no comment step here.
+   *
+   * Token discipline per platform: Meta uses the sealed Page/IG
+   * token (resolveAccountToken, as SU1 always did); YouTube uses
+   * the OAuth service's refresh-aware token (its sealed snapshot
+   * can be stale — the publish path does the same); LinkedIn
+   * reuses the token its publish just refreshed (passed in by
+   * attemptPublish), falling back to the refresh-aware path when
+   * called without one.
    */
-  async tryPostFirstComment(post: any, platformPostId: string): Promise<void> {
+  async tryPostFirstComment(post: any, platformPostId: string, publishAccessToken?: string): Promise<void> {
     const prisma = this.prisma as any;
     try {
       const { account, accessToken } = await this.resolveAccountToken(post.organizationId, post.socialAccountId);
+      if (account.platform === "youtube") {
+        const freshToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+        const { commentId } = await this.youtubeClient.postComment(
+          freshToken, platformPostId, String(post.firstCommentText),
+        );
+        await prisma.socialPost.update({
+          where: { id: post.id },
+          data: { firstCommentStatus: "posted", firstCommentId: commentId, firstCommentError: null },
+        }).catch(() => undefined);
+        await this.audit.log({
+          organizationId: post.organizationId, userId: post.createdById, action: "social.first_comment_posted",
+          entityType: "SocialPost", entityId: post.id, metadata: { firstCommentId: commentId },
+        }).catch(() => undefined);
+        return;
+      }
+      if (account.platform === "linkedin_page") {
+        const token = publishAccessToken ?? (await this.oauth.ensureAccessToken(post.organizationId, account));
+        const { commentId } = await this.linkedinClient.createComment(token, {
+          organizationId: String(account.externalId),
+          postUrn: platformPostId,
+          text: String(post.firstCommentText),
+        });
+        await prisma.socialPost.update({
+          where: { id: post.id },
+          data: { firstCommentStatus: "posted", firstCommentId: commentId, firstCommentError: null },
+        }).catch(() => undefined);
+        await this.audit.log({
+          organizationId: post.organizationId, userId: post.createdById, action: "social.first_comment_posted",
+          entityType: "SocialPost", entityId: post.id, metadata: { firstCommentId: commentId },
+        }).catch(() => undefined);
+        return;
+      }
       if (account.platform !== "meta_page" && account.platform !== "instagram") return;
       const { commentId } = await this.publisher.postFirstComment(
         accessToken, account.platform, platformPostId, String(post.firstCommentText),
@@ -844,6 +1345,8 @@ export class SocialPublishService {
           mediaRefs: Array.isArray(source.mediaRefs) ? source.mediaRefs : [],
           status: "scheduled", scheduledAt: nextAt,
           firstCommentText, firstCommentStatus: firstCommentText ? "pending" : null,
+          // SN1: the series keeps its chosen YouTube playlist.
+          youtubePlaylistId: source.youtubePlaylistId ?? null,
           seriesId: source.seriesId,
           recurrenceFrequency: source.recurrenceFrequency,
           recurrenceInterval: source.recurrenceInterval ?? null,

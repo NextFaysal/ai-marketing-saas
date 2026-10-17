@@ -1,6 +1,8 @@
 import type { MetadataRoute } from "next";
-import { fetchAllProductSitemapEntries, fetchShopBlog } from "@/lib/storefront-server";
-import { buildShopSitemapEntries, sitemapUrlBase } from "@/lib/storefront-sitemap";
+import { shopSubdomainHost } from "@repo/contracts";
+import { fetchAllProductSitemapEntries, fetchShopBlog, fetchShopHome } from "@/lib/storefront-server";
+import { canonicalShopBase } from "@/lib/storefront-seo";
+import { buildCanonicalShopSitemapEntries } from "@/lib/storefront-sitemap";
 
 /**
  * Shop sitemap: home + every ACTIVE product (paged from the shop
@@ -13,10 +15,11 @@ import { buildShopSitemapEntries, sitemapUrlBase } from "@/lib/storefront-sitema
  * carries the newest product updatedAt (falling back to "now"
  * only when the shop has no products at all).
  *
- * URL base limitation: Next's sitemap signature has no request,
- * and this app has no canonical public-URL setting besides
- * NEXT_PUBLIC_WEB_URL. When it is unset we emit path-only URLs
- * rather than fabricating a production domain.
+ * TD7: URLs live on the shop's canonical HOST — the verified
+ * custom domain when the shop home payload says there is one,
+ * otherwise the tenant subdomain {slug}.qosprey.com (a rule, not
+ * a fabricated guess: the TD1 contracts host for this slug). The
+ * home payload is the same fetch the sitemap paging already makes.
  */
 export default async function sitemap({
   params,
@@ -27,14 +30,17 @@ export default async function sitemap({
   const products = await fetchAllProductSitemapEntries(orgSlug).catch(
     () => [] as { slug: string; updatedAt: string | null }[],
   );
+  const home = await fetchShopHome(orgSlug).catch(() => null);
+  const base = home ? canonicalShopBase(home.organization) : `https://${shopSubdomainHost(orgSlug)}`;
   // AB6 (AX12): blog posts (failure-isolated — a blog fetch
-  // failure must never break the product sitemap).
+  // failure must never break the product sitemap), listed on the
+  // same canonical host base as the products (TD7).
   const blog = await fetchShopBlog(orgSlug).catch(() => null);
   const blogPosts = (blog?.posts ?? []).map((p) => ({
     slug: p.slug,
     updatedAt: p.updatedAt ?? p.publishedAt ?? null,
   }));
-  const entries = buildShopSitemapEntries(sitemapUrlBase(), orgSlug, products, blogPosts);
+  const entries = buildCanonicalShopSitemapEntries(base, products, blogPosts);
   const now = new Date();
   return entries.map((entry, i) => ({
     url: entry.url,

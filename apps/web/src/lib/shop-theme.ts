@@ -1,6 +1,6 @@
 /**
  * GC — shop theme tokens keyed by settings.themeId.
- * Supports 10 ready-to-use themes for different Bangladeshi & global commerce niches.
+ * Supports ready-to-use themes for different Bangladeshi & global commerce niches plus token-native v2.
  * "classic" MUST equal the pre-theme classes exactly for backwards compatibility.
  */
 export type ShopThemeId =
@@ -23,7 +23,8 @@ export type ShopThemeId =
   | "kids"
   | "automotive"
   | "sports"
-  | "jewelry";
+  | "jewelry"
+  | "v2";
 
 export interface ShopTheme {
   headerDark: boolean;
@@ -36,6 +37,10 @@ export interface ShopTheme {
   pageBgClass?: string;
   nameBn?: string;
   descBn?: string;
+  // ED7: optional v2 surfaces (ED8 consumes them).
+  cardBodyClass?: string;
+  cardPriceClass?: string;
+  sectionTitleClass?: string;
 }
 
 export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
@@ -279,6 +284,22 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     nameBn: "জুয়েলারি, ডায়মন্ড ও লাক্সারি ওয়াচেস",
     descBn: "২২ ক্যারেট হলমার্ক গোল্ড সনদ, ডায়মন্ড ৪সি সার্টিফিকেট, রিং সাইজ গাইড ও ব্রাইডাল জুয়েলারি সেট (আপন জুয়েলার্স / ডায়মন্ড ওয়ার্ল্ড / টাইম জোন বিডি স্টাইল)",
   },
+  // ED7: token-native v2 — every colour / radius / shadow below
+  // resolves through the EB1 CSS variables, so the shop follows
+  // the token layer (and a future dark palette) instead of literal
+  // slate/indigo values. Grid rhythm matches classic (2 → 3 → 4).
+  v2: {
+    headerDark: false,
+    heroClass: "rounded-[var(--radius-xl)] bg-[var(--surface)] p-8 text-center shadow-[var(--shadow-card)] border border-[var(--border-soft)]",
+    heroTitleClass: "text-3xl font-black text-[var(--ink-strong)] sm:text-4xl",
+    gridClass: "grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4",
+    featuredGridClass: "grid grid-cols-2 gap-4 md:grid-cols-4",
+    cardClass: "rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)]",
+    cardImageWrapClass: "",
+    cardBodyClass: "space-y-1.5 p-4 text-[var(--ink-body)]",
+    cardPriceClass: "text-base font-extrabold text-[var(--brand)]",
+    sectionTitleClass: "text-xl font-black text-[var(--ink-strong)]",
+  },
 };
 
 export const THEME_ID_LIST: ShopThemeId[] = [
@@ -302,6 +323,7 @@ export const THEME_ID_LIST: ShopThemeId[] = [
   "automotive",
   "sports",
   "jewelry",
+  "v2",
 ];
 
 export function themeOf(id: unknown): ShopTheme {
@@ -316,4 +338,47 @@ export function themeIdOf(id: unknown): ShopThemeId {
     return id as ShopThemeId;
   }
   return "classic";
+}
+
+/** ED7: true only for the token-native v2 theme. */
+export function isV2Theme(id: unknown): boolean {
+  return id === "v2";
+}
+
+/**
+ * ED8: v2 detection from a RESOLVED tokens object. ShopTheme
+ * carries no id, so consumers that receive tokens (ProductCard)
+ * detect v2 by the presence of the v2-only optional fields ED7
+ * added — the legacy themes omit them entirely (pinned by
+ * shop-theme.test.ts). This is THE chosen detection approach for
+ * token consumers; do not invent id-string checks there.
+ */
+export function isV2Tokens(theme: ShopTheme): boolean {
+  return theme.cardPriceClass !== undefined;
+}
+
+/**
+ * ED7: the theme a request actually renders with. A preview id
+ * wins ONLY when it is itself a valid theme id; anything else
+ * (missing, unknown, non-string) falls back to the stored id's
+ * own resolution (which itself falls back to classic).
+ */
+export function effectiveThemeId(storedId: unknown, previewId: unknown): ShopThemeId {
+  if (typeof previewId === "string" && previewId in SHOP_THEMES) {
+    return previewId as ShopThemeId;
+  }
+  return themeIdOf(storedId);
+}
+
+/** Request header the middleware sets for a ?themePreview=v2 view. */
+export const SHOP_THEME_PREVIEW_HEADER = "x-shop-theme-preview";
+
+/**
+ * ED7: read the theme-preview id from a Headers-like object (any
+ * { get(name) } — so this stays unit-testable without next/headers).
+ * Returns the raw header value, or null when absent; validity is
+ * effectiveThemeId's job, not this reader's.
+ */
+export function previewThemeIdFromHeaders(h: { get(name: string): string | null }): string | null {
+  return h.get(SHOP_THEME_PREVIEW_HEADER);
 }

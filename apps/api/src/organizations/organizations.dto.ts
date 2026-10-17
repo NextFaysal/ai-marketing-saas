@@ -1,7 +1,9 @@
 import { IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
 export class CreateOrganizationDto {
   @IsString() @MinLength(2) @MaxLength(120) name!: string;
-  @IsString() @Matches(/^[a-z0-9-]+$/) @MinLength(3) @MaxLength(60) slug!: string;
+  // TD1: mirrors SLUG_FORMAT_REGEX in @repo/contracts — single
+  // hyphens between groups only (no leading/trailing/consecutive).
+  @IsString() @Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/) @MinLength(3) @MaxLength(60) slug!: string;
   @IsOptional() @IsString() @Length(2, 2) country?: string;
   @IsOptional() @IsString() timezone?: string;
   @IsOptional() @IsString() @Length(3, 3) currency?: string;

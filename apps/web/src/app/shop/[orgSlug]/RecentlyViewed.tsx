@@ -5,6 +5,7 @@ import { readRecentlyViewedIds, recordRecentlyViewed } from "@/lib/recently-view
 import type { ShopProduct } from "@/lib/storefront-server";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { ProductCard } from "./ProductCard";
+import type { ShopTheme } from "@/lib/shop-theme";
 
 /**
  * AB6 (AX14) — recently viewed v2 (web-only, localStorage per
@@ -25,10 +26,14 @@ export function RecentlyViewedStrip({
   orgSlug,
   locale = "bn",
   excludeId,
+  theme,
 }: {
   orgSlug: string;
   locale?: ShopLocale | string;
   excludeId?: string;
+  /** ED8: callers pass v2 tokens ONLY when the effective theme
+   * is v2; undefined keeps the classic-token cards as before. */
+  theme?: ShopTheme | string;
 }) {
   const t = shopT(locale);
   const [products, setProducts] = useState<ShopProduct[]>([]);
@@ -60,7 +65,7 @@ export function RecentlyViewedStrip({
       <h2 className="text-xl font-black text-slate-900">{t.home.recentlyViewed}</h2>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {products.map((p) => (
-          <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+          <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} />
         ))}
       </div>
     </section>

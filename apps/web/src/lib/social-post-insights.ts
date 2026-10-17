@@ -16,7 +16,7 @@ import type { SocialPost } from "./social-post-filters";
 import type { AutoDraftKind } from "./social-posts-su5";
 
 export interface SocialPostInsights {
-  platform: "meta_page" | "instagram";
+  platform: "meta_page" | "instagram" | "threads";
   reactions?: number;
   comments?: number;
   shares?: number;
@@ -26,6 +26,12 @@ export interface SocialPostInsights {
   reach?: number;
   saved?: number;
   plays?: number;
+  // SN7: Threads-native metrics (absent when Threads omits them).
+  views?: number;
+  likes?: number;
+  replies?: number;
+  reposts?: number;
+  quotes?: number;
 }
 
 export type SocialApprovalStatus = "pending" | "approved" | "rejected" | "manager_approved";
@@ -72,11 +78,49 @@ export interface Sp7SocialPost extends SocialPost {
   youtubeTags?: string[] | null;
   youtubeCategoryId?: string | null;
   youtubeIsShort?: boolean;
+  /** SN1: chosen YouTube playlist id (null = no playlist). */
+  youtubePlaylistId?: string | null;
   coverAssetId?: string | null;
   isStory?: boolean;
   /** SU9: the team member this post is assigned to (null =
    * unassigned); members are picked from GET /organizations/:id/members. */
   assignedUserId?: string | null;
+  /** SN10: caption-test pair id — two drafts sharing one id are
+   * a caption test pair; null/absent = not in a test. */
+  captionTestId?: string | null;
+}
+
+/** SN10 — one post inside a caption-test pair, as GET
+ * insights/caption-tests returns it. engagement is null when the
+ * platform returned no engagement fields; metricsPresent lists
+ * ONLY the metric keys actually present (never invented). */
+export interface CaptionTestPost {
+  id: string;
+  caption: string;
+  status: string;
+  scheduledAt: string | null;
+  publishedAt: string | null;
+  platformUrl: string | null;
+  platform: string | null;
+  accountName: string | null;
+  engagement: number | null;
+  metricsPresent: string[];
+  insightsFetchedAt: string | null;
+  linkClicks: number;
+}
+
+/** SN10 — one caption test (a pair of posts). There is NO winner
+ * field by design; closeCall is null when it cannot be decided
+ * yet (not both published, or a post has no engagement score). */
+export interface CaptionTestGroup {
+  captionTestId: string;
+  posts: CaptionTestPost[];
+  bothPublished: boolean;
+  closeCall: boolean | null;
+}
+
+export interface CaptionTestsResponse {
+  tests: CaptionTestGroup[];
 }
 
 export interface SocialInsightsSummary {
@@ -109,6 +153,12 @@ const METRIC_DEFS: { key: string; chipLabel: string; totalLabel: string }[] = [
   { key: "reach", chipLabel: "পৌঁছেছে", totalLabel: "মোট পৌঁছেছে" },
   { key: "saved", chipLabel: "সেভ", totalLabel: "মোট সেভ" },
   { key: "plays", chipLabel: "প্লে", totalLabel: "মোট প্লে" },
+  // SN7: Threads-native metrics (shares above is shared).
+  { key: "views", chipLabel: "👁️ ভিউ", totalLabel: "মোট ভিউ" },
+  { key: "likes", chipLabel: "❤️ লাইক", totalLabel: "মোট লাইক" },
+  { key: "replies", chipLabel: "💬 রিপ্লাই", totalLabel: "মোট রিপ্লাই" },
+  { key: "reposts", chipLabel: "🔁 রিপোস্ট", totalLabel: "মোট রিপোস্ট" },
+  { key: "quotes", chipLabel: "❝ কোট", totalLabel: "মোট কোট" },
 ];
 
 /**
@@ -131,6 +181,12 @@ export function insightChips(insights: SocialPostInsights | null | undefined): I
 
 export function hasInsights(insights: SocialPostInsights | null | undefined): boolean {
   return insightChips(insights).length > 0;
+}
+
+/** SN10: the display label for one metric key (the chip label the
+ * rest of the page uses); unknown keys show as their raw key. */
+export function insightMetricLabel(key: string): string {
+  return METRIC_DEFS.find((d) => d.key === key)?.chipLabel ?? key;
 }
 
 /**

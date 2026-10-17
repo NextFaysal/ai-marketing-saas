@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 import { BlocksEditor, cleanBlocks, normalizeBlock, type EditableBlock } from "../BlocksEditor";
 
 // GC3 — staff content-pages manager. Consumes the staff routes:
@@ -36,11 +37,12 @@ function slugify(text: string): string {
 }
 
 export default function StorefrontPagesManager() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [pages, setPages] = useState<ShopPage[]>([]);
   const [orgSlug, setOrgSlug] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
 
   // editor (selectedId === null + editorOpen === true means "new page")
@@ -96,7 +98,7 @@ export default function StorefrontPagesManager() {
     // normalize those into the editor's data shape so nothing opens
     // blank. Saving always writes the contract shape { type, data }.
     setBlocks(Array.isArray(p.blocks) ? p.blocks.map((b) => normalizeBlock(b)) : []);
-    setError(""); setNotice("");
+    setError("");
   }
 
   function startNew() {
@@ -111,13 +113,13 @@ export default function StorefrontPagesManager() {
     setEShowInMenu(false);
     setESortOrder("0");
     setBlocks([]);
-    setError(""); setNotice("");
+    setError("");
   }
 
   async function save() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (!eTitle.trim()) { setError("পেজের শিরোনাম দিন।"); return; }
-    setBusy("save"); setError(""); setNotice("");
+    setBusy("save"); setError("");
     const cleanedBlocks = cleanBlocks(blocks);
     const body: Record<string, any> = {
       title: eTitle.trim(),
@@ -136,13 +138,13 @@ export default function StorefrontPagesManager() {
           method: "PATCH", body: JSON.stringify(body),
         });
         savedId = out?.page?.id ?? out?.id ?? selectedId;
-        setNotice("পেজ আপডেট হয়েছে।");
+        toast({ title: "পেজ আপডেট হয়েছে।", tone: "success" });
       } else {
         const out = await apiFetch<any>(`/organizations/${orgId}/storefront/pages`, {
           method: "POST", body: JSON.stringify(body),
         });
         savedId = out?.page?.id ?? out?.id ?? null;
-        setNotice("নতুন পেজ তৈরি হয়েছে।");
+        toast({ title: "নতুন পেজ তৈরি হয়েছে।", tone: "success" });
       }
       const list = await load();
       const saved = list.find((p) => p.id === savedId);
@@ -153,11 +155,11 @@ export default function StorefrontPagesManager() {
 
   async function deletePage(p: ShopPage) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${p.title}" পেজটি মুছে ফেলবেন? পাবলিক লিংকটি বন্ধ হয়ে যাবে।`)) return;
-    setBusy(`del-${p.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: `"${p.title}" পেজটি মুছে ফেলবেন?`, body: `পাবলিক লিংকটি বন্ধ হয়ে যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setBusy(`del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/pages/${p.id}`, { method: "DELETE" });
-      setNotice("পেজ মুছে ফেলা হয়েছে।");
+      toast({ title: "পেজ মুছে ফেলা হয়েছে।", tone: "success" });
       if (selectedId === p.id) { setSelectedId(null); setEditorOpen(false); }
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -188,7 +190,6 @@ export default function StorefrontPagesManager() {
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="grid items-start gap-6 lg:grid-cols-[320px_1fr]">
         {/* List */}

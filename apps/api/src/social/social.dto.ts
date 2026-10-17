@@ -56,6 +56,8 @@ export class CreateSocialPostDto {
   @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(100, { each: true }) youtubeTags?: string[] | null;
   @IsOptional() @IsString() @MaxLength(10) youtubeCategoryId?: string | null;
   @IsOptional() @IsBoolean() youtubeIsShort?: boolean;
+  // SN1: target YouTube playlist id (from the playlists endpoint).
+  @IsOptional() @IsString() @MaxLength(200) youtubePlaylistId?: string | null;
   @IsOptional() @IsString() coverAssetId?: string | null;
   @IsOptional() @IsBoolean() isStory?: boolean;
 }
@@ -73,8 +75,17 @@ export class UpdateSocialPostDto {
   @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(100, { each: true }) youtubeTags?: string[] | null;
   @IsOptional() @IsString() @MaxLength(10) youtubeCategoryId?: string | null;
   @IsOptional() @IsBoolean() youtubeIsShort?: boolean;
+  // SN1: target YouTube playlist id (null clears).
+  @IsOptional() @IsString() @MaxLength(200) youtubePlaylistId?: string | null;
   @IsOptional() @IsString() coverAssetId?: string | null;
   @IsOptional() @IsBoolean() isStory?: boolean;
+}
+
+// SN10: create a caption test from one draft — an optional
+// replacement caption for the partner draft (absent/blank keeps
+// the source caption, which the service enforces).
+export class CreateCaptionTestDto {
+  @IsOptional() @IsString() @MaxLength(5000) caption?: string;
 }
 
 // SU8: cross-post derive — one source post, several target
@@ -164,12 +175,44 @@ export class SelectLinkedInOrganizationDto {
   @IsString() @MaxLength(200) organizationId!: string;
 }
 
+// SN6: Telegram channel connect — the tenant's OWN bot token
+// (BotFather) + the channel (@username or numeric chat id).
+// Verification happens in the service BEFORE anything is saved;
+// the token is never echoed back (the account serializer carries
+// no credential material, like every other connect).
+export class ConnectTelegramDto {
+  @IsString() @MaxLength(200) botToken!: string;
+  @IsString() @MaxLength(200) channel!: string;
+}
+
 // SP7: the org-level social settings switch (OWNER/ADMIN write).
 // SU9: both fields optional — a PATCH touches only what it
 // carries (the service preserves the absent field).
+// SN2: socialRequireClientApproval joins the same PATCH, same
+// discipline.
 export class UpdateSocialSettingsDto {
   @IsOptional() @IsBoolean() socialRequireApproval?: boolean;
   @IsOptional() @IsBoolean() socialApprovalTwoStep?: boolean;
+  @IsOptional() @IsBoolean() socialRequireClientApproval?: boolean;
+}
+
+// SN2: create a client-approval share link. Only the expiry is
+// client-supplied; absent = the service's 7-day default. The
+// range is ALSO enforced in SocialShareService (direct callers).
+export class CreateShareLinkDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) expiresInDays?: number;
+}
+
+// SN2: a client's public review submission. Deliberately loose —
+// the semantic checks (post inside this link's scope, non-empty
+// reviewer name, decision in the closed set) live in
+// SocialShareService so their errors are the honest Bengali
+// explanations, mirroring the BulkSocialPostsDto discipline.
+export class SubmitClientReviewDto {
+  @IsOptional() @IsString() @MaxLength(200) postId?: string;
+  @IsOptional() @IsString() @MaxLength(200) reviewerName?: string;
+  @IsOptional() @IsString() @MaxLength(40) decision?: string;
+  @IsOptional() @IsString() @MaxLength(2000) comment?: string;
 }
 
 // SU9: an internal team note on a post (never sent to any
@@ -194,6 +237,11 @@ export class UpdateAutoDraftSettingsDto {
   @IsOptional() @IsBoolean() saleEnabled?: boolean;
   @IsOptional() @IsBoolean() backInStockEnabled?: boolean;
   @IsOptional() @IsBoolean() reviewMilestoneEnabled?: boolean;
+  // SN8: syndication toggles + the RSS/Atom feed URL (null
+  // clears it; the http/https check ALSO lives in the service).
+  @IsOptional() @IsBoolean() rssEnabled?: boolean;
+  @IsOptional() @IsBoolean() youtubeEnabled?: boolean;
+  @IsOptional() @IsString() @MaxLength(2048) rssFeedUrl?: string | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(20) maxDraftsPerDay?: number;
   @IsOptional() @IsString() @MaxLength(200) socialAccountId?: string | null;
 }
@@ -244,6 +292,29 @@ export class CoverMediaDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) atSeconds?: number;
 }
 
+// SN5: the org's own Pexels API key (verify-before-save in the
+// service — a failed Pexels probe saves nothing).
+export class SaveStockKeyDto {
+  @IsString() @MaxLength(300) apiKey!: string;
+}
+
+// SN5: import one stock item by its Pexels id — the service
+// re-reads the item from Pexels, so no URL ever comes from the
+// client.
+export class ImportStockMediaDto {
+  @IsString() @MaxLength(40) stockId!: string;
+  @IsOptional() @IsIn(["photo", "video"]) kind?: string;
+}
+
+// SN5: brand overlay on one image asset (derived asset; the
+// source is untouched). position defaults to "bottom" in the
+// service; barColor falls back to the org's brand colour.
+export class BrandOverlayMediaDto {
+  @IsOptional() @IsString() logoAssetId?: string;
+  @IsOptional() @IsIn(["bottom", "top", "corner"]) position?: string;
+  @IsOptional() @IsString() @MaxLength(7) barColor?: string;
+}
+
 // SU4: monthly AI content plan.
 export class GenerateContentPlanDto {
   @IsString() @MaxLength(7) @Matches(/^\d{4}-\d{2}$/) month!: string;
@@ -272,6 +343,29 @@ export class BulkSocialPostsDto {
   @IsOptional() @IsArray() @IsString({ each: true }) ids?: string[];
   @IsOptional() @IsString() action?: string;
   @IsOptional() @IsString() scheduledAt?: string;
+}
+
+// SN4: AI platform variants — an existing caption re-shaped per
+// platform (RETURN ONLY; nothing is saved). platforms is the
+// closed set checked in the service (unknown values are filtered
+// there, an all-unknown list is a Bengali 400 there).
+export class GenerateSocialVariantsDto {
+  @IsString() @MaxLength(2200) caption!: string;
+  @IsArray() @ArrayMaxSize(5) @IsString({ each: true }) platforms!: string[];
+  @IsOptional() @IsString() @MaxLength(120) tone?: string;
+}
+
+// SN4: AI translation of a caption/text (RETURN ONLY). The
+// target language is the closed bn/en pair (also re-checked in
+// the service for direct callers).
+export class TranslateSocialTextDto {
+  @IsString() @MaxLength(2200) text!: string;
+  @IsIn(["bn", "en"]) targetLang!: string;
+}
+
+// SN4: AI carousel outline from a caption (RETURN ONLY).
+export class GenerateCarouselOutlineDto {
+  @IsString() @MaxLength(2200) caption!: string;
 }
 
 export class CreateTemplateImageDto {

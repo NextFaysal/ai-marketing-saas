@@ -14,6 +14,10 @@ import { rewriteV1Url } from "./v1-alias";
  */
 const FROZEN_PUBLIC_ROUTES: string[] = [
   "GET /public/shop/by-domain/:domain",
+  // TD (tenant-domain): the web tier's domain-allowlist probe —
+  // deliberately added to the frozen inventory with the route
+  // (interim-release union, 2026-10-16).
+  "GET /public/shop/domain-allowed",
   "GET /public/shop/:orgSlug",
   "GET /public/shop/:orgSlug/brands/:brandSlug",
   "GET /public/shop/:orgSlug/flash-sales",
@@ -60,6 +64,10 @@ const FROZEN_PUBLIC_ROUTES: string[] = [
   "DELETE /public/shop/:orgSlug/account/wishlist/:productId",
   "POST /public/shop/:orgSlug/track",
   "POST /public/shop/:orgSlug/track/digital-access",
+  // Owner's 7-step marketing suite (main 1526500c): the public
+  // NDR-recovery tracking post — deliberately added to the frozen
+  // inventory with the route (interim-release union, 2026-10-16).
+  "POST /public/shop/:orgSlug/track/ndr-recovery",
   // AB5 (AX9): the signed-token digital download redirect —
   // deliberately added to the frozen inventory with the route.
   "GET /public/shop/:orgSlug/orders/:orderId/digital-download",

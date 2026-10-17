@@ -11,7 +11,7 @@ import { referralConfig, maybeRewardReferral } from "../common/referral";
 import {
   seal, unseal, refreshPlatformConfig, getPlatformConfigSync,
   effectiveLlmConfig, effectiveImageConfig,
-  effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig, effectiveLinkedinAppConfig,
+  effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveThreadsAppConfig,
   sslcommerzBase, bkashBase, socialOAuthRedirectUri,
   type BkashConfig, type SslcommerzConfig,
 } from "../common/platform-config";
@@ -30,6 +30,7 @@ import { SocialHealthService } from "../social/social-health.service";
 import { SocialPublishService } from "../social/social-publish.service";
 import { AdsService } from "../ads/ads.service";
 import { publicMediaServingEnabled } from "../storage/media-url";
+import { SLUG_TOMBSTONE_COOLDOWN_DAYS } from "../common/slug-availability";
 
 const ADMIN_TIERS = ["SUPER", "SUPPORT", "FINANCE"] as const;
 
@@ -1906,13 +1907,14 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li, goauth] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li, goauth, th] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
       this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
       this.rawConfigRow("imageConfig"),
       this.rawConfigRow("tiktokAppConfig"), this.rawConfigRow("googleAppConfig"),
       this.rawConfigRow("walletConfig"), this.rawConfigRow("linkedinAppConfig"), this.rawConfigRow("googleOAuthConfig"),
+      this.rawConfigRow("threadsAppConfig"),
     ]);
     return {
       llm: {
@@ -1993,6 +1995,12 @@ export class AdminService {
         enabled: goauth ? goauth.enabled === true : false,
         secretConfigured: Boolean(goauth?.clientSecretEncrypted),
       },
+      threadsApp: {
+        source: th?.clientId ? "admin" : (process.env.THREADS_APP_ID ? "env" : "none"),
+        clientId: th?.clientId ?? (process.env.THREADS_APP_ID || null),
+        redirectUri: th?.redirectUri ?? (process.env.THREADS_REDIRECT_URI || null),
+        secretConfigured: Boolean(th?.clientSecretEncrypted || process.env.THREADS_APP_SECRET),
+      },
       wallet: {
         // CC10: the platform fee on platform-gateway payments.
         // Unset ⇒ 0 — a fee is never invented.
@@ -2015,7 +2023,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig", threads: "threadsAppConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -2063,6 +2071,12 @@ export class AdminService {
       // switch — credentials alone never turn SSO on.
       setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
       if (patch.enabled !== undefined) setField("enabled", patch.enabled === true);
+      setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
+    } else if (area === "threads") {
+      // SN7: the Threads app (inside a Meta app) — same shape as
+      // LinkedIn: client id + optional redirect + sealed secret.
+      setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
+      setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
       setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
     } else if (area === "meta") {
       setField("appId", patch.appId === undefined ? undefined : String(patch.appId));
@@ -2584,6 +2598,58 @@ export class AdminService {
     const cfg = effectiveLinkedinAppConfig();
     if (!cfg) return { ok: false, latencyMs: 0, detail: "LinkedIn App configure করা নেই — Client ID ও Client Secret দুটোই লাগবে। আগে সেভ করুন।" };
     const probe = await this.probeLinkedinApp(cfg);
+    return { ...probe, source: cfg.source };
+  }
+
+  /** SN7: Threads client-auth probe — the LinkedIn pattern: an
+   * authorization_code exchange with a deliberately bogus code.
+   * If Threads rejects the CLIENT (invalid client_id/secret)
+   * the credentials are wrong; a code-level refusal means the
+   * client itself authenticated. Proves client recognition
+   * only — NOT the App Review (Advanced Access) Meta gates
+   * production publishing behind, and never runs on save. */
+  private async probeThreadsApp(cfg: { clientId: string; clientSecret: string; redirectUri?: string }) {
+    const started = Date.now();
+    try {
+      const res = await fetch("https://graph.threads.net/oauth/access_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: (() => {
+          const form = new URLSearchParams();
+          form.set("client_id", cfg.clientId);
+          form.set("client_secret", cfg.clientSecret);
+          form.set("grant_type", "authorization_code");
+          form.set("redirect_uri", socialOAuthRedirectUri("threads", cfg.redirectUri));
+          form.set("code", "admin-verify-invalid-code");
+          return form.toString();
+        })(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      const errMsg = String(json?.error?.message ?? json?.error_message ?? json?.error ?? "");
+      if (json?.access_token) {
+        return { ok: true, latencyMs: Date.now() - started, detail: "Threads access token দিয়েছে — App ID/Secret সঠিক।" };
+      }
+      if (/client/i.test(errMsg)) {
+        return this.probeFail(started, errMsg || "Threads client authentication ব্যর্থ — Threads App ID/Secret প্রত্যাখ্যান করা হয়েছে।");
+      }
+      if (errMsg) {
+        return {
+          ok: true, latencyMs: Date.now() - started,
+          detail: `Threads client credential গৃহীত হয়েছে — dummy code প্রত্যাখ্যান করা হয়েছে (প্রত্যাশিত; code-টি আসল নয়)। প্রমাণের সীমা: Threads App ID/Secret Meta চিনেছে — App Review (Advanced Access) বা Redirect URI নিবন্ধন এটি প্রমাণ করে না। Threads-এর উত্তর: ${errMsg}`,
+        };
+      }
+      return this.probeFail(started, `Threads-এর উত্তর বোঝা যায়নি (HTTP ${res.status}) — credential যাচাই করা গেল না।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  async testThreads() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveThreadsAppConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "Threads App configure করা নেই — Threads App ID ও App Secret দুটোই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeThreadsApp(cfg);
     return { ...probe, source: cfg.source };
   }
 
@@ -3291,12 +3357,75 @@ export class AdminService {
     try { await p.businessProfile?.deleteMany({ where: { organizationId } }); } catch { /* ignore */ }
     await p.organization.delete({ where: { id: organizationId } });
     certificate.organization = 1;
+    // TD11: park the slug for 180 days (subdomain takeover
+    // protection — the deleted shop's {slug}.qosprey.com address
+    // must not be claimable by a stranger tomorrow). Written
+    // immediately after the org row is gone; this delete path is
+    // deliberately NOT one big transaction (defensive multi-pass
+    // deletes above), so a tombstone failure does not resurrect
+    // anything — instead it is reported honestly in the return
+    // value and the audit certificate, so an operator can see
+    // the cooldown is missing and act.
+    let slugTombstoneWritten = false;
+    try {
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + SLUG_TOMBSTONE_COOLDOWN_DAYS * 86400000);
+      const upserted = await p.slugTombstone?.upsert?.({
+        where: { slug: org.slug },
+        create: { slug: org.slug, deletedOrgName: org.name, deletedAt: now, expiresAt },
+        update: { deletedOrgName: org.name, deletedAt: now, expiresAt, releasedAt: null, releasedById: null },
+      });
+      slugTombstoneWritten = Boolean(upserted);
+    } catch { /* reported via slugTombstoneWritten below — never hidden */ }
     // The certificate lives in a PLATFORM audit row (no org) — it survives.
     await this.audit.log({
       userId: actor.id, action: "admin.org_deleted_permanently", entityType: "Organization", entityId: organizationId,
-      metadata: { organizationName: org.name, reason, certificate }, ipAddress: ip,
+      metadata: { organizationName: org.name, reason, certificate, slugTombstoneWritten }, ipAddress: ip,
     });
-    return { organizationId, organizationName: org.name, deleted: true, certificate };
+    return { organizationId, organizationName: org.name, deleted: true, certificate, slugTombstoneWritten };
+  }
+
+  // ---------------- TD11: slug tombstones (cooldown) ----------------
+
+  /** One tombstone row as the admin console shows it: the stored
+   * facts plus the computed state — active means the name is
+   * still parked (unreleased and unexpired right now). */
+  private slugTombstoneView(row: any) {
+    const active = !row.releasedAt && new Date(row.expiresAt).getTime() > Date.now();
+    return {
+      id: row.id, slug: row.slug, deletedOrgName: row.deletedOrgName ?? null,
+      deletedAt: row.deletedAt, expiresAt: row.expiresAt,
+      releasedAt: row.releasedAt ?? null, releasedById: row.releasedById ?? null,
+      createdAt: row.createdAt, active,
+    };
+  }
+
+  async listSlugTombstones() {
+    const p = this.prisma as any;
+    const rows = (await p.slugTombstone?.findMany?.({ orderBy: { deletedAt: "desc" }, take: 200 }).catch(() => [])) ?? [];
+    return { tombstones: rows.map((r: any) => this.slugTombstoneView(r)) };
+  }
+
+  /** SUPER-only early release of a parked slug (route carries
+   * @AdminTier("SUPER")). A reason ("note") is mandatory — it
+   * lands in the platform audit trail with the release. The row
+   * itself stays as history; only its blocking effect ends. */
+  async releaseSlugTombstone(actor: any, rawSlug: string, noteRaw: string, ip?: string) {
+    const note = this.requireReason(noteRaw);
+    const slug = String(rawSlug ?? "").trim().toLowerCase();
+    const p = this.prisma as any;
+    const row = await p.slugTombstone?.findUnique?.({ where: { slug } }).catch(() => null);
+    if (!row) throw new NotFoundException("No slug tombstone found for this name");
+    if (row.releasedAt) throw new BadRequestException("This slug was already released");
+    if (new Date(row.expiresAt).getTime() <= Date.now()) {
+      throw new BadRequestException("This slug's cooldown has already expired — no release is needed");
+    }
+    const updated = await p.slugTombstone.update({
+      where: { slug },
+      data: { releasedAt: new Date(), releasedById: actor.id },
+    });
+    await this.logAdmin(actor, "slug_tombstone_released", "SlugTombstone", row.id, { slug, note, expiresAt: row.expiresAt }, ip);
+    return { released: true, tombstone: this.slugTombstoneView(updated) };
   }
 
   // ---------------- Milestone 42 (Phase A6): Reliability Panel ----------------

@@ -16,12 +16,14 @@ import {
 } from "./social-posts-su5";
 
 describe("AUTO_DRAFT_TOGGLES (SU5)", () => {
-  it("lists exactly the four settings keys in panel order", () => {
+  it("lists the commerce keys in panel order, then the SN8 syndication keys", () => {
     expect(AUTO_DRAFT_TOGGLES.map((t) => t.key)).toEqual([
       "newProductEnabled",
       "saleEnabled",
       "backInStockEnabled",
       "reviewMilestoneEnabled",
+      "rssEnabled",
+      "youtubeEnabled",
     ]);
     expect(AUTO_DRAFT_TOGGLES.every((t) => t.label.length > 0)).toBe(true);
   });
@@ -54,6 +56,9 @@ describe("buildAutoDraftSettingsPayload (SU5)", () => {
         saleEnabled: false,
         backInStockEnabled: true,
         reviewMilestoneEnabled: false,
+        rssEnabled: false,
+        youtubeEnabled: false,
+        rssFeedUrl: "",
         maxDraftsPerDay: 8,
         socialAccountId: "",
       }),
@@ -62,6 +67,9 @@ describe("buildAutoDraftSettingsPayload (SU5)", () => {
       saleEnabled: false,
       backInStockEnabled: true,
       reviewMilestoneEnabled: false,
+      rssEnabled: false,
+      youtubeEnabled: false,
+      rssFeedUrl: null,
       maxDraftsPerDay: 8,
       socialAccountId: null,
     });
@@ -73,6 +81,9 @@ describe("buildAutoDraftSettingsPayload (SU5)", () => {
       saleEnabled: false,
       backInStockEnabled: false,
       reviewMilestoneEnabled: false,
+      rssEnabled: false,
+      youtubeEnabled: false,
+      rssFeedUrl: "",
       maxDraftsPerDay: 500,
       socialAccountId: "  acc-1 ",
     });
@@ -80,10 +91,28 @@ describe("buildAutoDraftSettingsPayload (SU5)", () => {
     expect(payload.maxDraftsPerDay).toBe(20);
     const low = buildAutoDraftSettingsPayload({
       newProductEnabled: false, saleEnabled: false, backInStockEnabled: false,
-      reviewMilestoneEnabled: false, maxDraftsPerDay: 0, socialAccountId: "   ",
+      reviewMilestoneEnabled: false, rssEnabled: false, youtubeEnabled: false, rssFeedUrl: "",
+      maxDraftsPerDay: 0, socialAccountId: "   ",
     });
     expect(low.maxDraftsPerDay).toBe(1);
     expect(low.socialAccountId).toBeNull();
+  });
+
+  it("SN8: trims the RSS feed URL; blank becomes null (clears it)", () => {
+    const payload = buildAutoDraftSettingsPayload({
+      newProductEnabled: false, saleEnabled: false, backInStockEnabled: false,
+      reviewMilestoneEnabled: false, rssEnabled: true, youtubeEnabled: true,
+      rssFeedUrl: "  https://example.com/feed.xml  ", maxDraftsPerDay: 5, socialAccountId: "",
+    });
+    expect(payload.rssEnabled).toBe(true);
+    expect(payload.youtubeEnabled).toBe(true);
+    expect(payload.rssFeedUrl).toBe("https://example.com/feed.xml");
+    const blank = buildAutoDraftSettingsPayload({
+      newProductEnabled: false, saleEnabled: false, backInStockEnabled: false,
+      reviewMilestoneEnabled: false, rssEnabled: false, youtubeEnabled: false,
+      rssFeedUrl: "   ", maxDraftsPerDay: 5, socialAccountId: "",
+    });
+    expect(blank.rssFeedUrl).toBeNull();
   });
 });
 
@@ -94,6 +123,9 @@ describe("autoDraftFormFromSettings (SU5)", () => {
       saleEnabled: true,
       backInStockEnabled: false,
       reviewMilestoneEnabled: true,
+      rssEnabled: true,
+      youtubeEnabled: false,
+      rssFeedUrl: "https://example.com/feed.xml",
       maxDraftsPerDay: 3,
       socialAccountId: "acc-9",
     };
@@ -103,9 +135,11 @@ describe("autoDraftFormFromSettings (SU5)", () => {
   it("turns a null account into the empty select value", () => {
     const form = autoDraftFormFromSettings({
       newProductEnabled: false, saleEnabled: false, backInStockEnabled: false,
-      reviewMilestoneEnabled: false, maxDraftsPerDay: 5, socialAccountId: null,
+      reviewMilestoneEnabled: false, rssEnabled: false, youtubeEnabled: false, rssFeedUrl: null,
+      maxDraftsPerDay: 5, socialAccountId: null,
     });
     expect(form.socialAccountId).toBe("");
+    expect(form.rssFeedUrl).toBe("");
   });
 });
 

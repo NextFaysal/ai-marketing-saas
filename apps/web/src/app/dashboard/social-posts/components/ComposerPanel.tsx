@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type { SocialPageCtx } from "./shared";
 import { PLATFORM_LABELS, ACCOUNT_STATUS_META, MAX_MEDIA, MediaThumb, formatMb, AccountAvatar, PlatformDot } from "./shared";
 import { buildPlatformPreview, isFirstCommentApplicable, type RecurrenceFrequency } from "@/lib/social-composer";
@@ -17,7 +17,15 @@ import { buildPlatformPreview, isFirstCommentApplicable, type RecurrenceFrequenc
  * list empties and stay as they are.
  */
 export function ComposerPanel({ c }: { c: SocialPageCtx }) {
-  const { accountSelected, accounts, aiCount, aiHashtags, aiImageProductId, aiImagePrompt, aiLanguage, aiNotice, aiProductId, aiProducts, aiScript, aiTopic, aiVariants, applyHashtagSet, assets, attachMedia, busy, caption, composerTargets, contentPlan, coverAssetId, createTemplatePoster, editingPostId, firstCommentText, generateAiCopy, generateAiImage, generateAiScript, generateContentPlan, hashtagInsights, hashtagSetName, hashtagSets, imageStatus, importError, importProductId, importProductImage, inputCls, isStory, linkUrl, loadAssets, loadMediaFolders, materializeContentPlan, mediaLimits, planAccountId, planFocus, planMonth, planPillars, planSelectedItems, platformModes, posts, recurrenceFrequency, recurrenceInterval, resetComposer, saveDraft, saveHashtagSet, scriptProductId, scriptTopic, selectedHashtags, selectedMedia, setAccountSelected, setAiCount, setAiImageProductId, setAiImagePrompt, setAiLanguage, setAiProductId, setAiTopic, setCaption, setCoverAssetId, setFirstCommentText, setHashtagSetName, setImportError, setImportProductId, setIsStory, setLinkUrl, setPlanAccountId, setPlanFocus, setPlanMonth, setPlanPillars, setPlanSelectedItems, setRecurrenceFrequency, setRecurrenceInterval, setScriptProductId, setScriptTopic, setSelectedMedia, setShowLibrary, setTemplateAssetId, setTemplateHeadline, setTemplateProductId, setTemplateSubtext, setVariantOverrides, setYtCategoryId, setYtIsShort, setYtTagsInput, setYtTitle, showAiPanel, showFirstCommentInput, showLibrary, templateAssetId, templateHeadline, templatePoster, templateProductId, templateSubtext, toggleAiPanel, toggleHashtag, uploadMedia, useAiCaption, variantOverrides, ytCategoryId, ytIsShort, ytTagsInput, ytTitle, csvImportResults, importPostsCsv, } = c;
+  const { accountSelected, accounts, aiCount, aiHashtags, aiImageProductId, aiImagePrompt, aiLanguage, aiNotice, aiProductId, aiProducts, aiScript, aiTopic, aiVariants, applyHashtagSet, assets, attachMedia, busy, caption, composerTargets, contentPlan, coverAssetId, createTemplatePoster, editingPostId, firstCommentText, generateAiCopy, generateAiImage, generateAiScript, generateContentPlan, hashtagInsights, hashtagSetName, hashtagSets, imageStatus, importError, importProductId, importProductImage, inputCls, isStory, linkUrl, loadAssets, loadMediaFolders, materializeContentPlan, mediaLimits, planAccountId, planFocus, planMonth, planPillars, planSelectedItems, platformModes, posts, recurrenceFrequency, recurrenceInterval, resetComposer, saveDraft, saveHashtagSet, scriptProductId, scriptTopic, selectedHashtags, selectedMedia, setAccountSelected, setAiCount, setAiImageProductId, setAiImagePrompt, setAiLanguage, setAiProductId, setAiTopic, setCaption, setCoverAssetId, setFirstCommentText, setHashtagSetName, setImportError, setImportProductId, setIsStory, setLinkUrl, setPlanAccountId, setPlanFocus, setPlanMonth, setPlanPillars, setPlanSelectedItems, setRecurrenceFrequency, setRecurrenceInterval, setScriptProductId, setScriptTopic, setSelectedMedia, setShowLibrary, setTemplateAssetId, setTemplateHeadline, setTemplateProductId, setTemplateSubtext, setVariantOverrides, setYtCategoryId, setYtIsShort, setYtTagsInput, setYtTitle, setYtPlaylistId, showAiPanel, showFirstCommentInput, showLibrary, templateAssetId, templateHeadline, templatePoster, templateProductId, templateSubtext, toggleAiPanel, toggleHashtag, uploadMedia, useAiCaption, variantOverrides, ytCategoryId, ytIsShort, ytTagsInput, ytTitle, ytPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, csvImportResults, importPostsCsv, aiPlatformVariants, aiVariantDropped, translations, generatePlatformVariants, applyPlatformVariant, translateComposerText, } = c;
+
+  // SN1: the YouTube target in this composer session (if any) —
+  // its playlists feed the playlist select below.
+  const ytTarget = composerTargets.find((a) => a.platform === "youtube");
+  useEffect(() => {
+    if (ytTarget) void loadYouTubePlaylists(ytTarget.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ytTarget?.id]);
   // SD3: the drag-over highlight is pure presentation (no page state).
   const [dragOver, setDragOver] = useState(false);
 
@@ -54,7 +62,26 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
         <label className="block text-sm">ক্যাপশন
           <textarea className={inputCls} rows={5} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="পোস্টে যা লিখতে চান..." />
         </label>
-        <div className="-mt-2 text-right text-xs text-slate-400">{caption.length} অক্ষর</div>
+        <div className="-mt-2 flex flex-wrap items-center justify-between gap-2">
+          {/* SN4: caption translation — the result is only shown;
+              it replaces the caption when the user taps বসান. */}
+          <span className="flex flex-wrap gap-1.5">
+            <button type="button" className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-200 disabled:opacity-50" disabled={busy !== "" || !caption.trim()} onClick={() => translateComposerText("caption", caption, "en")}>
+              {busy === "ai-translate-caption" ? "অনুবাদ হচ্ছে..." : "🌐 English-এ অনুবাদ"}
+            </button>
+            <button type="button" className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-200 disabled:opacity-50" disabled={busy !== "" || !caption.trim()} onClick={() => translateComposerText("caption", caption, "bn")}>
+              {busy === "ai-translate-caption" ? "অনুবাদ হচ্ছে..." : "🌐 বাংলায় অনুবাদ"}
+            </button>
+          </span>
+          <span className="text-xs text-slate-400">{caption.length} অক্ষর</span>
+        </div>
+        {translations["caption"] ? (
+          <div className="space-y-1.5 rounded-xl bg-slate-50 p-3">
+            <div className="text-xs font-medium text-slate-500">{translations["caption"].targetLang === "en" ? "English অনুবাদ" : "বাংলা অনুবাদ"}</div>
+            <p className="whitespace-pre-wrap text-sm text-slate-700">{translations["caption"].text}</p>
+            <button type="button" className="btn-secondary btn-sm" onClick={() => setCaption(translations["caption"].text)}>এই অনুবাদ ক্যাপশনে বসান</button>
+          </div>
+        ) : null}
 
         <label className="block text-sm">লিংক URL (ঐচ্ছিক)
           <input className={inputCls} value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://..." />
@@ -92,8 +119,8 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
 
         {/* SU8: optional YouTube / Story platform fields */}
         <div className="space-y-3 rounded-xl border border-slate-200 p-4">
-          <div className="text-sm font-semibold">▶️ YouTube / Story (ঐচ্ছিক)</div>
-          <p className="text-xs text-slate-400">এই ঘরগুলো শুধু সংশ্লিষ্ট platform-এর পোস্টে ব্যবহৃত হয় — খালি রাখলে আগের মতোই পোস্ট হবে।</p>
+          <div className="text-sm font-semibold">▶️ YouTube / Cover / Story (ঐচ্ছিক)</div>
+          <p className="text-xs text-slate-400">এই ঘরগুলো শুধু সংশ্লিষ্ট platform-এর পোস্টে ব্যবহৃত হয় — খালি রাখলে আগের মতোই পোস্ট হবে। Cover ছবিটি YouTube thumbnail হিসেবেও বসে, Facebook Page video-র cover হিসেবেও বসে।</p>
           <div className="flex flex-wrap items-end gap-3">
             <label className="block min-w-[220px] flex-1 text-sm">YouTube শিরোনাম (ঐচ্ছিক)
               <input className={inputCls} value={ytTitle} onChange={(e) => setYtTitle(e.target.value)} placeholder="খালি রাখলে ক্যাপশনের প্রথম লাইন" />
@@ -101,7 +128,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
             <label className="block text-sm">YouTube Category ID (ঐচ্ছিক)
               <input className={`${inputCls} w-36`} value={ytCategoryId} onChange={(e) => setYtCategoryId(e.target.value)} placeholder="যেমন: 22" />
             </label>
-            <label className="block min-w-[220px] flex-1 text-sm">Cover ছবি (ঐচ্ছিক)
+            <label className="block min-w-[220px] flex-1 text-sm">Cover ছবি — YouTube thumbnail / Facebook video cover (ঐচ্ছিক)
               <select className={inputCls} value={coverAssetId} onChange={(e) => setCoverAssetId(e.target.value)}>
                 <option value="">কোনো Cover নয়</option>
                 {assets.filter((a) => a.kind === "image").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -111,6 +138,24 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
           <label className="block text-sm">YouTube Tags (কমা দিয়ে, ঐচ্ছিক)
             <input className={inputCls} value={ytTagsInput} onChange={(e) => setYtTagsInput(e.target.value)} placeholder="যেমন: ঈদ, অফার, শাড়ি" />
           </label>
+          {ytTarget ? (
+            <label className="block text-sm">YouTube Playlist (ঐচ্ছিক)
+              <select className={inputCls} value={ytPlaylistId} onChange={(e) => setYtPlaylistId(e.target.value)}>
+                <option value="">কোনো playlist নয়</option>
+                {ytPlaylistId && !ytPlaylists.some((pl) => pl.id === ytPlaylistId) ? (
+                  <option value={ytPlaylistId}>বর্তমান playlist ({ytPlaylistId})</option>
+                ) : null}
+                {ytPlaylists.map((pl) => <option key={pl.id} value={pl.id}>{pl.title}</option>)}
+              </select>
+              {busy === "yt-playlists" ? (
+                <span className="text-xs text-slate-400">Playlist লোড হচ্ছে…</span>
+              ) : ytPlaylistsAccountId === ytTarget.id && ytPlaylists.length === 0 ? (
+                <span className="text-xs text-slate-400">এই channel-এ কোনো playlist পাওয়া যায়নি।</span>
+              ) : (
+                <span className="text-xs text-slate-400">ভিডিওটি publish হওয়ার পর এই playlist-এ যোগ হবে।</span>
+              )}
+            </label>
+          ) : null}
           <div className="flex flex-wrap gap-4">
             <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input type="checkbox" checked={ytIsShort} onChange={(e) => setYtIsShort(e.target.checked)} />
@@ -199,6 +244,51 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                       </div>
                     </div>
                   ))}
+                </div>
+              ) : null}
+
+              {/* SN4: per-platform variants of the composer's own
+                  caption — generated on demand, shown per platform,
+                  and written into the Step-3 variant fields only
+                  when the user taps বসান. Nothing is saved. */}
+              {!editingPostId ? (
+                <div className="space-y-2 border-t border-indigo-100 pt-3">
+                  <div className="text-sm font-medium">📱 Platform অনুযায়ী Variant</div>
+                  <p className="text-xs text-slate-400">মূল ক্যাপশনটাকেই AI প্রতিটি বেছে-নেওয়া platform-এর ধরন অনুযায়ী সাজিয়ে দেবে — নতুন দাম বা তথ্য যোগ হবে না। ফলাফল শুধু দেখানো হয়; “বসান” চাপলে সংশ্লিষ্ট অ্যাকাউন্টের Variant ঘরে যাবে।</p>
+                  <button type="button" className="btn-ai" disabled={busy !== ""} onClick={generatePlatformVariants}>
+                    {busy === "ai-variants" ? "তৈরি হচ্ছে..." : "📱 Platform Variant বানান"}
+                  </button>
+                  {aiVariantDropped > 0 ? (
+                    <p className="text-xs text-amber-700">{aiVariantDropped.toLocaleString("bn-BD")}টি variant যাচাইয়ে বাদ গেছে (মূল লেখায় নেই এমন সংখ্যা ছিল)।</p>
+                  ) : null}
+                  {aiPlatformVariants.length > 0 ? (
+                    <div className="space-y-2">
+                      {aiPlatformVariants.map((v) => {
+                        const targets = composerTargets.filter((a) => a.platform === v.platform);
+                        return (
+                          <div key={v.platform} className="space-y-2 rounded-xl bg-white p-3">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <PlatformDot platform={v.platform} />
+                              <span className="badge-slate">{PLATFORM_LABELS[v.platform] ?? v.platform}</span>
+                              {v.policy.status === "pass" ? (
+                                <span className="inline-block rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">✅ Policy Check: Pass</span>
+                              ) : (
+                                <span className="inline-block rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">⚠️ Flagged</span>
+                              )}
+                            </div>
+                            <p className="whitespace-pre-wrap text-sm text-slate-700">{v.caption}</p>
+                            {targets.length > 0 ? (
+                              <button type="button" className="btn-secondary btn-sm" onClick={() => applyPlatformVariant(v.platform, v.caption)}>
+                                {targets.map((a) => a.name).join(", ")} — এই অ্যাকাউন্টের Variant-এ বসান
+                              </button>
+                            ) : (
+                              <p className="text-xs text-slate-400">এই platform-এর কোনো অ্যাকাউন্ট এখন বেছে নেওয়া নেই।</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -506,7 +596,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                 <AccountAvatar name={a.name} pictureUrl={a.pictureUrl} platform={a.platform} />
                 <span className="font-medium">{a.name}</span>
                 <span className="badge-slate">{PLATFORM_LABELS[a.platform] ?? a.platform}</span>
-                {a.platform === "instagram" && a.username ? <span className="text-xs text-slate-500">@{a.username}</span> : null}
+                {(a.platform === "instagram" || a.platform === "telegram" || a.platform === "threads") && a.username ? <span className="text-xs text-slate-500">@{a.username}</span> : null}
                 {!usable ? (
                   <span className="text-xs text-red-600">
                     ({ACCOUNT_STATUS_META[a.status]?.label ?? a.status}{a.lastError ? ` — ${a.lastError}` : ""})
@@ -524,10 +614,23 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                 : null}
             </p>
           ) : null}
+          {!editingPostId && accounts.some((a) => a.platform === "telegram" && a.status === "connected" && accountSelected[a.id]) ? (
+            <p className="rounded-lg bg-sky-50 p-2.5 text-xs text-sky-800">
+              ✈️ Telegram বেছে নিয়েছেন — শুধু লেখা, একটি ছবি/ভিডিও, অথবা সর্বোচ্চ <strong>১০টি মিডিয়ার Media Group</strong> পাঠানো যায়। মিডিয়ার ক্যাপশন ১০২৪ অক্ষরের বেশি হলে পুরো লেখাটি আলাদা মেসেজ হিসেবে ঠিক পরেই যাবে। First Comment Telegram-এ পাঠানো হয় না (Discussion Group-এর পথ আলাদা)।
+            </p>
+          ) : null}
+          {!editingPostId && accounts.some((a) => a.platform === "threads" && a.status === "connected" && accountSelected[a.id]) ? (
+            <p className="rounded-lg bg-slate-100 p-2.5 text-xs text-slate-700">
+              🧵 Threads বেছে নিয়েছেন — ক্যাপশন সর্বোচ্চ <strong>৫০০ অক্ষর</strong>; শুধু লেখা, একটি ছবি/ভিডিও, অথবা সর্বোচ্চ <strong>২০টি মিডিয়ার Carousel</strong> পোস্ট করা যায়। First Comment Threads-এ পাঠানো হয় না।
+            </p>
+          ) : null}
         </div>
 
-        {/* SU1: per-account variant panels (multiple accounts only) */}
-        {!editingPostId && composerTargets.length > 1 ? (
+        {/* SU1: per-account variant panels (multiple accounts, or
+            a single account once SN4/a hand edit has put an
+            override on it — otherwise an applied AI variant would
+            be invisible and uneditable). */}
+        {!editingPostId && (composerTargets.length > 1 || composerTargets.some((a) => ((variantOverrides[a.id]?.caption ?? "").trim() || (variantOverrides[a.id]?.firstCommentText ?? "").trim()))) ? (
           <div className="space-y-3 rounded-xl border border-slate-200 p-4">
             <div className="text-sm font-semibold">প্রতি অ্যাকাউন্টের আলাদা রূপ (Variant)</div>
             <p className="text-xs text-slate-400">কোনো ঘর খালি রাখলে সেই অ্যাকাউন্টের জন্য উপরের মূল ক্যাপশন / প্রথম কমেন্টই ব্যবহার হবে।</p>
@@ -544,6 +647,29 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                     onChange={(e) => setVariantOverrides((s) => ({ ...s, [a.id]: { ...s[a.id], caption: e.target.value } }))}
                     placeholder="খালি রাখলে মূল ক্যাপশন" />
                 </label>
+                {/* SN4: translate this account's effective caption
+                    (its override, or the main caption when the
+                    override is empty) — result shown, applied by hand. */}
+                <div className="flex flex-wrap gap-1.5">
+                  <button type="button" className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-100 disabled:opacity-50"
+                    disabled={busy !== ""}
+                    onClick={() => translateComposerText(`variant-${a.id}`, (variantOverrides[a.id]?.caption ?? "").trim() || caption, "en")}>
+                    {busy === `ai-translate-variant-${a.id}` ? "অনুবাদ হচ্ছে..." : "🌐 English-এ অনুবাদ"}
+                  </button>
+                  <button type="button" className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-100 disabled:opacity-50"
+                    disabled={busy !== ""}
+                    onClick={() => translateComposerText(`variant-${a.id}`, (variantOverrides[a.id]?.caption ?? "").trim() || caption, "bn")}>
+                    {busy === `ai-translate-variant-${a.id}` ? "অনুবাদ হচ্ছে..." : "🌐 বাংলায় অনুবাদ"}
+                  </button>
+                </div>
+                {translations[`variant-${a.id}`] ? (
+                  <div className="space-y-1.5 rounded-lg bg-white p-2.5">
+                    <p className="whitespace-pre-wrap text-xs text-slate-700">{translations[`variant-${a.id}`].text}</p>
+                    <button type="button" className="btn-secondary btn-sm" onClick={() => setVariantOverrides((s) => ({ ...s, [a.id]: { ...s[a.id], caption: translations[`variant-${a.id}`].text } }))}>
+                      এই অনুবাদ Variant-এ বসান
+                    </button>
+                  </div>
+                ) : null}
                 {isFirstCommentApplicable(a.platform) ? (
                   <label className="block text-xs text-slate-500">প্রথম কমেন্ট Override (ঐচ্ছিক)
                     <input className="input mt-1"

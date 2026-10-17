@@ -1,5 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { useOverlayGrant } from "@/lib/shop-overlay-queue";
+import { useBottomLiftPx } from "@/lib/shop-bottom-chrome";
 
 /**
  * AB8 (AX22) — per-shop install bar.
@@ -46,6 +48,11 @@ export function shopInstallDismissedKey(orgSlug: string): string {
 
 export function ShopInstallBar({ orgSlug }: { orgSlug: string }) {
   const [mode, setMode] = useState<"prompt" | "ios" | null>(null);
+  // ED9: queue grant + bottom lift (the bar is bottom-0
+  // full-width bottom chrome itself, so the lift moves it above
+  // the v2 bottom nav / a page buy bar instead of overlapping).
+  const granted = useOverlayGrant("install", mode != null);
+  const lift = useBottomLiftPx();
 
   useEffect(() => {
     if (isStandalone()) return;
@@ -67,7 +74,7 @@ export function ShopInstallBar({ orgSlug }: { orgSlug: string }) {
     };
   }, [orgSlug]);
 
-  if (!mode) return null;
+  if (!mode || !granted) return null;
 
   function dismiss() {
     try { localStorage.setItem(shopInstallDismissedKey(orgSlug), new Date().toISOString()); } catch { /* ignore */ }
@@ -85,7 +92,7 @@ export function ShopInstallBar({ orgSlug }: { orgSlug: string }) {
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] backdrop-blur" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] backdrop-blur" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))", ...(lift > 0 ? { bottom: lift } : {}) }}>
       <div className="mx-auto flex max-w-3xl items-center gap-3">
         {mode === "prompt" ? (
           <>

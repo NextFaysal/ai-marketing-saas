@@ -9,11 +9,14 @@ import {
   insightChips,
   summaryMetricRows,
   weekdayNameBn,
+  type CaptionTestGroup,
+  type CaptionTestsResponse,
   type SocialApprovalStatus,
   type SocialInsightsSummary,
   type Sp7SocialPost,
 } from "@/lib/social-post-insights";
 import { bucketPostsByDay, localInputToUtcIso, monthCells, orgDayKey, utcToLocalInput } from "@/lib/social-calendar";
+import { rescheduledIsoKeepingTime } from "@/lib/social-board";
 import {
   ASPECT_OPTIONS,
   buildMediaQuery,
@@ -59,6 +62,17 @@ import {
   type SocialFollowers,
   type SocialTimeseries,
 } from "@/lib/social-analytics";
+import {
+  type SocialShareLink,
+  type SocialShareLinkCreated,
+  type YouTubePlaylistOption,
+} from "@/lib/social-posts-sn";
+import type {
+  CoachResponse,
+  StockConfigStatus,
+  StockSearchItem,
+  StockSearchResult,
+} from "@/lib/social-stock-coach";
 import { EmptyState } from "@repo/ui";
 
 // SU11: the contract types, status constants, MediaThumb and
@@ -66,7 +80,8 @@ import { EmptyState } from "@repo/ui";
 // for the page body, and by the panel components directly).
 import {
   ACCOUNT_STATUS_META, ApprovalStatusPill, MAX_MEDIA, PLATFORM_LABELS, POST_STATUS_META,
-  type AiCopyResponse, type AiCopyVariant, type AiProductOption, type AiScriptResult,
+  type AiCopyResponse, type AiCopyVariant, type AiPlatformVariant, type AiProductOption, type AiScriptResult,
+  type CarouselOutline,
   type ContentPlan, type DeriveResult, type DeriveWarning, type DiscoveredPage,
   type EvergreenFormState, type HashtagInsight, type HashtagSet, type MediaAsset,
   type MediaFolder, type MediaUsage, type PlatformModes, type SelectedMedia,
@@ -121,6 +136,11 @@ export default function SocialPostsPage() {
   const [ytIsShort, setYtIsShort] = useState(false);
   const [coverAssetId, setCoverAssetId] = useState("");
   const [isStory, setIsStory] = useState(false);
+  // SN1: YouTube playlist choice + the picked account's playlist
+  // list (loaded on demand from the SN1 endpoint).
+  const [ytPlaylistId, setYtPlaylistId] = useState("");
+  const [ytPlaylists, setYtPlaylists] = useState<YouTubePlaylistOption[]>([]);
+  const [ytPlaylistsAccountId, setYtPlaylistsAccountId] = useState("");
   // SU8: Derive panel (per post) — selected target accounts + the
   // API's warnings, shown verbatim.
   const [deriveOpenId, setDeriveOpenId] = useState<string | null>(null);
@@ -146,6 +166,22 @@ export default function SocialPostsPage() {
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkFolderId, setBulkFolderId] = useState("");
   const [assetAspect, setAssetAspect] = useState<Record<string, MediaAspect>>({});
+  // SN5: stock media (Pexels, the org's own key) + brand overlay.
+  const [stockStatus, setStockStatus] = useState<StockConfigStatus | null>(null);
+  const [stockKeyInput, setStockKeyInput] = useState("");
+  const [stockQuery, setStockQuery] = useState("");
+  const [stockKind, setStockKind] = useState<"photo" | "video">("photo");
+  const [stockResults, setStockResults] = useState<StockSearchItem[]>([]);
+  const [stockSearched, setStockSearched] = useState(false);
+  const [overlayPos, setOverlayPos] = useState<Record<string, string>>({});
+  // SN9: the weekly performance coach (latest digest + preview).
+  const [coach, setCoach] = useState<CoachResponse | null>(null);
+  // SN6: Telegram connect form (bot token + channel). The token
+  // is held only until the connect call returns, then cleared —
+  // it is never stored anywhere client-side.
+  const [telegramTokenInput, setTelegramTokenInput] = useState("");
+  const [telegramChannelInput, setTelegramChannelInput] = useState("");
+  const [showTelegramConnect, setShowTelegramConnect] = useState(false);
   // PP3: product-image import in the composer picker (reuses the
   // SP3 aiProducts list — same products endpoint, one fetch).
   const [importProductId, setImportProductId] = useState("");
@@ -179,6 +215,14 @@ export default function SocialPostsPage() {
   const [scriptTopic, setScriptTopic] = useState("");
   const [scriptProductId, setScriptProductId] = useState("");
   const [aiScript, setAiScript] = useState<AiScriptResult | null>(null);
+  // SN4: AI platform variants (returned only — applying one writes
+  // it into the per-account variant overrides by hand), per-field
+  // translation results, and per-post repurpose results.
+  const [aiPlatformVariants, setAiPlatformVariants] = useState<AiPlatformVariant[]>([]);
+  const [aiVariantDropped, setAiVariantDropped] = useState(0);
+  const [translations, setTranslations] = useState<Record<string, { text: string; targetLang: "bn" | "en" }>>({});
+  const [repurposeScriptByPost, setRepurposeScriptByPost] = useState<Record<string, AiScriptResult>>({});
+  const [repurposeOutlineByPost, setRepurposeOutlineByPost] = useState<Record<string, CarouselOutline>>({});
 
   // SP4 image panel (AI image + template poster). The product
   // selects REUSE the SP3 aiProducts state — one fetch, shared.
@@ -198,7 +242,7 @@ export default function SocialPostsPage() {
 
   // SP5: org timezone, list/calendar/queue views, schedule inputs.
   const [orgTz, setOrgTz] = useState("Asia/Dhaka");
-  const [viewMode, setViewMode] = useState<"list" | "calendar" | "queue">("list");
+  const [viewMode, setViewMode] = useState<"list" | "calendar" | "queue" | "board">("list");
   const [calCursor, setCalCursor] = useState<{ y: number; m: number }>(() => {
     const [y, m] = orgDayKey(new Date().toISOString(), "Asia/Dhaka").split("-").map(Number);
     return { y, m };
@@ -225,6 +269,8 @@ export default function SocialPostsPage() {
   const [analyticsContentTypes, setAnalyticsContentTypes] = useState<SocialContentTypes | null>(null);
   const [analyticsAccounts, setAnalyticsAccounts] = useState<SocialAccountsInsights | null>(null);
   const [analyticsFollowers, setAnalyticsFollowers] = useState<SocialFollowers | null>(null);
+  // SN10: caption-test pairs for the Analytics comparison.
+  const [captionTests, setCaptionTests] = useState<CaptionTestGroup[]>([]);
   const [reportMonth, setReportMonth] = useState(() => currentMonthValue(new Date()));
   const [requireApproval, setRequireApproval] = useState(false);
   const [requireApprovalLoaded, setRequireApprovalLoaded] = useState(false);
@@ -236,6 +282,9 @@ export default function SocialPostsPage() {
     saleEnabled: false,
     backInStockEnabled: false,
     reviewMilestoneEnabled: false,
+    rssEnabled: false,
+    youtubeEnabled: false,
+    rssFeedUrl: "",
     maxDraftsPerDay: 5,
     socialAccountId: "",
   });
@@ -262,6 +311,12 @@ export default function SocialPostsPage() {
   const [timelineByPost, setTimelineByPost] = useState<Record<string, SocialTimelineEntry[]>>({});
   const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
   const [approvalTwoStep, setApprovalTwoStep] = useState(false);
+  // SN2: client approval share links (per-post list + the full URL
+  // of the most recently created link, shown once) and the
+  // require-client-approval settings toggle.
+  const [shareLinksByPost, setShareLinksByPost] = useState<Record<string, SocialShareLink[]>>({});
+  const [shareCreatedByPost, setShareCreatedByPost] = useState<Record<string, SocialShareLinkCreated>>({});
+  const [requireClientApproval, setRequireClientApproval] = useState(false);
   // SU10 web: account health rows + failure groups.
   const [accountHealth, setAccountHealth] = useState<SocialAccountHealthRow[]>([]);
   const [failureGroups, setFailureGroups] = useState<SocialFailureGroup[]>([]);
@@ -331,13 +386,40 @@ export default function SocialPostsPage() {
     setAnalyticsFollowers(await apiFetch<SocialFollowers>(`/organizations/${orgId}/social/insights/followers`));
   }, []);
 
+  // SN10: caption-test pairs — auxiliary like the other analytics
+  // loaders (a failure only empties its own section).
+  const loadCaptionTests = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const res = await apiFetch<CaptionTestsResponse>(`/organizations/${orgId}/social/insights/caption-tests`);
+    setCaptionTests(res.tests ?? []);
+  }, []);
+
   const loadSocialSettings = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const res = await apiFetch<{ socialRequireApproval: boolean; socialApprovalTwoStep?: boolean }>(`/organizations/${orgId}/social/settings`);
+    const res = await apiFetch<{ socialRequireApproval: boolean; socialApprovalTwoStep?: boolean; socialRequireClientApproval?: boolean }>(`/organizations/${orgId}/social/settings`);
     setRequireApproval(!!res.socialRequireApproval);
     setApprovalTwoStep(!!res.socialApprovalTwoStep);
+    setRequireClientApproval(!!res.socialRequireClientApproval);
     setRequireApprovalLoaded(true);
   }, []);
+
+  // SN1: the picked YouTube account's playlists (composer select).
+  // Cached per account; the composer effect calls this whenever the
+  // selected YouTube account changes.
+  async function loadYouTubePlaylists(accountId: string) {
+    if (!accountId || ytPlaylistsAccountId === accountId) return;
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("yt-playlists"); setError("");
+    try {
+      const res = await apiFetch<{ playlists: YouTubePlaylistOption[] }>(`/organizations/${orgId}/social/accounts/${accountId}/youtube/playlists`);
+      setYtPlaylists(res.playlists ?? []);
+      setYtPlaylistsAccountId(accountId);
+    } catch (e) {
+      setYtPlaylists([]);
+      setYtPlaylistsAccountId(accountId);
+      setError(e instanceof Error ? e.message : "Playlist লোড করা যায়নি");
+    } finally { setBusy(""); }
+  }
 
   // SU9/SU10 web loaders — auxiliary like the other settings:
   // callers .catch() them so a failure never blanks the page.
@@ -401,6 +483,19 @@ export default function SocialPostsPage() {
     setMediaLimits(await apiFetch<{ imageMaxBytes: number; videoMaxBytes: number }>(`/organizations/${orgId}/social/media/limits`));
   }, []);
 
+  // SN5: stock key status (configured + last-4 only — the key
+  // itself never comes back from the API).
+  const loadStockStatus = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setStockStatus(await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`));
+  }, []);
+
+  // SN9: latest coach digest + live preview.
+  const loadCoach = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setCoach(await apiFetch<CoachResponse>(`/organizations/${orgId}/social/insights/coach`));
+  }, []);
+
   // SP8/SP9: OAuth return landing — the callback redirects here
   // with social_connected / social_error. Show the outcome once,
   // refresh the account list, then strip the params so a reload
@@ -414,6 +509,7 @@ export default function SocialPostsPage() {
     if (oauthError) setError(oauthError);
     if (connected === "tiktok") setNotice("TikTok অ্যাকাউন্ট যুক্ত হয়েছে।");
     if (connected === "youtube") setNotice("YouTube Channel যুক্ত হয়েছে।");
+    if (connected === "threads") setNotice("Threads অ্যাকাউন্ট যুক্ত হয়েছে।");
     if (pick) {
       // SP9: the callback parked a multi-channel authorization —
       // load the offered channels for the picker (the state id is
@@ -473,9 +569,12 @@ export default function SocialPostsPage() {
       loadMembers().catch(() => undefined);
       loadAccountHealth().catch(() => undefined);
       loadFailureGroups().catch(() => undefined);
+      loadStockStatus().catch(() => undefined);
+      loadCoach().catch(() => undefined);
+      loadCaptionTests().catch(() => undefined);
       apiFetch<{ id: string }>("/auth/me").then((me) => setMyUserId(me.id)).catch(() => undefined);
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
-  }, [loadAccounts, loadPosts, loadAssets, loadImageStatus, loadInsightsSummary, loadSocialSettings, loadAutoDraftSettings, loadPlatformModes, loadMediaLimits, loadPostingSlots, loadMediaFolders, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadMembers, loadAccountHealth, loadFailureGroups]);
+  }, [loadAccounts, loadPosts, loadAssets, loadImageStatus, loadInsightsSummary, loadSocialSettings, loadAutoDraftSettings, loadPlatformModes, loadMediaLimits, loadPostingSlots, loadMediaFolders, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadMembers, loadAccountHealth, loadFailureGroups, loadStockStatus, loadCoach, loadCaptionTests]);
 
   // SU11: keep the API-side post filters in a ref for loadPosts,
   // and reload from the FIRST page whenever a filter changes
@@ -549,7 +648,7 @@ export default function SocialPostsPage() {
   // The API returns the platform's authorize URL; the browser
   // leaves for the platform and the callback redirects back here
   // with social_connected / social_error (handled on mount).
-  async function connectOAuth(platform: "tiktok" | "youtube") {
+  async function connectOAuth(platform: "tiktok" | "youtube" | "threads") {
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy(`connect-${platform}`); setError("");
     try {
@@ -559,6 +658,29 @@ export default function SocialPostsPage() {
       setError(e instanceof Error ? e.message : "Connect শুরু করা যায়নি");
       setBusy("");
     }
+  }
+
+  // --- SN6 Telegram connect (bot token, NOT OAuth) ----------------------------
+  // Verify-before-save runs server-side (bot → channel → admin);
+  // a failure comes back as the API's Bengali 400 carrying
+  // Telegram's own message, shown verbatim through setError.
+  async function connectTelegram() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!telegramTokenInput.trim()) { setError("আগে Bot Token দিন — Telegram-এ @BotFather দিয়ে Bot বানালে Token পাওয়া যায়।"); return; }
+    if (!telegramChannelInput.trim()) { setError("Channel-এর Username (@সহ) অথবা numeric Chat ID দিন।"); return; }
+    setBusy("connect-telegram"); setError("");
+    try {
+      const res = await apiFetch<SocialAccount>(`/organizations/${orgId}/social/accounts/telegram/connect`, {
+        method: "POST",
+        body: JSON.stringify({ botToken: telegramTokenInput.trim(), channel: telegramChannelInput.trim() }),
+      });
+      setTelegramTokenInput("");
+      setTelegramChannelInput("");
+      setShowTelegramConnect(false);
+      setNotice(`Telegram Channel যুক্ত হয়েছে: “${res.name}” এখন সংযুক্ত।`);
+      await loadAccounts();
+    } catch (e) { setError(e instanceof Error ? e.message : "Telegram যুক্ত করা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
   }
 
   // SP9: finish a parked YouTube connect with the chosen channel.
@@ -693,6 +815,94 @@ export default function SocialPostsPage() {
       });
       setAiScript(res);
     } catch (e) { setError(e instanceof Error ? e.message : "Script তৈরি ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  // --- SN4: AI platform variants / translation / repurpose -----------------
+
+  async function generatePlatformVariants() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!caption.trim()) { setError("আগে মূল ক্যাপশন লিখুন — AI সেটাকেই platform অনুযায়ী সাজাবে।"); return; }
+    const platforms = [...new Set(composerTargets.map((a) => a.platform))];
+    if (platforms.length === 0) { setError("আগে অন্তত একটি অ্যাকাউন্ট বেছে নিন — কোন কোন platform-এর variant লাগবে তা সেখান থেকেই ঠিক হয়।"); return; }
+    setBusy("ai-variants"); setError("");
+    try {
+      const res = await apiFetch<{ variants: AiPlatformVariant[]; droppedCount: number }>(
+        `/organizations/${orgId}/social/posts/ai-variants`, {
+          method: "POST",
+          body: JSON.stringify({ caption: caption.trim(), platforms }),
+        });
+      setAiPlatformVariants(res.variants);
+      setAiVariantDropped(res.droppedCount ?? 0);
+      setNotice(res.droppedCount > 0
+        ? `Platform variant তৈরি হয়েছে — ${res.droppedCount.toLocaleString("bn-BD")}টি variant যাচাইয়ে বাদ গেছে (মূল লেখায় নেই এমন সংখ্যা ছিল)।`
+        : "Platform variant তৈরি হয়েছে — পছন্দেরটি সংশ্লিষ্ট অ্যাকাউন্টের Variant ঘরে বসান।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Platform variant তৈরি ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN4: write one generated platform variant into the variant
+   * overrides of every targeted account on that platform. Nothing
+   * is saved to the server — it only fills the composer fields,
+   * exactly like typing them by hand. */
+  function applyPlatformVariant(platform: string, text: string) {
+    const targets = composerTargets.filter((a) => a.platform === platform);
+    if (targets.length === 0) return;
+    setVariantOverrides((s) => {
+      const next = { ...s };
+      for (const a of targets) next[a.id] = { ...next[a.id], caption: text };
+      return next;
+    });
+    setNotice(`${targets.map((a) => a.name).join(", ")} — এই অ্যাকাউন্টের Variant ঘরে AI-এর লেখা বসানো হয়েছে। চাইলে বদলে নিন, তারপর Draft সংরক্ষণ করুন।`);
+  }
+
+  /** SN4: translate one composer field's text. The result is only
+   * SHOWN next to the field (keyed preview) — the field itself
+   * changes when the user taps "বসান" in the panel. */
+  async function translateComposerText(key: string, text: string, targetLang: "bn" | "en") {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!text.trim()) { setError("আগে লেখা লিখুন — অনুবাদ করতে লেখা লাগবে।"); return; }
+    setBusy(`ai-translate-${key}`); setError("");
+    try {
+      const res = await apiFetch<{ text: string }>(`/organizations/${orgId}/social/posts/ai-translate`, {
+        method: "POST",
+        body: JSON.stringify({ text: text.trim(), targetLang }),
+      });
+      setTranslations((s) => ({ ...s, [key]: { text: res.text, targetLang } }));
+    } catch (e) { setError(e instanceof Error ? e.message : "অনুবাদ ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN4 repurpose: Reel script from the post's own caption via
+   * the SU4 script endpoint (returned only, kept per post). */
+  async function generateRepurposeScript(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const topic = (p.caption ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+    if (!topic) { setError("এই পোস্টে কোনো ক্যাপশন নেই — Script বানাতে ক্যাপশন লাগবে।"); return; }
+    setBusy(`repurpose-script-${p.id}`); setError("");
+    try {
+      const res = await apiFetch<AiScriptResult>(`/organizations/${orgId}/social/posts/ai-script`, {
+        method: "POST",
+        body: JSON.stringify({ topic, language: aiLanguage }),
+      });
+      setRepurposeScriptByPost((s) => ({ ...s, [p.id]: res }));
+    } catch (e) { setError(e instanceof Error ? e.message : "Script তৈরি ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN4 repurpose: carousel outline from the post's caption
+   * (returned only, kept per post). */
+  async function generateCarouselOutline(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!(p.caption ?? "").trim()) { setError("এই পোস্টে কোনো ক্যাপশন নেই — Carousel outline বানাতে ক্যাপশন লাগবে।"); return; }
+    setBusy(`repurpose-outline-${p.id}`); setError("");
+    try {
+      const res = await apiFetch<CarouselOutline>(`/organizations/${orgId}/social/posts/ai-carousel-outline`, {
+        method: "POST",
+        body: JSON.stringify({ caption: p.caption.trim() }),
+      });
+      setRepurposeOutlineByPost((s) => ({ ...s, [p.id]: res }));
+    } catch (e) { setError(e instanceof Error ? e.message : "Carousel outline তৈরি ব্যর্থ হয়েছে"); }
     finally { setBusy(""); }
   }
 
@@ -932,6 +1142,81 @@ export default function SocialPostsPage() {
     finally { setBusy(""); }
   }
 
+  // SN5: save the org's Pexels key — the API verifies it with a
+  // real Pexels call first; a failed verification saves nothing
+  // and the server's verbatim reason lands in the error banner.
+  async function saveStockKey() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!stockKeyInput.trim()) { setError("Pexels API key দিন।"); return; }
+    setBusy("stock-key-save"); setError(""); setNotice("");
+    try {
+      const status = await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`, {
+        method: "PUT", body: JSON.stringify({ apiKey: stockKeyInput.trim() }),
+      });
+      setStockStatus(status);
+      setStockKeyInput("");
+      setNotice("Pexels key যাচাই হয়ে সংরক্ষিত হয়েছে — এখন stock ছবি/ভিডিও খুঁজতে পারবেন।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Pexels key সংরক্ষণ ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  async function deleteStockKey() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("stock-key-delete"); setError(""); setNotice("");
+    try {
+      setStockStatus(await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`, { method: "DELETE" }));
+      setStockResults([]);
+      setStockSearched(false);
+      setNotice("Pexels key মুছে ফেলা হয়েছে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Pexels key মোছা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  async function searchStock() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("stock-search"); setError(""); setNotice("");
+    try {
+      const qs = new URLSearchParams({ kind: stockKind });
+      if (stockQuery.trim()) qs.set("q", stockQuery.trim());
+      const res = await apiFetch<StockSearchResult>(`/organizations/${orgId}/social/media/stock/search?${qs.toString()}`);
+      setStockResults(res.items ?? []);
+      setStockSearched(true);
+    } catch (e) { setError(e instanceof Error ? e.message : "Stock খোঁজা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  // SN5: import goes by stock id only — the API re-reads the
+  // item from Pexels and downloads through the guarded importer;
+  // the returned asset (with its credit) joins the grid.
+  async function importStockItem(item: StockSearchItem) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`stock-import-${item.stockId}`); setError(""); setNotice("");
+    try {
+      const asset = await apiFetch<MediaAsset>(`/organizations/${orgId}/social/media/stock/import`, {
+        method: "POST", body: JSON.stringify({ stockId: item.stockId, kind: item.kind }),
+      });
+      setAssets((prev) => [asset, ...prev.filter((a) => a.id !== asset.id)]);
+      setNotice(`“${asset.name}” Library-তে যোগ হয়েছে — credit asset-এ সংরক্ষিত আছে।`);
+    } catch (e) { setError(e instanceof Error ? e.message : "Stock import ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  // SN5: brand overlay — a NEW derived asset; the original tile
+  // stays untouched (same discipline as Crop).
+  async function brandOverlayFor(asset: MediaAsset) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const position = overlayPos[asset.id] ?? "bottom";
+    setBusy(`overlay-${asset.id}`); setError(""); setNotice("");
+    try {
+      const derived = await apiFetch<MediaAsset>(`/organizations/${orgId}/social/media/${asset.id}/brand-overlay`, {
+        method: "POST", body: JSON.stringify({ position }),
+      });
+      setAssets((prev) => [derived, ...prev.filter((a) => a.id !== derived.id)]);
+      setNotice("Brand overlay-সহ নতুন সংস্করণ তৈরি হয়েছে (আসলটি অপরিবর্তিত)");
+    } catch (e) { setError(e instanceof Error ? e.message : "Brand overlay ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
   function toggleBulkSelected(assetId: string) {
     setBulkSelected((prev) => {
       const next = new Set(prev);
@@ -1044,6 +1329,9 @@ export default function SocialPostsPage() {
     setYtIsShort(false);
     setCoverAssetId("");
     setIsStory(false);
+    setYtPlaylistId("");
+    setYtPlaylists([]);
+    setYtPlaylistsAccountId("");
   }
 
   /** SU8: the composer's optional platform fields as a save payload. */
@@ -1053,6 +1341,7 @@ export default function SocialPostsPage() {
       youtubeTags: parseYoutubeTagsInput(ytTagsInput),
       youtubeCategoryId: ytCategoryId,
       youtubeIsShort: ytIsShort,
+      youtubePlaylistId: ytPlaylistId,
       coverAssetId,
       isStory,
       isStoryApplicable,
@@ -1076,6 +1365,7 @@ export default function SocialPostsPage() {
     setYtTagsInput(youtubeTagsToInput(p.youtubeTags));
     setYtCategoryId(p.youtubeCategoryId ?? "");
     setYtIsShort(!!p.youtubeIsShort);
+    setYtPlaylistId(p.youtubePlaylistId ?? "");
     setCoverAssetId(p.coverAssetId ?? "");
     setIsStory(!!p.isStory);
     setError("");
@@ -1206,6 +1496,23 @@ export default function SocialPostsPage() {
     finally { setBusy(""); }
   }
 
+  // SN10: caption test — the API pairs this draft with a fresh
+  // clone draft under one captionTestId. The v1 UI sends no
+  // caption override: the second draft starts as an exact copy
+  // and the user edits ITS caption before scheduling the pair at
+  // different times.
+  async function createCaptionTest(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`caption-test-${p.id}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/caption-test`, { method: "POST", body: JSON.stringify({}) });
+      setNotice("Caption Test জোড়া তৈরি হয়েছে — দ্বিতীয় Draft-এর caption বদলে আলাদা সময়ে শিডিউল করুন।");
+      await loadPosts().catch(() => undefined);
+      loadCaptionTests().catch(() => undefined);
+    } catch (e) { setError(e instanceof Error ? e.message : "Caption Test তৈরি করা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
   async function addToQueue(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy(`queue-${p.id}`); setError("");
@@ -1308,8 +1615,16 @@ export default function SocialPostsPage() {
   const fmtInTz = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("bn-BD", { timeZone: orgTz }) : "");
 
   async function doSchedule(p: Sp7SocialPost) {
-    const orgId = getOrganizationId(); if (!orgId) return;
     const value = scheduleInputs[p.id] || (p.scheduledAt ? utcToLocalInput(p.scheduledAt, orgTz) : "");
+    if (!value) { setError("আগে তারিখ ও সময় বেছে নিন।"); return; }
+    await doScheduleValue(p, value);
+  }
+
+  /** SN3: schedule with an explicit datetime-local value — the
+   * board's schedule modal calls this; the list form's doSchedule
+   * above delegates here too. Same endpoint, same gates. */
+  async function doScheduleValue(p: Sp7SocialPost, value: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
     if (!value) { setError("আগে তারিখ ও সময় বেছে নিন।"); return; }
     setBusy(`schedule-${p.id}`); setError("");
     try {
@@ -1320,6 +1635,27 @@ export default function SocialPostsPage() {
       setNotice("পোস্টটি শিডিউল করা হয়েছে — নির্ধারিত সময়ে প্রকাশ হবে (Social Post Publisher Job চালু থাকলে)।");
       await loadPosts();
     } catch (e) { setError(e instanceof Error ? e.message : "শিডিউল করা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN3: calendar drag — move a scheduled post to another day,
+   * keeping its org-timezone wall time. Goes through the SAME
+   * schedule endpoint (so the approval/client gates decide); on
+   * refusal the posts state never changed, so the chip simply
+   * stays on its original day and the server's reason shows. */
+  async function reschedulePostToDay(p: Sp7SocialPost, dayKey: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!p.scheduledAt) return;
+    if (orgDayKey(p.scheduledAt, orgTz) === dayKey) return;
+    setBusy(`cal-drag-${p.id}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/schedule`, {
+        method: "POST",
+        body: JSON.stringify({ scheduledAt: rescheduledIsoKeepingTime(p.scheduledAt, dayKey, orgTz) }),
+      });
+      setNotice("পোস্টটির তারিখ বদলে দেওয়া হয়েছে — সময় আগেরটাই আছে।");
+      await loadPosts();
+    } catch (e) { setError(e instanceof Error ? e.message : "তারিখ বদলানো ব্যর্থ হয়েছে"); }
     finally { setBusy(""); }
   }
 
@@ -1482,6 +1818,22 @@ export default function SocialPostsPage() {
     } finally { setBusy(""); }
   }
 
+  // SN2 web: the optional client-approval requirement (third gate).
+  async function saveRequireClientApproval(next: boolean) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("client-approval-requirement"); setError("");
+    try {
+      const res = await apiFetch<{ socialRequireClientApproval: boolean }>(`/organizations/${orgId}/social/settings`, {
+        method: "PATCH", body: JSON.stringify({ socialRequireClientApproval: next }),
+      });
+      setRequireClientApproval(!!res.socialRequireClientApproval);
+      setNotice(next ? "ক্লায়েন্ট অনুমোদন বাধ্যতামূলক করা হয়েছে — অনুমোদন ছাড়া publish/schedule আটকাবে।" : "ক্লায়েন্ট অনুমোদনের বাধ্যবাধকতা বন্ধ হয়েছে।");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "সেটিং সংরক্ষণ ব্যর্থ হয়েছে");
+      await loadSocialSettings().catch(() => undefined);
+    } finally { setBusy(""); }
+  }
+
   // SU11: bulk selection + actions over the post list.
   function togglePostSelected(postId: string) {
     setSelectedPostIds((prev) => {
@@ -1540,9 +1892,58 @@ export default function SocialPostsPage() {
 
   // SU9 web: per-post detail (notes / versions / timeline),
   // loaded together the first time the panel opens for a post.
+  // SN2: client share links for one post — loaded with the detail
+  // panel; failures stay local (the rest of the detail still opens).
+  async function loadShareLinks(postId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const links = await apiFetch<SocialShareLink[]>(`/organizations/${orgId}/social/posts/${postId}/share-links`);
+      setShareLinksByPost((s) => ({ ...s, [postId]: links }));
+    } catch { /* share list is auxiliary — detail opens without it */ }
+  }
+
+  async function createShareLink(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`share-create-${p.id}`); setError("");
+    try {
+      const created = await apiFetch<SocialShareLinkCreated>(`/organizations/${orgId}/social/posts/${p.id}/share-link`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      setShareCreatedByPost((s) => ({ ...s, [p.id]: created }));
+      setNotice("ক্লায়েন্ট শেয়ার লিংক তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন।");
+      await loadShareLinks(p.id);
+    } catch (e) { setError(e instanceof Error ? e.message : "শেয়ার লিংক তৈরি করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function createGroupShareLink(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId || !p.postGroupId) return;
+    setBusy(`share-group-${p.id}`); setError("");
+    try {
+      const created = await apiFetch<SocialShareLinkCreated>(`/organizations/${orgId}/social/post-groups/${p.postGroupId}/share-link`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      setShareCreatedByPost((s) => ({ ...s, [p.id]: created }));
+      setNotice("গ্রুপের ক্লায়েন্ট শেয়ার লিংক তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন।");
+    } catch (e) { setError(e instanceof Error ? e.message : "গ্রুপ শেয়ার লিংক তৈরি করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function revokeShareLink(p: Sp7SocialPost, linkId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`share-revoke-${linkId}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/social/share-links/${linkId}`, { method: "DELETE" });
+      setNotice("শেয়ার লিংক বাতিল করা হয়েছে।");
+      await loadShareLinks(p.id);
+    } catch (e) { setError(e instanceof Error ? e.message : "লিংক বাতিল করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
   async function togglePostDetail(p: Sp7SocialPost) {
     if (detailOpenId === p.id) { setDetailOpenId(null); return; }
     setDetailOpenId(p.id);
+    void loadShareLinks(p.id);
     if (notesByPost[p.id] && versionsByPost[p.id] && timelineByPost[p.id]) return;
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy(`detail-${p.id}`);
@@ -2047,12 +2448,13 @@ export default function SocialPostsPage() {
 
   // SU11: the panel context — page.tsx keeps ALL state and
   // handlers; the components under components/ only render.
-  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
+  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, ytPlaylistId, setYtPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, aiPlatformVariants, aiVariantDropped, translations, repurposeScriptByPost, repurposeOutlineByPost, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doScheduleValue, reschedulePostToDay, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, generatePlatformVariants, applyPlatformVariant, translateComposerText, generateRepurposeScript, generateCarouselOutline, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, stockStatus, setStockStatus, stockKeyInput, setStockKeyInput, stockQuery, setStockQuery, stockKind, setStockKind, stockResults, stockSearched, overlayPos, setOverlayPos, saveStockKey, deleteStockKey, searchStock, importStockItem, brandOverlayFor, coach, loadCoach, loadStockStatus, captionTests, createCaptionTest, loadCaptionTests, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
   bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, csvImportResults, importPostsCsv,
   members, myUserId, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost,
   noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel,
-  approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost,
-  loadAccountHealth, loadFailureGroups, filteredPosts, calCells, calBuckets, calMonthTitle, selectedPost, queuePosts, pendingApprovalPosts, hasPublishedOrInsights, analyticsBars, analyticsHasTimeseriesData, followerHasGrowth, connectedAccounts, composerTargets, showFirstCommentInput, inputCls, activeTab, setActiveTab };
+  approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, requireClientApproval, saveRequireClientApproval,
+  loadAccountHealth, loadFailureGroups, filteredPosts, calCells, calBuckets, calMonthTitle, selectedPost, queuePosts, pendingApprovalPosts, hasPublishedOrInsights, analyticsBars, analyticsHasTimeseriesData, followerHasGrowth, connectedAccounts, composerTargets, showFirstCommentInput, inputCls, activeTab, setActiveTab,
+  telegramTokenInput, setTelegramTokenInput, telegramChannelInput, setTelegramChannelInput, showTelegramConnect, setShowTelegramConnect, connectTelegram };
 
   const SU11_TABS = [
     { id: "composer", label: "✍️ Composer" },

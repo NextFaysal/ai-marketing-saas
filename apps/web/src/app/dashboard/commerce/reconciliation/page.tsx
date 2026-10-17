@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
+import { ResponsiveTable } from "@repo/ui";
 import { getOrganizationId } from "@/lib/org";
 import { minorToTakaString } from "@/lib/storefront-money";
 
@@ -365,6 +366,29 @@ export default function ReconciliationPage() {
     </div>
   );
 
+  // EB6/ED13: line actions shared verbatim by the desktop table
+  // cell and the ResponsiveTable mobile card — same handlers.
+  const renderLineActions = (line: ReconLine) => (
+    <div className="flex flex-col gap-1">
+      {line.matchedShipmentId && line.sheetAmountMinor ? (
+        <button
+          type="button"
+          className="inline-flex min-h-[44px] items-center text-left text-xs font-semibold text-blue-700 disabled:opacity-50"
+          disabled={busyLine !== ""}
+          onClick={() => void resolveLine(line, "accept_sheet")}
+        >শিটের পরিমাণ গ্রহণ করুন</button>
+      ) : null}
+      {!line.reviewedAt ? (
+        <button
+          type="button"
+          className="inline-flex min-h-[44px] items-center text-left text-xs font-semibold text-slate-700 disabled:opacity-50"
+          disabled={busyLine !== ""}
+          onClick={() => void resolveLine(line, "mark_reviewed")}
+        >পর্যালোচিত</button>
+      ) : null}
+    </div>
+  );
+
   const counts = lastResult?.counts;
 
   return (
@@ -449,7 +473,7 @@ export default function ReconciliationPage() {
         >
           {importing ? "Import হচ্ছে…" : "Import করুন"}
         </button>
-        {!courierId ? <p className="text-xs text-slate-400">Import করতে আগে কুরিয়ার বেছে নিন।</p> : null}
+        {!courierId ? <p className="text-xs text-slate-500">Import করতে আগে কুরিয়ার বেছে নিন।</p> : null}
 
         {counts ? (
           <div className="space-y-2 border-t pt-4">
@@ -479,7 +503,7 @@ export default function ReconciliationPage() {
         {imports.length === 0 ? (
           <p className="text-sm text-slate-500">এখনো কোনো শিট import করা হয়নি।</p>
         ) : (
-          <div className="overflow-x-auto">
+          <ResponsiveTable table={<div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -510,9 +534,17 @@ export default function ReconciliationPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>} cards={imports.map((row) => (
+  <div
+    key={row.id}
+    className={`cursor-pointer rounded-xl border bg-white p-3 shadow-sm ${selectedImport?.id === row.id ? "bg-blue-50" : ""}`}
+    onClick={() => openImport(row)}
+  >
+    <dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">তারিখ</dt><dd className="text-right">{new Date(row.createdAt).toLocaleString("bn-BD")}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ফাইল</dt><dd className="text-right">{row.fileName ?? "—"}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সারি</dt><dd className="text-right">{row.rowCount}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মিলেছে</dt><dd className="text-right">{row.matchedCount}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অমিল</dt><dd className="text-right">{row.mismatchCount}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পাওয়া যায়নি</dt><dd className="text-right">{row.notFoundCount}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ডুপ্লিকেট</dt><dd className="text-right">{row.duplicateCount}</dd></div></dl>
+  </div>
+))} />
         )}
-        <p className="text-xs text-slate-400">যেকোনো সারিতে ক্লিক করলে তার বিস্তারিত লাইনগুলো নিচে দেখা যাবে।</p>
+        <p className="text-xs text-slate-500">যেকোনো সারিতে ক্লিক করলে তার বিস্তারিত লাইনগুলো নিচে দেখা যাবে।</p>
       </div>
 
       {selectedImport ? (
@@ -526,14 +558,14 @@ export default function ReconciliationPage() {
             <button
               type="button"
               onClick={() => onOutcomeFilter("")}
-              className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${outcomeFilter === "" ? "bg-slate-900 text-white" : "border bg-white"}`}
+              className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 text-sm font-semibold ${outcomeFilter === "" ? "bg-slate-900 text-white" : "border bg-white"}`}
             >সব</button>
             {OUTCOME_ORDER.map((o) => (
               <button
                 key={o}
                 type="button"
                 onClick={() => onOutcomeFilter(o)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${outcomeFilter === o ? "bg-slate-900 text-white" : "border bg-white"}`}
+                className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 text-sm font-semibold ${outcomeFilter === o ? "bg-slate-900 text-white" : "border bg-white"}`}
               >{OUTCOME_LABEL[o]}</button>
             ))}
           </div>
@@ -549,7 +581,7 @@ export default function ReconciliationPage() {
           {!linesBusy && lines.length === 0 ? (
             <p className="text-sm text-slate-500">এই ফিল্টারে কোনো সারি নেই।</p>
           ) : (
-            <div className="overflow-x-auto">
+            <ResponsiveTable table={<div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-slate-500">
@@ -582,31 +614,12 @@ export default function ReconciliationPage() {
                         {line.reviewedAt ? <span className="ml-1 text-green-600" title={`পর্যালোচিত: ${new Date(line.reviewedAt).toLocaleString("bn-BD")}`}>✓</span> : null}
                       </td>
                       <td className="py-2 pr-3 text-xs text-slate-500">{line.note ?? "—"}</td>
-                      <td className="py-2">
-                        <div className="flex flex-col gap-1">
-                          {line.matchedShipmentId && line.sheetAmountMinor ? (
-                            <button
-                              type="button"
-                              className="text-left text-xs font-semibold text-blue-700 disabled:opacity-50"
-                              disabled={busyLine !== ""}
-                              onClick={() => void resolveLine(line, "accept_sheet")}
-                            >শিটের পরিমাণ গ্রহণ করুন</button>
-                          ) : null}
-                          {!line.reviewedAt ? (
-                            <button
-                              type="button"
-                              className="text-left text-xs font-semibold text-slate-700 disabled:opacity-50"
-                              disabled={busyLine !== ""}
-                              onClick={() => void resolveLine(line, "mark_reviewed")}
-                            >পর্যালোচিত</button>
-                          ) : null}
-                        </div>
-                      </td>
+                      <td className="py-2">{renderLineActions(line)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </div>} cards={lines.map((line) => (<div key={line.id} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সারি</dt><dd className="text-right">{line.rowNumber}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Tracking</dt><dd className="text-right">{line.rawTrackingId ?? "—"}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Order Ref</dt><dd className="text-right">{line.rawOrderRef ?? "—"}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শিটের পরিমাণ</dt><dd className="text-right">{taka(line.sheetAmountMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">প্রত্যাশিত</dt><dd className="text-right">{taka(line.expectedMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">চার্জ</dt><dd className="text-right">{taka(line.sheetChargeMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শিটের Status</dt><dd className="text-right">{line.sheetStatus ?? "—"}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ফলাফল</dt><dd className="text-right"><><span className={`rounded px-2 py-0.5 text-xs font-semibold ${outcomeCls(line.outcome)}`}>{OUTCOME_LABEL[line.outcome] ?? line.outcome}</span>{line.reviewedAt ? <span className="ml-1 text-green-600" title={`পর্যালোচিত: ${new Date(line.reviewedAt).toLocaleString("bn-BD")}`}>✓</span> : null}</></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">নোট</dt><dd className="text-right">{line.note ?? "—"}</dd></div></dl><div className="mt-2">{renderLineActions(line)}</div></div>))} />
           )}
         </div>
       ) : null}

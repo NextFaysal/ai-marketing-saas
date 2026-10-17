@@ -1,9 +1,12 @@
 "use client";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
-import { EmptyState } from "@repo/ui";
+import { EmptyState, FilterBar, PageHeader, ResponsiveTable } from "@repo/ui";
+import { useConfirm, useToast } from "@repo/ui/client";
+import { MediaImage } from "@/components/MediaImage";
 import {
   EcBundleDialog, EcCategoryManagerDialog, EcChannelsDialog, EcGalleryDialog,
   type EcCategory, type EcTag,
@@ -143,10 +146,29 @@ const MOVEMENT_REASON_LABELS: Record<string, string> = {
 };
 
 export default function ProductsPage() {
+  const confirmDialog = useConfirm();
+  const { toast } = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [items, setItems] = useState<ProductItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [search, setSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  // ED12: search text + category filter are committed to the URL
+  // (searchParams: ?q= / ?category=). Initial state is read from the
+  // URL, so a bare URL renders exactly as before ("" / "all") and a
+  // shared link restores the committed filters. The input keeps its
+  // local draft state; the URL is written at the same commit points
+  // where the old code called load(search) / setSelectedCategory.
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  const searchCommitRef = useRef(searchParams.get("q") ?? "");
+  const [selectedCategory, setSelectedCategory] = useState(() => searchParams.get("category") ?? "all");
+  const commitUrlFilters = useCallback((q: string, category: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (q) params.set("q", q); else params.delete("q");
+    if (category && category !== "all") params.set("category", category); else params.delete("category");
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [router, pathname, searchParams]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -311,7 +333,9 @@ export default function ProductsPage() {
   }, [selectedBrandId]);
 
   useEffect(() => {
-    load();
+    // ED12: on mount the committed URL search (?q=) is the query —
+    // identical to the old load() when the URL is bare ("").
+    load(searchCommitRef.current);
   }, [load]);
 
   const loadBrands = useCallback(async () => {
@@ -357,7 +381,12 @@ export default function ProductsPage() {
   async function onDeleteBrand(b: BrandItem) {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (!window.confirm(`ব্র্যান্ড "${b.name}" মুছে ফেলবেন? এই ব্র্যান্ডের ${b.productCount}টি পণ্য ব্র্যান্ডবিহীন হয়ে যাবে — পণ্যগুলো মোছা হবে না, শুধু ব্র্যান্ডের লিংক সরিয়ে দেওয়া হবে।`)) return;
+    if (!(await confirmDialog({
+      title: `ব্র্যান্ড "${b.name}" মুছে ফেলবেন?`,
+      body: `এই ব্র্যান্ডের ${b.productCount}টি পণ্য ব্র্যান্ডবিহীন হয়ে যাবে — পণ্যগুলো মোছা হবে না, শুধু ব্র্যান্ডের লিংক সরিয়ে দেওয়া হবে।`,
+      confirmLabel: "মুছে ফেলুন",
+      danger: true,
+    }))) return;
     setBrandBusy(true); setBrandMsg("");
     try {
       const res = await apiFetch<{ ok: true; unlinkedProducts: number }>(
@@ -373,9 +402,18 @@ export default function ProductsPage() {
   async function onBulkDelete() {
     const orgId = getOrganizationId();
     if (!orgId || selectedIds.size === 0) return;
-    if (!window.confirm(
-      `${selectedIds.size}টি পণ্য মুছতে/আর্কাইভ করতে চান?\n\n• যেসব পণ্যে অর্ডার আছে — সেগুলো আর্কাইভ হবে (স্থায়ীভাবে মোছা হবে না)।\n• যেসব পণ্যে কখনো অর্ডার হয়নি — সেগুলো স্থায়ীভাবে মুছে যাবে।\n\nএই কাজটি ফেরত নেওয়া যাবে না।`
-    )) return;
+    if (!(await confirmDialog({
+      title: `${selectedIds.size}টি পণ্য মুছতে/আর্কাইভ করতে চান?`,
+      body: (
+        <>
+          <p>• যেসব পণ্যে অর্ডার আছে — সেগুলো আর্কাইভ হবে (স্থায়ীভাবে মোছা হবে না)।</p>
+          <p>• যেসব পণ্যে কখনো অর্ডার হয়নি — সেগুলো স্থায়ীভাবে মুছে যাবে।</p>
+          <p>এই কাজটি ফেরত নেওয়া যাবে না।</p>
+        </>
+      ),
+      confirmLabel: "মুছুন/আর্কাইভ করুন",
+      danger: true,
+    }))) return;
     setBulkDeleteBusy(true); setBulkDeleteResult(null); setError(""); setNotice("");
     try {
       const res = await apiFetch<BulkDeleteResult>(`/organizations/${orgId}/products/bulk-delete`, {
@@ -409,7 +447,7 @@ export default function ProductsPage() {
       a.download = "products-export.csv";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      setNotice("✅ পণ্যের CSV এক্সপোর্ট ডাউনলোড হয়েছে।");
+      toast({ title: "✅ পণ্যের CSV এক্সপোর্ট ডাউনলোড হয়েছে।", tone: "success" });
     } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট ব্যর্থ হয়েছে"); }
     finally { setExportBusy(false); }
   }
@@ -456,11 +494,14 @@ export default function ProductsPage() {
   async function onDuplicate(p: ProductItem) {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (!window.confirm(`"${p.name}" এর একটি কপি তৈরি করবেন?`)) return;
+    if (!(await confirmDialog({
+      title: `"${p.name}" এর একটি কপি তৈরি করবেন?`,
+      confirmLabel: "কপি তৈরি করুন",
+    }))) return;
     setError(""); setNotice("");
     try {
       const copy = await apiFetch<ProductItem>(`/organizations/${orgId}/products/${p.id}/duplicate`, { method: "POST" });
-      setNotice(`📄 "${p.name}" এর কপি তৈরি হয়েছে: "${copy.name}"`);
+      toast({ title: `📄 "${p.name}" এর কপি তৈরি হয়েছে: "${copy.name}"`, tone: "success" });
       await load(search);
     } catch (e) {
       setError(e instanceof Error ? e.message : "কপি তৈরি ব্যর্থ হয়েছে");
@@ -572,9 +613,12 @@ export default function ProductsPage() {
         { method: "PATCH", body: JSON.stringify({ productImageAutoMirror: next }) },
       );
       setAutoMirror(s.productImageAutoMirror);
-      setNotice(s.productImageAutoMirror
-        ? "অটো-মিরর চালু করা হয়েছে — শিডিউল করা Job চললে বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি হবে।"
-        : "অটো-মিরর বন্ধ করা হয়েছে — শিডিউল করা Job আর ছবি কপি করবে না (হাতে চালানো মিরর বোতাম আগের মতোই কাজ করবে)।");
+      toast({
+        title: s.productImageAutoMirror
+          ? "অটো-মিরর চালু করা হয়েছে — শিডিউল করা Job চললে বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি হবে।"
+          : "অটো-মিরর বন্ধ করা হয়েছে — শিডিউল করা Job আর ছবি কপি করবে না (হাতে চালানো মিরর বোতাম আগের মতোই কাজ করবে)।",
+        tone: "success",
+      });
     } catch (e) { setError(e instanceof Error ? e.message : "অটো-মিরর সেটিং বদলানো যায়নি"); }
     finally { setAutoMirrorBusy(false); }
   }
@@ -658,7 +702,11 @@ export default function ProductsPage() {
 
   async function onDeleteVariant(v: VariantItem) {
     const orgId = getOrganizationId(); if (!orgId || !variantFor) return;
-    if (!window.confirm(`ভ্যারিয়েন্ট "${v.name}" মুছে ফেলবেন?`)) return;
+    if (!(await confirmDialog({
+      title: `ভ্যারিয়েন্ট "${v.name}" মুছে ফেলবেন?`,
+      confirmLabel: "মুছে ফেলুন",
+      danger: true,
+    }))) return;
     setVBusy(true); setVMsg("");
     try {
       await apiFetch(`/organizations/${orgId}/products/${variantFor.id}/variants/${v.id}`, { method: "DELETE" });
@@ -893,7 +941,12 @@ export default function ProductsPage() {
 
   async function revokeLicenseKey(key: LicenseKeyRow) {
     const orgId = getOrganizationId(); if (!orgId || !editingProduct) return;
-    if (!window.confirm(`শেষ ৪ অক্ষর “…${key.keyLast4}” — এই লাইসেন্স কীটি বাতিল (revoke) করবেন? বাতিল কী আর কোনো ক্রেতাকে দেওয়া হবে না।`)) return;
+    if (!(await confirmDialog({
+      title: "এই লাইসেন্স কীটি বাতিল (revoke) করবেন?",
+      body: `শেষ ৪ অক্ষর “…${key.keyLast4}” — বাতিল কী আর কোনো ক্রেতাকে দেওয়া হবে না।`,
+      confirmLabel: "বাতিল করুন",
+      danger: true,
+    }))) return;
     setLkBusy(true); setLkError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/license-keys/${key.id}/revoke`, { method: "POST" });
@@ -1032,7 +1085,7 @@ export default function ProductsPage() {
             body: JSON.stringify({ cost: form.cost }),
           });
         }
-        setNotice(`✅ "${form.name}" সফলভাবে আপডেট হয়েছে!`);
+        toast({ title: `✅ "${form.name}" সফলভাবে আপডেট হয়েছে!`, tone: "success" });
       } else {
         // Create product
         const created = await apiFetch<ProductItem>(`/organizations/${orgId}/products`, {
@@ -1063,7 +1116,7 @@ export default function ProductsPage() {
             body: JSON.stringify({ cost: form.cost }),
           });
         }
-        setNotice(`🎉 নতুন পণ্য "${form.name}" সফলভাবে তৈরি হয়েছে!`);
+        toast({ title: `🎉 নতুন পণ্য "${form.name}" সফলভাবে তৈরি হয়েছে!`, tone: "success" });
       }
 
       setIsModalOpen(false);
@@ -1078,10 +1131,14 @@ export default function ProductsPage() {
   async function onArchive(id: string, name: string) {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (!confirm(`আপনি কি নিশ্চিত যে "${name}" আর্কাইভ করতে চান?`)) return;
+    if (!(await confirmDialog({
+      title: `আপনি কি নিশ্চিত যে "${name}" আর্কাইভ করতে চান?`,
+      confirmLabel: "আর্কাইভ করুন",
+      danger: true,
+    }))) return;
     try {
       await apiFetch(`/organizations/${orgId}/products/${id}`, { method: "DELETE" });
-      setNotice(`"${name}" আর্কাইভ করা হয়েছে।`);
+      toast({ title: `"${name}" আর্কাইভ করা হয়েছে।`, tone: "success" });
       await load(search);
     } catch (e) {
       setError(e instanceof Error ? e.message : "আর্কাইভ ব্যর্থ হয়েছে");
@@ -1095,25 +1152,105 @@ export default function ProductsPage() {
     return true;
   });
 
+  // ED13: row actions are shared verbatim by the desktop table cell
+  // and the ResponsiveTable mobile card — same handlers, same order.
+  const renderProductActions = (p: ProductItem) => (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {p.slug ? (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              const fullUrl = `${window.location.origin}/checkout/${p.slug}`;
+              navigator.clipboard.writeText(fullUrl);
+              toast({ title: `📋 "${p.name}" এর চেকআউট লিংক কপি করা হয়েছে: ${fullUrl}`, tone: "success" });
+            }}
+            className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors flex items-center gap-1"
+            title="ফেসবুক/ইনবক্সে পাঠানোর জন্য লিংক কপি করুন"
+          >
+            📋 লিংক কপি
+          </button>
+          <a
+            href={`/checkout/${p.slug}`}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
+            title="১-ক্লিক পাবলিক চেকআউট পেজ দেখুন"
+          >
+            🔗 চেকআউট পেজ
+          </a>
+        </>
+      ) : null}
+      <button
+        onClick={() => openStockDialog(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+      >
+        📦 স্টক
+      </button>
+      <button
+        onClick={() => openVariantDialog(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+      >
+        🧩 ভ্যারিয়েন্ট
+      </button>
+      <button
+        onClick={() => setChannelsFor(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-violet-700 hover:bg-violet-50"
+      >
+        🔀 চ্যানেল
+      </button>
+      <button
+        onClick={() => setGalleryFor(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+      >
+        🖼️ গ্যালারি
+      </button>
+      <button
+        onClick={() => setBundleFor(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+      >
+        🎁 বান্ডল
+      </button>
+      <button
+        onClick={() => onDuplicate(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+      >
+        📄 কপি
+      </button>
+      <button
+        onClick={() => openHistory(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+      >
+        📜 ইতিহাস
+      </button>
+      <button
+        onClick={() => openEditModal(p)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+      >
+        ✏️ এডিট
+      </button>
+      <button
+        onClick={() => onArchive(p.id, p.name)}
+        className="rounded border px-2 py-1 text-[11px] font-medium text-rose-600 hover:bg-rose-50"
+      >
+        🗑️
+      </button>
+    </div>
+  );
+
   return (
     <div className="space-y-6 p-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              🛍️ Products & E-Commerce Inventory
-            </h1>
+      {/* Page Header (ED13: kit PageHeader — same title/subtitle and
+          the same action buttons as the old hand-rolled header; the
+          Live Catalog badge rides along as the first action item). */}
+      <PageHeader
+        title="🛍️ Products & E-Commerce Inventory"
+        subtitle="আপনার পণ্যের তালিকা, স্টক, ভ্যারিয়্যান্ট এবং ১-ক্লিক ইনস্ট্যান্ট চেকআউট ও সোশ্যাল ইনবক্স লিংক।"
+        actions={
+          <>
             <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-800">
               Live Catalog
             </span>
-          </div>
-          <p className="mt-1 text-sm text-slate-500">
-            আপনার পণ্যের তালিকা, স্টক, ভ্যারিয়্যান্ট এবং ১-ক্লিক ইনস্ট্যান্ট চেকআউট ও সোশ্যাল ইনবক্স লিংক।
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
           <button
             onClick={async () => {
               const orgId = getOrganizationId();
@@ -1159,7 +1296,7 @@ export default function ProductsPage() {
                     body: JSON.stringify(item),
                   });
                 }
-                setNotice("✨ ৩টি জনপ্রিয় ডেমো পণ্য সফলভাবে তৈরি হয়েছে! এখন সরাসরি ১-ক্লিক চেকআউট টেস্ট করতে পারবেন।");
+                toast({ title: "✨ ৩টি জনপ্রিয় ডেমো পণ্য সফলভাবে তৈরি হয়েছে! এখন সরাসরি ১-ক্লিক চেকআউট টেস্ট করতে পারবেন।", tone: "success" });
                 await load();
               } catch (e) {
                 setError(e instanceof Error ? e.message : "ডেমো পণ্য তৈরি ব্যর্থ হয়েছে");
@@ -1223,8 +1360,9 @@ export default function ProductsPage() {
           >
             <span>➕ নতুন প্রোডাক্ট যোগ করুন</span>
           </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {notice ? (
         <div className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800 border border-emerald-200">
@@ -1237,26 +1375,42 @@ export default function ProductsPage() {
         </div>
       ) : null}
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white p-3 shadow-sm">
+      {/* Filter and Search Bar (ED13: kit FilterBar; ED12: the search
+          commit points — Enter / খুঁজুন button — also write ?q= to the
+          URL, and a category change writes ?category=, exactly where
+          the old code committed the state). */}
+      <FilterBar className="justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <input
             className="w-72 rounded-lg border px-3 py-1.5 text-xs"
             placeholder="পণ্যের নাম বা SKU দিয়ে খুঁজুন..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load(search)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                searchCommitRef.current = search;
+                commitUrlFilters(search, selectedCategory);
+                load(search);
+              }
+            }}
           />
           <button
             className="rounded-lg border bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-            onClick={() => load(search)}
+            onClick={() => {
+              searchCommitRef.current = search;
+              commitUrlFilters(search, selectedCategory);
+              load(search);
+            }}
           >
             🔍 খুঁজুন
           </button>
 
           <select
             value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
+            onChange={(e) => {
+              setSelectedCategory(e.target.value);
+              commitUrlFilters(searchCommitRef.current, e.target.value);
+            }}
             className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 font-medium"
           >
             <option value="all">সব ক্যাটাগরি ({items.length})</option>
@@ -1285,7 +1439,7 @@ export default function ProductsPage() {
         <div className="text-xs text-slate-500 font-medium">
           মোট প্রদর্শিত পণ্য: <b>{filteredItems.length}</b> টি
         </div>
-      </div>
+      </FilterBar>
 
       {/* EC3: bulk edit bar — প্রিভিউ ছাড়া প্রয়োগ করা যায় না */}
       {selectedIds.size > 0 ? (
@@ -1371,8 +1525,10 @@ export default function ProductsPage() {
           description="নতুন পণ্য যোগ করুন অথবা CSV Import দিয়ে একসাথে অনেক পণ্য আনুন।"
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
-          <table className="w-full text-left text-xs">
+        <ResponsiveTable
+          table={
+            <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+              <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 font-semibold border-b">
               <tr>
                 <th className="px-4 py-3">
@@ -1426,9 +1582,12 @@ export default function ProductsPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         {p.imageUrl ? (
-                          <img
+                          <MediaImage
                             src={p.imageUrl}
                             alt={p.name}
+                            width={80}
+                            height={80}
+                            sizes="40px"
                             className="h-10 w-10 rounded-lg object-cover border border-slate-200"
                           />
                         ) : (
@@ -1506,94 +1665,95 @@ export default function ProductsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        {p.slug ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const fullUrl = `${window.location.origin}/checkout/${p.slug}`;
-                                navigator.clipboard.writeText(fullUrl);
-                                setNotice(`📋 "${p.name}" এর চেকআউট লিংক কপি করা হয়েছে: ${fullUrl}`);
-                              }}
-                              className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors flex items-center gap-1"
-                              title="ফেসবুক/ইনবক্সে পাঠানোর জন্য লিংক কপি করুন"
-                            >
-                              📋 লিংক কপি
-                            </button>
-                            <a
-                              href={`/checkout/${p.slug}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
-                              title="১-ক্লিক পাবলিক চেকআউট পেজ দেখুন"
-                            >
-                              🔗 চেকআউট পেজ
-                            </a>
-                          </>
-                        ) : null}
-                        <button
-                          onClick={() => openStockDialog(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
-                        >
-                          📦 স্টক
-                        </button>
-                        <button
-                          onClick={() => openVariantDialog(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
-                        >
-                          🧩 ভ্যারিয়েন্ট
-                        </button>
-                        <button
-                          onClick={() => setChannelsFor(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-violet-700 hover:bg-violet-50"
-                        >
-                          🔀 চ্যানেল
-                        </button>
-                        <button
-                          onClick={() => setGalleryFor(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
-                        >
-                          🖼️ গ্যালারি
-                        </button>
-                        <button
-                          onClick={() => setBundleFor(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
-                        >
-                          🎁 বান্ডল
-                        </button>
-                        <button
-                          onClick={() => onDuplicate(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
-                        >
-                          📄 কপি
-                        </button>
-                        <button
-                          onClick={() => openHistory(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
-                        >
-                          📜 ইতিহাস
-                        </button>
-                        <button
-                          onClick={() => openEditModal(p)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
-                        >
-                          ✏️ এডিট
-                        </button>
-                        <button
-                          onClick={() => onArchive(p.id, p.name)}
-                          className="rounded border px-2 py-1 text-[11px] font-medium text-rose-600 hover:bg-rose-50"
-                        >
-                          🗑️
-                        </button>
-                      </div>
+                      {renderProductActions(p)}
                     </td>
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+              </tbody>
+              </table>
+            </div>
+          }
+          cards={filteredItems.map((p) => {
+            const isLowStock = p.stockQuantity !== null && p.stockQuantity !== undefined && p.stockQuantity <= 5;
+            const isOutOfStock = p.stockQuantity !== null && p.stockQuantity !== undefined && p.stockQuantity === 0;
+            return (
+              <div key={p.id} className="rounded-xl border bg-white p-3 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`${p.name} নির্বাচন করুন`}
+                    checked={selectedIds.has(p.id)}
+                    onChange={(e) => {
+                      setBulkPreview(null);
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(p.id); else next.delete(p.id);
+                        return next;
+                      });
+                    }}
+                    className="mt-1"
+                  />
+                  {p.imageUrl ? (
+                    <MediaImage
+                      src={p.imageUrl}
+                      alt={p.name}
+                      width={80}
+                      height={80}
+                      sizes="40px"
+                      className="h-10 w-10 rounded-lg object-cover border border-slate-200"
+                    />
+                  ) : (
+                    <div className="h-10 w-10 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-500 font-bold text-xs">
+                      📦
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold text-slate-900">{p.name}</div>
+                    <div className="text-[11px] text-slate-400">
+                      {p.category || "সাধারণ ক্যাটাগরি"}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-mono text-slate-600">{p.sku || "—"}</span>
+                      <span className="font-bold text-slate-900">
+                        {formatMinor(BigInt(p.priceMinor))}
+                      </span>
+                      <span
+                        className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                          p.status === "ACTIVE"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : p.status === "DRAFT"
+                            ? "bg-slate-100 text-slate-600"
+                            : "bg-rose-100 text-rose-700"
+                        }`}
+                      >
+                        {p.status}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs">
+                      {isOutOfStock ? (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                          🔴 স্টক শেষ (0)
+                        </span>
+                      ) : isLowStock ? (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                          ⚠️ লো-স্টক ({p.stockQuantity})
+                        </span>
+                      ) : (
+                        <span className="text-slate-700 font-medium">
+                          {p.stockQuantity ?? "আনলিমিটেড"} টি
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2">
+                  {renderProductActions(p)}
+                </div>
+              </div>
+            );
+          })}
+        />
       )}
 
       <section className="card p-4 space-y-4">
@@ -1687,10 +1847,10 @@ export default function ProductsPage() {
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-name">
                   পণ্যের নাম (Product Name) *
                 </label>
-                <input
+                <input id="product-form-name"
                   type="text"
                   required
                   placeholder="যেমন: প্রিমিয়াম লেদার ওয়ালেট"
@@ -1702,8 +1862,8 @@ export default function ProductsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">SKU কোড</label>
-                  <input
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-sku">SKU কোড</label>
+                  <input id="product-form-sku"
                     type="text"
                     placeholder="WLT-001"
                     value={form.sku}
@@ -1712,9 +1872,9 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ক্যাটাগরি</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-category">ক্যাটাগরি</label>
                   {ecCategories.length > 0 ? (
-                    <select
+                    <select id="product-form-category"
                       value={form.categoryId}
                       onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
                       className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -1725,7 +1885,7 @@ export default function ProductsPage() {
                       ))}
                     </select>
                   ) : (
-                    <input
+                    <input id="product-form-category"
                       type="text"
                       placeholder="Fashion / Electronics"
                       value={form.category}
@@ -1739,8 +1899,8 @@ export default function ProductsPage() {
               {/* GC6: brand picker + free shipping */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ব্র্যান্ড</label>
-                  <select
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-brand">ব্র্যান্ড</label>
+                  <select id="product-form-brand"
                     value={form.brandId}
                     onChange={(e) => setForm({ ...form, brandId: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -1788,7 +1948,7 @@ export default function ProductsPage() {
                 <div className="mt-2 flex gap-2">
                   <input
                     type="text"
-                    placeholder="নতুন ট্যাগ"
+                    placeholder="নতুন ট্যাগ" aria-label="নতুন ট্যাগ"
                     value={newTagName}
                     onChange={(e) => setNewTagName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onQuickAddTag(); } }}
@@ -1804,46 +1964,46 @@ export default function ProductsPage() {
               {/* EC3: shipping dimensions / barcode / SEO */}
               <div className="grid grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ওজন (গ্রাম)</label>
-                  <input type="number" min="0" placeholder="500" value={form.weightGrams}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-weight">ওজন (গ্রাম)</label>
+                  <input id="product-form-weight" type="number" min="0" placeholder="500" value={form.weightGrams}
                     onChange={(e) => setForm({ ...form, weightGrams: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">দৈর্ঘ্য (সেমি)</label>
-                  <input type="number" min="0" step="0.1" placeholder="20" value={form.lengthCm}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-length">দৈর্ঘ্য (সেমি)</label>
+                  <input id="product-form-length" type="number" min="0" step="0.1" placeholder="20" value={form.lengthCm}
                     onChange={(e) => setForm({ ...form, lengthCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">প্রস্থ (সেমি)</label>
-                  <input type="number" min="0" step="0.1" placeholder="15" value={form.widthCm}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-width">প্রস্থ (সেমি)</label>
+                  <input id="product-form-width" type="number" min="0" step="0.1" placeholder="15" value={form.widthCm}
                     onChange={(e) => setForm({ ...form, widthCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">উচ্চতা (সেমি)</label>
-                  <input type="number" min="0" step="0.1" placeholder="10" value={form.heightCm}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-height">উচ্চতা (সেমি)</label>
+                  <input id="product-form-height" type="number" min="0" step="0.1" placeholder="10" value={form.heightCm}
                     onChange={(e) => setForm({ ...form, heightCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">বারকোড</label>
-                <input type="text" placeholder="Barcode / EAN" value={form.barcode}
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-barcode">বারকোড</label>
+                <input id="product-form-barcode" type="text" placeholder="Barcode / EAN" value={form.barcode}
                   onChange={(e) => setForm({ ...form, barcode: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs font-mono" />
               </div>
               <div className="grid grid-cols-1 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">SEO টাইটেল</label>
-                  <input type="text" placeholder="সার্চ ইঞ্জিনের জন্য শিরোনাম" value={form.seoTitle}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-title">SEO টাইটেল</label>
+                  <input id="product-form-seo-title" type="text" placeholder="সার্চ ইঞ্জিনের জন্য শিরোনাম" value={form.seoTitle}
                     onChange={(e) => setForm({ ...form, seoTitle: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">SEO বিবরণ</label>
-                  <textarea rows={2} placeholder="সার্চ ইঞ্জিনের জন্য সংক্ষিপ্ত বিবরণ" value={form.seoDescription}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-description">SEO বিবরণ</label>
+                  <textarea id="product-form-seo-description" rows={2} placeholder="সার্চ ইঞ্জিনের জন্য সংক্ষিপ্ত বিবরণ" value={form.seoDescription}
                     onChange={(e) => setForm({ ...form, seoDescription: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
@@ -1851,10 +2011,10 @@ export default function ProductsPage() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-price">
                     বিক্রয়মূল্য (BDT) *
                   </label>
-                  <input
+                  <input id="product-form-price"
                     type="number"
                     step="0.01"
                     required
@@ -1865,10 +2025,10 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-compare-at">
                     আসল দাম (Compare Price)
                   </label>
-                  <input
+                  <input id="product-form-compare-at"
                     type="number"
                     step="0.01"
                     placeholder="1500"
@@ -1878,10 +2038,10 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-cost">
                     ইউনিট কস্ট (Cost BDT)
                   </label>
-                  <input
+                  <input id="product-form-cost"
                     type="number"
                     step="0.01"
                     placeholder="750"
@@ -1894,10 +2054,10 @@ export default function ProductsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-stock">
                     স্টক পরিমাণ (Stock Quantity)
                   </label>
-                  <input
+                  <input id="product-form-stock"
                     type="number"
                     min="0"
                     placeholder="50"
@@ -1907,8 +2067,8 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">স্ট্যাটাস</label>
-                  <select
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-status">স্ট্যাটাস</label>
+                  <select id="product-form-status"
                     value={form.status}
                     onChange={(e) => setForm({ ...form, status: e.target.value as any })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -1921,10 +2081,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-low-stock">
                   কম স্টকের সতর্কতা (Low-stock alert, খালি = ৫)
                 </label>
-                <input
+                <input id="product-form-low-stock"
                   type="number"
                   min="0"
                   placeholder="5"
@@ -1935,10 +2095,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-tax-rate">
                   VAT হার % (ঐচ্ছিক — ফাঁকা = দোকানের ডিফল্ট)
                 </label>
-                <input
+                <input id="product-form-tax-rate"
                   type="number"
                   step="0.01"
                   min="0"
@@ -1951,10 +2111,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-image-url">
                   প্রোডাক্ট ইমেজ ইউআরএল (Image URL)
                 </label>
-                <input
+                <input id="product-form-image-url"
                   type="url"
                   placeholder="https://images.unsplash.com/photo-..."
                   value={form.imageUrl}
@@ -1964,10 +2124,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-description">
                   বিস্তারিত বর্ণনা (Product Description)
                 </label>
-                <textarea
+                <textarea id="product-form-description"
                   rows={3}
                   placeholder="পণ্যের ফিচার, ওয়ারেন্টি এবং গুণমান সম্পর্কে লিখুন..."
                   value={form.description}
@@ -1981,8 +2141,8 @@ export default function ProductsPage() {
                 <div className="text-xs font-bold text-sky-950">ইংরেজি কনটেন্ট (English)</div>
                 <p className="text-[11px] text-slate-500">দোকানের ভাষা English হলে এই লেখা দেখাবে; খালি রাখলে মূল নাম/বিবরণই দেখাবে।</p>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ইংরেজি নাম (Name in English)</label>
-                  <input
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-name-en">ইংরেজি নাম (Name in English)</label>
+                  <input id="product-form-name-en"
                     type="text"
                     placeholder="e.g. Premium Leather Wallet"
                     value={form.nameEn}
@@ -1991,8 +2151,8 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ইংরেজি বিবরণ (Description in English)</label>
-                  <textarea
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-description-en">ইংরেজি বিবরণ (Description in English)</label>
+                  <textarea id="product-form-description-en"
                     rows={3}
                     placeholder="Product features, warranty and quality in English..."
                     value={form.descriptionEn}
@@ -2142,8 +2302,8 @@ export default function ProductsPage() {
                   <p className="text-[11px] font-semibold text-slate-600">পাইকারি স্তর (কমপক্ষে পরিমাণ → একক দাম ৳) — সর্বোচ্চ ১০টি, পরিমাণ বাড়তে হবে</p>
                   {ec24.tiers.map((t, i) => (
                     <div key={i} className="flex items-center gap-2">
-                      <input type="number" min="2" placeholder="পরিমাণ (কমপক্ষে)" value={t.minQty} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, minQty: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
-                      <input type="number" min="0" step="0.01" placeholder="দাম ৳" value={t.price} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, price: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <input type="number" min="2" placeholder="পরিমাণ (কমপক্ষে)" aria-label="পাইকারি স্তরের পরিমাণ (কমপক্ষে)" value={t.minQty} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, minQty: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <input type="number" min="0" step="0.01" placeholder="দাম ৳" aria-label="পাইকারি স্তরের দাম (টাকা)" value={t.price} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, price: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
                       <button type="button" onClick={() => setEc24({ ...ec24, tiers: ec24.tiers.filter((_, xi) => xi !== i) })} className="rounded-lg bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700">মুছুন</button>
                     </div>
                   ))}
@@ -2179,10 +2339,10 @@ export default function ProductsPage() {
 
                 <div className="space-y-2 pt-1">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-title">
                       অ্যাড-অন অফার শিরোনাম (Bump Offer Title):
                     </label>
-                    <input
+                    <input id="product-form-bump-title"
                       type="text"
                       placeholder="যেমন: মাত্র ১৯০ টাকায় লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
                       value={form.bumpTitle}
@@ -2193,10 +2353,10 @@ export default function ProductsPage() {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-price">
                         অ্যাড-অন প্রাইস (Bump Price BDT):
                       </label>
-                      <input
+                      <input id="product-form-bump-price"
                         type="number"
                         step="0.01"
                         placeholder="190"
@@ -2206,10 +2366,10 @@ export default function ProductsPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-image">
                         অ্যাড-অন ইমেজ লিংক (ঐচ্ছিক):
                       </label>
-                      <input
+                      <input id="product-form-bump-image"
                         type="url"
                         placeholder="https://..."
                         value={form.bumpImageUrl}
@@ -2222,7 +2382,12 @@ export default function ProductsPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t">
+            {/* ED13: sticky save bar — the form's existing বাতিল /
+                সংরক্ষণ করুন buttons (same handlers) stay reachable at
+                the bottom of the long scrolling modal form. The -mx-6 /
+                px-6 pair lets the bar's background span the form's
+                padding so fields scrolling underneath stay covered. */}
+            <div className="sticky bottom-0 -mx-6 flex items-center justify-end gap-2 border-t bg-white px-6 pt-3">
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
@@ -2442,8 +2607,7 @@ export default function ProductsPage() {
                   <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 border-b pb-3 last:border-b-0">
                     <div className="flex items-center gap-3 text-sm">
                       {b.logoUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={b.logoUrl} alt={b.name} className="h-9 w-9 rounded-lg border border-slate-200 object-contain" />
+                        <MediaImage src={b.logoUrl} alt={b.name} width={72} height={72} sizes="36px" className="h-9 w-9 rounded-lg border border-slate-200 object-contain" />
                       ) : (
                         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-sm">🏷️</div>
                       )}

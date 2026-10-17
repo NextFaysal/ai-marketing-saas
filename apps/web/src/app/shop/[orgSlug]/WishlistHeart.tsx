@@ -24,11 +24,15 @@ export function WishlistHeart({
   productId,
   locale = "bn",
   className = "",
+  large = false,
 }: {
   orgSlug: string;
   productId: string;
   locale?: ShopLocale | string;
   className?: string;
+  /** ED8: v2 cards only — enlarges the hit area to 44px.
+   * Default false renders exactly as before. */
+  large?: boolean;
 }) {
   const t = shopT(locale);
   const [active, setActive] = useState(false);
@@ -92,7 +96,7 @@ export function WishlistHeart({
       disabled={busy}
       aria-label={active ? t.product.removeFromWishlist : t.product.addToWishlist}
       title={active ? t.product.removeFromWishlist : t.product.addToWishlist}
-      className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/95 text-lg shadow-md ring-1 ring-slate-200 transition hover:scale-110 disabled:opacity-60 ${active ? "text-rose-600" : "text-slate-400"} ${className}`}
+      className={`flex ${large ? "h-11 w-11" : "h-9 w-9"} items-center justify-center rounded-full bg-white/95 text-lg shadow-md ring-1 ring-slate-200 transition hover:scale-110 disabled:opacity-60 ${active ? "text-rose-600" : "text-slate-400"} ${className}`}
     >
       {active ? "❤️" : "🤍"}
     </button>

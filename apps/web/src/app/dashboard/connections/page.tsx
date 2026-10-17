@@ -331,10 +331,13 @@ export default function ConnectionsPage() {
   // back to the saved config's own list.
   const googleRedirectUris = ownAppGuides?.google.redirectUris ?? googleAppConfig?.redirectUris ?? [];
   const linkedinRedirectUris = ownAppGuides?.linkedin.redirectUris ?? linkedinAppConfig?.redirectUris ?? [];
+  // SN7: the tenant's own Threads app (SN7 own-app path).
+  const threadsAppConfig = appConfigs.find((c) => c.platform === "threads") ?? null;
+  const threadsRedirectUris = ownAppGuides?.threads?.redirectUris ?? threadsAppConfig?.redirectUris ?? [];
 
-  type OwnAppPlatform = "meta" | "tiktok" | "google" | "linkedin";
+  type OwnAppPlatform = "meta" | "tiktok" | "google" | "linkedin" | "threads";
   const OWN_APP_ANCHORS: Record<OwnAppPlatform, string> = {
-    meta: "own-meta-form", tiktok: "own-tiktok-form", google: "own-google-form", linkedin: "own-linkedin-form",
+    meta: "own-meta-form", tiktok: "own-tiktok-form", google: "own-google-form", linkedin: "own-linkedin-form", threads: "own-threads-form",
   };
 
   const saveAppConfig = useCallback(async (platform: OwnAppPlatform, appId: string, appSecret: string) => {
@@ -397,6 +400,21 @@ export default function ConnectionsPage() {
       window.location.href = res.url;
     } catch (e) {
       setError(e instanceof Error ? e.message : "TikTok কানেক্ট শুরু হয়নি");
+      setBusy("");
+    }
+  }, []);
+
+  /** SN7: Threads OAuth শুরু — একই ধাঁচ। (Callback Social Posts
+   * পেজে ফেরত যায়, যেখানে Connect বোতামটিও আছে।) */
+  const threadsConnect = useCallback(async (source: "platform" | "own") => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setBusy(`threads-${source}`); setError("");
+    try {
+      const res = await apiFetch<{ url: string }>(`organizations/${orgId}/social/accounts/threads/connect-url${source === "own" ? "?appSource=own" : ""}`);
+      window.location.href = res.url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Threads কানেক্ট শুরু হয়নি");
       setBusy("");
     }
   }, []);
@@ -607,6 +625,19 @@ export default function ConnectionsPage() {
             onSave={(appId, appSecret) => void saveAppConfig("linkedin", appId, appSecret)}
             onDelete={() => void deleteAppConfig("linkedin")}
           />
+          <OwnAppCard
+            anchorId="own-threads-form"
+            icon="🧵"
+            title="নিজের Threads অ্যাপ"
+            idLabel="Threads App ID"
+            secretLabel="Threads App Secret"
+            config={threadsAppConfig}
+            busy={busy}
+            verifyBeforeSave={false}
+            note={`Meta for Developers-এ নিজের অ্যাপে Threads use case যোগ করে Threads App ID ও App Secret দিন, আর অ্যাপের Threads সেটিংসে এই Callback URL-টি নিবন্ধন করুন:${threadsRedirectUris.length ? ` ${threadsRedirectUris.join(" · ")}` : " (লোড হয়নি — পেজটি আবার লোড করুন)"} Threads-ও কোনো আগাম credential-যাচাই দেয় না, তাই এটি সেভ হয় "কনফিগার করা" হিসেবে — আসল যাচাই হবে প্রথম কানেক্টে। সৎ সীমা: প্রোডাকশন পাবলিশিংয়ের জন্য অ্যাপটিতে Meta App Review (Advanced Access) লাগতে পারে।`}
+            onSave={(appId, appSecret) => void saveAppConfig("threads", appId, appSecret)}
+            onDelete={() => void deleteAppConfig("threads")}
+          />
         </div>
         <div className="card flex flex-wrap items-center gap-2 p-4">
           <span className="text-sm font-semibold text-slate-700">অ্যাপ বেছে কানেক্ট করুন:</span>
@@ -621,6 +652,12 @@ export default function ConnectionsPage() {
             <button type="button" disabled={busy === "tiktok-own"} onClick={() => void tiktokConnect("own")} className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200 disabled:opacity-50">🎵 TikTok — নিজের অ্যাপ দিয়ে</button>
           ) : (
             <a href="#own-tiktok-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">🎵 নিজের TikTok অ্যাপ দিয়ে — আগে অ্যাপ কনফিগার করুন ↑</a>
+          )}
+          <button type="button" disabled={busy === "threads-platform"} onClick={() => void threadsConnect("platform")} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">🧵 Threads — আমাদের অ্যাপ দিয়ে</button>
+          {threadsAppConfig ? (
+            <button type="button" disabled={busy === "threads-own"} onClick={() => void threadsConnect("own")} className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200 disabled:opacity-50">🧵 Threads — নিজের অ্যাপ দিয়ে</button>
+          ) : (
+            <a href="#own-threads-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">🧵 নিজের Threads অ্যাপ দিয়ে — আগে অ্যাপ কনফিগার করুন ↑</a>
           )}
         </div>
       </section>

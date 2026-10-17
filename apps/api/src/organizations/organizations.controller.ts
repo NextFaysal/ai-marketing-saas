@@ -18,6 +18,12 @@ export class OrganizationsController {
   @Get()
   listMine(@CurrentUser() user: AuthUser) { return this.orgs.listMine(user.userId); }
 
+  // TD2: live slug check for the onboarding subdomain picker.
+  // Declared BEFORE ":organizationId" so the literal segment is
+  // never captured as an organization id.
+  @Get("slug-available")
+  slugAvailable(@Query("slug") slug?: string) { return this.orgs.checkSlugAvailability(slug ?? ""); }
+
   @Get(":organizationId")
   @UseGuards(TenantGuard)
   getOne(@Param("organizationId") id: string) { return this.orgs.getOne(id); }

@@ -15,7 +15,7 @@ export const SOCIAL_POST_STATUSES = [
 ] as const;
 export type SocialPostStatus = (typeof SOCIAL_POST_STATUSES)[number];
 
-export const SOCIAL_ACCOUNT_PLATFORMS = ["meta_page", "instagram", "tiktok", "youtube", "linkedin_page"] as const;
+export const SOCIAL_ACCOUNT_PLATFORMS = ["meta_page", "instagram", "tiktok", "youtube", "linkedin_page", "telegram", "threads"] as const;
 export type SocialAccountPlatform = (typeof SOCIAL_ACCOUNT_PLATFORMS)[number];
 
 export const SOCIAL_MEDIA_KINDS = ["image", "video"] as const;

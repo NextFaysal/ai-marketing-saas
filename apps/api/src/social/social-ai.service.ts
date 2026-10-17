@@ -702,4 +702,246 @@ export class SocialAiService {
       isRealLlm: true as const,
     };
   }
+
+  // ---------- SN4: platform variants + translation + carousel outline ----------
+  //
+  // All three are REAL-LLM ONLY and RETURN ONLY — like
+  // generateScript, a non-real provider refuses BEFORE any usage
+  // row is written, and like generateContentPlan the usage row is
+  // written after provider success, before parsing, per feature.
+  // No SocialPost / SocialContentPlan (or any other) row is ever
+  // created here — only the AIUsageRecord. The number guard
+  // (ungroundedNumbers against extractSocialNumbers of the
+  // source text) drops/w refuses anything carrying a number the
+  // user's own text did not contain.
+
+  async generateVariants(
+    organizationId: string,
+    userId: string,
+    dto: { caption: string; platforms: string[]; tone?: string },
+  ) {
+    await this.checkDailyLimit(organizationId, "social_variants");
+
+    const caption = typeof dto.caption === "string" ? dto.caption.trim() : "";
+    if (!caption) throw new BadRequestException("Caption লিখুন।");
+
+    const ALLOWED_PLATFORMS = ["meta_page", "instagram", "tiktok", "youtube", "linkedin"];
+    const platforms: string[] = [];
+    for (const raw of Array.isArray(dto.platforms) ? dto.platforms : []) {
+      const platform = typeof raw === "string" ? raw.trim() : "";
+      if (!ALLOWED_PLATFORMS.includes(platform)) continue;
+      if (platforms.includes(platform)) continue;
+      platforms.push(platform);
+    }
+    if (platforms.length === 0) {
+      throw new BadRequestException("অন্তত একটা সঠিক Platform বেছে নিন (meta_page, instagram, tiktok, youtube অথবা linkedin)।");
+    }
+
+    const allowedNumbers = new Set<string>(extractSocialNumbers(caption));
+    const tone = dto.tone?.trim() ? dto.tone.trim() : undefined;
+
+    const provider = await providerForOrg(this.llm, organizationId);
+    if (!provider.isRealLlm) {
+      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Platform Variant বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে variant বানানো হবে না।");
+    }
+
+    const systemPrompt = [
+      "You adapt ONE given social media caption into platform-specific variants.",
+      "Re-shape ONLY the given caption for each platform. Never add new information, prices, discounts, stock claims, delivery promises, features or results.",
+      "A number that appears in the given caption may be kept exactly as it is; never introduce any new number.",
+      "Platform guidance:",
+      "- meta_page (Facebook Page): slightly longer, link-friendly.",
+      "- instagram: concise, hashtag-friendly.",
+      "- tiktok: short, casual, the first line is the hook.",
+      "- youtube: the first line works like a title, followed by a short description.",
+      "- linkedin: professional tone.",
+      ...(tone ? [`Match this tone: ${tone}`] : []),
+      'Return ONLY JSON {"variants":[{"platform":string,"caption":string}]} with exactly one variant for each requested platform.',
+    ].join("\n");
+    const userMessage = [
+      `Caption:\n${caption}`,
+      `Platforms: ${platforms.join(", ")}`,
+    ].join("\n");
+
+    let result: any;
+    try {
+      result = await provider.complete(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        { jsonMode: true, maxTokens: 1800 },
+      );
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? String(e));
+    }
+
+    await (this.prisma as any).aIUsageRecord.create({
+      data: {
+        organizationId, userId, feature: "social_variants",
+        provider: provider.name, model: result.model,
+        inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+        estimated: result.tokensEstimated,
+      },
+    });
+
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const rawVariants: any[] = Array.isArray(parsed?.variants) ? parsed.variants : [];
+    const variants: any[] = [];
+    let droppedCount = 0;
+    for (const platform of platforms) {
+      const raw = rawVariants.find((v: any) => v && typeof v.platform === "string" && v.platform.trim() === platform);
+      if (!raw) continue;
+      const variantCaption = typeof raw.caption === "string" ? raw.caption.trim().slice(0, 2200) : "";
+      if (!variantCaption) continue;
+      if (ungroundedNumbers(variantCaption, allowedNumbers).length > 0) {
+        droppedCount++;
+        continue;
+      }
+      const findings = policyFindingsForText(variantCaption);
+      variants.push({
+        platform,
+        caption: variantCaption,
+        policy: { status: findings.length ? "flagged" : "pass", findings },
+      });
+    }
+
+    if (variants.length === 0) {
+      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য variant দেয়নি — আবার চেষ্টা করুন।");
+    }
+
+    return { variants, droppedCount, provider: provider.name, isRealLlm: true as const };
+  }
+
+  async translateText(
+    organizationId: string,
+    userId: string,
+    dto: { text: string; targetLang: string },
+  ) {
+    await this.checkDailyLimit(organizationId, "social_translate");
+
+    const text = typeof dto.text === "string" ? dto.text.trim() : "";
+    if (!text) throw new BadRequestException("অনুবাদের জন্য লেখা (Text) দিন।");
+    const targetLang = dto.targetLang === "en" ? "en" : dto.targetLang === "bn" ? "bn" : null;
+    if (!targetLang) throw new BadRequestException("Target language শুধু bn অথবা en হতে পারে।");
+
+    const provider = await providerForOrg(this.llm, organizationId);
+    if (!provider.isRealLlm) {
+      throw new BadRequestException("আসল AI (LLM) configure করা নেই — অনুবাদ করতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে অনুবাদ করা হবে না।");
+    }
+
+    const systemPrompt = [
+      targetLang === "bn"
+        ? "Translate the given text faithfully into Bengali (Bangla script)."
+        : "Translate the given text faithfully into English.",
+      "Keep every hashtag, URL, @mention, emoji and number exactly unchanged.",
+      "Add no information and remove no information — translate only.",
+      'Return ONLY JSON {"text": string}.',
+    ].join("\n");
+
+    let result: any;
+    try {
+      result = await provider.complete(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: text },
+        ],
+        { jsonMode: true, maxTokens: 1200 },
+      );
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? String(e));
+    }
+
+    await (this.prisma as any).aIUsageRecord.create({
+      data: {
+        organizationId, userId, feature: "social_translate",
+        provider: provider.name, model: result.model,
+        inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+        estimated: result.tokensEstimated,
+      },
+    });
+
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const translated = typeof parsed?.text === "string" ? parsed.text.trim() : "";
+    if (!translated) {
+      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য অনুবাদ দেয়নি — আবার চেষ্টা করুন।");
+    }
+    if (ungroundedNumbers(translated, new Set<string>(extractSocialNumbers(text))).length > 0) {
+      throw new BadRequestException("অনুবাদে মূল লেখায় নেই এমন সংখ্যা এসেছে — আবার চেষ্টা করুন।");
+    }
+
+    return { text: translated, provider: provider.name, isRealLlm: true as const };
+  }
+
+  async generateCarouselOutline(
+    organizationId: string,
+    userId: string,
+    dto: { caption: string },
+  ) {
+    await this.checkDailyLimit(organizationId, "social_carousel_outline");
+
+    const caption = typeof dto.caption === "string" ? dto.caption.trim() : "";
+    if (!caption) throw new BadRequestException("Caption লিখুন।");
+
+    const allowedNumbers = new Set<string>(extractSocialNumbers(caption));
+
+    const provider = await providerForOrg(this.llm, organizationId);
+    if (!provider.isRealLlm) {
+      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Carousel Outline বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে outline বানানো হবে না।");
+    }
+
+    const systemPrompt = [
+      "You split ONE given caption into an Instagram carousel outline.",
+      "Return 4 to 8 slides. The first slide is the hook, the last slide is the call to action (CTA).",
+      "Each slide is short — at most 200 characters.",
+      "Use ONLY the given caption. Never add new information or any new number; a number from the caption may be kept exactly as it is.",
+      'Return ONLY JSON {"slides": string[]}.',
+    ].join("\n");
+
+    let result: any;
+    try {
+      result = await provider.complete(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: caption },
+        ],
+        { jsonMode: true, maxTokens: 1200 },
+      );
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? String(e));
+    }
+
+    await (this.prisma as any).aIUsageRecord.create({
+      data: {
+        organizationId, userId, feature: "social_carousel_outline",
+        provider: provider.name, model: result.model,
+        inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+        estimated: result.tokensEstimated,
+      },
+    });
+
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const rawSlides: any[] = Array.isArray(parsed?.slides) ? parsed.slides : [];
+    const slides: string[] = [];
+    let droppedCount = 0;
+    for (const raw of rawSlides) {
+      if (slides.length >= 8) break;
+      const slide = typeof raw === "string" ? raw.trim().slice(0, 200) : "";
+      if (!slide) continue;
+      if (ungroundedNumbers(slide, allowedNumbers).length > 0) {
+        droppedCount++;
+        continue;
+      }
+      slides.push(slide);
+    }
+
+    if (slides.length < 2) {
+      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য carousel outline দেয়নি — আবার চেষ্টা করুন।");
+    }
+
+    return { slides, droppedCount, provider: provider.name, isRealLlm: true as const };
+  }
 }

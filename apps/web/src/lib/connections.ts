@@ -191,6 +191,7 @@ export interface TenantAppConfigView {
 export interface OwnAppGuides {
   google: { redirectUris: string[] };
   linkedin: { redirectUris: string[] };
+  threads?: { redirectUris: string[] };
 }
 
 export const APP_SOURCE_META: Record<string, { label: string; cls: string }> = {

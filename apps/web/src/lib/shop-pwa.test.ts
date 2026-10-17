@@ -56,6 +56,13 @@ describe("AB8 buildShopManifest", () => {
     expect(wl.icons).toEqual([{ src: "https://cdn.example/logo.png", sizes: "any", purpose: "any" }]);
   });
 
+  it("icons: maskable is never claimed for a merchant logo or the generated icon (ED10)", () => {
+    const logo = buildShopManifest(home({ organization: { name: "Org", brandName: null, logoUrl: "https://cdn.example/logo.png", primaryColor: null } }), "s");
+    expect(logo.icons.some((i) => i.purpose.includes("maskable"))).toBe(false);
+    const wl = buildShopManifest(home({ organization: { name: "Org", brandName: null, logoUrl: null, primaryColor: null, whiteLabel: true } }), "s");
+    expect(wl.icons.some((i) => i.purpose.includes("maskable"))).toBe(false);
+  });
+
   it("icons: white-label without a logo gets the generated icon, never the platform mark", () => {
     const m = buildShopManifest(home({ organization: { name: "Org", brandName: null, logoUrl: null, primaryColor: null, whiteLabel: true } }), "ghost-shop");
     expect(m.icons).toEqual([
@@ -68,6 +75,9 @@ describe("AB8 buildShopManifest", () => {
     expect(m.icons).toEqual([
       { src: "/icons/icon-192.png", sizes: "192x192", purpose: "any", type: "image/png" },
       { src: "/icons/icon-512.png", sizes: "512x512", purpose: "any", type: "image/png" },
+      // ED10: the platform's purpose-built maskable asset is
+      // the ONLY icon ever declared maskable (see shop-pwa).
+      { src: "/icons/icon-maskable-512.png", sizes: "512x512", purpose: "maskable", type: "image/png" },
     ]);
     // whiteLabel present but not exactly true behaves as non-white-label.
     const m2 = buildShopManifest(home({ organization: { name: "Org", brandName: null, logoUrl: null, primaryColor: null, whiteLabel: false } }), "s");

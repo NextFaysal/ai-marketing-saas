@@ -3,13 +3,13 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { formatMinor, shopSubdomainHost } from "@repo/contracts";
 import type { Overview } from "@/components/analytics-shared";
 
 interface ReportLite { id: string; title: string; provider: string; createdAt: string }
 interface AnomalyResult { anomalies: { severity: string; message: string }[]; sufficientData: boolean }
 interface OnboardingState { steps: { key: string; label: string; done: boolean; href: string }[]; completed: number; total: number; allDone: boolean }
-interface OrgLite { name?: string; brandName?: string | null }
+interface OrgLite { name?: string; brandName?: string | null; slug?: string }
 
 function OnboardingCard() {
   const [state, setState] = useState<OnboardingState | null>(null);
@@ -162,6 +162,13 @@ export default function OverviewPage() {
               <span className="truncate">{a.label}</span>
             </Link>
           ))}
+          {/* TD8: the shop's public address is its tenant subdomain. */}
+          {org?.slug ? (
+            <a href={`https://${shopSubdomainHost(org.slug)}`} target="_blank" rel="noreferrer" className="quick-action">
+              <span className="text-base leading-none">🛍️</span>
+              <span className="truncate">দোকান দেখুন</span>
+            </a>
+          ) : null}
         </div>
       </section>
 

@@ -19,9 +19,95 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+// ---------- TD1: slug / shop-subdomain rules ----------
+// An organization's slug IS its public shop address:
+// {slug}.qosprey.com. One source of truth for the format and the
+// reserved-name rules lives here; the contracts schema, the API
+// (OrganizationsService.create + GET /organizations/slug-available)
+// and the web onboarding picker all consume these helpers — there
+// is deliberately no second copy of the rules anywhere.
+export const PLATFORM_APEX_DOMAIN = "qosprey.com";
+export const SLUG_MIN_LENGTH = 3;
+export const SLUG_MAX_LENGTH = 60;
+/** Lowercase letters/digits in single-hyphen-separated groups:
+ * never a leading/trailing hyphen, never consecutive hyphens. */
+export const SLUG_FORMAT_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** Class 1 — the platform's own names (TD plan §TD1). */
+export const RESERVED_SYSTEM_SLUGS = [
+  "app", "admin", "api", "media", "www", "mail", "dashboard", "login",
+  "register", "logout", "shop", "store", "support", "help", "pricing",
+  "blog", "docs", "status", "cdn", "assets", "static", "webhook",
+  "webhooks", "oauth", "auth", "account", "billing", "settings",
+  "platform", "system", "root", "home", "official-site",
+] as const;
+
+/** Class 2 — misleading / impersonation names (owner examples:
+ * "fake", "orgnail") plus a starter profanity list. */
+export const RESERVED_MISLEADING_SLUGS = [
+  "qosprey", "fake", "official", "verified", "original", "orgnail",
+  "genuine", "authentic",
+  // starter profanity/abuse list (exact names only)
+  "porn", "porno", "sex", "xxx", "adult", "casino", "gambling",
+] as const;
+
+/** Class 3 — names reserved for future platform products. */
+export const RESERVED_FUTURE_SLUGS = [
+  "pay", "wallet", "ads", "ai", "inbox", "crm",
+] as const;
+
+export const RESERVED_SLUGS: ReadonlySet<string> = new Set<string>([
+  ...RESERVED_SYSTEM_SLUGS,
+  ...RESERVED_MISLEADING_SLUGS,
+  ...RESERVED_FUTURE_SLUGS,
+]);
+
+/** Substring rule (TD plan §TD1): a slug merely CONTAINING one of
+ * these is also refused — "my-admin-shop", "supportbd",
+ * "officialstore" are impersonation-shaped even when not exact. */
+export const RESERVED_SLUG_SUBSTRINGS = ["admin", "support", "official"] as const;
+
+/** Format-only problem, independent of reservation/taken state. */
+export function slugFormatInvalid(slug: unknown): boolean {
+  if (typeof slug !== "string") return true;
+  if (slug.length < SLUG_MIN_LENGTH || slug.length > SLUG_MAX_LENGTH) return true;
+  return !SLUG_FORMAT_REGEX.test(slug);
+}
+
+/** Reserved check: code lists + substring rule + caller-supplied
+ * extra names (the API passes SUPER-added platform-setting names).
+ * Extras are exact names, normalised to lowercase. */
+export function isReservedSlug(slug: string, extra?: Iterable<string>): boolean {
+  const s = String(slug ?? "");
+  if (RESERVED_SLUGS.has(s)) return true;
+  for (const part of RESERVED_SLUG_SUBSTRINGS) if (s.includes(part)) return true;
+  if (extra) {
+    for (const name of extra) {
+      if (String(name).trim().toLowerCase() === s) return true;
+    }
+  }
+  return false;
+}
+
+export type SlugLocalCheck =
+  | { ok: true }
+  | { ok: false; reason: "invalid" | "reserved" };
+
+/** Everything about a slug that can be decided WITHOUT the
+ * database. "taken" is decided by the API on top of this. */
+export function checkSlugLocally(slug: unknown, extra?: Iterable<string>): SlugLocalCheck {
+  if (slugFormatInvalid(slug)) return { ok: false, reason: "invalid" };
+  if (isReservedSlug(slug as string, extra)) return { ok: false, reason: "reserved" };
+  return { ok: true };
+}
+
+export function shopSubdomainHost(slug: string): string {
+  return `${slug}.${PLATFORM_APEX_DOMAIN}`;
+}
+
 export const createOrganizationSchema = z.object({
   name: z.string().min(2).max(120),
-  slug: z.string().regex(/^[a-z0-9-]+$/, "slug must be lowercase letters, numbers and hyphens").min(3).max(60),
+  slug: z.string().regex(SLUG_FORMAT_REGEX, "slug must be lowercase letters, numbers and single hyphens (no leading, trailing or consecutive hyphens)").min(SLUG_MIN_LENGTH).max(SLUG_MAX_LENGTH),
   country: z.string().length(2).default("BD"),
   timezone: z.string().default("Asia/Dhaka"),
   currency: z.string().length(3).default("BDT"),

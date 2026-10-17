@@ -6,15 +6,20 @@ import { fetchCart, patchCartLine } from "@/lib/storefront-cart";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "./ProductCard";
 import { FashionSizeGuideModal, FashionFitAssistantModal } from "./FashionTheme";
+import { MediaImage } from "@/components/MediaImage";
 
 export function QuickViewButton({
   orgSlug,
   product,
   locale = "bn",
+  large = false,
 }: {
   orgSlug: string;
   product: ShopProduct;
   locale?: ShopLocale | string;
+  /** ED8: v2 cards only — enlarges the hit area to ≥44px tall.
+   * Default false renders exactly as before. */
+  large?: boolean;
 }) {
   const t = shopT(locale);
   const [open, setOpen] = useState(false);
@@ -29,7 +34,7 @@ export function QuickViewButton({
           e.stopPropagation();
           setOpen(true);
         }}
-        className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1.5 text-[11px] font-bold text-slate-800 shadow-md transition hover:bg-white"
+        className={`absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 rounded-full bg-white/95 text-[11px] font-bold text-slate-800 shadow-md transition hover:bg-white ${large ? "min-h-11 px-3.5 py-3" : "px-2.5 py-1.5"}`}
       >
         <span aria-hidden="true">👁️</span>
         <span className="hidden sm:inline">{t.product.quickView}</span>
@@ -131,8 +136,7 @@ export function QuickView({
           <div className="space-y-3">
             <div className="overflow-hidden rounded-2xl border border-slate-200">
               {image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={image} alt={product.name} className="aspect-square w-full object-cover" />
+                <MediaImage src={image} alt={product.name} width={640} height={640} sizes="(max-width: 640px) 90vw, 400px" className="aspect-square w-full object-cover" />
               ) : (
                 <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-6xl">📦</div>
               )}
@@ -146,8 +150,7 @@ export function QuickView({
                     onClick={() => setImage(src)}
                     className={`h-14 w-14 overflow-hidden rounded-lg border-2 ${src === image ? "border-indigo-600" : "border-slate-200"}`}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt="" className="h-full w-full object-cover" />
+                    <MediaImage src={src} alt="" width={160} height={160} className="h-full w-full object-cover" />
                   </button>
                 ))}
               </div>
@@ -237,7 +240,7 @@ export function QuickView({
                 <p className="text-sm font-bold text-emerald-800">{t.product.added}</p>
                 <div className="flex justify-center gap-2">
                   <Link href={`/shop/${orgSlug}/cart`} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">{t.product.viewCart}</Link>
-                  <Link href={`/shop/${orgSlug}/checkout`} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white">{t.product.checkoutNow}</Link>
+                  <Link href={`/shop/${orgSlug}/checkout`} className="btn-brand rounded-lg px-4 py-2 text-xs font-bold">{t.product.checkoutNow}</Link>
                 </div>
               </div>
             ) : (
@@ -245,7 +248,7 @@ export function QuickView({
                 type="button"
                 onClick={addToCart}
                 disabled={busy || outOfStock}
-                className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-extrabold text-white disabled:opacity-50"
+                className="btn-brand w-full rounded-xl py-3 text-sm font-extrabold disabled:opacity-50"
               >
                 {outOfStock ? t.product.outOfStockOrder : busy ? t.product.adding : t.product.addToCart}
               </button>

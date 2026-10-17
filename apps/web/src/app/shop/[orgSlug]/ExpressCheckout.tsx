@@ -176,9 +176,13 @@ export function ExpressCheckout({
 
       {open ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true">
-          <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-xl sm:rounded-3xl">
+          {/* ED9: token polish only — surface/radius/ink via the
+              EB1 CSS vars (values equal the hard-coded ones at
+              the defaults). The emerald confirm + trigger buttons
+              are emerald BY DESIGN and are NOT touched. */}
+          <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-[var(--radius-xl)] bg-[var(--surface)] p-5 shadow-xl sm:rounded-[var(--radius-xl)]">
             <div className="mb-3 flex items-start justify-between gap-2">
-              <h2 className="text-base font-black text-slate-900">⚡ এক্সপ্রেস চেকআউট</h2>
+              <h2 className="text-base font-black text-[var(--ink-strong)]">⚡ এক্সপ্রেস চেকআউট</h2>
               <button type="button" onClick={() => setOpen(false)} className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-bold text-slate-600" aria-label="বন্ধ করুন">✕</button>
             </div>
 
@@ -189,22 +193,26 @@ export function ExpressCheckout({
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
                   এক্সপ্রেস চেকআউটের জন্য একটি সংরক্ষিত ঠিকানা লাগবে — আপনার কোনো ঠিকানা সেভ করা নেই।
                 </p>
-                <Link href={`/shop/${orgSlug}/account`} className="block rounded-xl bg-indigo-600 py-2.5 text-center text-sm font-bold text-white">
+                {/* ED9: this no-address CTA was the sheet's one
+                    hard-coded indigo primary — .btn-brand at the
+                    shop root resolves to the org colour, falling
+                    back to #4f46e5 (indigo-600) exactly as before. */}
+                <Link href={`/shop/${orgSlug}/account`} className="btn-brand block rounded-xl py-2.5 text-center text-sm font-bold">
                   অ্যাকাউন্ট পেজে ঠিকানা যোগ করুন
                 </Link>
               </div>
             ) : (
               <div className="space-y-3">
                 {address ? (
-                  <div className="rounded-xl bg-slate-50 p-3 text-sm">
-                    <p className="font-bold text-slate-900">📍 ডেলিভারি ঠিকানা{address.label ? ` (${address.label})` : ""}</p>
+                  <div className="rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 text-sm">
+                    <p className="font-bold text-[var(--ink-strong)]">📍 ডেলিভারি ঠিকানা{address.label ? ` (${address.label})` : ""}</p>
                     <p className="text-slate-700">{address.recipientName} · <span className="font-mono">{address.phone}</span></p>
                     <p className="text-slate-600">{address.addressLine}, {address.district}</p>
                   </div>
                 ) : null}
 
-                <div className="rounded-xl bg-slate-50 p-3 text-sm">
-                  <p className="font-bold text-slate-900">💳 পেমেন্ট: {paymentMethodLabelBn(payMethod)}</p>
+                <div className="rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 text-sm">
+                  <p className="font-bold text-[var(--ink-strong)]">💳 পেমেন্ট: {paymentMethodLabelBn(payMethod)}</p>
                   <p className="text-[11px] text-slate-500">আপনার সর্বশেষ অর্ডারের পেমেন্ট পদ্ধতি অনুযায়ী বেছে নেওয়া হয়েছে।</p>
                 </div>
 
@@ -225,7 +233,7 @@ export function ExpressCheckout({
                     ) : null}
                   </div>
                 ) : (
-                  <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">মোট হিসাব লোড করা যায়নি — অর্ডার করলে সার্ভার চূড়ান্ত হিসাব করবে।</p>
+                  <p className="rounded-[var(--radius-md)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-slate-500">মোট হিসাব লোড করা যায়নি — অর্ডার করলে সার্ভার চূড়ান্ত হিসাব করবে।</p>
                 )}
 
                 <CheckoutFieldsSection

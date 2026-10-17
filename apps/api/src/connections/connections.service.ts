@@ -836,6 +836,7 @@ export class ConnectionsService {
       // carries them so the UI can show them next to the form.
       ...(row.platform === "google" ? { redirectUris: googleOwnAppRedirectUris() } : {}),
       ...(row.platform === "linkedin" ? { redirectUris: [socialOAuthRedirectUri("linkedin")] } : {}),
+      ...(row.platform === "threads" ? { redirectUris: [socialOAuthRedirectUri("threads")] } : {}),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -854,6 +855,7 @@ export class ConnectionsService {
       ownAppGuides: {
         google: { redirectUris: googleOwnAppRedirectUris() },
         linkedin: { redirectUris: [socialOAuthRedirectUri("linkedin")] },
+        threads: { redirectUris: [socialOAuthRedirectUri("threads")] },
       },
     };
   }
@@ -879,6 +881,10 @@ export class ConnectionsService {
    * - linkedin (CC28): same pattern — presence only, "configured",
    *   verified at first connect; the view carries the callback
    *   URL to register in the LinkedIn app.
+   * - threads (SN7): same pattern again — the tenant's own
+   *   Threads app (inside their Meta app); presence only,
+   *   "configured", verified at first connect; the view carries
+   *   the callback URL to register in the Threads app settings.
    * The secret is sealed (encryptJson, { appSecret }) at rest.
    *
    * CC28 META SECRET ROTATION: saving meta with the SAME appId
@@ -895,8 +901,8 @@ export class ConnectionsService {
    * the response so the UI can say reconnect is not needed.
    */
   async putAppConfig(organizationId: string, actorId: string, platform: string, dto: { appId: string; appSecret: string }) {
-    if (!["meta", "tiktok", "google", "linkedin"].includes(platform)) {
-      throw new BadRequestException("platform must be meta, tiktok, google or linkedin");
+    if (!["meta", "tiktok", "google", "linkedin", "threads"].includes(platform)) {
+      throw new BadRequestException("platform must be meta, tiktok, google, linkedin or threads");
     }
     const appId = (dto?.appId ?? "").trim();
     const appSecret = (dto?.appSecret ?? "").trim();
@@ -949,8 +955,8 @@ export class ConnectionsService {
    * refresh can no longer resolve this app's secret.
    */
   async deleteAppConfig(organizationId: string, actorId: string, platform: string, totpCode?: string | null) {
-    if (!["meta", "tiktok", "google", "linkedin"].includes(platform)) {
-      throw new BadRequestException("platform must be meta, tiktok, google or linkedin");
+    if (!["meta", "tiktok", "google", "linkedin", "threads"].includes(platform)) {
+      throw new BadRequestException("platform must be meta, tiktok, google, linkedin or threads");
     }
     // CC23: deleting the tenant's own app config is a sensitive
     // action — TOTP step-up runs BEFORE anything is deleted

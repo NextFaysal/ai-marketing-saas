@@ -1,13 +1,15 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { BD_DISTRICTS } from "@repo/contracts";
+import { BD_DISTRICTS, shopSubdomainHost } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
 import { ReferralRewardSettingsCard } from "@/components/loyalty-referral-settings";
 import { PushPanel } from "@/components/push-panel";
 import { SocialProofSettingsCard } from "@/components/social-proof-settings";
+import { EmptyState } from "@repo/ui";
+import { useConfirm, useToast } from "@repo/ui/client";
 
 // EC8 staff storefront administration. Consumes
 // GET /organizations/:id/storefront (staffState):
@@ -138,6 +140,8 @@ interface PickupPointRow {
 interface ProductOpt { id: string; name: string }
 interface VerifyTokenOut { domain: string; recordHost: string; recordType: string; recordValue: string; token: string }
 interface RoutingOut { routingActive: boolean; checkedUrl: string | null; status?: number; evidence?: string; reason?: string }
+// TD9: POST /storefront/domain/set contract (API worker, parallel build).
+interface SetDomainOut { domain: string | null; previousDomain: string | null; verificationReset: boolean }
 
 const THEME_OPTIONS = [
   { id: "fashion", label: "👗 ফ্যাশন ও ক্লদিং (Aarong / Yellow)", desc: "৩:৪ পোর্ট্রেট কার্ড, সাইজ সিলেক্টর ও সাইজ চার্ট গাইড" },
@@ -160,6 +164,7 @@ const THEME_OPTIONS = [
   { id: "pastel", label: "৮. প্যাস্টেল সফট", desc: "নরম মিষ্টি রং — স্কিনকেয়ার ও কসমেটিকস" },
   { id: "nordic", label: "৯. নর্ডিক ওয়ার্ম", desc: "স্ক্যান্ডিনেভিয়ান কাঠ — হোম ডেকর ও লাইফস্টাইল" },
   { id: "midnight", label: "১০. মিডনাইট নিয়ন", desc: "ট্রু ডার্ক মোড ও নিয়ন — স্ট্রিটওয়্যার ও ইউথ" },
+  { id: "v2", label: "১১. আধুনিক ডিজাইন v2", desc: "আধুনিক ডিজাইন — মোবাইল অ্যাপের মতো নেভিগেশন, ব্র্যান্ড রঙে সব বোতাম" },
 ] as const;
 
 /** GC1: pure-div mini shop mock used as a theme preview (no images). */
@@ -285,6 +290,12 @@ function ThemePreview({ theme }: { theme: string }) {
       hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-stone-950 via-[#1a1614] to-amber-950 border border-amber-500/30",
       tile: "h-9 rounded-lg bg-[#292524] border border-amber-900/40 shadow-xs",
     },
+    v2: {
+      wrap: "rounded-xl border border-slate-200 bg-white shadow-sm",
+      header: "h-3 rounded-t-xl bg-indigo-600",
+      hero: "mx-2 mt-2 h-9 rounded-xl bg-indigo-100",
+      tile: "h-7 rounded-xl bg-slate-200",
+    },
   };
   const s = styles[theme] ?? styles.classic;
   return (
@@ -321,12 +332,33 @@ const KIND_LABEL: Record<string, string> = {
 };
 const KINDS = Object.keys(KIND_LABEL);
 
+// ED12: in-page section anchors — ids match the section elements below
+// (in page order); labels match the section titles.
+const SECTION_NAV = [
+  { id: "shop-link", label: "আপনার দোকানের লিংক" },
+  { id: "shop-settings", label: "দোকানের সেটিংস" },
+  { id: "referral-rewards", label: "রেফারেল পুরস্কার" },
+  { id: "popup", label: "প্রমোশনাল পপআপ" },
+  { id: "push", label: "ওয়েব পুশ" },
+  { id: "social-proof", label: "সোশ্যাল প্রুফ" },
+  { id: "content-pages", label: "কনটেন্ট পেজ" },
+  { id: "blog", label: "ব্লগ" },
+  { id: "shop-search", label: "দোকানের সার্চ" },
+  { id: "delivery-slots", label: "ডেলিভারি স্লট" },
+  { id: "shipping-zones", label: "শিপিং জোন ও ডেলিভারি চার্জ" },
+  { id: "rate-rules", label: "ওজনভিত্তিক ডেলিভারি রেট রুল" },
+  { id: "pickup-points", label: "পিকআপ পয়েন্ট" },
+  { id: "checkout-fields", label: "চেকআউট ফিল্ড" },
+  { id: "custom-domain", label: "কাস্টম ডোমেইন" },
+] as const;
+
 export default function StorefrontStaffPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [state, setState] = useState<StaffState | null>(null);
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
 
   // settings form
@@ -388,9 +420,10 @@ export default function StorefrontStaffPage() {
   const [popupStartsAt, setPopupStartsAt] = useState("");
   const [popupEndsAt, setPopupEndsAt] = useState("");
   const [popupError, setPopupError] = useState("");
-  const [popupNotice, setPopupNotice] = useState("");
+  const [popupLoadError, setPopupLoadError] = useState("");
   // GC3: content pages summary for the card (full manager is its own page)
   const [shopPages, setShopPages] = useState<ShopPageSummary[]>([]);
+  const [pagesLoadError, setPagesLoadError] = useState("");
 
   // EC18 delivery slot form
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
@@ -452,12 +485,15 @@ export default function StorefrontStaffPage() {
   const [fSortOrder, setFSortOrder] = useState("0");
   const [fActive, setFActive] = useState(true);
   const [fieldError, setFieldError] = useState("");
+  const [fieldLoadError, setFieldLoadError] = useState("");
 
   // domain
   const [tokenOut, setTokenOut] = useState<VerifyTokenOut | null>(null);
   const [domainError, setDomainError] = useState("");
   const [domainNotice, setDomainNotice] = useState("");
   const [routing, setRouting] = useState<RoutingOut | null>(null);
+  // TD9: step-1 domain input (prefilled from state on every load)
+  const [domainInput, setDomainInput] = useState("");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -469,6 +505,7 @@ export default function StorefrontStaffPage() {
         apiFetch<{ items: ProductOpt[] }>(`/organizations/${orgId}/products?pageSize=100`).catch(() => ({ items: [] as ProductOpt[] })),
       ]);
       setState(s);
+      setDomainInput(s.domain.customDomain ?? "");
       setProducts(p.items ?? []);
       const st = s.setting;
       setShopEnabled(st.shopEnabled);
@@ -552,7 +589,8 @@ export default function StorefrontStaffPage() {
         setPopupStartsAt(isoToDatetimeLocal(p.startsAt));
         setPopupEndsAt(isoToDatetimeLocal(p.endsAt));
       }
-    } catch { /* popup card stays empty until the endpoint answers */ }
+      setPopupLoadError("");
+    } catch { setPopupLoadError("লোড ব্যর্থ হয়েছে"); }
   }, []);
   useEffect(() => { void loadPopup(); }, [loadPopup]);
 
@@ -567,7 +605,8 @@ export default function StorefrontStaffPage() {
         : ((out as { items?: CheckoutFieldRow[]; fields?: CheckoutFieldRow[] }).items
           ?? (out as { fields?: CheckoutFieldRow[] }).fields ?? []);
       setFieldDefs(items);
-    } catch { /* section stays empty until the endpoint answers */ }
+      setFieldLoadError("");
+    } catch { setFieldLoadError("লোড ব্যর্থ হয়েছে"); }
   }, []);
   useEffect(() => { void loadFieldDefs(); }, [loadFieldDefs]);
 
@@ -586,7 +625,7 @@ export default function StorefrontStaffPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (!fLabel.trim()) { setFieldError("ফিল্ডের লেবেল দিন।"); return; }
     if (!editingFieldId && !fKey.trim()) { setFieldError("ফিল্ডের key দিন (ইংরেজি, যেমন: gift_note)।"); return; }
-    setBusy("field"); setFieldError(""); setError(""); setNotice("");
+    setBusy("field"); setFieldError(""); setError("");
     const options = fType === "select"
       ? fOptions.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
       : null;
@@ -603,10 +642,10 @@ export default function StorefrontStaffPage() {
     try {
       if (editingFieldId) {
         await apiFetch(`/organizations/${orgId}/storefront/checkout-fields/${editingFieldId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("চেকআউট ফিল্ড আপডেট হয়েছে।");
+        toast({ title: "চেকআউট ফিল্ড আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/checkout-fields`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("নতুন চেকআউট ফিল্ড তৈরি হয়েছে।");
+        toast({ title: "নতুন চেকআউট ফিল্ড তৈরি হয়েছে।", tone: "success" });
       }
       resetFieldForm();
       await loadFieldDefs();
@@ -615,11 +654,11 @@ export default function StorefrontStaffPage() {
   }
   async function deleteField(f: CheckoutFieldRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${f.label}" ফিল্ডটি মুছে ফেলবেন? আগের অর্ডারে দেওয়া উত্তরগুলো থেকে যাবে।`)) return;
-    setBusy(`field-del-${f.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: `"${f.label}" ফিল্ডটি মুছে ফেলবেন?`, body: "আগের অর্ডারে দেওয়া উত্তরগুলো থেকে যাবে।", confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    setBusy(`field-del-${f.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/checkout-fields/${f.id}`, { method: "DELETE" });
-      setNotice("চেকআউট ফিল্ড মুছে ফেলা হয়েছে।");
+      toast({ title: "চেকআউট ফিল্ড মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingFieldId === f.id) resetFieldForm();
       await loadFieldDefs();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -632,13 +671,14 @@ export default function StorefrontStaffPage() {
     try {
       const out = await apiFetch<{ pages: ShopPageSummary[] }>(`/organizations/${orgId}/storefront/pages`);
       setShopPages(out.pages ?? []);
-    } catch { /* counts stay at zero until the endpoint answers */ }
+      setPagesLoadError("");
+    } catch { setPagesLoadError("লোড ব্যর্থ হয়েছে"); }
   }, []);
   useEffect(() => { void loadShopPages(); }, [loadShopPages]);
 
   async function savePopup() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy("popup"); setPopupError(""); setPopupNotice("");
+    setBusy("popup"); setPopupError("");
     try {
       const out = await apiFetch<{ popup: StorefrontPopup }>(`/organizations/${orgId}/storefront/popup`, {
         method: "PUT",
@@ -659,7 +699,7 @@ export default function StorefrontStaffPage() {
         }),
       });
       if (out.popup) setPopup(out.popup);
-      setPopupNotice("পপআপ সংরক্ষণ হয়েছে।");
+      toast({ title: "পপআপ সংরক্ষণ হয়েছে।", tone: "success" });
       await loadPopup();
     } catch (e) { setPopupError(e instanceof Error ? e.message : "পপআপ সংরক্ষণ ব্যর্থ"); }
     finally { setBusy(""); }
@@ -672,7 +712,7 @@ export default function StorefrontStaffPage() {
   async function copyText(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setNotice(`${label} কপি হয়েছে।`);
+      toast({ title: `${label} কপি হয়েছে।`, tone: "success" });
     } catch {
       setError("কপি করা যায়নি — লেখাটি হাতে কপি করুন।");
     }
@@ -682,7 +722,7 @@ export default function StorefrontStaffPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (featuredIds.length > 50) { setError("Featured পণ্য সর্বোচ্চ ৫০টি হতে পারবে।"); return; }
     if (giftWrapEnabled && giftWrapFee.trim() && takaToMinorString(giftWrapFee) === null) { setError("গিফট র‍্যাপের ফি টাকায় সঠিক সংখ্যা দিন (যেমন: 50)।"); return; }
-    setBusy("settings"); setError(""); setNotice("");
+    setBusy("settings"); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/settings`, {
         method: "PATCH",
@@ -727,7 +767,7 @@ export default function StorefrontStaffPage() {
           customJsEnabled,
         }),
       });
-      setNotice("দোকানের সেটিংস সংরক্ষণ হয়েছে।");
+      toast({ title: "দোকানের সেটিংস সংরক্ষণ হয়েছে।", tone: "success" });
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
     finally { setBusy(""); }
@@ -767,7 +807,7 @@ export default function StorefrontStaffPage() {
       setZoneError("জেলা-তালিকা জোনের জন্য অন্তত একটি জেলা বেছে নিন।");
       return;
     }
-    setBusy("zone"); setZoneError(""); setError(""); setNotice("");
+    setBusy("zone"); setZoneError(""); setError("");
     const body = {
       name: zName.trim(),
       kind: zKind,
@@ -781,10 +821,10 @@ export default function StorefrontStaffPage() {
     try {
       if (editingZoneId) {
         await apiFetch(`/organizations/${orgId}/storefront/zones/${editingZoneId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("শিপিং জোন আপডেট হয়েছে।");
+        toast({ title: "শিপিং জোন আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/zones`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("নতুন শিপিং জোন তৈরি হয়েছে।");
+        toast({ title: "নতুন শিপিং জোন তৈরি হয়েছে।", tone: "success" });
       }
       resetZoneForm();
       await load();
@@ -794,11 +834,11 @@ export default function StorefrontStaffPage() {
 
   async function deleteZone(z: Zone) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${z.name}" জোনটি মুছে ফেলবেন? এটি আর ডেলিভারি হিসেবে ব্যবহৃত হবে না।`)) return;
-    setBusy(`zone-del-${z.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: `"${z.name}" জোনটি মুছে ফেলবেন?`, body: "এটি আর ডেলিভারি হিসেবে ব্যবহৃত হবে না।", confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    setBusy(`zone-del-${z.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/zones/${z.id}`, { method: "DELETE" });
-      setNotice("জোন মুছে ফেলা হয়েছে।");
+      toast({ title: "জোন মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingZoneId === z.id) resetZoneForm();
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -827,7 +867,7 @@ export default function StorefrontStaffPage() {
       if (!Number.isFinite(n) || n < 0 || String(n) !== sCapacity.trim()) { setSlotError("দৈনিক সক্ষমতা পূর্ণ সংখ্যায় দিন, অথবা খালি রাখুন (আনলিমিটেড)।"); return; }
       capacityPerDay = n;
     }
-    setBusy("slot"); setSlotError(""); setError(""); setNotice("");
+    setBusy("slot"); setSlotError(""); setError("");
     const body = {
       label: sLabel.trim(),
       startTime: sStart,
@@ -839,10 +879,10 @@ export default function StorefrontStaffPage() {
     try {
       if (editingSlotId) {
         await apiFetch(`/organizations/${orgId}/storefront/slots/${editingSlotId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("ডেলিভারি স্লট আপডেট হয়েছে।");
+        toast({ title: "ডেলিভারি স্লট আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/slots`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("নতুন ডেলিভারি স্লট তৈরি হয়েছে।");
+        toast({ title: "নতুন ডেলিভারি স্লট তৈরি হয়েছে।", tone: "success" });
       }
       resetSlotForm();
       await load();
@@ -852,11 +892,11 @@ export default function StorefrontStaffPage() {
 
   async function deleteSlot(s: Slot) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${s.label}" স্লটটি মুছে ফেলবেন?`)) return;
-    setBusy(`slot-del-${s.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: `"${s.label}" স্লটটি মুছে ফেলবেন?`, body: `${s.startTime} – ${s.endTime} সময়ের এই ডেলিভারি স্লটটি আর চেকআউটে দেখাবে না।`, confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    setBusy(`slot-del-${s.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/slots/${s.id}`, { method: "DELETE" });
-      setNotice("স্লট মুছে ফেলা হয়েছে।");
+      toast({ title: "স্লট মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingSlotId === s.id) resetSlotForm();
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -896,7 +936,7 @@ export default function StorefrontStaffPage() {
     };
     if (rMinWeight.trim() && parseWeight(rMinWeight) === null) { setRuleError("সর্বনিম্ন ওজন গ্রামে পূর্ণ সংখ্যা দিন, অথবা খালি রাখুন।"); return; }
     if (rMaxWeight.trim() && parseWeight(rMaxWeight) === null) { setRuleError("সর্বোচ্চ ওজন গ্রামে পূর্ণ সংখ্যা দিন, অথবা খালি রাখুন।"); return; }
-    setBusy("rule"); setRuleError(""); setError(""); setNotice("");
+    setBusy("rule"); setRuleError(""); setError("");
     const body = {
       shippingZoneId: rZoneId ? rZoneId : null,
       minWeightGrams: parseWeight(rMinWeight),
@@ -908,10 +948,10 @@ export default function StorefrontStaffPage() {
     try {
       if (editingRuleId) {
         await apiFetch(`/organizations/${orgId}/storefront/rate-rules/${editingRuleId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("রেট রুল আপডেট হয়েছে।");
+        toast({ title: "রেট রুল আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/rate-rules`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("নতুন রেট রুল তৈরি হয়েছে।");
+        toast({ title: "নতুন রেট রুল তৈরি হয়েছে।", tone: "success" });
       }
       resetRuleForm();
       await loadPricing();
@@ -920,11 +960,11 @@ export default function StorefrontStaffPage() {
   }
   async function deleteRule(r: RateRule) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("এই রেট রুলটি মুছে ফেলবেন?")) return;
-    setBusy(`rule-del-${r.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: "এই রেট রুলটি মুছে ফেলবেন?", body: `${zoneNameFor(r.shippingZoneId)} — ওজন: ${weightWindowLabel(r)}, চার্জ: ${formatMinorTaka(r.chargeMinor)}। এই রুলটি আর ডেলিভারি চার্জে প্রযোজ্য হবে না।`, confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    setBusy(`rule-del-${r.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/rate-rules/${r.id}`, { method: "DELETE" });
-      setNotice("রেট রুল মুছে ফেলা হয়েছে।");
+      toast({ title: "রেট রুল মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingRuleId === r.id) resetRuleForm();
       await loadPricing();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -948,7 +988,7 @@ export default function StorefrontStaffPage() {
       if (converted === null) { setPointError("ফি টাকায় সঠিক সংখ্যা দিন (যেমন: 30 অথবা 30.50), অথবা খালি রাখুন (ফ্রি)।"); return; }
       feeMinor = converted;
     }
-    setBusy("point"); setPointError(""); setError(""); setNotice("");
+    setBusy("point"); setPointError(""); setError("");
     const body = {
       name: pName.trim(),
       address: pAddress.trim(),
@@ -960,10 +1000,10 @@ export default function StorefrontStaffPage() {
     try {
       if (editingPointId) {
         await apiFetch(`/organizations/${orgId}/storefront/pickup-points/${editingPointId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("পিকআপ পয়েন্ট আপডেট হয়েছে।");
+        toast({ title: "পিকআপ পয়েন্ট আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/pickup-points`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("নতুন পিকআপ পয়েন্ট তৈরি হয়েছে।");
+        toast({ title: "নতুন পিকআপ পয়েন্ট তৈরি হয়েছে।", tone: "success" });
       }
       resetPointForm();
       await loadPricing();
@@ -972,11 +1012,11 @@ export default function StorefrontStaffPage() {
   }
   async function deletePoint(p: PickupPointRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${p.name}" পিকআপ পয়েন্টটি মুছে ফেলবেন?`)) return;
-    setBusy(`point-del-${p.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: `"${p.name}" পিকআপ পয়েন্টটি মুছে ফেলবেন?`, body: `${p.address}, ${p.district} — এই পয়েন্টটি আর চেকআউটে পিকআপ হিসেবে বেছে নেওয়া যাবে না।`, confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    setBusy(`point-del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/pickup-points/${p.id}`, { method: "DELETE" });
-      setNotice("পিকআপ পয়েন্ট মুছে ফেলা হয়েছে।");
+      toast({ title: "পিকআপ পয়েন্ট মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingPointId === p.id) resetPointForm();
       await loadPricing();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -985,14 +1025,15 @@ export default function StorefrontStaffPage() {
 
   async function createDefaults() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy("defaults"); setError(""); setNotice("");
+    setBusy("defaults"); setError("");
     try {
       const out = await apiFetch<{ created: Zone[]; zones: Zone[] }>(`/organizations/${orgId}/storefront/zones/defaults`, { method: "POST" });
-      setNotice(
-        out.created.length
+      toast({
+        title: out.created.length
           ? `ডিফল্ট জোন তৈরি হয়েছে: ${out.created.map((z) => z.name).join(", ")}।`
           : "ঢাকার ভিতরে/বাইরে জোন আগেই ছিল — নতুন কিছু তৈরি হয়নি।",
-      );
+        tone: "success",
+      });
       await load();
     } catch (e) {
       // Server refusal (e.g. BusinessProfile charges unset) verbatim.
@@ -1002,21 +1043,21 @@ export default function StorefrontStaffPage() {
 
   async function issueToken() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy("token"); setDomainError(""); setDomainNotice(""); setRouting(null);
+    setBusy("token"); setDomainError(""); setRouting(null);
     try {
       const out = await apiFetch<VerifyTokenOut>(`/organizations/${orgId}/storefront/domain/verify-token`, { method: "POST" });
       setTokenOut(out);
-      setDomainNotice("নতুন যাচাই টোকেন তৈরি হয়েছে। নিচের TXT রেকর্ডটি DNS-এ যোগ করুন — আগের যাচাই থাকলে তা নতুন করে প্রমাণ করতে হবে।");
+      toast({ title: "নতুন যাচাই টোকেন তৈরি হয়েছে।", description: "নিচের TXT রেকর্ডটি DNS-এ যোগ করুন — আগের যাচাই থাকলে তা নতুন করে প্রমাণ করতে হবে।", tone: "success" });
     } catch (e) { setDomainError(e instanceof Error ? e.message : "টোকেন তৈরি ব্যর্থ"); }
     finally { setBusy(""); }
   }
 
   async function verifyDomain() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy("verify"); setDomainError(""); setDomainNotice("");
+    setBusy("verify"); setDomainError("");
     try {
       const out = await apiFetch<{ verified: boolean; domain: string; verifiedAt: string }>(`/organizations/${orgId}/storefront/domain/verify`, { method: "POST" });
-      setDomainNotice(`ডোমেইন যাচাই হয়েছে: ${out.domain} (${new Date(out.verifiedAt).toLocaleString("bn-BD")})`);
+      toast({ title: `ডোমেইন যাচাই হয়েছে: ${out.domain} (${new Date(out.verifiedAt).toLocaleString("bn-BD")})`, tone: "success" });
       await load();
     } catch (e) { setDomainError(e instanceof Error ? e.message : "যাচাই ব্যর্থ"); }
     finally { setBusy(""); }
@@ -1024,11 +1065,53 @@ export default function StorefrontStaffPage() {
 
   async function checkRouting() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy("routing"); setDomainError(""); setDomainNotice("");
+    setBusy("routing"); setDomainError("");
     try {
       const out = await apiFetch<RoutingOut>(`/organizations/${orgId}/storefront/domain/check-routing`, { method: "POST" });
       setRouting(out);
     } catch (e) { setDomainError(e instanceof Error ? e.message : "Routing পরীক্ষা ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // TD9: set/change the custom domain. Server rejections (bad format,
+  // platform domain, taken by another org) surface verbatim via
+  // domainError — no client-side domain rules of our own.
+  async function saveDomain() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const domain = domainInput.trim();
+    if (!domain) { setDomainError("আগে ডোমেইনটি লিখুন (যেমন: dhaka-fashion.com)।"); return; }
+    setBusy("domain-set"); setDomainError(""); setDomainNotice("");
+    try {
+      const out = await apiFetch<SetDomainOut>(`/organizations/${orgId}/storefront/domain/set`, {
+        method: "POST",
+        body: JSON.stringify({ domain }),
+      });
+      if (out.verificationReset) {
+        setTokenOut(null);
+        setRouting(null);
+        setDomainNotice("ডোমেইন বদলানো হয়েছে — আগের যাচাই বাতিল হয়েছে, নতুন ডোমেইনের জন্য আবার TXT যাচাই করুন");
+      } else {
+        setDomainNotice(`ডোমেইন সেভ হয়েছে: ${out.domain ?? domain}`);
+      }
+      await load();
+    } catch (e) { setDomainError(e instanceof Error ? e.message : "ডোমেইন সেভ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function removeDomain() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm("কাস্টম ডোমেইনটি সরিয়ে ফেলবেন? এরপর দোকান শুধু আপনার সাবডোমেইন ঠিকানায় খুলবে।")) return;
+    setBusy("domain-remove"); setDomainError(""); setDomainNotice("");
+    try {
+      await apiFetch<SetDomainOut>(`/organizations/${orgId}/storefront/domain/set`, {
+        method: "POST",
+        body: JSON.stringify({ domain: null }),
+      });
+      setTokenOut(null);
+      setRouting(null);
+      setDomainNotice("ডোমেইন সরিয়ে ফেলা হয়েছে — এখন সাবডোমেইন ঠিকানাই আপনার দোকানের ঠিকানা।");
+      await load();
+    } catch (e) { setDomainError(e instanceof Error ? e.message : "ডোমেইন সরানো ব্যর্থ"); }
     finally { setBusy(""); }
   }
 
@@ -1055,11 +1138,20 @@ export default function StorefrontStaffPage() {
         </div>
       </div>
 
+      {/* ED12: sticky in-page sub-nav — anchor links to each section
+          below (single-column layout, so a top chip row). */}
+      <nav className="sticky top-2 z-30 -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" aria-label="সেকশন">
+        {SECTION_NAV.map((n) => (
+          <a key={n.id} href={`#${n.id}`} className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-white px-3 py-2 text-[13px] font-semibold text-slate-600 shadow-card ring-1 ring-slate-200/70">
+            {n.label}
+          </a>
+        ))}
+      </nav>
+
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       {/* Live shop link */}
-      <div className="card flex flex-wrap items-center gap-3 p-5">
+      <div id="shop-link" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold">আপনার দোকানের লিংক</div>
           {shopEnabled ? (
@@ -1076,12 +1168,55 @@ export default function StorefrontStaffPage() {
         ) : null}
       </div>
 
+      {/* TD8: shop addresses — subdomain + custom domain + canonical */}
+      <section className="card space-y-3 p-5">
+        <div className="font-semibold">আপনার দোকানের ঠিকানা</div>
+        {(() => {
+          const subdomainHost = shopSubdomainHost(state.organization.slug);
+          const subdomainUrl = `https://${subdomainHost}`;
+          const canonicalHost = verified && customDomain ? customDomain : subdomainHost;
+          return (
+            <>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-semibold">সাবডোমেইন:</span>
+                <span className="font-mono font-bold text-indigo-700">{subdomainUrl}</span>
+                <button type="button" onClick={() => copyText(subdomainUrl, "সাবডোমেইন ঠিকানা")} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">কপি করুন</button>
+                <a href={subdomainUrl} target="_blank" rel="noreferrer" className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">খুলুন ↗</a>
+                {canonicalHost === subdomainHost ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">প্রধান (canonical) ঠিকানা</span> : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-semibold">কাস্টম ডোমেইন:</span>
+                {customDomain ? (
+                  <>
+                    <span className="font-mono font-bold">{`https://${customDomain}`}</span>
+                    {verified ? (
+                      <span className="text-emerald-700">যাচাই হয়েছে{domain.verifiedAt ? ` (${new Date(domain.verifiedAt).toLocaleString("bn-BD")})` : ""}</span>
+                    ) : (
+                      <span className="text-amber-700">এখনো যাচাই হয়নি — নিচের “কাস্টম ডোমেইন” ধাপে যাচাই করুন</span>
+                    )}
+                    {verified && canonicalHost === customDomain ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">প্রধান (canonical) ঠিকানা</span> : null}
+                  </>
+                ) : (
+                  <span className="text-slate-500">কোনো কাস্টম ডোমেইন সেট করা নেই — আপাতত সাবডোমেইন ঠিকানাই আপনার দোকানের ঠিকানা।</span>
+                )}
+              </div>
+              <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                দুই ঠিকানাতেই একই দোকান খোলে; প্রধান (canonical) ঠিকানাটাই সার্চ ইঞ্জিন ও শেয়ারে ব্যবহৃত হয় —
+                কাস্টম ডোমেইন যাচাই করা থাকলে সেটাই প্রধান, নইলে সাবডোমেইন। মনে রাখবেন: দোকান পরিচালনার প্যানেলে
+                লগইন শুধু <b>app.qosprey.com</b> থেকে হয় — দোকানের ঠিকানায় কোনো লগইন পেজ নেই, প্যানেলের পথে গেলে
+                স্বয়ংক্রিয়ভাবে app.qosprey.com-এ পাঠিয়ে দেওয়া হয়।
+              </p>
+            </>
+          );
+        })()}
+      </section>
+
       {/* Settings */}
-      <section className="card space-y-4 p-5">
+      <section id="shop-settings" className="card scroll-mt-24 space-y-4 p-5">
         <div className="font-semibold">দোকানের সেটিংস</div>
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={shopEnabled} onChange={(e) => setShopEnabled(e.target.checked)} />
-          দোকান চালু করুন (shopEnabled) {!state.setting.exists ? <span className="text-xs font-normal text-slate-400">— এখনো কোনো সেটিংস সেভ হয়নি</span> : null}
+          দোকান চালু করুন (shopEnabled) {!state.setting.exists ? <span className="text-xs font-normal text-slate-500">— এখনো কোনো সেটিংস সেভ হয়নি</span> : null}
         </label>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block text-sm">দোকানের নাম (খালি = ব্র্যান্ড/সংস্থার নাম)
@@ -1168,6 +1303,18 @@ export default function StorefrontStaffPage() {
               );
             })}
           </div>
+          {orgSlug ? (
+            <p className="text-xs">
+              <a
+                href={`${typeof window !== "undefined" ? window.location.origin : ""}${shopPath}?themePreview=v2`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-indigo-700 underline"
+              >
+                নতুন ডিজাইন v2 লাইভ প্রিভিউ (সেভ না করেই দেখুন)
+              </a>
+            </p>
+          ) : null}
           <label className="block text-sm">ফেভিকন URL (ব্রাউজার ট্যাবের ছোট আইকন)
             <div className="mt-1 flex items-center gap-3">
               <input className="input flex-1" value={faviconUrl} onChange={(e) => setFaviconUrl(e.target.value)} placeholder="https://…/favicon.png" />
@@ -1362,12 +1509,12 @@ export default function StorefrontStaffPage() {
         <div>
           <div className="text-sm font-medium">ফিচার্ড পণ্য ({featuredIds.length}/৫০) — ক্রম অনুযায়ী দেখাবে</div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {products.length === 0 ? <span className="text-xs text-slate-400">কোনো পণ্য পাওয়া যায়নি</span> : products.map((p) => {
+            {products.length === 0 ? <span className="text-xs text-slate-500">কোনো পণ্য পাওয়া যায়নি</span> : products.map((p) => {
               const on = featuredIds.includes(p.id);
               const order = on ? featuredIds.indexOf(p.id) + 1 : null;
               return (
                 <button key={p.id} type="button" onClick={() => toggleFeatured(p.id)}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                   {order ? `${order}. ` : ""}{p.name}
                 </button>
               );
@@ -1384,17 +1531,24 @@ export default function StorefrontStaffPage() {
           settings section above (that discount goes to the
           referred buyer; this reward goes to the referrer). The
           same component renders on the loyalty page. */}
-      <ReferralRewardSettingsCard />
+      <div id="referral-rewards" className="scroll-mt-24">
+        <ReferralRewardSettingsCard />
+      </div>
 
       {/* GC2: promotional popup */}
-      <section className="card space-y-4 p-5">
+      <section id="popup" className="card scroll-mt-24 space-y-4 p-5">
         <div className="font-semibold">প্রমোশনাল পপআপ</div>
         <p className="text-sm text-slate-600">
           অবস্থা: <b>{popupEnabled ? "চালু" : "বন্ধ"}</b>
           {popup ? <> · ইমপ্রেশন: <b>{popup.impressions ?? 0}</b> · ক্লিক: <b>{popup.clicks ?? 0}</b></> : null}
         </p>
+        {popupLoadError ? (
+          <p className="flex flex-wrap items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            {popupLoadError}
+            <button type="button" onClick={() => void loadPopup()} className="font-semibold underline">পুনরায় চেষ্টা</button>
+          </p>
+        ) : null}
         {popupError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{popupError}</p> : null}
-        {popupNotice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{popupNotice}</p> : null}
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-3">
             <label className="flex items-center gap-2 text-sm font-semibold">
@@ -1474,13 +1628,17 @@ export default function StorefrontStaffPage() {
 
       {/* AB7 (AX16): web push settings + composer + history,
           beside the GC2 popup card above. */}
-      <PushPanel />
+      <div id="push" className="scroll-mt-24">
+        <PushPanel />
+      </div>
 
       {/* AB7 (AX17): social-proof settings, beside the push card. */}
-      <SocialProofSettingsCard />
+      <div id="social-proof" className="scroll-mt-24">
+        <SocialProofSettingsCard />
+      </div>
 
       {/* GC3: content pages summary */}
-      <section className="card flex flex-wrap items-center gap-3 p-5">
+      <section id="content-pages" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
           <div className="font-semibold">কনটেন্ট পেজ</div>
           <p className="text-sm text-slate-500">
@@ -1489,10 +1647,16 @@ export default function StorefrontStaffPage() {
           </p>
         </div>
         <Link href="/dashboard/commerce/storefront/pages" className="btn-primary">পেজ পরিচালনা করুন →</Link>
+        {pagesLoadError ? (
+          <p className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            {pagesLoadError}
+            <button type="button" onClick={() => void loadShopPages()} className="font-semibold underline">পুনরায় চেষ্টা</button>
+          </p>
+        ) : null}
       </section>
 
       {/* AB6 (AX12): blog manager */}
-      <section className="card flex flex-wrap items-center gap-3 p-5">
+      <section id="blog" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
           <div className="font-semibold">ব্লগ</div>
           <p className="text-sm text-slate-500">
@@ -1503,7 +1667,7 @@ export default function StorefrontStaffPage() {
       </section>
 
       {/* AB6 (AX11): search analytics + synonyms */}
-      <section className="card flex flex-wrap items-center gap-3 p-5">
+      <section id="shop-search" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
           <div className="font-semibold">দোকানের সার্চ</div>
           <p className="text-sm text-slate-500">
@@ -1514,12 +1678,12 @@ export default function StorefrontStaffPage() {
       </section>
 
       {/* EC18: Delivery slots */}
-      <section className="card space-y-4 p-5">
+      <section id="delivery-slots" className="card scroll-mt-24 space-y-4 p-5">
         <div className="font-semibold">ডেলিভারি স্লট</div>
         <p className="text-xs text-slate-500">ক্রেতা চেকআউটে স্লট ও তারিখ (আজ থেকে ৭ দিনের মধ্যে) বেছে নিতে পারবে। জেলা বেছে না দিলে স্লটটি সব জেলার জন্য প্রযোজ্য। সক্ষমতা খালি = আনলিমিটেড।</p>
 
         {(state.slots ?? []).length === 0 ? (
-          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">এখনো কোনো ডেলিভারি স্লট নেই — নিচে তৈরি করুন।</p>
+          <EmptyState title="এখনো কোনো ডেলিভারি স্লট নেই" description="নিচে তৈরি করুন।" />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {(state.slots ?? []).map((s) => (
@@ -1533,8 +1697,8 @@ export default function StorefrontStaffPage() {
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditSlot(s)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => deleteSlot(s)} disabled={busy === `slot-del-${s.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditSlot(s)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deleteSlot(s)} disabled={busy === `slot-del-${s.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
@@ -1571,7 +1735,7 @@ export default function StorefrontStaffPage() {
                 const on = sDistricts.includes(d);
                 return (
                   <button key={d} type="button" onClick={() => setSDistricts(on ? sDistricts.filter((x) => x !== d) : [...sDistricts, d])}
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                    className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                     {d}
                   </button>
                 );
@@ -1589,7 +1753,7 @@ export default function StorefrontStaffPage() {
       </section>
 
       {/* Shipping zones */}
-      <section className="card space-y-4 p-5">
+      <section id="shipping-zones" className="card scroll-mt-24 space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="font-semibold">শিপিং জোন ও ডেলিভারি চার্জ</div>
           <button type="button" onClick={createDefaults} disabled={busy === "defaults"} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
@@ -1599,7 +1763,7 @@ export default function StorefrontStaffPage() {
         <p className="text-xs text-slate-500">ডিফল্ট জোন Business Profile-এর ডেলিভারি চার্জ থেকে তৈরি হয়। সব টাকার ঘর টাকায় লিখুন — সিস্টেম নিজে পয়সায় (minor) রূপান্তর করে পাঠাবে।</p>
 
         {state.zones.length === 0 ? (
-          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">এখনো কোনো শিপিং জোন নেই — জোন ছাড়া চেকআউটে অর্ডার নেওয়া যাবে না। ডিফল্ট জোন তৈরি করুন অথবা নিচে নিজে বানান।</p>
+          <EmptyState title="এখনো কোনো শিপিং জোন নেই" description="জোন ছাড়া চেকআউটে অর্ডার নেওয়া যাবে না। ডিফল্ট জোন তৈরি করুন অথবা নিচে নিজে বানান।" />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {state.zones.map((z) => (
@@ -1610,8 +1774,8 @@ export default function StorefrontStaffPage() {
                     <div className="text-xs text-slate-500">{KIND_LABEL[z.kind] ?? z.kind} · অবস্থান {z.position} · {z.active ? "সক্রিয়" : "বন্ধ"}</div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditZone(z)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => deleteZone(z)} disabled={busy === `zone-del-${z.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditZone(z)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deleteZone(z)} disabled={busy === `zone-del-${z.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
@@ -1662,7 +1826,7 @@ export default function StorefrontStaffPage() {
                   const on = zDistricts.includes(d);
                   return (
                     <button key={d} type="button" onClick={() => setZDistricts(on ? zDistricts.filter((x) => x !== d) : [...zDistricts, d])}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                      className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                       {d}
                     </button>
                   );
@@ -1681,11 +1845,11 @@ export default function StorefrontStaffPage() {
       </section>
 
       {/* EC30: weight-based rate rules */}
-      <section className="card space-y-4 p-5">
+      <section id="rate-rules" className="card scroll-mt-24 space-y-4 p-5">
         <div className="font-semibold">ওজনভিত্তিক ডেলিভারি রেট রুল</div>
         <p className="text-xs text-slate-500">হোম ডেলিভারিতে কার্টের মোট ওজন অনুযায়ী জোনের ফ্ল্যাট চার্জের বদলে এই রুলের চার্জ বসবে (priority বেশি = আগে মিলবে)। ওজনের কোনো ঘর খালি = সেই দিকে সীমা নেই। কোনো পণ্যের ওজন সেট না থাকলে ওজন-সীমাওয়ালা রুল মিলবে না।</p>
         {rateRules.length === 0 ? (
-          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">এখনো কোনো রেট রুল নেই — নিচে তৈরি করুন।</p>
+          <EmptyState title="এখনো কোনো রেট রুল নেই" description="নিচে তৈরি করুন।" />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {rateRules.map((r) => (
@@ -1699,8 +1863,8 @@ export default function StorefrontStaffPage() {
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditRule(r)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => deleteRule(r)} disabled={busy === `rule-del-${r.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditRule(r)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deleteRule(r)} disabled={busy === `rule-del-${r.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
@@ -1745,11 +1909,11 @@ export default function StorefrontStaffPage() {
       </section>
 
       {/* EC30: pickup points */}
-      <section className="card space-y-4 p-5">
+      <section id="pickup-points" className="card scroll-mt-24 space-y-4 p-5">
         <div className="font-semibold">পিকআপ পয়েন্ট</div>
         <p className="text-xs text-slate-500">ক্রেতা চেকআউটে হোম ডেলিভারির বদলে পিকআপ বেছে নিতে পারবে — তখন ডেলিভারি চার্জের বদলে পয়েন্টের নিজের ফি বসবে (ফি ০ = ফ্রি)।</p>
         {pickupPoints.length === 0 ? (
-          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">এখনো কোনো পিকআপ পয়েন্ট নেই — নিচে তৈরি করুন।</p>
+          <EmptyState title="এখনো কোনো পিকআপ পয়েন্ট নেই" description="নিচে তৈরি করুন।" />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {pickupPoints.map((p) => (
@@ -1763,8 +1927,8 @@ export default function StorefrontStaffPage() {
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditPoint(p)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => deletePoint(p)} disabled={busy === `point-del-${p.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditPoint(p)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deletePoint(p)} disabled={busy === `point-del-${p.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
@@ -1810,15 +1974,21 @@ export default function StorefrontStaffPage() {
       </section>
 
       {/* AB4 (AX5): checkout field definitions */}
-      <section className="card space-y-4 p-5">
+      <section id="checkout-fields" className="card scroll-mt-24 space-y-4 p-5">
         <div className="font-semibold">চেকআউট ফিল্ড</div>
         <p className="text-xs leading-relaxed text-slate-500">
           চেকআউটে ক্রেতার কাছ থেকে অতিরিক্ত তথ্য নিন — যেমন উপহারের বার্তা, সাইজ বা বিশেষ নির্দেশনা।
           ক্রেতার দেওয়া উত্তরগুলো সরাসরি অর্ডারের বিবরণে (Dashboard → Orders) দেখা যাবে।
           ফিল্ডের <b>key</b> তৈরি করার পর বদলানো যায় না — উত্তরের হিসাব এই key দিয়েই রাখা হয়।
         </p>
+        {fieldLoadError ? (
+          <p className="flex flex-wrap items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            {fieldLoadError}
+            <button type="button" onClick={() => void loadFieldDefs()} className="font-semibold underline">পুনরায় চেষ্টা</button>
+          </p>
+        ) : null}
         {fieldDefs.length === 0 ? (
-          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">এখনো কোনো চেকআউট ফিল্ড নেই — নিচে তৈরি করুন।</p>
+          <EmptyState title="এখনো কোনো চেকআউট ফিল্ড নেই" description="নিচে তৈরি করুন।" />
         ) : (
           <div className="space-y-2">
             {fieldDefs.map((f) => (
@@ -1834,8 +2004,8 @@ export default function StorefrontStaffPage() {
                 {f.required ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">আবশ্যক</span> : null}
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${f.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{f.active ? "সক্রিয়" : "বন্ধ"}</span>
                 <span className="ml-auto flex gap-1.5">
-                  <button type="button" onClick={() => startEditField(f)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                  <button type="button" onClick={() => void deleteField(f)} disabled={busy === `field-del-${f.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                  <button type="button" onClick={() => startEditField(f)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                  <button type="button" onClick={() => void deleteField(f)} disabled={busy === `field-del-${f.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                 </span>
               </div>
             ))}
@@ -1889,84 +2059,229 @@ export default function StorefrontStaffPage() {
         </div>
       </section>
 
-      {/* Custom domain */}
-      <section className="card space-y-4 p-5">
-        <div className="font-semibold">কাস্টম ডোমেইন</div>
-
-        <div className="space-y-2 text-sm">
-          <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${customDomain ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>১</span>
-            <span className="font-semibold">ডোমেইন দেওয়া হয়েছে</span>
-            {customDomain ? <span className="font-mono font-bold">{customDomain}</span> : <span className="text-slate-500">— কোনো কাস্টম ডোমেইন সেট করা নেই</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${verified ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>২</span>
-            <span className="font-semibold">DNS যাচাই</span>
-            {verified ? <span className="text-emerald-700">যাচাই হয়েছে ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">এখনো যাচাই হয়নি</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${routing?.routingActive ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>৩</span>
-            <span className="font-semibold">Routing সক্রিয়</span>
-            {routing?.routingActive ? (
-              <span className="text-emerald-700">সক্রিয় — {routing.evidence ?? routing.checkedUrl}</span>
-            ) : routing ? (
-              <span className="text-amber-700">সক্রিয় পাওয়া যায়নি: {routing.reason ?? routing.checkedUrl}</span>
-            ) : verified ? (
-              <span className="text-slate-500">Routing: প্ল্যাটফর্মে ডোমেইন পয়েন্ট + SSL সেটআপ বাকি থাকতে পারে — Check now দিয়ে যাচাই করুন</span>
-            ) : (
-              <span className="text-slate-500">আগে DNS যাচাই করুন</span>
-            )}
-          </div>
+      {/* TD9: নিজের ডোমেইন — one unified 5-step custom-domain flow */}
+      <section className="card space-y-5 p-5">
+        <div>
+          <div className="font-semibold">নিজের ডোমেইন</div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">
+            নিজের কেনা ডোমেইনেই দোকান চালান — ডোমেইন লেখা, TXT যাচাই, routing নির্দেশনা আর অবস্থা, সব ধাপ এই এক বিভাগেই।
+          </p>
         </div>
 
-        {!customDomain ? (
-          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-            কাস্টম ডোমেইন ব্যবহার করতে আগে সংস্থার ব্র্যান্ডিং/সেটিংসে Custom Domain সেট করুন, তারপর এখানে এসে যাচাই করুন।{" "}
-            <Link href="/dashboard/settings" className="font-bold underline">Organization Settings →</Link>
-          </p>
-        ) : (
-          <>
-            {domainError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{domainError}</p> : null}
-            {domainNotice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{domainNotice}</p> : null}
+        {domainError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{domainError}</p> : null}
+        {domainNotice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{domainNotice}</p> : null}
 
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={issueToken} disabled={busy === "token"} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-                {busy === "token" ? "তৈরি হচ্ছে…" : "যাচাই টোকেন তৈরি করুন (TXT)"}
-              </button>
-              <button type="button" onClick={verifyDomain} disabled={busy === "verify"} className="btn-primary disabled:opacity-50">
-                {busy === "verify" ? "যাচাই হচ্ছে…" : "এখন যাচাই করুন"}
-              </button>
-              <button type="button" onClick={checkRouting} disabled={busy === "routing" || !verified} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-                {busy === "routing" ? "পরীক্ষা হচ্ছে…" : "Routing Check now"}
-              </button>
-            </div>
-
-            {tokenOut ? (
-              <div className="space-y-2 rounded-xl bg-slate-900 p-4 text-xs text-green-300">
-                <p className="font-sans font-bold text-white">DNS-এ এই TXT রেকর্ডটি যোগ করুন:</p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-sans text-slate-300">Host:</span>
-                  <code className="rounded bg-slate-800 px-2 py-1">{tokenOut.recordHost}</code>
-                  <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+        {(() => {
+          const stepBadge = "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700";
+          const statusMark = (ok: boolean) =>
+            `flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`;
+          const labels = customDomain ? customDomain.split(".").filter(Boolean) : [];
+          const isSubdomainStyle = labels.length > 2;
+          const hasToken = !!state.setting.hasDomainVerifyToken;
+          return (
+            <>
+              {/* ধাপ ১ — ডোমেইন লেখা ও সেভ */}
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>১</span>
+                  <span className="font-semibold">ধাপ ১ — ডোমেইন লেখা ও সেভ</span>
+                  {customDomain ? <span className="font-mono font-bold">{customDomain}</span> : <span className="text-slate-500">— এখনো কোনো ডোমেইন সেট করা নেই</span>}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-sans text-slate-300">Type: {tokenOut.recordType} · Value:</span>
-                  <code className="break-all rounded bg-slate-800 px-2 py-1">{tokenOut.recordValue}</code>
-                  <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    className="input min-w-64 flex-1 font-mono"
+                    value={domainInput}
+                    onChange={(e) => setDomainInput(e.target.value)}
+                    placeholder="dhaka-fashion.com"
+                    maxLength={253}
+                  />
+                  <button type="button" onClick={saveDomain} disabled={busy === "domain-set" || !domainInput.trim()} className="btn-primary disabled:opacity-50">
+                    {busy === "domain-set" ? "সেভ হচ্ছে…" : "ডোমেইন সেভ করুন"}
+                  </button>
                 </div>
-                <p className="font-sans text-slate-400">রেকর্ড যোগ করার পর DNS propagate হতে কিছু সময় লাগতে পারে — তারপর &ldquo;এখন যাচাই করুন&rdquo; চাপুন।</p>
+                <p className="text-xs text-slate-500">শুধু ডোমেইনটি লিখুন — https:// বা কোনো পথ ছাড়া (যেমন: dhaka-fashion.com অথবা shop.dhaka-fashion.com)।</p>
               </div>
-            ) : domain.verifyHost ? (
-              <p className="text-xs text-slate-500">TXT রেকর্ডের Host হবে: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{domain.verifyHost}</code> — টোকেন তৈরি করলে এর Value এখানে দেখাবে।</p>
-            ) : null}
 
-            <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-              মনে রাখবেন: ডোমেইনটি এই প্ল্যাটফর্মের দিকে পয়েন্ট করা (DNS A/CNAME) এবং SSL সার্টিফিকেট সেটআপ (Dokploy/Traefik) একটি
-              প্ল্যাটফর্ম-স্তরের কাজ — এই অ্যাপ থেকে করা যায় না। DNS যাচাই সফল হলেও routing সক্রিয় হতে ওই সেটআপ লাগবে; উপরে
-              &ldquo;Routing Check now&rdquo; দিয়ে আসল অবস্থা যাচাই করুন — প্রমাণ ছাড়া routing সক্রিয় বলা হবে না।
-            </p>
-          </>
-        )}
+              {/* ধাপ ২ — TXT যাচাই */}
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>২</span>
+                  <span className="font-semibold">ধাপ ২ — TXT যাচাই</span>
+                  {verified ? <span className="text-emerald-700">যাচাই হয়েছে ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">এখনো যাচাই হয়নি</span>}
+                </div>
+                {!customDomain ? (
+                  <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+                    এই ধাপটি এখন নিষ্ক্রিয় — আগে ধাপ ১-এ ডোমেইন লিখে সেভ করুন, তারপর এখানে TXT টোকেন তৈরি করে ডোমেইনটির মালিকানা যাচাই করতে পারবেন।
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={issueToken} disabled={busy === "token"} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
+                        {busy === "token" ? "তৈরি হচ্ছে…" : "যাচাই টোকেন তৈরি করুন (TXT)"}
+                      </button>
+                      <button type="button" onClick={verifyDomain} disabled={busy === "verify"} className="btn-primary disabled:opacity-50">
+                        {busy === "verify" ? "যাচাই হচ্ছে…" : "এখন যাচাই করুন"}
+                      </button>
+                    </div>
+
+                    {tokenOut ? (
+                      <div className="space-y-2 rounded-xl bg-slate-900 p-4 text-xs text-green-300">
+                        <p className="font-sans font-bold text-white">DNS-এ এই TXT রেকর্ডটি যোগ করুন:</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-sans text-slate-300">Host:</span>
+                          <code className="rounded bg-slate-800 px-2 py-1">{tokenOut.recordHost}</code>
+                          <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-sans text-slate-300">Type: {tokenOut.recordType} · Value:</span>
+                          <code className="break-all rounded bg-slate-800 px-2 py-1">{tokenOut.recordValue}</code>
+                          <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                        </div>
+                        <p className="font-sans text-slate-400">রেকর্ড যোগ করার পর DNS propagate হতে কিছু সময় লাগতে পারে — তারপর &ldquo;এখন যাচাই করুন&rdquo; চাপুন।</p>
+                      </div>
+                    ) : domain.verifyHost ? (
+                      <p className="text-xs text-slate-500">TXT রেকর্ডের Host হবে: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{domain.verifyHost}</code> — টোকেন তৈরি করলে এর Value এখানে দেখাবে।</p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+
+              {/* ধাপ ৩ — Routing নির্দেশনা */}
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>৩</span>
+                  <span className="font-semibold">ধাপ ৩ — Routing নির্দেশনা (DNS রেকর্ড)</span>
+                </div>
+                {!customDomain ? (
+                  <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+                    আগে ধাপ ১-এ ডোমেইন সেভ করুন — তারপর সেই ডোমেইনের জন্য ঠিক কোন DNS রেকর্ড লাগবে, তা এখানে হিসাব করে দেখানো হবে।
+                  </p>
+                ) : (
+                  <>
+                    {isSubdomainStyle ? (
+                      <div className="space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold">Type:</span>
+                          <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">CNAME</code>
+                          <span className="font-semibold">Host:</span>
+                          <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">{customDomain}</code>
+                          <button type="button" onClick={() => copyText(customDomain, "CNAME Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                          <span className="font-semibold">Target:</span>
+                          <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">app.qosprey.com</code>
+                          <button type="button" onClick={() => copyText("app.qosprey.com", "CNAME Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                        </div>
+                        <p className="text-xs leading-relaxed text-slate-500">
+                          টীকা: registrar অনুযায়ী Host ঘরে পুরো ডোমেইনটি লিখতে হতে পারে, আবার কোনোটায় শুধু subdomain অংশটি
+                          (যেমন: {labels[0]}) লাগে — আপনার registrar-এর নিয়ম অনুযায়ী দিন।
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 rounded-xl bg-slate-50 p-4 text-sm">
+                        <div className="space-y-1.5">
+                          <p><b>(ক)</b> আপনার registrar-এ <b>CNAME flattening / ALIAS / ANAME</b> সুবিধা থাকলে apex ডোমেইনের জন্য সেটাই ব্যবহার করুন:</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">Type:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">ALIAS / ANAME</code>
+                            <span className="font-semibold">Host:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">@</code>
+                            <span className="font-semibold">Target:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">app.qosprey.com</code>
+                            <button type="button" onClick={() => copyText("app.qosprey.com", "ALIAS Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 border-t border-slate-200 pt-3">
+                          <p><b>(খ)</b> সেই সুবিধা না থাকলে <b>A রেকর্ড</b> দিন:</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">Type:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">A</code>
+                            <span className="font-semibold">Host:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">@</code>
+                            <span className="font-semibold">Value:</span>
+                            <span>সার্ভারের IP (Dokploy প্যানেলে app ডোমেইনের A রেকর্ডের মান)</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold">www রূপ — Type:</span>
+                        <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">CNAME</code>
+                        <span className="font-semibold">Host:</span>
+                        <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">www</code>
+                        <button type="button" onClick={() => copyText("www", "www Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                        <span className="font-semibold">Target:</span>
+                        <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">{customDomain}</code>
+                        <button type="button" onClick={() => copyText(customDomain, "www Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                      </div>
+                      <p className="text-xs leading-relaxed text-slate-500">টীকা: যাচাই করা ডোমেইন ও তার www রূপ — দুটোতেই দোকান খুলবে।</p>
+                    </div>
+
+                    <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                      মনে রাখবেন: ডোমেইনটি এই প্ল্যাটফর্মের দিকে পয়েন্ট করা (DNS A/CNAME) এবং SSL সার্টিফিকেট সেটআপ (Dokploy/Traefik) একটি
+                      প্ল্যাটফর্ম-স্তরের কাজ — এই অ্যাপ থেকে করা যায় না। DNS যাচাই সফল হলেও routing সক্রিয় হতে ওই সেটআপ লাগবে; নিচের ধাপ ৪-এ
+                      &ldquo;Routing Check now&rdquo; দিয়ে আসল অবস্থা যাচাই করুন — প্রমাণ ছাড়া routing সক্রিয় বলা হবে না।
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* ধাপ ৪ — অবস্থা তালিকা */}
+              <div className="space-y-2 border-t pt-4 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className={stepBadge}>৪</span>
+                  <span className="font-semibold">ধাপ ৪ — অবস্থা</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={statusMark(hasToken)}>{hasToken ? "✓" : "…"}</span>
+                  <span className="font-semibold">টোকেন দেওয়া হয়েছে</span>
+                  {hasToken ? <span className="text-emerald-700">হ্যাঁ — TXT যাচাই টোকেন সেট করা আছে</span> : <span className="text-slate-500">বাকি — ধাপ ২-এ টোকেন তৈরি করুন</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={statusMark(verified)}>{verified ? "✓" : "…"}</span>
+                  <span className="font-semibold">যাচাই হয়েছে</span>
+                  {verified ? <span className="text-emerald-700">হ্যাঁ ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">বাকি — এখনো যাচাই হয়নি</span>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={statusMark(!!routing?.routingActive)}>{routing?.routingActive ? "✓" : "…"}</span>
+                  <span className="font-semibold">Routing ঠিক আছে</span>
+                  {routing?.routingActive ? (
+                    <span className="text-emerald-700">সক্রিয় — {routing.evidence ?? routing.checkedUrl}</span>
+                  ) : routing ? (
+                    <span className="text-amber-700">সক্রিয় পাওয়া যায়নি: {routing.reason ?? routing.checkedUrl}</span>
+                  ) : (
+                    <span className="text-slate-500">এখনো পরীক্ষা করা হয়নি — অনুমান নয়, আসল diagnostic দেখতে Check now চাপুন</span>
+                  )}
+                  <button type="button" onClick={checkRouting} disabled={busy === "routing" || !verified} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
+                    {busy === "routing" ? "পরীক্ষা হচ্ছে…" : "Routing Check now"}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={statusMark(false)}>…</span>
+                  <span className="font-semibold">SSL</span>
+                  <span className="text-slate-500">স্বয়ংক্রিয় SSL-এর পথ বেছে নেওয়া হয়েছে: Cloudflare for SaaS (TD10 spike রায়) — তবে প্ল্যাটফর্ম-মালিকের প্যানেল ধাপ (SaaS enable + লাইভ টেস্ট) বাকি থাকায় এই মুহূর্তে HTTPS নিশ্চিত নয়; routing ঠিক থাকলেও ব্রাউজারে সার্টিফিকেট সতর্কতা দেখাতে পারে</span>
+                </div>
+              </div>
+
+              {/* ধাপ ৫ — বদলানো/সরানো */}
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>৫</span>
+                  <span className="font-semibold">ধাপ ৫ — ডোমেইন বদলানো বা সরানো</span>
+                </div>
+                <p className="text-xs leading-relaxed text-slate-500">
+                  ডোমেইন বদলাতে চাইলে উপরের ধাপ ১-এর ঘরে নতুন ডোমেইন লিখে সেভ করুন — বদলালে আগের যাচাই রিসেট হয়ে যাবে,
+                  নতুন ডোমেইনের জন্য আবার TXT যাচাই করতে হবে। ডোমেইন সরিয়ে ফেললেও চিন্তা নেই — আপনার সাবডোমেইন ঠিকানা
+                  ({shopSubdomainHost(state.organization.slug)}) সবসময়ই থাকে, দোকান সেখানেই খুলবে।
+                </p>
+                <button type="button" onClick={removeDomain} disabled={busy === "domain-remove" || !customDomain} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold text-rose-600 disabled:opacity-50">
+                  {busy === "domain-remove" ? "সরানো হচ্ছে…" : "ডোমেইন সরিয়ে ফেলুন"}
+                </button>
+                {!customDomain ? <span className="ml-2 text-xs text-slate-400">কোনো ডোমেইন সেট করা নেই — সরানোর কিছু নেই।</span> : null}
+              </div>
+            </>
+          );
+        })()}
       </section>
     </div>
   );

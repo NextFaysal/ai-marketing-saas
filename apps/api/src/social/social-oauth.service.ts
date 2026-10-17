@@ -4,12 +4,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson, encryptJson } from "../integrations/crypto";
 import {
-  effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveTiktokAppConfig, ensurePlatformConfig, socialOAuthRedirectUri,
+  effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveThreadsAppConfig, effectiveTiktokAppConfig, ensurePlatformConfig, socialOAuthRedirectUri,
 } from "../common/platform-config";
 import { TikTokClient, type TikTokTokenSet, type TikTokAppCreds } from "./tiktok.client";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 import { YouTubeClient, type GoogleTokenSet, type YouTubeChannel, type GoogleAppCreds } from "./youtube.client";
 import { LinkedInClient, type LinkedinTokenSet, type LinkedinAppCreds } from "./linkedin.client";
+import { TelegramClient } from "./telegram.client";
+import { ThreadsClient, type ThreadsTokenSet, type ThreadsAppCreds } from "./threads.client";
 import { PermanentPublishError } from "./social-publish.service";
 
 /**
@@ -74,6 +76,16 @@ export const LINKEDIN_NOT_CONFIGURED_MSG =
 export const OWN_LINKEDIN_NOT_CONFIGURED_MSG =
   "নিজের LinkedIn অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার LinkedIn অ্যাপটি যোগ করুন (সেখানে দেওয়া Callback URL-টি LinkedIn অ্যাপে register করতে হবে), অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।";
 export const LINKEDIN_SCOPES = "r_liteprofile r_organization_admin w_organization_social";
+/** SN7: Threads app not configured (platform app path). */
+export const THREADS_NOT_CONFIGURED_MSG =
+  "Threads app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন (Admin Panel → Platform Config → Threads App)।";
+/** SN7: appSource "own" was chosen but this org has no Threads
+ * app of its own saved in the Connect Center. */
+export const OWN_THREADS_NOT_CONFIGURED_MSG =
+  "নিজের Threads অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার Threads অ্যাপটি যোগ করুন (সেখানে দেওয়া Callback URL-টি Threads অ্যাপে register করতে হবে), অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।";
+/** SN7: the documented Threads scopes — basic profile, content
+ * publishing, and insights (follower counts + post metrics). */
+export const THREADS_SCOPES = "threads_basic,threads_content_publish,threads_manage_insights";
 
 @Injectable()
 export class SocialOAuthService {
@@ -81,6 +93,8 @@ export class SocialOAuthService {
   private readonly tiktok: TikTokClient;
   private readonly youtube: YouTubeClient;
   private readonly linkedin: LinkedInClient;
+  private readonly telegram: TelegramClient;
+  private readonly threads: ThreadsClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -88,10 +102,19 @@ export class SocialOAuthService {
     @Optional() tiktokClient?: TikTokClient,
     @Optional() youtubeClient?: YouTubeClient,
     @Optional() linkedinClient?: LinkedInClient,
+    // SN6: Telegram is not OAuth, but its connect lives here so
+    // it can reuse persistOAuthAccount's one persistence path.
+    // Appended LAST — existing positional spec constructions
+    // (prisma, audit, tiktok, youtube, linkedin) are untouched.
+    @Optional() telegramClient?: TelegramClient,
+    // SN7: appended after the SN6 client for the same reason.
+    @Optional() threadsClient?: ThreadsClient,
   ) {
     this.tiktok = tiktokClient ?? new TikTokClient();
     this.youtube = youtubeClient ?? new YouTubeClient();
     this.linkedin = linkedinClient ?? new LinkedInClient();
+    this.telegram = telegramClient ?? new TelegramClient();
+    this.threads = threadsClient ?? new ThreadsClient();
   }
 
   private webBase(): string {
@@ -173,6 +196,7 @@ export class SocialOAuthService {
       tiktok: { configured: Boolean(tt), audited: tt?.audited === true },
       youtube: { configured: Boolean(gg) },
       linkedin: { configured: Boolean(effectiveLinkedinAppConfig()) },
+      threads: { configured: Boolean(effectiveThreadsAppConfig()) },
     };
   }
 
@@ -301,7 +325,11 @@ export class SocialOAuthService {
     }
     const expiresAt = typeof cred.expiresAt === "number" ? cred.expiresAt : 0;
     if (!expiresAt || expiresAt - Date.now() > TOKEN_REFRESH_SKEW_MS) return accessToken;
-    if (!cred.refreshToken) {
+    // SN7: Threads long-lived tokens carry NO separate refresh
+    // token — the refresh grant consumes the access token
+    // itself (th_refresh_token), so the missing-refresh-token
+    // terminal check does not apply to that platform.
+    if (!cred.refreshToken && account.platform !== "threads") {
       await this.markAccountError(account.id, "Access token-এর মেয়াদ শেষ, কিন্তু refresh token নেই — অ্যাকাউন্টটি আবার কানেক্ট করুন।");
       throw new PermanentPublishError("Access token-এর মেয়াদ শেষ হয়ে গেছে — অ্যাকাউন্টটি আবার কানেক্ট করুন।");
     }
@@ -309,7 +337,7 @@ export class SocialOAuthService {
     // connect is as terminal as a dead refresh token.
     try {
       await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
-      let fresh: TikTokTokenSet | GoogleTokenSet | LinkedinTokenSet;
+      let fresh: TikTokTokenSet | GoogleTokenSet | LinkedinTokenSet | ThreadsTokenSet;
       if (account.platform === "tiktok") {
         // CC4: an account connected under the tenant's OWN app
         // refreshes against THAT app — the platform app's secret
@@ -369,6 +397,14 @@ export class SocialOAuthService {
             String(cred.refreshToken),
           );
         }
+      } else if (account.platform === "threads") {
+        // SN7: th_refresh_token needs NO app secret and no app
+        // config at all — the current long-lived token is the
+        // whole grant (documented; the token reaching this
+        // branch is ≥24h old by construction, as Threads
+        // requires). Works for own-app and platform-app
+        // accounts alike.
+        fresh = await this.threads.refreshLongLived(accessToken);
       } else {
         throw new Error(`OAuth refresh is not supported for platform: ${account.platform}`);
       }
@@ -912,5 +948,184 @@ export class SocialOAuthService {
       appSource: (row.payload as any)?.appSource === "own" ? "own" : "platform",
     });
     return this.serializeAccount(account);
+  }
+
+  // ---------- SN6: Telegram channel connect (bot token, NOT OAuth) ----------
+
+  /**
+   * Verify-before-save, in order — ANY failure throws a Bengali
+   * 400 carrying Telegram's verbatim message and NOTHING is
+   * stored (no Integration, no credential, no account row):
+   * 1. getMe — the pasted token really is a bot token;
+   * 2. getChat — the channel exists for this bot, and really is
+   *    a channel (a group/supergroup target is refused honestly:
+   *    SN6 publishes to channels);
+   * 3. getChatMember — the bot is that channel's administrator
+   *    (or creator) AND may post messages; a bot that cannot
+   *    post would only fail later, inside the worker.
+   * On success the account persists through the ONE OAuth
+   * persistence path (provider "telegram_social") with the bot
+   * token sealed exactly like every other social credential
+   * ({ accessToken, expiresAt: 0 } — bot tokens do not expire,
+   * so ensureAccessToken's skew check always returns the stored
+   * token and no refresh branch exists for telegram).
+   * externalId is the channel's numeric chat id (the stable id
+   * publishing addresses); the channel username rides along for
+   * display + public t.me URLs.
+   */
+  async connectTelegramChannel(
+    organizationId: string, userId: string,
+    dto: { botToken?: string; channel?: string },
+  ) {
+    const botToken = String(dto?.botToken ?? "").trim();
+    const channelInput = String(dto?.channel ?? "").trim();
+    if (!botToken) {
+      throw new BadRequestException("Bot Token প্রয়োজন — Telegram-এ @BotFather দিয়ে একটি Bot বানিয়ে তার Token-টি দিন।");
+    }
+    if (!channelInput) {
+      throw new BadRequestException("Channel-এর Username (যেমন @mychannel) অথবা numeric Chat ID প্রয়োজন।");
+    }
+    let bot: { id: number; username: string | null };
+    try {
+      bot = await this.telegram.getMe(botToken);
+    } catch (e) {
+      throw new BadRequestException(`Bot যাচাই ব্যর্থ হয়েছে — Token-টি সঠিক কিনা দেখুন। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+    let chat: { id: number; type: string; title: string | null; username: string | null };
+    try {
+      chat = await this.telegram.getChat(botToken, channelInput);
+    } catch (e) {
+      throw new BadRequestException(`Channel পাওয়া যায়নি — Username/ID সঠিক কিনা এবং Bot-টি Channel-এ যোগ করা হয়েছে কিনা দেখুন। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+    if (chat.type !== "channel") {
+      throw new BadRequestException(`এটি একটি Channel নয় (ধরন: ${chat.type || "unknown"}) — Telegram পোস্টিং এই সংস্করণে শুধু Channel-এ হয়। Channel-এর Username/ID দিন।`);
+    }
+    let member: { status: string; canPostMessages: boolean | null };
+    try {
+      member = await this.telegram.getChatMember(botToken, String(chat.id), bot.id);
+    } catch (e) {
+      throw new BadRequestException(`Bot-এর Channel-সদস্যতা যাচাই করা যায়নি। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+    const isAdmin = member.status === "administrator" || member.status === "creator";
+    if (!isAdmin) {
+      throw new BadRequestException(`Bot-টি এই Channel-এর Admin নয় (বর্তমান অবস্থা: ${member.status || "member নয়"}) — Channel Settings → Administrators-এ Bot-টিকে Admin করুন, তারপর আবার চেষ্টা করুন।`);
+    }
+    if (member.canPostMessages === false) {
+      throw new BadRequestException("Bot-টি Admin হলেও Channel-এ পোস্ট করার অনুমতি (Post Messages) বন্ধ আছে — Channel-এর Admin সেটিংসে Bot-এর 'Post Messages' অনুমতি চালু করুন, তারপর আবার চেষ্টা করুন।");
+    }
+    const account = await this.persistOAuthAccount({
+      organizationId, actorId: userId,
+      platform: "telegram", provider: "telegram_social",
+      externalId: String(chat.id),
+      name: chat.title || (chat.username ? `@${chat.username}` : `Channel ${chat.id}`),
+      username: chat.username ?? null,
+      credential: { accessToken: botToken, expiresAt: 0, botUsername: bot.username ?? null },
+    });
+    return this.serializeAccount(account);
+  }
+
+  // ---------- SN7: Threads connect (Meta-family OAuth) ----------
+
+  private async threadsCredsFor(organizationId: string, appSource: string): Promise<ThreadsAppCreds | null> {
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma, organizationId, "threads");
+      if (!own) return null;
+      return { clientId: own.appId, clientSecret: own.appSecret, redirectUri: socialOAuthRedirectUri("threads") };
+    }
+    await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
+    const cfg = effectiveThreadsAppConfig();
+    if (!cfg) return null;
+    return {
+      clientId: cfg.clientId, clientSecret: cfg.clientSecret,
+      redirectUri: socialOAuthRedirectUri("threads", cfg.redirectUri),
+    };
+  }
+
+  /** Step 1 (authenticated): state + threads.net authorize URL.
+   * One authorization yields exactly ONE Threads profile, so
+   * (unlike YouTube/LinkedIn) there is no picker — the callback
+   * stores the account directly. ?appSource=own runs under the
+   * tenant's OWN Threads app (CC28 discipline). */
+  async threadsConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
+    if (appSource != null && !["platform", "own"].includes(appSource)) {
+      throw new BadRequestException("appSource must be platform or own");
+    }
+    const creds = await this.threadsCredsFor(organizationId, appSource ?? "platform");
+    if (!creds) {
+      throw new BadRequestException(appSource === "own" ? OWN_THREADS_NOT_CONFIGURED_MSG : THREADS_NOT_CONFIGURED_MSG);
+    }
+    const state = appSource === "own"
+      ? await this.createState(organizationId, userId, "threads", "connect", { appSource: "own" })
+      : await this.createState(organizationId, userId, "threads", "connect");
+    const params = new URLSearchParams({
+      client_id: creds.clientId,
+      redirect_uri: creds.redirectUri,
+      scope: THREADS_SCOPES,
+      response_type: "code",
+      state,
+    });
+    return { url: `https://www.threads.net/oauth/authorize?${params.toString()}` };
+  }
+
+  /**
+   * Step 2 (PUBLIC callback): code → short-lived token →
+   * long-lived token (th_exchange_token) → profile → account.
+   * The stored credential is the LONG-lived token only, with
+   * its real expiry — the 1-hour token never touches storage.
+   * NEVER throws — every outcome is a redirect to the Social
+   * Posts page (where the connect started) with
+   * social_connected=threads or a social_error explanation.
+   */
+  async handleThreadsCallback(query: { code?: string; state?: string; error?: string }): Promise<string> {
+    try {
+      if (query.error) {
+        return this.webRedirect({ social_error: `Threads Connect বাতিল/ব্যর্থ হয়েছে: ${query.error}` });
+      }
+      if (!query.code || !query.state) {
+        return this.webRedirect({ social_error: "Threads callback-এ code/state পাওয়া যায়নি — আবার Connect করার চেষ্টা করুন।" });
+      }
+      const stateRow = await this.consumeState(query.state, "threads", "connect");
+      if (!stateRow) {
+        return this.webRedirect({ social_error: "Connect লিংকটি মেয়াদোত্তীর্ণ বা ইতিমধ্যে ব্যবহৃত — আবার Connect করুন।" });
+      }
+      const appSource = (stateRow as any).payload?.appSource === "own" ? "own" : "platform";
+      const creds = await this.threadsCredsFor(stateRow.organizationId, appSource);
+      if (!creds) {
+        return this.webRedirect({ social_error: appSource === "own" ? OWN_THREADS_NOT_CONFIGURED_MSG : THREADS_NOT_CONFIGURED_MSG });
+      }
+      let longLived: ThreadsTokenSet;
+      let exchangedUserId: string | null;
+      try {
+        const exchanged = await this.threads.exchangeCode(creds, query.code);
+        exchangedUserId = exchanged.userId;
+        longLived = await this.threads.exchangeLongLived(creds, exchanged.shortLivedToken);
+      } catch (e) {
+        return this.webRedirect({ social_error: `Threads Token বিনিময় ব্যর্থ হয়েছে: ${e instanceof Error ? e.message : "unknown error"}` });
+      }
+      let profile: { id: string; username: string | null; name: string | null; pictureUrl: string | null };
+      try {
+        profile = await this.threads.getProfile(longLived.accessToken);
+      } catch (e) {
+        return this.webRedirect({ social_error: `Threads Profile আনা যায়নি: ${e instanceof Error ? e.message : "unknown error"}` });
+      }
+      const externalId = profile.id || exchangedUserId;
+      if (!externalId) {
+        return this.webRedirect({ social_error: "Threads Profile থেকে কোনো User ID পাওয়া যায়নি — কিছু সেভ করা হয়নি, আবার Connect করুন।" });
+      }
+      await this.persistOAuthAccount({
+        organizationId: stateRow.organizationId, actorId: stateRow.userId,
+        platform: "threads", provider: "threads_social",
+        externalId,
+        name: profile.name || (profile.username ? `@${profile.username}` : "Threads"),
+        username: profile.username ?? null,
+        pictureUrl: profile.pictureUrl ?? null,
+        credential: { accessToken: longLived.accessToken, expiresAt: longLived.expiresAt, scope: THREADS_SCOPES },
+        appSource,
+      });
+      return this.webRedirect({ social_connected: "threads" });
+    } catch (e) {
+      this.logger.warn(`threads callback failed: ${e instanceof Error ? e.message : "unknown"}`);
+      return this.webRedirect({ social_error: "Threads Connect সম্পন্ন করা যায়নি — আবার চেষ্টা করুন।" });
+    }
   }
 }

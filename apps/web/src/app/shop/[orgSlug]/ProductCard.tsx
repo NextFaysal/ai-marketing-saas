@@ -1,12 +1,12 @@
 import React from "react";
 import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
-import { MediaImage } from "@/components/media-image";
+import { MediaImage } from "@/components/MediaImage";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { FlashCountdown } from "./FlashCountdown";
 import { WishlistHeart } from "./WishlistHeart";
-import { themeOf, type ShopTheme } from "@/lib/shop-theme";
+import { isV2Tokens, themeOf, type ShopTheme } from "@/lib/shop-theme";
 import { QuickViewButton } from "./QuickView";
 
 export function priceText(minor: string): string {
@@ -45,6 +45,12 @@ export function ProductCard({
   flashServerNow?: string | null;
 }) {
   const tokens: ShopTheme = theme && typeof theme === "object" ? theme : themeOf(theme);
+  // ED8: v2 detection — the tokens object carries no id, so v2 is
+  // detected by the presence of its v2-only optional fields
+  // (isV2Tokens: cardPriceClass !== undefined; legacy themes omit
+  // them entirely). The legacy branch below is the pre-ED8 JSX,
+  // untouched; v2 renders through its own separate branch.
+  const isV2 = isV2Tokens(tokens);
   const badge = stockBadge(product.stockState, locale);
   const t = shopT(locale);
   const inner = (
@@ -89,12 +95,71 @@ export function ProductCard({
       <WishlistHeart orgSlug={orgSlug} productId={product.id} locale={locale} />
     </div>
   );
-  if (!product.slug) return <div className={`relative ${cls}`}>{heart}{inner}</div>;
+  if (!isV2) {
+    if (!product.slug) return <div className={`relative ${cls}`}>{heart}{inner}</div>;
+    return (
+      <div className="relative">
+        {heart}
+        <Link href={`/shop/${orgSlug}/products/${product.slug}`} className={cls}>
+          {inner}
+        </Link>
+      </div>
+    );
+  }
+
+  // ED8: v2 card — token-native surface (tokens.cardClass already
+  // carries the v2 surface/border/shadow), body + price from the
+  // v2-only token fields, badges aligned in one row with one
+  // radius, and ≥44px hit areas on both quick actions. Same data,
+  // same handlers, same Link target — presentation only. There is
+  // deliberately NO add-to-cart on the card (there never was one;
+  // the card links to the PDP, quick actions are view + wishlist).
+  const innerV2 = (
+    <>
+      <div className={`relative ${tokens.cardImageWrapClass}`}>
+        {product.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <MediaImage src={product.imageUrl} alt={product.name} width={640} height={640} sizes="(max-width: 768px) 50vw, 320px" className="aspect-square w-full object-cover" />
+        ) : (
+          <div className="flex aspect-square w-full items-center justify-center bg-[var(--brand-soft)] text-5xl">📦</div>
+        )}
+        <QuickViewButton orgSlug={orgSlug} product={product} locale={locale} large />
+      </div>
+      <div className={tokens.cardBodyClass}>
+        <h3 className="line-clamp-2 text-sm font-bold text-[var(--ink-strong)]">{product.name}</h3>
+        {product.category ? <p className="text-[11px] text-[var(--ink-faint)]">{product.category}</p> : null}
+        {product.brand ? <p className="text-[11px] text-[var(--ink-faint)]">{t.brand.brandLabel}: {product.brand.name}</p> : null}
+        {product.flashSale ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">⚡ {t.home.flashSale} −{product.flashSale.percentOff}%</span>
+            <span className="text-[11px] text-rose-700">
+              <FlashCountdown endsAt={product.flashSale.endsAt} serverNow={flashServerNow} locale={locale} compact />
+            </span>
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={tokens.cardPriceClass}>{priceText(product.priceMinor)}</span>
+          {product.compareAtMinor ? (
+            <span className="text-xs text-[var(--ink-faint)] line-through">{priceText(product.compareAtMinor)}</span>
+          ) : null}
+          {badge ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.cls}`}>{badge.label}</span> : null}
+          {product.freeShipping ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">{t.brand.freeDeliveryBadge}</span> : null}
+        </div>
+      </div>
+    </>
+  );
+  const clsV2 = `block overflow-hidden transition hover:shadow-[var(--shadow-card-hover)] ${tokens.cardClass}`;
+  const heartV2 = (
+    <div className="absolute right-2.5 top-2.5 z-10">
+      <WishlistHeart orgSlug={orgSlug} productId={product.id} locale={locale} large />
+    </div>
+  );
+  if (!product.slug) return <div className={`relative ${clsV2}`}>{heartV2}{innerV2}</div>;
   return (
     <div className="relative">
-      {heart}
-      <Link href={`/shop/${orgSlug}/products/${product.slug}`} className={cls}>
-        {inner}
+      {heartV2}
+      <Link href={`/shop/${orgSlug}/products/${product.slug}`} className={clsV2}>
+        {innerV2}
       </Link>
     </div>
   );

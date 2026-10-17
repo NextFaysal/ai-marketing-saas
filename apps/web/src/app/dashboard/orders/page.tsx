@@ -1,5 +1,7 @@
 "use client";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
@@ -7,32 +9,37 @@ import {
   type OrderFilters, type QueueRow, type SavedView, type FeedItem,
 } from "@/lib/orders-on1";
 import {
-  COD_CALL_OUTCOMES, FRAUD_BAND_LABEL, codCallOutcomeLabel, type RiskReason,
+  FRAUD_BAND_LABEL, codCallOutcomeLabel, type RiskReason,
 } from "@/lib/orders-on4";
 import {
-  EMPTY_FRAUD_RULE_DRAFT, FRAUD_RULE_ACTION_LABEL, buildFraudRulePayload, fraudAttemptKindLabel,
-  identifierKindLabel, normalizeIdentifierValue, validateIdentifierInput, type FraudRuleDraft,
+  EMPTY_FRAUD_RULE_DRAFT, buildFraudRulePayload,
+  normalizeIdentifierValue, validateIdentifierInput, type FraudRuleDraft,
 } from "@/lib/orders-gb3";
 import {
-  NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS, TEMPLATE_VARIABLE_HELP,
-  notificationChannelLabel, notificationEventLabel,
+  NOTIFICATION_CHANNELS,
 } from "@/lib/orders-on5";
 import {
-  buildEditItemsBody, draftsFromOrderItems, surgeryAvailability, surgeryMoneySummary,
+  buildEditItemsBody, draftsFromOrderItems,
   validateDraft, type DraftLine, type PatchItemsResult, type PreviewResult,
 } from "@/lib/orders-on3";
 import {
-  deliveryCoverageCaption, marginTone, overpaidMinorOf,
   type CodBoard, type OrderProfit,
 } from "@/lib/orders-on7";
-import { OrderAllocationsSection, OrderDetailOn2, memberName, type MemberRow, type OrderAllocation } from "./on2-detail";
+import { memberName, type MemberRow, type OrderAllocation } from "./on2-detail";
 import { DuplicatesModal } from "./components/DuplicatesModal";
+import { CodCallChips } from "./components/CodCallChips";
+import { SplitDialog } from "./components/SplitDialog";
+import { MergeDialog } from "./components/MergeDialog";
+import { FraudSettingsPanel } from "./components/FraudSettingsPanel";
+import { NotificationSettingsPanel } from "./components/NotificationSettingsPanel";
+import { OrderActionPanel } from "./components/OrderActionPanel";
 import { OrderAutomationPanel } from "./on8-automation";
 import { OrderAnalyticsPanel } from "./on9-analytics";
 import { OrderPrintPanel } from "./on10-print";
 import { OrderTeamPanel } from "./on12-team";
 import { formatMinor } from "@repo/contracts";
-import { EmptyState, KpiCard } from "@repo/ui";
+import { EmptyState, KpiCard, ResponsiveTable } from "@repo/ui";
+import { useConfirm, usePrompt, useToast } from "@repo/ui/client";
 import { extractedSummary, type LabelScanResultView, type LabelMatchView } from "@/lib/cx8";
 
 interface OrderItem {
@@ -178,39 +185,6 @@ const RISK_LABEL: Record<string, { text: string; cls: string }> = {
   unknown: { text: "ঝুঁকি: তথ্য নেই", cls: "bg-slate-100 text-slate-500" },
 };
 
-/** ON4: COD confirmation-call chip row. Renders the "কল করেছি:"
- * outcome buttons (small, so the dense table stays intact) plus
- * the recorded attempt history when there is any. The parent
- * decides WHERE it shows (needs_confirmation rows / the detail
- * panel for awaiting COD orders); this only renders the row. */
-function CodCallChips({ order, busy, onCall }: {
-  order: Order;
-  busy: boolean;
-  onCall: (order: Order, outcome: string) => void;
-}) {
-  const attempts = order.codCallAttempts ?? 0;
-  return (
-    <span className="mt-1.5 block space-y-1">
-      <span className="flex flex-wrap items-center gap-1">
-        <span className="text-[11px] font-semibold text-slate-500">কল করেছি:</span>
-        {COD_CALL_OUTCOMES.map((oc) => (
-          <button key={oc.key} type="button" disabled={busy}
-            className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => onCall(order, oc.key)}>
-            {oc.label}
-          </button>
-        ))}
-        {busy ? <span className="text-[11px] text-slate-400">রেকর্ড হচ্ছে…</span> : null}
-      </span>
-      {attempts > 0 ? (
-        <span className="block text-[11px] text-slate-500">
-          কল: {attempts}বার{order.codLastCallOutcome ? ` · সর্বশেষ: ${codCallOutcomeLabel(order.codLastCallOutcome)}` : ""}
-          {order.codLastCallAt ? ` · ${new Date(order.codLastCallAt).toLocaleString("bn-BD")}` : ""}
-        </span>
-      ) : null}
-    </span>
-  );
-}
 interface Stats { totalOrders: number; codOrders: number; codSharePercent: number; deliveredRevenueMinor: string; byStatus: { status: string; count: number }[] }
 interface Shipment { id: string; orderId: string; trackingCode?: string | null; status: string; provider: string; trackingUrl?: string | null; courierRuleId?: string | null; chargeMinor?: string | null }
 // EC22: courier auto-select rules + tracking templates, riders.
@@ -246,11 +220,24 @@ function transitionAllowed(from: string, to: string): boolean {
   return allowed.includes(to);
 }
 
-export default function OrdersPage() {
+function OrdersPageInner() {
+  // ED12 (EB5): URL-driven list state — queue / status / committed
+  // search are read from the query string on mount (see the mirror
+  // effect near patchFilters). Absent params = today's defaults.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const urlQueue = searchParams.get("queue") ?? "";
+  const urlStatus = searchParams.get("status") ?? "";
+  const urlSearch = searchParams.get("search") ?? "";
+  // ED14 (EB5): native dialogs replaced by the shared kit hooks.
+  const confirm = useConfirm();
+  const prompt = usePrompt();
+  const { toast } = useToast();
   const [items, setItems] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(urlStatus);
   const [codOnly, setCodOnly] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [error, setError] = useState("");
@@ -429,8 +416,10 @@ export default function OrdersPage() {
   // ---- ON1: Command Center state ----
   // One filter object drives the list query, the saved-view
   // payload and the reset button (see lib/orders-on1).
-  const [filters, setFilters] = useState<OrderFilters>(EMPTY_ORDER_FILTERS);
-  const [searchDraft, setSearchDraft] = useState("");
+  const [filters, setFilters] = useState<OrderFilters>(() => ({
+    ...EMPTY_ORDER_FILTERS, queue: urlQueue, status: urlStatus, search: urlSearch,
+  }));
+  const [searchDraft, setSearchDraft] = useState(urlSearch);
   const [queues, setQueues] = useState<QueueRow[]>([]);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [members, setMembers] = useState<MemberRow[]>([]);
@@ -821,7 +810,7 @@ export default function OrdersPage() {
       await loadDuplicates();
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "মার্জ করতে সমস্যা হয়েছে");
+      toast({ title: e instanceof Error ? e.message : "মার্জ করতে সমস্যা হয়েছে", tone: "error" });
     } finally {
       setDupMergeBusy("");
     }
@@ -841,7 +830,7 @@ export default function OrdersPage() {
       setMergeOpen(false);
       setSelected([]);
       setBulkActionResult(null);
-      setRowNotice(`মার্জ সম্পন্ন হয়েছে — survivor ${survivorLabel}; ${(out.cancelledOrderIds ?? others).length}টি অর্ডার বাতিল হয়েছে${out.reassignedVerifications ? `; ${out.reassignedVerifications}টি পেমেন্ট যাচাই survivor-এ সরে গেছে` : ""}।`);
+      toast({ title: `মার্জ সম্পন্ন হয়েছে — survivor ${survivorLabel}; ${(out.cancelledOrderIds ?? others).length}টি অর্ডার বাতিল হয়েছে${out.reassignedVerifications ? `; ${out.reassignedVerifications}টি পেমেন্ট যাচাই survivor-এ সরে গেছে` : ""}।`, tone: "success" });
       await load();
       void loadQueues();
     } catch (e) { setMergeError(e instanceof Error ? e.message : "মার্জ ব্যর্থ"); }
@@ -921,7 +910,7 @@ export default function OrdersPage() {
 
   async function cancelInstPlan() {
     const orgId = getOrganizationId(); if (!orgId || !instPlan) return;
-    if (!window.confirm("এই কিস্তি প্ল্যানটি বাতিল করবেন? ইতিমধ্যে সংগ্রহ করা টাকা সংগ্রহ হিসেবেই থাকবে।")) return;
+    if (!(await confirm({ title: "এই কিস্তি প্ল্যানটি বাতিল করবেন? ইতিমধ্যে সংগ্রহ করা টাকা সংগ্রহ হিসেবেই থাকবে।", danger: true, confirmLabel: "বাতিল করুন" }))) return;
     setInstBusy("cancel"); setInstError("");
     try {
       const plan = await apiFetch<InstallmentPlan>(`/organizations/${orgId}/installments/${instPlan.id}/cancel`, { method: "POST" });
@@ -1100,7 +1089,7 @@ export default function OrdersPage() {
 
   async function releaseFraud(o: Order) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`#${o.externalNumber ?? o.id.slice(0, 8)} অর্ডারের আটকানো ছেড়ে দেবেন?`)) return;
+    if (!(await confirm({ title: `#${o.externalNumber ?? o.id.slice(0, 8)} অর্ডারের আটকানো ছেড়ে দেবেন?` }))) return;
     setFraudBusy("release"); setFraudNotice("");
     try {
       const updated = await apiFetch<Order>(`/organizations/${orgId}/orders/${o.id}/release`, {
@@ -1125,7 +1114,7 @@ export default function OrdersPage() {
         method: "POST", body: JSON.stringify({ outcome }),
       });
       syncOrderRow(updated);
-      setRowNotice(`#${o.externalNumber ?? o.id.slice(0, 8)} — কল রেকর্ড হয়েছে: ${codCallOutcomeLabel(outcome)}`);
+      toast({ title: `#${o.externalNumber ?? o.id.slice(0, 8)} — কল রেকর্ড হয়েছে: ${codCallOutcomeLabel(outcome)}`, tone: "success" });
       void loadQueues();
     } catch (e) { setRowNotice(e instanceof Error ? e.message : "কল রেকর্ড ব্যর্থ"); }
     finally { setCodBusy(""); }
@@ -1223,7 +1212,7 @@ export default function OrdersPage() {
 
   async function deleteBlockedPhone(row: BlockedPhoneRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`${row.phone} নম্বরটি ব্লক তালিকা থেকে সরাবেন?`)) return;
+    if (!(await confirm({ title: `${row.phone} নম্বরটি ব্লক তালিকা থেকে সরাবেন?`, danger: true, confirmLabel: "সরিয়ে দিন" }))) return;
     setFraudPanelBusy(`block-del-${row.id}`); setFraudPanelNotice(""); setFraudPanelError("");
     try {
       await apiFetch(`/organizations/${orgId}/orders/blocked-phones/${row.id}`, { method: "DELETE" });
@@ -1329,7 +1318,7 @@ export default function OrdersPage() {
 
   async function deleteFraudRule(row: FraudRuleRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${row.name}" নিয়মটি মুছে ফেলবেন?`)) return;
+    if (!(await confirm({ title: `"${row.name}" নিয়মটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
     setFraudPanelBusy(`rule-del-${row.id}`); setFraudPanelNotice(""); setFraudPanelError("");
     try {
       await apiFetch(`/organizations/${orgId}/orders/fraud-rules/${row.id}`, { method: "DELETE" });
@@ -1372,6 +1361,23 @@ export default function OrdersPage() {
     }, 350);
     return () => clearTimeout(t);
   }, [searchDraft]);
+
+  // ED12 (EB5): mirror queue / status / committed search back into
+  // the URL (replace, scroll preserved; params at their default
+  // values are omitted, so the bare URL stays bare). Saved views
+  // flow through applyFiltersObject -> these same states, so
+  // applying a view updates the URL through this same path.
+  // Pagination is deliberately NOT in the URL: the list has no
+  // page state — buildOrderListParams always requests pageSize 50.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (filters.queue) next.set("queue", filters.queue);
+    if (status) next.set("status", status);
+    if (filters.search) next.set("search", filters.search);
+    const qs = next.toString();
+    if (qs === searchParams.toString()) return;
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [filters.queue, filters.search, status, pathname, router, searchParams]);
 
   const loadQueues = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -1443,7 +1449,7 @@ export default function OrdersPage() {
 
   async function saveCurrentView() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const name = window.prompt("ভিউয়ের নাম লিখুন");
+    const name = await prompt({ title: "ভিউয়ের নাম লিখুন" });
     if (!name || !name.trim()) return;
     setViewNotice("");
     try {
@@ -1452,7 +1458,7 @@ export default function OrdersPage() {
         method: "POST",
         body: JSON.stringify({ name: name.trim(), ...(payload.queue ? { queue: payload.queue } : {}), filters: payload.filters }),
       });
-      setViewNotice("ভিউ সংরক্ষণ হয়েছে।");
+      toast({ title: "ভিউ সংরক্ষণ হয়েছে।", tone: "success" });
       await loadSavedViews();
     } catch (e) { setViewNotice(e instanceof Error ? e.message : "ভিউ সংরক্ষণ ব্যর্থ"); }
   }
@@ -1471,8 +1477,8 @@ export default function OrdersPage() {
    * until the next action. */
   async function runBulkAction(action: string) {
     const orgId = getOrganizationId(); if (!orgId || selected.length === 0) return;
-    if (action === "set_status" && !window.confirm(`${selected.length}টি অর্ডারের অবস্থা "${bulkStatus}" করবেন?`)) return;
-    if (action === "book_courier" && !window.confirm(`${selected.length}টি অর্ডারের জন্য ${bulkProviderOn1} কুরিয়ার বুক করবেন?`)) return;
+    if (action === "set_status" && !(await confirm({ title: `${selected.length}টি অর্ডারের অবস্থা "${bulkStatus}" করবেন?` }))) return;
+    if (action === "book_courier" && !(await confirm({ title: `${selected.length}টি অর্ডারের জন্য ${bulkProviderOn1} কুরিয়ার বুক করবেন?`, danger: true, confirmLabel: "বুক করুন" }))) return;
     if ((action === "add_tag" || action === "remove_tag") && !bulkTag.trim()) { setRowNotice("আগে ট্যাগ লিখুন।"); return; }
     if (action === "assign" && !bulkAssignee) { setRowNotice("আগে দায়িত্বপ্রাপ্ত সদস্য বেছে নিন।"); return; }
     setBulkActionBusy(action); setBulkActionResult(null); setRowNotice("");
@@ -1601,7 +1607,7 @@ export default function OrdersPage() {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${conversationId}/cod-confirmation`, {
         method: "POST", body: JSON.stringify({ orderId: o.id }),
       });
-      setRowNotice(`#${o.externalNumber ?? o.id.slice(0, 8)} — COD কনফার্মেশন বার্তা পাঠানো হয়েছে। গ্রাহকের উত্তরের অপেক্ষায়।`);
+      toast({ title: `#${o.externalNumber ?? o.id.slice(0, 8)} — COD কনফার্মেশন বার্তা পাঠানো হয়েছে। গ্রাহকের উত্তরের অপেক্ষায়।`, tone: "success" });
       await load();
     } catch (e) { setRowNotice(e instanceof Error ? e.message : "COD কনফার্মেশন পাঠানো ব্যর্থ"); }
     finally { setRowBusy(""); }
@@ -2010,7 +2016,7 @@ export default function OrdersPage() {
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={codOnly} onChange={(e) => setCodOnly(e.target.checked)} /> শুধু COD</label>
           <label className="flex items-center gap-2 text-sm" title="CX12a প্র্যাক্টিস অর্ডার — আসল তালিকায় এগুলো ডিফল্টে থাকে না"><input type="checkbox" checked={filters.practice} onChange={(e) => patchFilters({ practice: e.target.checked })} /> প্র্যাক্টিস অর্ডার দেখান</label>
           <button className="btn-secondary btn-sm" disabled={exportBusy} onClick={downloadExport}>{exportBusy ? "ডাউনলোড হচ্ছে..." : "এক্সপোর্ট (CSV)"}</button>
-          <span className="ml-auto text-xs text-slate-400" title="তালিকা নিজে থেকে বদলায় না — নতুন অর্ডার এলে উপরে জানানো হয়, আপনি চাইলে তালিকা রিলোড হয়">স্বয়ংক্রিয় হালনাগাদ: চালু (২৫ সেকেন্ডে যাচাই)</span>
+          <span className="ml-auto text-xs text-slate-500" title="তালিকা নিজে থেকে বদলায় না — নতুন অর্ডার এলে উপরে জানানো হয়, আপনি চাইলে তালিকা রিলোড হয়">স্বয়ংক্রিয় হালনাগাদ: চালু (২৫ সেকেন্ডে যাচাই)</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5 text-xs text-slate-500">থেকে <input type="date" className="input w-auto" value={filters.dateFrom} onChange={(e) => patchFilters({ dateFrom: e.target.value })} /></label>
@@ -2057,10 +2063,10 @@ export default function OrdersPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t pt-2">
           <span className="text-xs font-semibold text-slate-500">সংরক্ষিত ভিউ:</span>
-          {savedViews.length === 0 ? <span className="text-xs text-slate-400">কোনো ভিউ নেই</span> : savedViews.map((v) => (
+          {savedViews.length === 0 ? <span className="text-xs text-slate-500">কোনো ভিউ নেই</span> : savedViews.map((v) => (
             <span key={v.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 py-0.5 pl-3 pr-1.5 text-xs font-medium">
               <button type="button" className="hover:underline" onClick={() => applyFiltersObject(viewToFilters(v))}>{v.name}</button>
-              <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-600" title="ভিউ মুছুন" onClick={() => void deleteView(v)}>✕</button>
+              <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-1 text-slate-400 hover:text-red-600" title="ভিউ মুছুন" aria-label="ভিউ মুছুন" onClick={() => void deleteView(v)}>✕</button>
             </span>
           ))}
           <button className="btn-secondary btn-sm" onClick={() => void saveCurrentView()}>ভিউ সংরক্ষণ</button>
@@ -2081,7 +2087,7 @@ export default function OrdersPage() {
             onChange={(e) => setLabelQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void runLabelLookup(); } }} />
           <button className="btn-secondary btn-sm" disabled={labelBusy !== "" || !labelQuery.trim()} onClick={() => void runLabelLookup()}>{labelBusy === "lookup" ? "খোঁজা হচ্ছে..." : "🔢 নম্বর দিয়ে খুঁজুন"}</button>
-          <span className="text-[11px] text-slate-400">কীবোর্ডের মাইক (🎤) দিয়ে নম্বর বলেও লেখা যায় — এই বক্সে বললেই সংখ্যা বসবে, আলাদা কোনো ভয়েস-চেনা ফিচার নয়।</span>
+          <span className="text-[11px] text-slate-500">কীবোর্ডের মাইক (🎤) দিয়ে নম্বর বলেও লেখা যায় — এই বক্সে বললেই সংখ্যা বসবে, আলাদা কোনো ভয়েস-চেনা ফিচার নয়।</span>
         </div>
         {labelError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{labelError}</p> : null}
         {labelScan && !labelScan.available ? (
@@ -2142,7 +2148,7 @@ export default function OrdersPage() {
             <input className="input" placeholder="Steadfast API Key" value={courierForm.apiKey} onChange={(e) => setCourierForm({ ...courierForm, apiKey: e.target.value })} required />
             <input className="input" placeholder="Secret Key" value={courierForm.secretKey} onChange={(e) => setCourierForm({ ...courierForm, secretKey: e.target.value })} required />
             <button className="btn-primary" disabled={courierBusy !== ""}>{courierBusy === "connect" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-            <p className="text-xs text-slate-400 sm:col-span-3">Key Steadfast Portal থেকে পাবেন। যুক্ত করার আগে আসল API দিয়ে Balance যাচাই করা হয়; ভুল Key হলে Steadfast এর নিজের ত্রুটিই দেখাবে।</p>
+            <p className="text-xs text-slate-500 sm:col-span-3">Key Steadfast Portal থেকে পাবেন। যুক্ত করার আগে আসল API দিয়ে Balance যাচাই করা হয়; ভুল Key হলে Steadfast এর নিজের ত্রুটিই দেখাবে।</p>
           </form>
         )}
       </div>
@@ -2164,7 +2170,7 @@ export default function OrdersPage() {
                 <input className="input" type="password" placeholder="Merchant পাসওয়ার্ড" value={pathaoForm.password} onChange={(e) => setPathaoForm({ ...pathaoForm, password: e.target.value })} required />
                 <label className="flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={pathaoForm.sandbox} onChange={(e) => setPathaoForm({ ...pathaoForm, sandbox: e.target.checked })} /> Sandbox (টেস্ট) পরিবেশ</label>
                 <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "pathao" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-400">Client ID/Secret Pathao Merchant Panel এর Developer API অংশে পাবেন। যুক্ত করার আগে আসল API তে Token নিয়ে Store তালিকা যাচাই করা হয়। পাসওয়ার্ড Token নবায়নের জন্য এনক্রিপ্ট করে রাখা হয়।</p>
+                <p className="text-xs text-slate-500">Client ID/Secret Pathao Merchant Panel এর Developer API অংশে পাবেন। যুক্ত করার আগে আসল API তে Token নিয়ে Store তালিকা যাচাই করা হয়। পাসওয়ার্ড Token নবায়নের জন্য এনক্রিপ্ট করে রাখা হয়।</p>
               </form>
             )}
           </div>
@@ -2180,7 +2186,7 @@ export default function OrdersPage() {
                 <input className="input" placeholder="API Access Token" value={redxForm.accessToken} onChange={(e) => setRedxForm({ ...redxForm, accessToken: e.target.value })} required />
                 <input className="input" placeholder="Base URL (ঐচ্ছিক — Legacy অ্যাকাউন্টের জন্য)" value={redxForm.baseUrl} onChange={(e) => setRedxForm({ ...redxForm, baseUrl: e.target.value })} />
                 <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "redx" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-400">Token RedX Merchant Panel এর API Settings থেকে পাবেন। যুক্ত করার আগে আসল API থেকে Delivery Area তালিকা এনে যাচাই করা হয়।</p>
+                <p className="text-xs text-slate-500">Token RedX Merchant Panel এর API Settings থেকে পাবেন। যুক্ত করার আগে আসল API থেকে Delivery Area তালিকা এনে যাচাই করা হয়।</p>
               </form>
             )}
           </div>
@@ -2198,7 +2204,7 @@ export default function OrdersPage() {
                 <input className="input" placeholder="User ID" value={ecourierForm.userId} onChange={(e) => setEcourierForm({ ...ecourierForm, userId: e.target.value })} required />
                 <input className="input" placeholder="Base URL (ঐচ্ছিক — Partner অ্যাকাউন্টের জন্য)" value={ecourierForm.baseUrl} onChange={(e) => setEcourierForm({ ...ecourierForm, baseUrl: e.target.value })} />
                 <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "ecourier" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-400">তিনটি তথ্য eCourier আপনার মার্চেন্ট অ্যাকাউন্টের জন্য ইস্যু করে দেয় — তাদের কাছ থেকে সংগ্রহ করুন। যুক্ত করার আগে আসল API থেকে নির্ধারিত Package তালিকা এনে যাচাই করা হয়।</p>
+                <p className="text-xs text-slate-500">তিনটি তথ্য eCourier আপনার মার্চেন্ট অ্যাকাউন্টের জন্য ইস্যু করে দেয় — তাদের কাছ থেকে সংগ্রহ করুন। যুক্ত করার আগে আসল API থেকে নির্ধারিত Package তালিকা এনে যাচাই করা হয়।</p>
               </form>
             )}
           </div>
@@ -2248,14 +2254,14 @@ export default function OrdersPage() {
         </form>
         <div className="space-y-2 border-t pt-3">
           <p className="text-sm font-medium">ট্র্যাকিং URL টেমপ্লেট</p>
-          {conns.filter((c) => c.connected).length === 0 ? <p className="text-xs text-slate-400">কোনো কুরিয়ার যুক্ত নেই।</p> : conns.filter((c) => c.connected).map((c) => (
+          {conns.filter((c) => c.connected).length === 0 ? <p className="text-xs text-slate-500">কোনো কুরিয়ার যুক্ত নেই।</p> : conns.filter((c) => c.connected).map((c) => (
             <div key={c.provider} className="flex flex-wrap items-center gap-2">
               <span className="w-24 text-sm font-medium">{c.provider}</span>
               <input className="input flex-1" placeholder="https://…/track/{trackingId}" value={trackingTemplates[c.provider] ?? ""} onChange={(e) => setTrackingTemplates({ ...trackingTemplates, [c.provider]: e.target.value })} />
               <button type="button" className="btn-secondary btn-sm" disabled={ruleBusy !== ""} onClick={() => saveTrackingTemplate(c.provider)}>{ruleBusy === `tpl-${c.provider}` ? "হচ্ছে…" : "সংরক্ষণ"}</button>
             </div>
           ))}
-          <p className="text-xs text-slate-400">{"{trackingId}"} জায়গায় আসল ট্র্যাকিং কোড বসবে। খালি রাখলে আগের মতোই শুধু নম্বর দেখাবে।</p>
+          <p className="text-xs text-slate-500">{"{trackingId}"} জায়গায় আসল ট্র্যাকিং কোড বসবে। খালি রাখলে আগের মতোই শুধু নম্বর দেখাবে।</p>
         </div>
       </div>
       <div className="card space-y-3">
@@ -2274,7 +2280,9 @@ export default function OrdersPage() {
         ) : perf.providers.length === 0 ? (
           <p className="text-sm text-slate-400">এই সময়ে কোনো shipment বুক হয়নি।</p>
         ) : (
-          <div className="overflow-x-auto">
+          <ResponsiveTable
+            table={
+              <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -2307,9 +2315,29 @@ export default function OrdersPage() {
                 })}
               </tbody>
             </table>
-          </div>
+              </div>
+            }
+            cards={[...perf.providers, perf.totals].map((row) => {
+              const isTotal = row.provider === "total";
+              const rate = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
+              return (
+                <div key={row.provider} className={`rounded-xl border bg-white p-3 shadow-sm ${isTotal ? "bg-slate-50 font-semibold" : ""}`}>
+                  <div className="font-bold text-slate-900">{PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</div>
+                  <dl className="mt-2 space-y-1 text-xs">
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">বুকিং</dt><dd className="font-medium">{row.booked}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভার্ড</dt><dd className="font-medium">{row.delivered}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন</dt><dd className="font-medium">{row.returned}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">বাতিল</dt><dd className="font-medium">{row.cancelled}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">পথে আছে</dt><dd className="font-medium">{row.inFlight}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভারি হার</dt><dd className="font-medium">{rate(row.deliveryRate)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন হার</dt><dd className="font-medium">{rate(row.returnRate)}</dd></div>
+                  </dl>
+                </div>
+              );
+            })}
+          />
         )}
-        <p className="text-[11px] text-slate-400">হিসাবের নিয়ম: শুধু এই সময়ে বুক করা shipment। ডেলিভার্ড = delivered + partial delivery; decided = ডেলিভার্ড + রিটার্ন + বাতিল; হার = decided-এর মধ্যে অংশ — decided 0 হলে হার দেখানো হয় না। গড় ডেলিভারি সময় এখন দেখানো যাচ্ছে না, কারণ shipment রেকর্ডে ডেলিভারির মুহূর্তের timestamp সংরক্ষিত হয় না।</p>
+        <p className="text-[11px] text-slate-500">হিসাবের নিয়ম: শুধু এই সময়ে বুক করা shipment। ডেলিভার্ড = delivered + partial delivery; decided = ডেলিভার্ড + রিটার্ন + বাতিল; হার = decided-এর মধ্যে অংশ — decided 0 হলে হার দেখানো হয় না। গড় ডেলিভারি সময় এখন দেখানো যাচ্ছে না, কারণ shipment রেকর্ডে ডেলিভারির মুহূর্তের timestamp সংরক্ষিত হয় না।</p>
       </div>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {riskDetail ? (
@@ -2322,7 +2350,7 @@ export default function OrdersPage() {
             {riskDetail.reasons.map((r, i) => <li key={i}>{r}</li>)}
           </ul>
           {riskDetail.suggestion ? <p className="text-sm font-medium text-amber-800">{riskDetail.suggestion}</p> : null}
-          <p className="text-xs text-slate-400">স্কোরটি শুধু এই দোকানের নিজের অর্ডার ইতিহাস থেকে হিসাব করা (ফোন নম্বর মিলিয়ে)। এটি কোনো অর্ডার আটকায় না — সিদ্ধান্ত সবসময় আপনার।</p>
+          <p className="text-xs text-slate-500">স্কোরটি শুধু এই দোকানের নিজের অর্ডার ইতিহাস থেকে হিসাব করা (ফোন নম্বর মিলিয়ে)। এটি কোনো অর্ডার আটকায় না — সিদ্ধান্ত সবসময় আপনার।</p>
         </div>
       ) : null}
       {/* ON4: Fraud Shield detail — the PERSISTED fraud
@@ -2341,8 +2369,8 @@ export default function OrdersPage() {
             </h3>
             <button className="btn-ghost btn-sm" onClick={() => setFraudOrder(null)}>বন্ধ করুন</button>
           </div>
-          {fraudOrder.riskScore != null ? <p className="text-sm text-slate-700">স্কোর: <b>{fraudOrder.riskScore}</b>{fraudOrder.riskAssessedAt ? <span className="text-xs text-slate-400"> · যাচাই: {new Date(fraudOrder.riskAssessedAt).toLocaleString("bn-BD")}</span> : null}</p> : null}
-          {fraudOrder.deviceHashPrefix ? <p className="text-sm text-slate-700">ডিভাইস: <span className="font-mono">{fraudOrder.deviceHashPrefix}…</span> <span className="text-xs text-slate-400">(শুধু হ্যাশের শুরুটা দেখানো হয়)</span></p> : null}
+          {fraudOrder.riskScore != null ? <p className="text-sm text-slate-700">স্কোর: <b>{fraudOrder.riskScore}</b>{fraudOrder.riskAssessedAt ? <span className="text-xs text-slate-500"> · যাচাই: {new Date(fraudOrder.riskAssessedAt).toLocaleString("bn-BD")}</span> : null}</p> : null}
+          {fraudOrder.deviceHashPrefix ? <p className="text-sm text-slate-700">ডিভাইস: <span className="font-mono">{fraudOrder.deviceHashPrefix}…</span> <span className="text-xs text-slate-500">(শুধু হ্যাশের শুরুটা দেখানো হয়)</span></p> : null}
           {(fraudOrder.riskReasons ?? []).length > 0 ? (
             <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
               {(fraudOrder.riskReasons ?? []).map((r, i) => <li key={r.key ?? i}>{r.label} <span className="font-semibold text-rose-700">(+{r.points})</span></li>)}
@@ -2395,7 +2423,7 @@ export default function OrdersPage() {
               {r.customerName ? <span className="text-slate-600">{r.customerName}</span> : null}
               {r.rating != null ? <span className="text-amber-500">{stars(r.rating)}</span> : <span className="badge-slate">{reviewStatusBn(r)}</span>}
               {r.comment ? <span className="text-slate-700">“{r.comment}”</span> : null}
-              <span className="text-xs text-slate-400">{r.receivedAt ? new Date(r.receivedAt).toLocaleString("bn-BD") : r.requestedAt ? `চাওয়া: ${new Date(r.requestedAt).toLocaleString("bn-BD")}` : "চ্যানেল নেই — পাঠানো হয়নি"}</span>
+              <span className="text-xs text-slate-500">{r.receivedAt ? new Date(r.receivedAt).toLocaleString("bn-BD") : r.requestedAt ? `চাওয়া: ${new Date(r.requestedAt).toLocaleString("bn-BD")}` : "চ্যানেল নেই — পাঠানো হয়নি"}</span>
             </div>
           ))}
           {reviews.filter((r) => reviewFilter === "" ? true : reviewFilter === "pending" ? r.status === "pending_send" : reviewFilter === "requested" ? r.status === "requested" : r.rating === Number(reviewFilter)).length === 0 ? <p className="text-sm text-slate-400">এই ফিল্টারে কোনো রিভিউ নেই</p> : null}
@@ -2404,15 +2432,15 @@ export default function OrdersPage() {
       {chases.length > 0 ? (
         <div className="card space-y-2">
           <h2 className="font-semibold">🎯 To Chase — থেমে যাওয়া অর্ডার সেশন</h2>
-          <p className="text-xs text-slate-400">অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া সেশনগুলোর অনুস্মারকের অবস্থা। শুধু যেসব সেশন Sweep ইতিমধ্যে বিবেচনা করেছে সেগুলোই এখানে আছে।</p>
+          <p className="text-xs text-slate-500">অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া সেশনগুলোর অনুস্মারকের অবস্থা। শুধু যেসব সেশন Sweep ইতিমধ্যে বিবেচনা করেছে সেগুলোই এখানে আছে।</p>
           {chases.slice(0, 50).map((c) => (
             <div key={c.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b py-1.5 text-sm last:border-0">
               <span className="font-medium">{c.productName ?? "পণ্য অজানা"}</span>
               <span className="badge-slate">{chaseStatusBn(c)}</span>
               {c.sessionStatus ? <span className="text-slate-500">সেশন: {c.sessionStatus}{c.sessionState ? ` (${c.sessionState})` : ""}</span> : null}
-              {c.lastChasedAt ? <span className="text-xs text-slate-400">সর্বশেষ অনুস্মারক: {new Date(c.lastChasedAt).toLocaleString("bn-BD")}</span> : null}
+              {c.lastChasedAt ? <span className="text-xs text-slate-500">সর্বশেষ অনুস্মারক: {new Date(c.lastChasedAt).toLocaleString("bn-BD")}</span> : null}
               {c.lastFailedAt && (!c.lastChasedAt || c.lastFailedAt > c.lastChasedAt) ? <span className="text-xs text-red-500">সর্বশেষ পাঠানো ব্যর্থ হয়েছে — আবার চেষ্টা হবে</span> : null}
-              {!c.stoppedReason && c.lastEvent === "customer_replied" ? <span className="text-xs text-slate-400">গ্রাহক উত্তর দিয়েছেন</span> : null}
+              {!c.stoppedReason && c.lastEvent === "customer_replied" ? <span className="text-xs text-slate-500">গ্রাহক উত্তর দিয়েছেন</span> : null}
             </div>
           ))}
         </div>
@@ -2427,7 +2455,7 @@ export default function OrdersPage() {
                 param cleared); it is not rendered twice — its
                 count rides on this button instead. */}
             <button type="button" onClick={() => selectQueue("")}
-              className={`flex shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === "" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
+              className={`flex min-h-[44px] shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === "" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
               <span>সব অর্ডার</span>
               {queues.find((q) => q.key === "all") ? (
                 <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${filters.queue === "" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>{queues.find((q) => q.key === "all")!.count}</span>
@@ -2435,12 +2463,12 @@ export default function OrdersPage() {
             </button>
             {queues.filter((q) => q.key !== "all").map((q) => (
               <button key={q.key} type="button" onClick={() => selectQueue(q.key)}
-                className={`flex shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === q.key ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
+                className={`flex min-h-[44px] shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === q.key ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
                 <span>{q.label}</span>
                 <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${filters.queue === q.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>{q.count}</span>
               </button>
             ))}
-            {queues.length === 0 ? <span className="px-1 text-xs text-slate-400">কিউ লোড হয়নি</span> : null}
+            {queues.length === 0 ? <span className="px-1 text-xs text-slate-500">কিউ লোড হয়নি</span> : null}
           </div>
         </aside>
         <div className="min-w-0 flex-1 space-y-4">
@@ -2595,7 +2623,7 @@ export default function OrdersPage() {
                 </label>
                 <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
               </div>
-              <p className="text-sm text-slate-600">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}{o.customer?.phone ? <span className="block text-xs text-slate-400">{o.customer.phone}</span> : null}</p>
+              <p className="text-sm text-slate-600">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}{o.customer?.phone ? <span className="block text-xs text-slate-500">{o.customer.phone}</span> : null}</p>
               <p className="text-xs text-slate-500">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</p>
               {(o.tags ?? []).length > 0 ? <p className="flex flex-wrap gap-1">{(o.tags ?? []).map((t) => <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{t}</span>)}</p> : null}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
@@ -2603,7 +2631,7 @@ export default function OrdersPage() {
                 <span className="font-semibold">{formatMinor(BigInt(o.totalMinor))}</span>
                 {due > 0n ? <span className="font-semibold text-red-600">বকেয়া {formatMinor(due)}</span> : null}
                 <span className="text-xs text-slate-500">দায়িত্ব: {memberName(members, o.assigneeId)}</span>
-                <span className="text-xs text-slate-400">{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</span>
+                <span className="text-xs text-slate-500">{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</span>
                 {sh ? <span className="badge-indigo">🚚 {sh.status}</span> : null}
                 {o.risk ? <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${RISK_LABEL[o.risk.band]?.cls ?? RISK_LABEL.unknown.cls}`}>{RISK_LABEL[o.risk.band]?.text ?? "ঝুঁকি"}</span> : null}
                 {o.riskBand ? (
@@ -2626,7 +2654,8 @@ export default function OrdersPage() {
                 {(o.conversationId ?? o.codConversationId) ? <a href="/dashboard/inbox" title="কথোপকথন খুলুন (ইনবক্স)" aria-label="কথোপকথন">💬</a> : null}
                 {o.isCod && (o.codConversationId ?? o.conversationId) && o.codConfirmationStatus === "awaiting" ? <a href="/dashboard/inbox" title="COD কনফার্ম অপেক্ষমাণ" aria-label="COD কনফার্ম অপেক্ষমাণ">⏳</a> : null}
                 {sh ? <button type="button" title="লেবেল প্রিন্ট" aria-label="লেবেল প্রিন্ট" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️</button> : null}
-                <button type="button" className="ml-auto text-sm font-semibold text-brand-600" onClick={() => { openActions(o); setTimeout(() => document.getElementById("orders-table-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}>⚙️ অ্যাকশন</button>
+                <Link href={`/dashboard/orders/${o.id}`} className="ml-auto text-sm font-semibold text-brand-600 hover:underline">বিস্তারিত →</Link>
+                <button type="button" className="text-sm font-semibold text-brand-600" onClick={() => { openActions(o); setTimeout(() => document.getElementById("orders-table-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}>⚙️ অ্যাকশন</button>
               </div>
             </div>
           ); })}
@@ -2642,11 +2671,11 @@ export default function OrdersPage() {
               {items.map((o) => (
                 <tr key={o.id} className="border-t">
                   <td className="px-4 py-3"><input type="checkbox" checked={selected.includes(o.id)} disabled={!selected.includes(o.id) && selected.length >= 50} onChange={(e) => toggleSelect(o.id, e.target.checked)} /></td>
-                  <td className="px-4 py-3 font-medium">#{o.externalNumber ?? o.id.slice(0, 8)}<button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button>
+                  <td className="px-4 py-3 font-medium"><Link href={`/dashboard/orders/${o.id}`} className="hover:underline" title="সম্পূর্ণ বিবরণ">#{o.externalNumber ?? o.id.slice(0, 8)}</Link><button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button>
                     {o.deliverySlot ? <span className="mt-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">🕐 {o.deliverySlot.label} · {o.deliverySlot.date}</span> : null}
                     {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="mt-1 ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">📍 পিকআপ: {o.pickupPoint.name}</span> : null}
                   </td>
-                  <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-400">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
+                  <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-500">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
                   <td className="px-4 py-3">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</td>
                   <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
                     {o.risk ? (
@@ -2663,6 +2692,7 @@ export default function OrdersPage() {
                     ) : null}
                     {o.reviewHold ? <span className="mt-1 inline-block rounded bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white" title={o.reviewHoldReason ?? undefined}>⛔ আটকানো</span> : null}
                     <button className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => openActions(o)}>⚙️ অ্যাকশন</button>
+                    <Link href={`/dashboard/orders/${o.id}`} className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline">বিস্তারিত →</Link>
                   </td>
                   <td className="px-4 py-3">{(o.tags ?? []).length > 0 ? (
                     <span className="flex flex-wrap gap-1">{(o.tags ?? []).map((t) => <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{t}</span>)}</span>
@@ -2870,8 +2900,8 @@ export default function OrdersPage() {
                             {shipmentEvents.map((ev: any) => (
                               <li key={ev.id} className="rounded-lg bg-white px-3 py-2 text-xs text-slate-700">
                                 <span className="font-semibold">{ev.kind === "error" ? "⚠️ ত্রুটি" : ev.kind === "note" ? "📝 নোট" : `স্ট্যাটাস: ${ev.status ?? "—"}`}</span>
-                                {ev.rawStatus ? <span className="text-slate-400"> (কুরিয়ারের ভাষায়: {ev.rawStatus})</span> : null}
-                                <span className="text-slate-400"> · {ev.source === "manual" ? "ম্যানুয়াল" : ev.source === "booking" ? "বুকিং" : ev.source === "api_sync" ? "API সিঙ্ক" : ev.source} · {ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ""}</span>
+                                {ev.rawStatus ? <span className="text-slate-500"> (কুরিয়ারের ভাষায়: {ev.rawStatus})</span> : null}
+                                <span className="text-slate-500"> · {ev.source === "manual" ? "ম্যানুয়াল" : ev.source === "booking" ? "বুকিং" : ev.source === "api_sync" ? "API সিঙ্ক" : ev.source} · {ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ""}</span>
                                 {ev.message ? <span className="block text-slate-500">{ev.message}</span> : null}
                               </li>
                             ))}
@@ -2893,659 +2923,118 @@ export default function OrdersPage() {
                   </div>
                 </td></tr>
               ); })() : null}
-              {actOrder ? (() => { const o = actOrder; const refunded = BigInt(o.refundedMinor ?? "0"); const totalAmt = BigInt(o.totalMinor); return (
-                <tr className="border-t bg-slate-50"><td colSpan={13} className="px-4 py-3">
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-semibold">⚙️ অর্ডার অ্যাকশন — #{o.externalNumber ?? o.id.slice(0, 8)}</h3>
-                      <span className="flex items-center gap-2">
-                        {/* ON3: surgery toggle — offered only for
-                            pending / on-hold / processing orders
-                            the server could accept; store-source
-                            orders get the reason as a title note
-                            instead of a dead button. */}
-                        {(() => { const av = surgeryAvailability(o); return av.allowed ? (
-                          <button type="button" className={surgery ? "btn-secondary btn-sm" : "btn-primary btn-sm"} onClick={() => (surgery ? exitSurgery() : enterSurgery())}>
-                            {surgery ? "সম্পাদনা বন্ধ করুন" : "✏️ সম্পাদনা"}
-                          </button>
-                        ) : (o.source === "woocommerce" || o.source === "shopify") && ["pending", "on-hold", "processing"].includes(o.status) ? (
-                          <span className="text-[11px] text-slate-400" title={av.note}>✏️ সম্পাদনা — {av.note}</span>
-                        ) : null; })()}
-                        <button className="btn-ghost btn-sm" onClick={() => setActOrder(null)}>বন্ধ করুন</button>
-                      </span>
-                    </div>
-                    {actNotice ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{actNotice}</p> : null}
-                    {surgeryNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{surgeryNotice}</p> : null}
-                    {overpaidNotice ? <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">⚠️ {overpaidNotice}</p> : null}
-                    {!surgery && surgeryError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{surgeryError}</p> : null}
-                    {/* ON4: review-hold banner — a held order says
-                        so loudly, with its reason and a release
-                        action, before anything else in the panel. */}
-                    {o.reviewHold ? (
-                      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2.5">
-                        <span className="text-sm font-bold text-rose-800">⛔ পর্যালোচনার জন্য আটকানো আছে</span>
-                        {o.reviewHoldReason ? <span className="text-sm text-rose-700">কারণ: {o.reviewHoldReason}</span> : null}
-                        {o.reviewHeldAt ? <span className="text-xs text-rose-500">আটকানো হয়েছে: {new Date(o.reviewHeldAt).toLocaleString("bn-BD")}</span> : null}
-                        <button type="button" className="btn-primary btn-sm ml-auto" disabled={fraudBusy !== ""} onClick={() => void releaseFraud(o)}>
-                          {fraudBusy === "release" ? "ছাড় হচ্ছে…" : "ছাড় দিন"}
-                        </button>
-                        {fraudNotice ? <span className="w-full text-xs text-indigo-700">{fraudNotice}</span> : null}
-                      </div>
-                    ) : null}
-                    {/* ON4: fraud summary + COD call recording for
-                        COD orders still awaiting confirmation. */}
-                    {(o.riskBand || (o.codCallAttempts ?? 0) > 0 || (o.isCod && o.codConfirmationStatus === "awaiting")) ? (
-                      <div className="space-y-2 rounded-xl border bg-white p-3">
-                        <h4 className="text-sm font-semibold">🛡️ জালিয়াতি ও COD নিশ্চিতকরণ</h4>
-                        {o.riskBand ? (
-                          <p className="flex flex-wrap items-center gap-2 text-sm">
-                            <button type="button" className={`rounded px-2 py-0.5 text-[11px] font-semibold ${FRAUD_BAND_LABEL[o.riskBand]?.cls ?? ""}`}
-                              title="জালিয়াতি ঝুঁকি (Fraud Shield)" onClick={() => openFraudDetail(o)}>
-                              🛡️ {FRAUD_BAND_LABEL[o.riskBand]?.text ?? o.riskBand}{o.riskScore != null ? ` · ${o.riskScore}` : ""}
-                            </button>
-                            <span className="text-xs text-slate-400">চিপে ক্লিক করলে কারণসহ বিস্তারিত ও আটকানো/ছাড়ের অ্যাকশন পাবেন।</span>
-                          </p>
-                        ) : <p className="text-xs text-slate-400">এই অর্ডারের জালিয়াতি ঝুঁকি এখনো যাচাই হয়নি।</p>}
-                        {o.isCod && o.codConfirmationStatus === "awaiting" ? (
-                          <CodCallChips order={o} busy={codBusy === o.id} onCall={(ord, outcome) => void recordCodCall(ord, outcome)} />
-                        ) : (o.codCallAttempts ?? 0) > 0 ? (
-                          <p className="text-[11px] text-slate-500">কল: {o.codCallAttempts}বার{o.codLastCallOutcome ? ` · সর্বশেষ: ${codCallOutcomeLabel(o.codLastCallOutcome)}` : ""}{o.codLastCallAt ? ` · ${new Date(o.codLastCallAt).toLocaleString("bn-BD")}` : ""}</p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {/* ON2: Timeline 360 + Customer 360 + assignee +
-                        tags + internal comments (on2-detail.tsx). */}
-                    <OrderDetailOn2
-                      orderId={o.id}
-                      orderLabel={`#${o.externalNumber ?? o.id.slice(0, 8)}`}
-                      assigneeId={o.assigneeId ?? null}
-                      tags={o.tags ?? null}
-                      members={members}
-                      onPatch={(patch) => {
-                        setActOrder((prev) => (prev && prev.id === o.id ? { ...prev, ...patch } : prev));
-                        setItems((prev) => prev.map((x) => (x.id === o.id ? { ...x, ...patch } : x)));
-                      }}
-                      onOpenOrder={(id) => void openOrderById(id)}
-                    />
-                    {/* AB3: per-item stock allocations + staff
-                        re-allocation (warehouse picker). The
-                        reallocate response rows carry no labels,
-                        so a successful move refetches the detail. */}
-                    {/* AB4 (AX5): custom checkout-field answers
-                        (labels resolved via checkoutFieldDefs, key
-                        fallback) + the order's deposit block. */}
-                    {((o.checkoutFields && Object.keys(o.checkoutFields).length > 0) || o.deposit) ? (
-                      <div className="space-y-3 rounded-xl border bg-white p-3">
-                        {o.checkoutFields && Object.keys(o.checkoutFields).length > 0 ? (
-                          <div className="space-y-1.5">
-                            <h4 className="text-sm font-semibold">📝 চেকআউট ফিল্ড — ক্রেতার দেওয়া উত্তর</h4>
-                            {Object.entries(o.checkoutFields).map(([key, value]) => {
-                              const label = (o.checkoutFieldDefs ?? []).find((d) => d.key === key)?.label ?? key;
-                              const display = value === true ? "হ্যাঁ" : value === false ? "না" : String(value);
-                              return (
-                                <p key={key} className="flex flex-wrap justify-between gap-2 text-sm">
-                                  <span className="text-slate-500">{label}</span>
-                                  <span className="font-medium text-slate-800">{display}</span>
-                                </p>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                        {o.deposit ? (
-                          <div className={`space-y-1 text-sm ${o.checkoutFields && Object.keys(o.checkoutFields).length > 0 ? "border-t pt-2" : ""}`}>
-                            <h4 className="font-semibold">💰 ডিপোজিট</h4>
-                            <p className="flex flex-wrap gap-x-4">
-                              <span>মোট ডিপোজিট: <b>{fmtM(o.deposit.dueMinor)}</b></span>
-                              <span>পরিশোধিত: <b className="text-emerald-700">{fmtM(o.deposit.paidMinor)}</b></span>
-                              <span>বাকি: <b className={o.deposit.outstandingMinor !== "0" ? "text-amber-700" : "text-emerald-700"}>{fmtM(o.deposit.outstandingMinor)}</b></span>
-                            </p>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    <OrderAllocationsSection
-                      orderId={o.id}
-                      allocations={o.allocations ?? null}
-                      items={o.items ?? null}
-                      onRefresh={async () => {
-                        const orgId = getOrganizationId(); if (!orgId) return;
-                        try {
-                          const detail = await apiFetch<Order>(`/organizations/${orgId}/orders/${o.id}`);
-                          if (detail) setActOrder((prev) => (prev && prev.id === detail.id ? { ...prev, ...detail } : prev));
-                        } catch { /* the section already showed its success notice */ }
-                      }}
-                    />
-                    <div className="grid gap-4 lg:grid-cols-3">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">স্ট্যাটাস</label>
-                        <select className="input" value={actStatus} onChange={(e) => setActStatus(e.target.value)}>
-                          {!PATCH_STATUSES.includes(o.status) ? <option value={o.status}>{o.status} (বর্তমান)</option> : null}
-                          {PATCH_STATUSES.map((s) => (
-                            <option key={s} value={s} disabled={!transitionAllowed(o.status, s)}>
-                              {s}{s === o.status ? " (বর্তমান)" : ""}{!transitionAllowed(o.status, s) ? " — যাওয়া যাবে না" : ""}
-                            </option>
-                          ))}
-                        </select>
-                        <button className="btn-primary btn-sm" disabled={actBusy !== "" || actStatus === o.status} onClick={saveStatus}>স্ট্যাটাস সংরক্ষণ</button>
-                        <p className="text-xs text-slate-400">Cancelled/Failed হলে স্টক ফেরত যোগ হয়, Returned হলেও তাই; Completed হলে order.delivered ইভেন্ট যায়। যেসব স্ট্যাটাসে যাওয়া যাবে না সেগুলো নিষ্ক্রিয় — সার্ভারই চূড়ান্ত authority।</p>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Refund রেকর্ড (টাকায়)</label>
-                        <input className="input" placeholder="পরিমাণ (টাকা, যেমন 250 বা 250.50)" value={actRefundTaka} onChange={(e) => setActRefundTaka(e.target.value)} />
-                        <input className="input" placeholder="কারণ (ঐচ্ছিক)" value={actRefundReason} onChange={(e) => setActRefundReason(e.target.value)} />
-                        <button className="btn-primary btn-sm" disabled={actBusy !== "" || actRefundTaka.trim() === ""} onClick={saveRefund}>Refund রেকর্ড করুন</button>
-                        <p className="text-xs text-slate-500">মোট ফেরত: {formatMinor(refunded)} / {formatMinor(totalAmt)} · আরও ফেরতযোগ্য: {formatMinor(totalAmt - refunded)}</p>
-                        <p className="text-xs text-slate-400">Refund শুধু টাকার হিসাব রাখে — স্টক ফেরত চাইলে স্ট্যাটাস Cancelled/Returned করুন। পুরো টাকা ফেরত হলে খোলা অর্ডার নিজে থেকেই refunded হয়ে যায়।</p>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">অভ্যন্তরীণ নোট (শুধু টিমের জন্য)</label>
-                        <textarea className="input" rows={3} maxLength={2000} placeholder="যেমন: কাস্টমার ফোনে ঠিকানা বদলেছেন…" value={actNote} onChange={(e) => setActNote(e.target.value)} />
-                        <div className="flex gap-2">
-                          <button className="btn-primary btn-sm" disabled={actBusy !== ""} onClick={saveNote}>নোট সংরক্ষণ</button>
-                          <button className="btn-ghost btn-sm text-red-600" disabled={actBusy !== ""} onClick={clearNote}>নোট মুছুন</button>
-                        </div>
-                        <p className="text-xs text-slate-400">এই নোট কাস্টমার বা কোনো প্ল্যাটফর্মে যায় না।</p>
-                      </div>
-                    </div>
-                    {/* EC18/EC19 (B8): delivery slot + payments / advances */}
-                    <div className="space-y-3 rounded-xl border bg-white p-3">
-                      <h4 className="text-sm font-semibold">💳 পেমেন্ট ও ডেলিভারি স্লট</h4>
-                      {o.deliverySlot ? (
-                        <p className="text-sm">🕐 ডেলিভারি স্লট: <b>{o.deliverySlot.label}</b>{o.deliverySlot.startTime && o.deliverySlot.endTime ? ` (${o.deliverySlot.startTime} – ${o.deliverySlot.endTime})` : ""} · তারিখ: <b>{o.deliverySlot.date}</b></p>
-                      ) : (
-                        <p className="text-xs text-slate-400">এই অর্ডারে কোনো ডেলিভারি স্লট বেছে নেওয়া হয়নি।</p>
-                      )}
-                      {o.deliveryMethod === "pickup" && o.pickupPoint ? (
-                        <p className="text-sm">📍 পিকআপ: <b>{o.pickupPoint.name}</b> — {o.pickupPoint.address}, {o.pickupPoint.district}{o.pickupPoint.phone ? <> · ফোন: <span className="font-mono">{o.pickupPoint.phone}</span></> : null} · ফি: <b>{(() => { try { return formatMinor(BigInt(o.pickupPoint.feeMinor)); } catch { return o.pickupPoint.feeMinor; } })()}</b></p>
-                      ) : null}
-                      {o.advancePaidMinor !== undefined || o.amountDueMinor !== undefined ? (
-                        <div className="flex flex-wrap gap-4 text-sm">
-                          {o.advancePaidMinor !== undefined ? <span>অগ্রিম পরিশোধিত: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(o.advancePaidMinor)); } catch { return o.advancePaidMinor; } })()}</b></span> : null}
-                          {o.amountDueMinor !== undefined ? <span>বকেয়া: <b>{(() => { try { return formatMinor(BigInt(o.amountDueMinor)); } catch { return o.amountDueMinor; } })()}</b></span> : null}
-                        </div>
-                      ) : null}
-                      {/* ON7: overpaid flag, computed client-side
-                          from the order's own advance/total fields. */}
-                      {(() => { const over = overpaidMinorOf(o.advancePaidMinor, o.totalMinor); return over ? (
-                        <p><span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800" title="অগ্রিম পরিশোধ অর্ডারের মোটের চেয়ে বেশি">⚠️ অতিরিক্ত পরিশোধ: {fmtM(over)}</span></p>
-                      ) : null; })()}
-                      {(o.promotionsApplied ?? []).length > 0 || o.referralCode ? (
-                        <div className="space-y-1 text-sm">
-                          {(o.promotionsApplied ?? []).map((pa) => (
-                            <p key={pa.promotionId}>🎁 প্রমোশন: <b>{pa.name}</b> — ছাড়: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(pa.amountMinor)); } catch { return pa.amountMinor; } })()}</b></p>
-                          ))}
-                          {o.referralCode ? (
-                            <p>🤝 রেফারেল কোড: <b className="font-mono">{o.referralCode}</b>
-                              {o.referralDiscountMinor !== undefined && Number(o.referralDiscountMinor) > 0 ? (
-                                <> — ছাড়: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(o.referralDiscountMinor)); } catch { return o.referralDiscountMinor; } })()}</b></>
-                              ) : null}
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {(o.wholesaleBreakdown ?? []).length > 0 ? (
-                        <div className="space-y-1 text-sm">
-                          <p className="font-semibold text-amber-800">🏷️ পাইকারি মূল্য প্রযোজ্য</p>
-                          {(o.wholesaleBreakdown ?? []).map((w) => (
-                            <p key={w.productId} className="text-xs text-slate-600">
-                              পণ্য {w.productId} — কমপক্ষে {w.minQty}টির স্তর: একক দাম {(() => { try { return formatMinor(BigInt(w.priceMinor)); } catch { return w.priceMinor; } })()}
-                            </p>
-                          ))}
-                        </div>
-                      ) : null}
-                      {/* EC29: order items with gift / bundle markers + wrap + gift message */}
-                      {(o.items ?? []).length > 0 ? (
-                        <div className="space-y-1 border-t pt-3">
-                          <p className="text-xs font-semibold text-slate-600">অর্ডারের পণ্য{surgery ? " — ✏️ সম্পাদনা মোড" : ""}</p>
-                          {surgery ? (
-                            <div className="space-y-2">
-                              {drafts.map((d, idx) => d.kind === "bundle" ? (
-                                <div key={`bundle-${d.bundleId ?? idx}`} className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-xs ring-1 ring-amber-200">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="font-semibold text-amber-900">🎁 বান্ডল: {d.bundleName ?? d.name}</span>
-                                    {d.lineTotalMinor ? <span className="ml-auto font-semibold">{fmtM(d.lineTotalMinor)}</span> : null}
-                                  </div>
-                                  {(d.components ?? []).map((c, ci) => (
-                                    <p key={ci} className="text-slate-600">• {c.name} × {c.quantity} <span className="text-slate-400">(বান্ডলের অংশ — দাম/পরিমাণ আলাদা করে বদলানো যায় না)</span></p>
-                                  ))}
-                                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                                    <span className="text-slate-500">গ্রুপের পরিমাণ:</span>
-                                    <button type="button" className="btn-secondary btn-sm px-2" onClick={() => patchDraft(idx, { quantity: Math.max(1, (d.quantity || 1) - 1) })}>−</button>
-                                    <input className="input w-16 text-center" type="number" min={1} value={Number.isNaN(d.quantity) ? "" : d.quantity} onChange={(e) => patchDraft(idx, { quantity: Number(e.target.value) })} />
-                                    <button type="button" className="btn-secondary btn-sm px-2" onClick={() => patchDraft(idx, { quantity: (d.quantity || 0) + 1 })}>+</button>
-                                    <button type="button" className="ml-auto font-semibold text-red-600 hover:underline" onClick={() => setDrafts((prev) => prev.filter((_, i) => i !== idx))}>পুরো গ্রুপ সরান</button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div key={d.orderItemId ?? `new-${idx}`} className="space-y-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs ring-1 ring-slate-200">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-sm font-medium">{d.name}</span>
-                                    {d.isGift ? <span className="rounded bg-pink-100 px-1.5 py-0.5 font-bold text-pink-700">🎁 উপহার</span> : null}
-                                    {!d.orderItemId ? <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-700">নতুন</span> : null}
-                                    <button type="button" className="ml-auto font-semibold text-red-600 hover:underline" onClick={() => setDrafts((prev) => prev.filter((_, i) => i !== idx))}>সরান</button>
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                                    <span className="inline-flex items-center gap-1">
-                                      <span className="text-slate-500">পরিমাণ:</span>
-                                      <button type="button" className="btn-secondary btn-sm px-2" disabled={d.isGift} onClick={() => patchDraft(idx, { quantity: Math.max(1, (d.quantity || 1) - 1) })}>−</button>
-                                      <input className="input w-16 text-center" type="number" min={1} disabled={d.isGift} value={Number.isNaN(d.quantity) ? "" : d.quantity} onChange={(e) => patchDraft(idx, { quantity: Number(e.target.value) })} />
-                                      <button type="button" className="btn-secondary btn-sm px-2" disabled={d.isGift} onClick={() => patchDraft(idx, { quantity: (d.quantity || 0) + 1 })}>+</button>
-                                      {d.isGift ? <span className="text-slate-400">উপহারের পরিমাণ বদলানো যায় না — শুধু সরানো যায়</span> : null}
-                                    </span>
-                                    <span className="inline-flex items-center gap-1">
-                                      <span className="text-slate-500">একক দাম (৳):</span>
-                                      <input className="input w-24" inputMode="decimal" disabled={d.isGift} value={d.isGift ? "০" : (d.priceText ?? minorToTaka(d.unitPriceMinor))} onChange={(e) => patchDraftPrice(idx, e.target.value)} />
-                                      {d.isGift ? <span className="text-slate-400">উপহারের দাম বদলানো যায় না</span> : null}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-                              {/* ON3: add a new line via the products API (search + variant chips). */}
-                              <div className="space-y-1.5 border-t pt-2">
-                                <p className="font-semibold text-slate-600">নতুন আইটেম যোগ</p>
-                                <div className="flex flex-wrap gap-2">
-                                  <input className="input min-w-[180px] flex-1" placeholder="পণ্যের নাম বা SKU দিয়ে খুঁজুন" value={pickQuery}
-                                    onChange={(e) => setPickQuery(e.target.value)}
-                                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void searchProducts(); } }} />
-                                  <button type="button" className="btn-secondary btn-sm" disabled={pickBusy} onClick={() => void searchProducts()}>{pickBusy ? "খোঁজা হচ্ছে…" : "খুঁজুন"}</button>
-                                </div>
-                                {pendingProduct ? (
-                                  <div className="space-y-1 rounded-lg bg-indigo-50 px-3 py-2">
-                                    <p className="font-medium text-indigo-900">{pendingProduct.name} — ভ্যারিয়েন্ট বেছে নিন:</p>
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {pendingProduct.variants.map((v) => (
-                                        <button key={v.id} type="button" className="btn-secondary btn-sm" onClick={() => addProductDraft(pendingProduct, v)}>
-                                          {v.name}{v.priceMinor ? ` · ${fmtM(v.priceMinor)}` : ""}
-                                        </button>
-                                      ))}
-                                      <button type="button" className="btn-ghost btn-sm" onClick={() => setPendingProduct(null)}>বাতিল</button>
-                                    </div>
-                                  </div>
-                                ) : pickResults.length > 0 ? (
-                                  <ul className="divide-y rounded-lg bg-white ring-1 ring-slate-200">
-                                    {pickResults.map((p) => (
-                                      <li key={p.id}>
-                                        <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => void chooseProduct(p)}>
-                                          <span className="font-medium">{p.name}{p.sku ? <span className="ml-2 text-slate-400">SKU: {p.sku}</span> : null}</span>
-                                          <span className="font-semibold">{fmtM(p.priceMinor)}</span>
-                                        </button>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : null}
-                              </div>
-                              {/* ON3: live preview totals (debounced server preview). */}
-                              <div className="space-y-1 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
-                                {previewError ? <p className="text-xs text-red-600">{previewError}</p> : null}
-                                {preview ? (
-                                  <>
-                                    {surgeryMoneySummary(preview).map((r) => (
-                                      <div key={r.key} className={`flex flex-wrap items-baseline justify-between gap-2 text-xs ${r.isTotal ? "border-t pt-1.5 text-sm font-bold" : ""}`}>
-                                        <span>{r.label}{r.note ? <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-800">{r.note}{r.key === "coupon" && preview.couponPinnedMinor && (() => { try { return BigInt(preview.couponPinnedMinor) > 0n; } catch { return false; } })() ? ` (${fmtM(preview.couponPinnedMinor)})` : ""}</span> : null}</span>
-                                        <span>{r.negative ? "−" : ""}{fmtM(r.amountMinor)}</span>
-                                      </div>
-                                    ))}
-                                    {previewBusy ? <p className="text-[11px] text-slate-400">হিসাব হচ্ছে…</p> : null}
-                                    {(preview.warnings ?? []).length > 0 ? (
-                                      <ul className="list-disc space-y-0.5 rounded-lg bg-amber-50 px-3 py-1.5 pl-6 text-[11px] text-amber-800">
-                                        {preview.warnings.map((w, wi) => <li key={wi}>{w}</li>)}
-                                      </ul>
-                                    ) : null}
-                                  </>
-                                ) : previewBusy ? (
-                                  <p className="text-xs text-slate-500">হিসাব হচ্ছে…</p>
-                                ) : !previewError ? (
-                                  <p className="text-[11px] text-slate-400">আইটেম বদলালেই সার্ভারের নতুন হিসাব এখানে দেখা যাবে।</p>
-                                ) : null}
-                              </div>
-                              <label className="flex items-center gap-2 text-xs">
-                                <input type="checkbox" checked={recalcDelivery} onChange={(e) => setRecalcDelivery(e.target.checked)} />
-                                ডেলিভারি চার্জ আবার হিসাব করুন
-                              </label>
-                              {draftErrors.length > 0 ? (
-                                <ul className="list-disc space-y-0.5 rounded-lg bg-red-50 px-3 py-1.5 pl-6 text-[11px] text-red-600">
-                                  {draftErrors.map((e, i) => <li key={i}>{e}</li>)}
-                                </ul>
-                              ) : null}
-                              {surgeryError ? <p className="rounded-lg bg-red-50 px-3 py-1.5 text-[11px] text-red-600">{surgeryError}</p> : null}
-                              <div className="flex flex-wrap gap-2 pt-1">
-                                <button type="button" className="btn-primary btn-sm" disabled={surgeryBusy} onClick={() => void saveSurgery()}>{surgeryBusy ? "সংরক্ষণ হচ্ছে…" : "সংরক্ষণ করুন"}</button>
-                                <button type="button" className="btn-secondary btn-sm" disabled={surgeryBusy} onClick={openSplit}>Split করুন</button>
-                                <button type="button" className="btn-ghost btn-sm" disabled={surgeryBusy} onClick={exitSurgery}>বাতিল</button>
-                              </div>
-                            </div>
-                          ) : (o.items ?? []).map((it) => (
-                            <div key={it.id} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
-                              <span className="font-medium">{it.name} × {it.quantity}</span>
-                              {it.isGift ? <span className="rounded bg-pink-100 px-1.5 py-0.5 font-bold text-pink-700">🎁 উপহার</span> : null}
-                              {it.bundleName ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-bold text-amber-800">বান্ডল: {it.bundleName}</span> : null}
-                              <span className="ml-auto font-semibold">{it.isGift ? "৳০" : (() => { try { return formatMinor(BigInt(it.totalMinor)); } catch { return it.totalMinor; } })()}</span>
-                            </div>
-                          ))}
-                          {o.giftWrapMinor !== undefined && Number(o.giftWrapMinor) > 0 ? (
-                            <div className="flex justify-between rounded-lg bg-pink-50 px-3 py-1.5 text-xs">
-                              <span className="font-medium text-pink-900">🎁 গিফট র‍্যাপ ফি</span>
-                              <span className="font-semibold">{(() => { try { return formatMinor(BigInt(o.giftWrapMinor)); } catch { return o.giftWrapMinor; } })()}</span>
-                            </div>
-                          ) : null}
-                          {o.giftSkipped ? (
-                            <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">উপহার পণ্যের স্টক শেষ থাকায় এই অর্ডারে উপহার যোগ করা যায়নি।</p>
-                          ) : null}
-                          {o.giftMessage ? (
-                            <div className="rounded-lg border-2 border-pink-300 bg-pink-50 px-3 py-2 text-sm font-semibold text-pink-900">
-                              🎁 গিফট বার্তা: {o.giftMessage}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {(o.paymentVerifications ?? []).length > 0 ? (
-                        <div className="space-y-1">
-                          <p className="text-xs font-semibold text-slate-600">পেমেন্ট যাচাই / অগ্রিমের রেকর্ড</p>
-                          {(o.paymentVerifications ?? []).map((pv) => (
-                            <div key={pv.id} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
-                              <span className="font-medium">{pv.provider ?? "—"}</span>
-                              <span className="font-semibold">{(() => { try { return pv.amountMinor != null ? formatMinor(BigInt(pv.amountMinor)) : "—"; } catch { return String(pv.amountMinor ?? "—"); } })()}</span>
-                              {pv.trxId ? <span className="font-mono">TrxID: {pv.trxId}</span> : null}
-                              <span className="rounded bg-slate-200 px-1.5 py-0.5 font-medium">{pv.status}</span>
-                              <span className="text-slate-500">{pv.source === "manual_advance" ? "স্টাফ রেকর্ড" : pv.source ?? ""}</span>
-                              <span className="text-slate-400">{new Date(pv.createdAt).toLocaleString("bn-BD")}</span>
-                              {pv.note ? <span className="text-slate-500">· {pv.note}</span> : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      <div className="space-y-2 border-t pt-3">
-                        <label className="text-sm font-medium">অগ্রিম পেমেন্ট রেকর্ড করুন</label>
-                        {advError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{advError}</p> : null}
-                        {advNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{advNotice}</p> : null}
-                        <div className="grid gap-2 sm:grid-cols-4">
-                          <input className="input" placeholder="পরিমাণ (টাকা)" inputMode="decimal" value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} />
-                          <select className="input" value={advMethod} onChange={(e) => setAdvMethod(e.target.value)}>
-                            <option value="bkash">বিকাশ</option>
-                            <option value="nagad">নগদ</option>
-                            <option value="rocket">রকেট</option>
-                            <option value="cash">ক্যাশ</option>
-                            <option value="bank">ব্যাংক</option>
-                            <option value="other">অন্যান্য</option>
-                          </select>
-                          <input className="input" placeholder="রেফারেন্স / TrxID (ঐচ্ছিক)" value={advRef} onChange={(e) => setAdvRef(e.target.value)} />
-                          <input className="input" placeholder="নোট (ঐচ্ছিক)" value={advNote} onChange={(e) => setAdvNote(e.target.value)} />
-                        </div>
-                        <button className="btn-primary btn-sm" disabled={advBusy || advAmount.trim() === ""} onClick={recordAdvance}>
-                          {advBusy ? "রেকর্ড হচ্ছে..." : "অগ্রিম রেকর্ড করুন"}
-                        </button>
-                        <p className="text-xs text-slate-400">স্টাফের রেকর্ড করা অগ্রিম যাচাইকৃত (approved) হিসেবেই ধরা হয় — রেকর্ডকারীই যাচাইকারী।</p>
-                      </div>
-                    </div>
-                    {/* ON7: per-order profit card. Null money from
-                        the server means "unknown" and is SAID so —
-                        never rendered as 0. */}
-                    <div className="space-y-2 rounded-xl border bg-white p-3">
-                      <h4 className="text-sm font-semibold">📊 লাভের হিসাব</h4>
-                      {profitError ? (
-                        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{profitError}</p>
-                      ) : !profit ? (
-                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
-                      ) : (
-                        <div className="space-y-1.5 text-sm">
-                          <div className="flex flex-wrap justify-between gap-2"><span className="text-slate-500">আয়</span><b>{fmtM(profit.revenueMinor)}</b></div>
-                          {(() => { try { return BigInt(profit.discountMinor) > 0n; } catch { return false; } })() ? (
-                            <div className="flex flex-wrap justify-between gap-2"><span className="text-slate-500">ছাড়</span><b className="text-rose-600">−{fmtM(profit.discountMinor)}</b></div>
-                          ) : null}
-                          <div className="flex flex-wrap justify-between gap-2"><span className="text-slate-500">ডেলিভারি চার্জ (গ্রাহকের থেকে)</span><b>{fmtM(profit.deliveryChargedMinor)}</b></div>
-                          {profit.productCostMinor != null ? (
-                            <div className="flex flex-wrap justify-between gap-2"><span className="text-slate-500">পণ্যের খরচ</span><b>{fmtM(profit.productCostMinor)}</b></div>
-                          ) : (
-                            <div className="space-y-1">
-                              <div className="flex flex-wrap justify-between gap-2"><span className="text-slate-500">পণ্যের খরচ</span><b className="text-amber-700">খরচ জানা নেই</b></div>
-                              {(profit.uncostedLines ?? []).map((u, ui) => (
-                                <p key={ui} className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
-                                  {u.name}{u.sku ? ` (SKU: ${u.sku})` : ""} × {u.quantity} — আয় {fmtM(u.revenueMinor)}, খরচ জানা নেই
-                                </p>
-                              ))}
-                            </div>
-                          )}
-                          {profit.grossMarginMinor != null ? (
-                            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-1.5">
-                              <span className="text-slate-500">মোট লাভ (গ্রস মার্জিন)</span>
-                              <span className={`rounded px-2 py-0.5 font-bold ${marginTone(profit.grossMarginMinor) === "negative" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>{fmtM(profit.grossMarginMinor)}</span>
-                            </div>
-                          ) : (
-                            <p className="border-t pt-1.5 text-xs text-slate-500">সব লাইনের খরচ জানা না থাকায় মোট লাভ হিসাব করা যায়নি।</p>
-                          )}
-                          <div className="flex flex-wrap justify-between gap-2">
-                            <span className="text-slate-500">আসল ডেলিভারি খরচ (courier)</span>
-                            {profit.deliveryActualMinor != null ? <b>{fmtM(profit.deliveryActualMinor)}</b> : <b className="text-slate-400">জানা নেই</b>}
-                          </div>
-                          {deliveryCoverageCaption(profit.deliveryActualCoverage) ? (
-                            <p className="text-[11px] text-slate-400">{deliveryCoverageCaption(profit.deliveryActualCoverage)}</p>
-                          ) : null}
-                          {profit.netMarginMinor != null ? (
-                            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-1.5">
-                              <span className="font-medium text-slate-600">নিট লাভ</span>
-                              <span className={`rounded px-2 py-0.5 font-bold ${marginTone(profit.netMarginMinor) === "negative" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>{fmtM(profit.netMarginMinor)}</span>
-                            </div>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                    {/* EC31: installment plan for this order */}
-                    <div className="space-y-3 rounded-xl border bg-white p-3">
-                      <h4 className="text-sm font-semibold">💰 কিস্তি প্ল্যান</h4>
-                      {instError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{instError}</p> : null}
-                      {!instLoaded ? (
-                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
-                      ) : !instPlan ? (
-                        (() => { let due = 0n; try { due = BigInt(o.amountDueMinor ?? "0"); } catch { due = 0n; } return due > 0n ? (
-                          <div className="space-y-2">
-                            <p className="text-xs text-slate-500">এই অর্ডারে বকেয়া {(() => { try { return formatMinor(BigInt(o.amountDueMinor ?? "0")); } catch { return o.amountDueMinor; } })()} — তা কিস্তিতে ভাগ করে একটি প্ল্যান তৈরি করুন। প্ল্যানের মোট হবে আজকের বকেয়ার স্ন্যাপশট।</p>
-                            <div className="grid gap-2 sm:grid-cols-4">
-                              <label className="block text-xs font-medium text-slate-600">কিস্তির সংখ্যা (২–২৪)
-                                <input className="input mt-1" type="number" min={2} max={24} value={instCount} onChange={(e) => setInstCount(e.target.value)} />
-                              </label>
-                              <label className="block text-xs font-medium text-slate-600">ব্যবধান দিন (১–৯০)
-                                <input className="input mt-1" type="number" min={1} max={90} value={instInterval} onChange={(e) => setInstInterval(e.target.value)} />
-                              </label>
-                              <label className="block text-xs font-medium text-slate-600">শুরুর তারিখ
-                                <input className="input mt-1" type="date" value={instStart} onChange={(e) => setInstStart(e.target.value)} />
-                              </label>
-                              <label className="block text-xs font-medium text-slate-600">নোট (ঐচ্ছিক)
-                                <input className="input mt-1" value={instNote} onChange={(e) => setInstNote(e.target.value)} />
-                              </label>
-                            </div>
-                            <button className="btn-primary btn-sm" disabled={instBusy !== "" || !instStart} onClick={createInstPlan}>
-                              {instBusy === "create" ? "তৈরি হচ্ছে..." : "কিস্তি প্ল্যান তৈরি করুন"}
-                            </button>
-                          </div>
-                        ) : (
-                          <p className="text-xs text-slate-400">এই অর্ডারে বকেয়া নেই — কিস্তি প্ল্যান দরকার নেই।</p>
-                        ); })()
-                      ) : (
-                        <div className="space-y-3">
-                          <div className="flex flex-wrap items-center gap-3 text-sm">
-                            <span>মোট: <b>{(() => { try { return formatMinor(BigInt(instPlan.totalMinor)); } catch { return instPlan.totalMinor; } })()}</b></span>
-                            <span>পরিশোধিত: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(instPlan.paidMinor)); } catch { return instPlan.paidMinor; } })()}</b></span>
-                            <span>বাকি: <b>{(() => { try { return formatMinor(BigInt(instPlan.remainingMinor)); } catch { return instPlan.remainingMinor; } })()}</b></span>
-                            <span className={`rounded px-2 py-0.5 text-xs font-semibold ${instPlan.status === "active" ? "bg-emerald-100 text-emerald-700" : instPlan.status === "completed" ? "bg-indigo-100 text-indigo-700" : "bg-slate-200 text-slate-600"}`}>{instPlan.status === "active" ? "সক্রিয়" : instPlan.status === "completed" ? "সম্পূর্ণ" : instPlan.status === "cancelled" ? "বাতিল" : instPlan.status}</span>
-                            {instPlan.note ? <span className="text-xs text-slate-500">নোট: {instPlan.note}</span> : null}
-                          </div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs">
-                              <thead><tr className="border-b text-slate-500"><th className="py-1.5 pr-2">ক্রম</th><th className="py-1.5 pr-2">তারিখ</th><th className="py-1.5 pr-2">পরিমাণ</th><th className="py-1.5 pr-2">পরিশোধিত</th><th className="py-1.5 pr-2">অবস্থা</th>{instPlan.status === "active" ? <th className="py-1.5">সংগ্রহ</th> : null}</tr></thead>
-                              <tbody>
-                                {instPlan.items.map((item) => {
-                                  const remaining = (() => { try { return BigInt(item.remainingMinor); } catch { return 0n; } })();
-                                  const paid = (() => { try { return BigInt(item.paidMinor); } catch { return 0n; } })();
-                                  const pill = item.fullyPaid
-                                    ? { text: "সম্পূর্ণ পরিশোধিত", cls: "bg-emerald-100 text-emerald-700" }
-                                    : item.overdue
-                                      ? { text: "অতিবাহিত", cls: "bg-red-100 text-red-700" }
-                                      : paid > 0n
-                                        ? { text: "আংশিক", cls: "bg-amber-100 text-amber-700" }
-                                        : { text: "বাকি", cls: "bg-slate-100 text-slate-600" };
-                                  const form = collectForms[item.id];
-                                  return (
-                                    <tr key={item.id} className="border-b last:border-0 align-top">
-                                      <td className="py-2 pr-2 font-medium">{item.seq}</td>
-                                      <td className="py-2 pr-2">{item.dueDay}</td>
-                                      <td className="py-2 pr-2">{(() => { try { return formatMinor(BigInt(item.amountMinor)); } catch { return item.amountMinor; } })()}</td>
-                                      <td className="py-2 pr-2">{(() => { try { return formatMinor(BigInt(item.paidMinor)); } catch { return item.paidMinor; } })()}</td>
-                                      <td className="py-2 pr-2"><span className={`rounded px-1.5 py-0.5 font-semibold ${pill.cls}`}>{pill.text}</span></td>
-                                      {instPlan.status === "active" ? (
-                                        <td className="py-2">
-                                          {remaining > 0n && form ? (
-                                            <div className="flex flex-wrap items-center gap-1.5">
-                                              <input className="input w-24" placeholder="টাকা" inputMode="decimal" value={form.amount} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, amount: e.target.value } }))} />
-                                              <select className="input w-auto" value={form.method} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, method: e.target.value } }))}>
-                                                <option value="bkash">বিকাশ</option>
-                                                <option value="nagad">নগদ</option>
-                                                <option value="rocket">রকেট</option>
-                                                <option value="cash">ক্যাশ</option>
-                                                <option value="bank">ব্যাংক</option>
-                                                <option value="other">অন্যান্য</option>
-                                              </select>
-                                              <input className="input w-32" placeholder="রেফারেন্স (ঐচ্ছিক)" value={form.reference} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, reference: e.target.value } }))} />
-                                              <input className="input w-32" placeholder="নোট (ঐচ্ছিক)" value={form.note} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, note: e.target.value } }))} />
-                                              <button className="btn-primary btn-sm" disabled={instBusy !== "" || form.amount.trim() === ""} onClick={() => collectInstItem(item)}>
-                                                {instBusy === `collect-${item.id}` ? "হচ্ছে..." : "সংগ্রহ করুন"}
-                                              </button>
-                                            </div>
-                                          ) : <span className="text-slate-400">—</span>}
-                                        </td>
-                                      ) : null}
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                          {instPlan.status === "active" ? (
-                            <button className="btn-ghost btn-sm text-red-600" disabled={instBusy !== ""} onClick={cancelInstPlan}>
-                              {instBusy === "cancel" ? "বাতিল হচ্ছে..." : "প্ল্যান বাতিল করুন"}
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                    <div className="space-y-3 rounded-xl border bg-white p-3">
-                      <h4 className="text-sm font-semibold">🏬 স্টোর সিঙ্ক</h4>
-                      {syncNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{syncNotice}</p> : null}
-                      {syncError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{syncError}</p> : null}
-                      {pushStateError ? (
-                        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">স্টোর সিঙ্কের তথ্য লোড করা যায়নি: {pushStateError}</p>
-                      ) : !pushState ? (
-                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
-                      ) : !pushState.store ? (
-                        <p className="text-xs text-slate-400">এই অর্ডারের কোনো স্টোর নেই</p>
-                      ) : (
-                        <div className="space-y-3">
-                          <p className="text-sm">
-                            <span className="font-medium">{pushState.store.name}</span>
-                            <span className="text-slate-500"> ({pushState.store.platform})</span>
-                            <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">Sync মোড: {pushState.store.syncMode}</span>
-                          </p>
-                          {pushState.store.syncMode === "mirror" ? (
-                            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">এই স্টোরটি Mirror মোডে আছে — এই মোডে এখানকার কোনো পরিবর্তন স্টোরে Push হবে না। Push চালু করতে Sync Center থেকে মোড co-manage বা full-manage করুন।</p>
-                          ) : null}
-                          <p className="text-xs text-slate-600">
-                            সর্বশেষ Push অবস্থা: <span className="font-medium">{pushState.storeSyncStatus ?? "—"}</span>
-                            {pushState.storeDraftId ? <span> · Draft ID: {pushState.storeDraftId}</span> : null}
-                          </p>
-                          {pushState.storeSyncError ? (
-                            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{pushState.storeSyncError}</p>
-                          ) : null}
-                          {pushState.store.refundPushEnabled ? (
-                            <p className="text-xs text-emerald-700">স্টোরে refund push চালু আছে — refund রেকর্ড হলে স্টোরেও পাঠানো হবে।</p>
-                          ) : (
-                            <p className="text-xs text-amber-700">স্টোরে refund push বন্ধ আছে — শুধু লোকাল রেকর্ড হবে (OWNER চালু করতে পারেন Sync Center থেকে)</p>
-                          )}
-                          <div className="space-y-1">
-                            <p className="text-xs font-semibold text-slate-600">সাম্প্রতিক Push</p>
-                            {pushState.recentPushes.length === 0 ? (
-                              <p className="text-xs text-slate-400">এখনো কোনো Push হয়নি।</p>
-                            ) : pushState.recentPushes.map((p) => (
-                              <div key={p.id} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
-                                <span className="font-medium">{p.operation}</span>
-                                <span className="rounded bg-slate-200 px-1.5 py-0.5 font-medium">{p.status}</span>
-                                <span className="text-slate-400">{new Date(p.createdAt).toLocaleString("bn-BD")}</span>
-                                {p.lastError ? <span className="text-red-600">{p.lastError}</span> : null}
-                              </div>
-                            ))}
-                          </div>
-                          <div className="space-y-2 border-t pt-3">
-                            <label className="text-sm font-medium">স্টোরে কাস্টমার-নোট</label>
-                            <p className="text-xs text-slate-400">এই নোটটি গ্রাহক স্টোরে দেখতে পাবেন — উপরের অভ্যন্তরীণ নোটের থেকে আলাদা, সেটি কখনো স্টোরে যায় না।</p>
-                            <textarea className="input" rows={2} maxLength={2000} placeholder="যেমন: আপনার অর্ডারটি প্যাক করা হয়েছে…" value={storeNoteText} onChange={(e) => setStoreNoteText(e.target.value)} />
-                            <button className="btn-primary btn-sm" disabled={syncBusy !== "" || !storeNoteText.trim()} onClick={sendStoreNote}>{syncBusy === "store-note" ? "পাঠানো হচ্ছে..." : "স্টোরে নোট পাঠান"}</button>
-                          </div>
-                          {pushState.storeInvoiceUrl ? (
-                            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                              <span className="font-medium">ইনভয়েস লিংক:</span>
-                              <a className="break-all text-brand-600 hover:underline" href={pushState.storeInvoiceUrl} target="_blank" rel="noreferrer">{pushState.storeInvoiceUrl}</a>
-                              <button className="btn-secondary btn-sm" onClick={() => copyText("invoice", pushState.storeInvoiceUrl!)}>{copiedKey === "invoice" ? "কপি হয়েছে ✓" : "ইনভয়েস লিংক কপি করুন"}</button>
-                            </div>
-                          ) : null}
-                          {!pushState.storeDraftId && o.source !== "woocommerce" && o.source !== "shopify" && (pushState.store !== null || !o.storeId) ? (
-                            <div className="border-t pt-3">
-                              <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createStoreDraft}>{syncBusy === "draft" ? "তৈরি হচ্ছে..." : "স্টোরে Draft Order তৈরি করুন"}</button>
-                              <p className="mt-1 text-xs text-slate-400">এই অর্ডারটি এখনো স্টোরে তৈরি হয়নি — Draft হিসেবে স্টোরে তৈরি করা হবে।</p>
-                            </div>
-                          ) : null}
-                        </div>
-                      )}
-                      {pushState && !pushState.store && !pushState.storeDraftId && o.source !== "woocommerce" && o.source !== "shopify" && !o.storeId ? (
-                        <div className="border-t pt-3">
-                          <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createStoreDraft}>{syncBusy === "draft" ? "তৈরি হচ্ছে..." : "স্টোরে Draft Order তৈরি করুন"}</button>
-                          <p className="mt-1 text-xs text-slate-400">এই অর্ডারের নিজের কোনো স্টোর নেই — একটিমাত্র co-manage/full-manage স্টোর থাকলে সেখানেই Draft তৈরি হবে, না হলে সার্ভারের কারণটি দেখানো হবে।</p>
-                        </div>
-                      ) : null}
-                      <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-                        <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createReturnLink}>{syncBusy === "return-link" ? "তৈরি হচ্ছে..." : "রিটার্ন লিংক তৈরি করুন"}</button>
-                        <a className="btn-secondary btn-sm" href={`/dashboard/commerce/print?orderId=${o.id}&kind=invoice`} target="_blank" rel="noreferrer">🧾 ইনভয়েস প্রিন্ট</a>
-                        <a className="btn-secondary btn-sm" href={`/dashboard/commerce/print?orderId=${o.id}&kind=slip`} target="_blank" rel="noreferrer">🏷️ প্যাকিং স্লিপ প্রিন্ট</a>
-                      </div>
-                      {returnUrl ? (
-                        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                          <span className="font-medium">রিটার্ন লিংক:</span>
-                          <a className="break-all text-brand-600 hover:underline" href={returnUrl} target="_blank" rel="noreferrer">{returnUrl}</a>
-                          <button className="btn-secondary btn-sm" onClick={() => copyText("return", returnUrl)}>{copiedKey === "return" ? "কপি হয়েছে ✓" : "লিংক কপি করুন"}</button>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="space-y-2 rounded-xl border bg-white p-3">
-                      <h4 className="text-sm font-semibold">🛵 রাইডার ডেলিভারি (নিজস্ব)</h4>
-                      {(() => { const active = orderAssignments.find((a) => a.status === "assigned" || a.status === "picked_up") ?? orderAssignments[0]; return active ? (
-                        <div className="flex flex-wrap items-center gap-2 text-sm">
-                          <span className="font-medium">{active.riderName ?? active.riderId}</span>
-                          <span className={`rounded px-2 py-0.5 text-xs font-semibold ${active.status === "delivered" ? "bg-green-100 text-green-700" : active.status === "returned" ? "bg-red-100 text-red-700" : active.status === "picked_up" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{active.status === "assigned" ? "বরাদ্দ হয়েছে" : active.status === "picked_up" ? "তোলা হয়েছে" : active.status === "delivered" ? "ডেলিভারি সম্পন্ন" : active.status === "returned" ? "ফেরত" : active.status}</span>
-                          {active.status === "assigned" ? <button type="button" className="btn-secondary btn-sm" disabled={riderBusy !== ""} onClick={() => transitionAssignment(active, "picked_up")}>তোলা হয়েছে</button> : null}
-                          {active.status === "picked_up" ? <>
-                            <button type="button" className="btn-primary btn-sm" disabled={riderBusy !== ""} onClick={() => transitionAssignment(active, "delivered")}>ডেলিভারি সম্পন্ন</button>
-                            <button type="button" className="btn-secondary btn-sm text-red-600" disabled={riderBusy !== ""} onClick={() => transitionAssignment(active, "returned")}>ফেরত</button>
-                          </> : null}
-                        </div>
-                      ) : (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <select className="input w-auto" value={assignRiderId} onChange={(e) => setAssignRiderId(e.target.value)}>
-                            <option value="">রাইডার বেছে নিন</option>
-                            {riders.filter((r) => r.active).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                          </select>
-                          <button type="button" className="btn-primary btn-sm" disabled={riderBusy !== "" || !assignRiderId} onClick={assignRider}>{riderBusy === "assign" ? "হচ্ছে…" : "রাইডার বরাদ্দ করুন"}</button>
-                          {riders.filter((r) => r.active).length === 0 ? <span className="text-xs text-slate-400">সক্রিয় রাইডার নেই — গুদাম পেজের রাইডার ট্যাব থেকে যোগ করুন।</span> : null}
-                        </div>
-                      ); })()}
-                    </div>
-                    {(() => { const rv = reviewForOrder(o.id); return rv ? (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
-                        <div className="text-sm font-semibold">⭐ গ্রাহক রিভিউ — {reviewStatusBn(rv)}</div>
-                        {rv.rating != null ? <div className="mt-1 text-base text-amber-500">{stars(rv.rating)} <span className="text-sm text-slate-600">({rv.rating}/৫)</span></div> : null}
-                        {rv.comment ? <p className="mt-1 text-sm text-slate-700">“{rv.comment}”</p> : null}
-                        <p className="mt-1 text-xs text-slate-400">{rv.receivedAt ? `পাওয়া গেছে: ${new Date(rv.receivedAt).toLocaleString("bn-BD")}` : rv.requestedAt ? `চাওয়া হয়েছে: ${new Date(rv.requestedAt).toLocaleString("bn-BD")}` : "কোনো চ্যানেল পাওয়া যায়নি বলে এখনো পাঠানো হয়নি"}{rv.source ? ` · মাধ্যম: ${rv.source === "chat" ? "চ্যাট" : "লিংক"}` : ""}</p>
-                      </div>
-                    ) : null; })()}
-                  </div>
-                </td></tr>
-              ); })() : null}
+              {actOrder ? (
+                <OrderActionPanel
+                  actOrder={actOrder}
+                  surgery={surgery}
+                  actNotice={actNotice}
+                  surgeryNotice={surgeryNotice}
+                  overpaidNotice={overpaidNotice}
+                  surgeryError={surgeryError}
+                  fraudNotice={fraudNotice}
+                  fraudBusy={fraudBusy}
+                  codBusy={codBusy}
+                  actStatus={actStatus}
+                  setActStatus={setActStatus}
+                  actRefundTaka={actRefundTaka}
+                  setActRefundTaka={setActRefundTaka}
+                  actRefundReason={actRefundReason}
+                  setActRefundReason={setActRefundReason}
+                  actNote={actNote}
+                  setActNote={setActNote}
+                  actBusy={actBusy}
+                  members={members}
+                  setActOrder={setActOrder}
+                  setItems={setItems}
+                  drafts={drafts}
+                  setDrafts={setDrafts}
+                  draftErrors={draftErrors}
+                  recalcDelivery={recalcDelivery}
+                  setRecalcDelivery={setRecalcDelivery}
+                  preview={preview}
+                  previewBusy={previewBusy}
+                  previewError={previewError}
+                  surgeryBusy={surgeryBusy}
+                  pickQuery={pickQuery}
+                  setPickQuery={setPickQuery}
+                  pickResults={pickResults}
+                  pickBusy={pickBusy}
+                  pendingProduct={pendingProduct}
+                  setPendingProduct={setPendingProduct}
+                  pushState={pushState}
+                  pushStateError={pushStateError}
+                  storeNoteText={storeNoteText}
+                  setStoreNoteText={setStoreNoteText}
+                  syncBusy={syncBusy}
+                  syncNotice={syncNotice}
+                  syncError={syncError}
+                  returnUrl={returnUrl}
+                  copiedKey={copiedKey}
+                  advAmount={advAmount}
+                  setAdvAmount={setAdvAmount}
+                  advMethod={advMethod}
+                  setAdvMethod={setAdvMethod}
+                  advRef={advRef}
+                  setAdvRef={setAdvRef}
+                  advNote={advNote}
+                  setAdvNote={setAdvNote}
+                  advBusy={advBusy}
+                  advError={advError}
+                  advNotice={advNotice}
+                  instPlan={instPlan}
+                  instLoaded={instLoaded}
+                  instError={instError}
+                  instBusy={instBusy}
+                  instCount={instCount}
+                  setInstCount={setInstCount}
+                  instInterval={instInterval}
+                  setInstInterval={setInstInterval}
+                  instStart={instStart}
+                  setInstStart={setInstStart}
+                  instNote={instNote}
+                  setInstNote={setInstNote}
+                  collectForms={collectForms}
+                  setCollectForms={setCollectForms}
+                  profit={profit}
+                  profitError={profitError}
+                  orderAssignments={orderAssignments}
+                  riders={riders}
+                  assignRiderId={assignRiderId}
+                  setAssignRiderId={setAssignRiderId}
+                  riderBusy={riderBusy}
+                  enterSurgery={enterSurgery}
+                  exitSurgery={exitSurgery}
+                  releaseFraud={releaseFraud}
+                  openFraudDetail={openFraudDetail}
+                  recordCodCall={recordCodCall}
+                  saveStatus={saveStatus}
+                  saveRefund={saveRefund}
+                  saveNote={saveNote}
+                  clearNote={clearNote}
+                  patchDraft={patchDraft}
+                  patchDraftPrice={patchDraftPrice}
+                  searchProducts={searchProducts}
+                  chooseProduct={chooseProduct}
+                  addProductDraft={addProductDraft}
+                  saveSurgery={saveSurgery}
+                  openSplit={openSplit}
+                  sendStoreNote={sendStoreNote}
+                  createStoreDraft={createStoreDraft}
+                  createReturnLink={createReturnLink}
+                  copyText={copyText}
+                  recordAdvance={recordAdvance}
+                  createInstPlan={createInstPlan}
+                  collectInstItem={collectInstItem}
+                  cancelInstPlan={cancelInstPlan}
+                  assignRider={assignRider}
+                  transitionAssignment={transitionAssignment}
+                  openOrderById={openOrderById}
+                  fmtM={fmtM}
+                  reviewForOrder={reviewForOrder}
+                  reviewStatusBn={reviewStatusBn}
+                  stars={stars}
+                />
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -3553,114 +3042,35 @@ export default function OrdersPage() {
       )}
         </div>
       </div>
-      {/* ON3: split dialog — movable lines take a quantity,
-          bundle groups move whole, gift lines never move. The
-          figures here are indicative; the server computes the
-          final split. */}
-      {splitOpen && actOrder ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="অর্ডার Split">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold">✂️ অর্ডার Split — #{actOrder.externalNumber ?? actOrder.id.slice(0, 8)}</h2>
-              <button type="button" className="btn-ghost btn-sm" onClick={() => setSplitOpen(false)}>বন্ধ করুন</button>
-            </div>
-            <p className="mt-1 text-xs text-slate-500">যে আইটেমগুলো নতুন অর্ডারে যাবে তা বেছে নিন। আনুমানিক — চূড়ান্ত হিসাব সার্ভারে হবে।</p>
-            {splitError ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{splitError}</p> : null}
-            {splitNotice ? (
-              <div className="mt-3 space-y-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                <p>{splitNotice}</p>
-                {splitCreated ? (
-                  <button type="button" className="font-semibold underline" onClick={() => { const id = splitCreated.id; setSplitOpen(false); void openOrderById(id); }}>
-                    নতুন অর্ডার {splitCreated.label} খুলুন →
-                  </button>
-                ) : null}
-              </div>
-            ) : (
-              <>
-                <div className="mt-4 space-y-2">
-                  {(actOrder.items ?? []).filter((it) => !it.bundleId && !it.isGift).map((it) => (
-                    <div key={it.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span className="font-medium">{it.name}</span>
-                      <span className="text-xs text-slate-400">মোট {it.quantity}টি</span>
-                      <span className="ml-auto inline-flex items-center gap-1.5 text-xs">
-                        নতুন অর্ডারে যাবে:
-                        <input className="input w-20 text-center" type="number" min={0} max={it.quantity}
-                          value={splitQty[it.id] ?? "0"}
-                          onChange={(e) => setSplitQty((prev) => ({ ...prev, [it.id]: e.target.value }))} />
-                        টি
-                      </span>
-                    </div>
-                  ))}
-                  {[...new Set((actOrder.items ?? []).filter((it) => it.bundleId).map((it) => it.bundleId as string))].map((bid) => {
-                    const comps = (actOrder.items ?? []).filter((it) => it.bundleId === bid);
-                    return (
-                      <div key={bid} className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200">
-                        <label className="flex flex-wrap items-center gap-2 font-medium text-amber-900">
-                          <input type="checkbox" checked={splitBundles.includes(bid)}
-                            onChange={(e) => setSplitBundles((prev) => (e.target.checked ? [...prev, bid] : prev.filter((x) => x !== bid)))} />
-                          🎁 বান্ডল: {comps[0]?.bundleName ?? "বান্ডল"} — পুরো গ্রুপ একসাথে যাবে
-                        </label>
-                        {comps.map((c) => <p key={c.id} className="pl-6 text-xs text-slate-600">• {c.name} × {c.quantity}</p>)}
-                      </div>
-                    );
-                  })}
-                  {(actOrder.items ?? []).filter((it) => it.isGift).map((it) => (
-                    <p key={it.id} className="rounded-lg bg-pink-50 px-3 py-2 text-xs text-pink-800">🎁 উপহার: {it.name} × {it.quantity} — উপহার লাইন Split-এ সরানো যায় না, মূল অর্ডারেই থাকবে।</p>
-                  ))}
-                </div>
-                <label className="mt-4 block text-sm font-medium">নতুন অর্ডারের ডেলিভারি চার্জ (৳)
-                  <input className="input mt-1 w-40" inputMode="decimal" value={splitDeliveryTaka} onChange={(e) => setSplitDeliveryTaka(e.target.value)} />
-                </label>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button type="button" className="btn-primary btn-sm" disabled={splitBusy} onClick={() => void doSplit()}>
-                    {splitBusy ? "Split হচ্ছে…" : "Split নিশ্চিত করুন"}
-                  </button>
-                  <button type="button" className="btn-ghost btn-sm" disabled={splitBusy} onClick={() => setSplitOpen(false)}>বাতিল</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      ) : null}
-      {/* ON3: bulk merge dialog — the survivor is picked by
-          radio; the delivery-charge warning is shown BEFORE
-          confirm, with the exact summed figure. */}
-      {mergeOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="অর্ডার মার্জ">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold">🔀 অর্ডার মার্জ করুন</h2>
-              <button type="button" className="btn-ghost btn-sm" onClick={() => setMergeOpen(false)}>বন্ধ করুন</button>
-            </div>
-            <p className="mt-1 text-xs text-slate-500">কোন অর্ডারটি থাকবে (survivor) তা বেছে নিন — বাকিগুলো এতে মার্জ হয়ে বাতিল হয়ে যাবে।</p>
-            {mergeError ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{mergeError}</p> : null}
-            <div className="mt-4 space-y-2">
-              {items.filter((x) => selected.includes(x.id)).map((x) => (
-                <label key={x.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                  <input type="radio" name="merge-survivor" checked={mergeSurvivor === x.id} onChange={() => setMergeSurvivor(x.id)} />
-                  <span className="font-medium">#{x.externalNumber ?? x.id.slice(0, 8)}</span>
-                  <span className="text-slate-600">{[x.customer?.firstName, x.customer?.lastName].filter(Boolean).join(" ") || "—"}</span>
-                  <span className="ml-auto text-xs text-slate-500">মোট {fmtM(x.totalMinor)} · ডেলিভারি {fmtM(x.shippingMinor ?? "0")}</span>
-                  {mergeSurvivor === x.id ? <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-bold text-emerald-700">Survivor</span> : null}
-                </label>
-              ))}
-            </div>
-            {(() => { const dropped = items.filter((x) => selected.includes(x.id) && x.id !== mergeSurvivor)
-              .reduce((acc, x) => { try { return acc + BigInt(x.shippingMinor ?? "0"); } catch { return acc; } }, 0n); return (
-              <div className="mt-4 space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
-                <p>⚠️ অন্য অর্ডারগুলোর ডেলিভারি চার্জ (মোট {fmtM(dropped.toString())}) বাদ যাবে — survivor-এর ডেলিভারি চার্জই থাকবে।</p>
-                <p>মার্জ হওয়া অর্ডারগুলো বাতিল হয়ে যাবে; তাদের পেমেন্ট survivor-এ চলে যাবে।</p>
-              </div>
-            ); })()}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" className="btn-primary btn-sm" disabled={mergeBusy || !mergeSurvivor} onClick={() => void doMerge()}>
-                {mergeBusy ? "মার্জ হচ্ছে…" : "মার্জ নিশ্চিত করুন"}
-              </button>
-              <button type="button" className="btn-ghost btn-sm" disabled={mergeBusy} onClick={() => setMergeOpen(false)}>বাতিল</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <SplitDialog
+        splitOpen={splitOpen}
+        actOrder={actOrder}
+        splitError={splitError}
+        splitNotice={splitNotice}
+        splitCreated={splitCreated}
+        splitQty={splitQty}
+        setSplitQty={setSplitQty}
+        splitBundles={splitBundles}
+        setSplitBundles={setSplitBundles}
+        splitDeliveryTaka={splitDeliveryTaka}
+        setSplitDeliveryTaka={setSplitDeliveryTaka}
+        splitBusy={splitBusy}
+        setSplitOpen={setSplitOpen}
+        doSplit={doSplit}
+        openOrderById={openOrderById}
+      />
+      <MergeDialog
+        mergeOpen={mergeOpen}
+        setMergeOpen={setMergeOpen}
+        mergeError={mergeError}
+        items={items}
+        selected={selected}
+        mergeSurvivor={mergeSurvivor}
+        setMergeSurvivor={setMergeSurvivor}
+        fmtM={fmtM}
+        mergeBusy={mergeBusy}
+        doMerge={doMerge}
+      />
       <DuplicatesModal
         isOpen={showDuplicatesModal}
         onClose={() => setShowDuplicatesModal(false)}
@@ -3688,386 +3098,66 @@ export default function OrdersPage() {
           onClose={() => setAutomationPanelOpen(false)}
         />
       ) : null}
-      {fraudPanelOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="জালিয়াতি সুরক্ষা">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold">🛡️ জালিয়াতি সুরক্ষা</h2>
-              <button type="button" className="btn-ghost btn-sm" onClick={() => setFraudPanelOpen(false)}>বন্ধ করুন</button>
-            </div>
-            <p className="mt-1 text-xs text-slate-500">প্রতিটি নতুন অর্ডারে জালিয়াতি ঝুঁকি যাচাই হয়। সেটিংস বদলালে পরের যাচাই থেকে তা কার্যকর হবে — আগের স্কোর নিজে থেকে বদলায় না, চাইলে অর্ডারের চিপ থেকে আবার যাচাই করুন।</p>
-            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ডিভাইস সংকেত দুর্বল — পরিবারের সবাই একই ফোন ব্যবহার করতে পারেন; এটি একা কোনো অর্ডার আটকাবে না</p>
-            {fraudPanelError ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{fraudPanelError}</p> : null}
-            {fraudPanelNotice ? <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{fraudPanelNotice}</p> : null}
-            {!fraudSettings ? (
-              <p className="mt-4 text-sm text-slate-400">{fraudPanelError ? "সেটিংস লোড হয়নি — আবার খুলে চেষ্টা করুন।" : "লোড হচ্ছে…"}</p>
-            ) : (
-              <div className="mt-4 space-y-3">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input type="checkbox" checked={fraudSettings.enabled} onChange={(e) => setFraudSettings({ ...fraudSettings, enabled: e.target.checked })} />
-                  জালিয়াতি যাচাই সক্রিয়
-                </label>
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input type="checkbox" checked={fraudSettings.autoHoldEnabled} onChange={(e) => setFraudSettings({ ...fraudSettings, autoHoldEnabled: e.target.checked })} />
-                  স্বয়ংক্রিয় আটকানো
-                </label>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-sm">কোন ঝুঁকি থেকে স্বয়ংক্রিয় আটকাবে
-                    <select className="input mt-1" value={fraudSettings.autoHoldBand} onChange={(e) => setFraudSettings({ ...fraudSettings, autoHoldBand: e.target.value })}>
-                      <option value="medium">মাঝারি ঝুঁকি থেকে</option>
-                      <option value="high">শুধু উচ্চ ঝুঁকি</option>
-                    </select>
-                  </label>
-                  <label className="text-sm">বড় অর্ডারের সীমা (৳)
-                    <input className="input mt-1" inputMode="decimal" placeholder="যেমন: 5000" value={fraudHighTaka} onChange={(e) => setFraudHighTaka(e.target.value)} />
-                  </label>
-                  <label className="text-sm">বার্স্ট: কয়টি অর্ডার হলে সন্দেহজনক
-                    <input className="input mt-1" type="number" min={0} value={fraudSettings.burstCount} onChange={(e) => setFraudSettings({ ...fraudSettings, burstCount: Number(e.target.value) })} />
-                  </label>
-                  <label className="text-sm">বার্স্ট সময়সীমা (ঘণ্টা)
-                    <input className="input mt-1" type="number" min={0} value={fraudSettings.burstWindowHours} onChange={(e) => setFraudSettings({ ...fraudSettings, burstWindowHours: Number(e.target.value) })} />
-                  </label>
-                </div>
-                {/* GB3 (GC9): open-order policy + window */}
-                <div className="grid gap-3 border-t pt-3 sm:grid-cols-2">
-                  <label className="text-sm">খোলা অর্ডার নীতি
-                    <select className="input mt-1" value={fraudSettings.openOrderPolicy ?? "off"} onChange={(e) => setFraudSettings({ ...fraudSettings, openOrderPolicy: e.target.value })}>
-                      <option value="off">বন্ধ (off)</option>
-                      <option value="warn">সতর্কতা + আটক (warn)</option>
-                      <option value="block">ব্লক (block)</option>
-                    </select>
-                  </label>
-                  <label className="text-sm">খোলা অর্ডারের সময়সীমা (ঘণ্টা)
-                    <input className="input mt-1" type="number" min={0} value={fraudSettings.openOrderWindowHours ?? 0} onChange={(e) => setFraudSettings({ ...fraudSettings, openOrderWindowHours: Number(e.target.value) })} />
-                  </label>
-                </div>
-                {/* GB3 (GC9): rate limits (0 = off) */}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-sm">হার সীমা — দুই অর্ডারের মধ্যে অপেক্ষা (মিনিট, ০ = বন্ধ)
-                    <input className="input mt-1" type="number" min={0} value={fraudSettings.waitingPeriodMinutes ?? 0} onChange={(e) => setFraudSettings({ ...fraudSettings, waitingPeriodMinutes: Number(e.target.value) })} />
-                  </label>
-                  <label className="text-sm">হার সীমা — এক ফোনে দিনে সর্বোচ্চ অর্ডার (০ = বন্ধ)
-                    <input className="input mt-1" type="number" min={0} value={fraudSettings.maxOrdersPerPhonePerDay ?? 0} onChange={(e) => setFraudSettings({ ...fraudSettings, maxOrdersPerPhonePerDay: Number(e.target.value) })} />
-                  </label>
-                </div>
-                {/* GB3 (GC9): Cloudflare Turnstile CAPTCHA */}
-                <div className="space-y-2 border-t pt-3">
-                  <div className="text-sm font-semibold">CAPTCHA (Cloudflare Turnstile)</div>
-                  <label className="flex items-center gap-2 text-sm font-medium">
-                    <input type="checkbox" checked={!!fraudSettings.captchaEnabled} onChange={(e) => setFraudSettings({ ...fraudSettings, captchaEnabled: e.target.checked })} />
-                    CAPTCHA চালু
-                  </label>
-                  <label className="flex items-center gap-2 text-sm font-medium">
-                    <input type="checkbox" checked={!!fraudSettings.captchaOnCheckout} onChange={(e) => setFraudSettings({ ...fraudSettings, captchaOnCheckout: e.target.checked })} />
-                    Checkout-এ CAPTCHA
-                  </label>
-                  <label className="flex items-center gap-2 text-sm font-medium">
-                    <input type="checkbox" checked={!!fraudSettings.captchaOnOtp} onChange={(e) => setFraudSettings({ ...fraudSettings, captchaOnOtp: e.target.checked })} />
-                    OTP অনুরোধে CAPTCHA
-                  </label>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="text-sm">Turnstile Site Key
-                      <input className="input mt-1" value={fraudSettings.turnstileSiteKey ?? ""} onChange={(e) => setFraudSettings({ ...fraudSettings, turnstileSiteKey: e.target.value })} placeholder="0x4AAAA…" />
-                    </label>
-                    <label className="text-sm">Turnstile Secret
-                      <input className="input mt-1" type="password" autoComplete="new-password" value={turnstileSecret} onChange={(e) => setTurnstileSecret(e.target.value)} placeholder={fraudSettings.turnstileSecretSet ? "সেট করা আছে — বদলাতে নতুন সিক্রেট দিন" : "সিক্রেট দিন"} />
-                    </label>
-                  </div>
-                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Cloudflare Turnstile চালু থাকলে যাচাই সেবা বন্ধ থাকলে checkout আটকে যাবে; site key/secret দুটোই না দিলে CAPTCHA কার্যকর হবে না।</p>
-                </div>
-                <button type="button" className="btn-primary btn-sm" disabled={fraudPanelBusy !== ""} onClick={() => void saveFraudSettings()}>
-                  {fraudPanelBusy === "save" ? "সংরক্ষণ হচ্ছে…" : "সেটিংস সংরক্ষণ করুন"}
-                </button>
-              </div>
-            )}
-            <div className="mt-6 space-y-3 border-t pt-4">
-              <div className="flex flex-wrap gap-2" role="tablist" aria-label="শনাক্তকারী তালিকা">
-                {([["phone", "ফোন ব্লক (আগের তালিকা)"], ["blocked", "ইমেইল/IP/ডিভাইস ব্লক"], ["trusted", "বিশ্বস্ত তালিকা"]] as const).map(([key, label]) => (
-                  <button key={key} type="button" role="tab" aria-selected={identTab === key}
-                    className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ${identTab === key ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-600 ring-slate-200"}`}
-                    onClick={() => setIdentTab(key)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {identTab === "phone" ? (<>
-              <h3 className="font-semibold">🚫 ব্লক করা ফোন নম্বর</h3>
-              <p className="text-xs text-slate-500">ব্লক করা নম্বর থেকে অর্ডার এলে ঝুঁকি যাচাইয়ে তা ধরা পড়বে। নম্বরটি যেভাবে লিখবেন সেভাবেই সংরক্ষণ হবে।</p>
-              <div className="flex flex-wrap items-end gap-2">
-                <label className="text-sm">ফোন নম্বর
-                  <input className="input mt-1 w-44" placeholder="01XXXXXXXXX" value={blockForm.phone} onChange={(e) => setBlockForm({ ...blockForm, phone: e.target.value })} />
-                </label>
-                <label className="text-sm">কারণ (ঐচ্ছিক)
-                  <input className="input mt-1 w-52" placeholder="যেমন: বারবার ভুয়া অর্ডার" value={blockForm.reason} onChange={(e) => setBlockForm({ ...blockForm, reason: e.target.value })} />
-                </label>
-                <button type="button" className="btn-primary btn-sm" disabled={fraudPanelBusy !== "" || !blockForm.phone.trim()} onClick={() => void addBlockedPhone()}>
-                  {fraudPanelBusy === "block-add" ? "যোগ হচ্ছে…" : "ব্লক করুন"}
-                </button>
-              </div>
-              {blockedPhones.length === 0 ? (
-                <p className="text-sm text-slate-400">কোনো নম্বর ব্লক করা নেই।</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {blockedPhones.map((b) => (
-                    <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span>
-                        <span className="font-mono font-medium">{b.phone}</span>
-                        {b.reason ? <span className="ml-2 text-slate-500">{b.reason}</span> : null}
-                        <span className="block text-xs text-slate-400">ব্লক করা হয়েছে: {new Date(b.createdAt).toLocaleString("bn-BD")}</span>
-                      </span>
-                      <button type="button" className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50" disabled={fraudPanelBusy !== ""} onClick={() => void deleteBlockedPhone(b)}>
-                        {fraudPanelBusy === `block-del-${b.id}` ? "সরানো হচ্ছে…" : "সরিয়ে দিন"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              </>) : null}
-              {identTab === "blocked" ? (<>
-              <h3 className="font-semibold">🚫 ইমেইল/IP/ডিভাইস ব্লক</h3>
-              <p className="text-xs text-slate-500">ডিভাইসের ক্ষেত্রে পুরো ৬৪ অক্ষরের ডিভাইস হ্যাশটি দিন (শুধু শুরুটা নয়)।</p>
-              <div className="flex flex-wrap items-end gap-2">
-                <label className="text-sm">ধরন
-                  <select className="input mt-1 w-36" value={blockedIdentForm.kind} onChange={(e) => setBlockedIdentForm({ ...blockedIdentForm, kind: e.target.value })}>
-                    <option value="email">ইমেইল</option>
-                    <option value="ip">IP</option>
-                    <option value="device">ডিভাইস হ্যাশ</option>
-                  </select>
-                </label>
-                <label className="text-sm">মান
-                  <input className="input mt-1 w-52 font-mono" placeholder={blockedIdentForm.kind === "email" ? "name@example.com" : blockedIdentForm.kind === "device" ? "৬৪ অক্ষরের hex হ্যাশ" : "203.0.113.10"} value={blockedIdentForm.value} onChange={(e) => setBlockedIdentForm({ ...blockedIdentForm, value: e.target.value })} />
-                </label>
-                <label className="text-sm">কারণ (ঐচ্ছিক)
-                  <input className="input mt-1 w-52" placeholder="যেমন: বারবার ভুয়া অর্ডার" value={blockedIdentForm.reason} onChange={(e) => setBlockedIdentForm({ ...blockedIdentForm, reason: e.target.value })} />
-                </label>
-                <button type="button" className="btn-primary btn-sm" disabled={fraudPanelBusy !== "" || !blockedIdentForm.value.trim()} onClick={() => void addBlockedIdent()}>
-                  {fraudPanelBusy === "ident-add" ? "যোগ হচ্ছে…" : "ব্লক করুন"}
-                </button>
-              </div>
-              {blockedIdents.length === 0 ? (
-                <p className="text-sm text-slate-400">কোনো ইমেইল/IP/ডিভাইস ব্লক করা নেই।</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {blockedIdents.map((b) => (
-                    <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span>
-                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold">{identifierKindLabel(b.kind)}</span>{" "}
-                        <span className="font-mono font-medium">{b.value}</span>
-                        {b.reason ? <span className="ml-2 text-slate-500">{b.reason}</span> : null}
-                        <span className="block text-xs text-slate-400">ব্লক করা হয়েছে: {new Date(b.createdAt).toLocaleString("bn-BD")}</span>
-                      </span>
-                      <button type="button" className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50" disabled={fraudPanelBusy !== ""} onClick={() => void deleteBlockedIdent(b)}>
-                        {fraudPanelBusy === `ident-del-${b.id}` ? "সরানো হচ্ছে…" : "সরিয়ে দিন"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              </>) : null}
-              {identTab === "trusted" ? (<>
-              <h3 className="font-semibold">✅ বিশ্বস্ত তালিকা</h3>
-              <p className="text-xs text-slate-500">বিশ্বস্ত নম্বর fraud score, খোলা-অর্ডার ব্লক ও হার-সীমা থেকে মুক্ত — CAPTCHA থেকে নয়।</p>
-              <div className="flex flex-wrap items-end gap-2">
-                <label className="text-sm">ধরন
-                  <select className="input mt-1 w-28" value={trustedForm.kind} onChange={(e) => setTrustedForm({ ...trustedForm, kind: e.target.value })}>
-                    <option value="phone">ফোন</option>
-                    <option value="email">ইমেইল</option>
-                    <option value="ip">IP</option>
-                  </select>
-                </label>
-                <label className="text-sm">মান
-                  <input className="input mt-1 w-52" placeholder="01XXXXXXXXX / name@example.com / IP" value={trustedForm.value} onChange={(e) => setTrustedForm({ ...trustedForm, value: e.target.value })} />
-                </label>
-                <label className="text-sm">কারণ (ঐচ্ছিক)
-                  <input className="input mt-1 w-52" placeholder="যেমন: নিয়মিত ক্রেতা" value={trustedForm.reason} onChange={(e) => setTrustedForm({ ...trustedForm, reason: e.target.value })} />
-                </label>
-                <button type="button" className="btn-primary btn-sm" disabled={fraudPanelBusy !== "" || !trustedForm.value.trim()} onClick={() => void addTrustedIdent()}>
-                  {fraudPanelBusy === "trusted-add" ? "যোগ হচ্ছে…" : "যোগ করুন"}
-                </button>
-              </div>
-              {trustedIdents.length === 0 ? (
-                <p className="text-sm text-slate-400">বিশ্বস্ত তালিকায় কিছু নেই।</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {trustedIdents.map((b) => (
-                    <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span>
-                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-bold text-emerald-700">{identifierKindLabel(b.kind)}</span>{" "}
-                        <span className="font-mono font-medium">{b.value}</span>
-                        {b.reason ? <span className="ml-2 text-slate-500">{b.reason}</span> : null}
-                        <span className="block text-xs text-slate-400">যোগ করা হয়েছে: {new Date(b.createdAt).toLocaleString("bn-BD")}</span>
-                      </span>
-                      <button type="button" className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50" disabled={fraudPanelBusy !== ""} onClick={() => void deleteTrustedIdent(b)}>
-                        {fraudPanelBusy === `trusted-del-${b.id}` ? "সরানো হচ্ছে…" : "সরিয়ে দিন"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              </>) : null}
-            </div>
-            {/* GB3 (GC9): blocked attempts log (newest first, as served). */}
-            <div className="mt-6 space-y-3 border-t pt-4">
-              <h3 className="font-semibold">🧾 আটকানো চেষ্টা</h3>
-              {fraudAttempts.length === 0 ? (
-                <p className="text-sm text-slate-400">এখনো কোনো চেষ্টা আটকানো হয়নি।</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {fraudAttempts.map((a) => (
-                    <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span>
-                        <span className="font-medium">{fraudAttemptKindLabel(a.kind)}</span>
-                        <span className="ml-2 text-slate-500">{a.channel}</span>
-                        {a.identifierSummary ? <span className="ml-2 font-mono text-xs text-slate-500">{a.identifierSummary}</span> : null}
-                      </span>
-                      <span className="text-xs text-slate-400">{new Date(a.createdAt).toLocaleString("bn-BD")}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            {/* GB3 (GC9): fraud rules */}
-            <div className="mt-6 space-y-3 border-t pt-4">
-              <h3 className="font-semibold">📏 নিয়ম</h3>
-              {fraudRules.length === 0 ? (
-                <p className="text-sm text-slate-400">কোনো নিয়ম তৈরি করা হয়নি।</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {fraudRules.map((r) => (
-                    <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span>
-                        <span className="font-medium">{r.name}</span>
-                        <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold">{FRAUD_RULE_ACTION_LABEL[r.action] ?? r.action}{r.action === "tag" && r.tagValue ? `: ${r.tagValue}` : ""}</span>
-                        <span className="ml-2 text-xs text-slate-500">হিট: {r.hitCount}বার</span>
-                        <span className="block font-mono text-[11px] text-slate-400">{JSON.stringify(r.conditions ?? {})}</span>
-                      </span>
-                      <span className="flex items-center gap-3">
-                        <label className="flex items-center gap-1.5 text-xs font-medium">
-                          <input type="checkbox" checked={r.enabled} disabled={fraudPanelBusy !== ""} onChange={(e) => void toggleFraudRule(r, e.target.checked)} />
-                          চালু
-                        </label>
-                        <button type="button" className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50" disabled={fraudPanelBusy !== ""} onClick={() => void deleteFraudRule(r)}>
-                          {fraudPanelBusy === `rule-del-${r.id}` ? "মোছা হচ্ছে…" : "মুছুন"}
-                        </button>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="space-y-2 rounded-xl border p-3">
-                <div className="text-sm font-semibold">নতুন নিয়ম</div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-sm">নিয়মের নাম
-                    <input className="input mt-1" value={ruleDraft.name} onChange={(e) => setRuleDraft({ ...ruleDraft, name: e.target.value })} placeholder="যেমন: বড় COD অর্ডার" />
-                  </label>
-                  <label className="text-sm">অ্যাকশন
-                    <select className="input mt-1" value={ruleDraft.action} onChange={(e) => setRuleDraft({ ...ruleDraft, action: e.target.value })}>
-                      <option value="hold">আটকাও (hold)</option>
-                      <option value="tag">ট্যাগ (tag)</option>
-                      <option value="block_checkout">checkout ব্লক (block_checkout)</option>
-                    </select>
-                  </label>
-                  {ruleDraft.action === "tag" ? (
-                    <label className="text-sm">ট্যাগের মান
-                      <input className="input mt-1" value={ruleDraft.tagValue} onChange={(e) => setRuleDraft({ ...ruleDraft, tagValue: e.target.value })} placeholder="যেমন: সন্দেহজনক" />
-                    </label>
-                  ) : null}
-                  <label className="text-sm">সর্বনিম্ন মোট (টাকা)
-                    <input className="input mt-1" inputMode="decimal" value={ruleDraft.minTotalTaka} onChange={(e) => setRuleDraft({ ...ruleDraft, minTotalTaka: e.target.value })} placeholder="যেমন: 5000" />
-                  </label>
-                  <label className="text-sm">জেলা (কমা দিয়ে আলাদা)
-                    <input className="input mt-1" value={ruleDraft.districtsText} onChange={(e) => setRuleDraft({ ...ruleDraft, districtsText: e.target.value })} placeholder="খুলনা, বরিশাল" />
-                  </label>
-                  <label className="text-sm">খোলা অর্ডার ≥
-                    <input className="input mt-1" type="number" min={0} value={ruleDraft.phoneOpenOrdersGte} onChange={(e) => setRuleDraft({ ...ruleDraft, phoneOpenOrdersGte: e.target.value })} />
-                  </label>
-                  <label className="text-sm">সর্বনিম্ন risk score
-                    <input className="input mt-1" type="number" min={0} value={ruleDraft.minRiskScore} onChange={(e) => setRuleDraft({ ...ruleDraft, minRiskScore: e.target.value })} />
-                  </label>
-                </div>
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input type="checkbox" checked={ruleDraft.isCod} onChange={(e) => setRuleDraft({ ...ruleDraft, isCod: e.target.checked })} />
-                  শুধু COD
-                </label>
-                <p className="text-[11px] text-slate-400">risk score শর্তটি অর্ডার তৈরি হওয়ার পরে যাচাই হয় — checkout ব্লক হয় না, hold/tag প্রযোজ্য হয়।</p>
-                <button type="button" className="btn-primary btn-sm" disabled={fraudPanelBusy !== ""} onClick={() => void createFraudRule()}>
-                  {fraudPanelBusy === "rule-add" ? "তৈরি হচ্ছে…" : "নিয়ম তৈরি করুন"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {/* ON5: customer notification settings panel. */}
-      {notifPanelOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="বিজ্ঞপ্তি সেটিংস">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold">🔔 বিজ্ঞপ্তি সেটিংস</h2>
-              <button type="button" className="btn-ghost btn-sm" onClick={() => setNotifPanelOpen(false)}>বন্ধ করুন</button>
-            </div>
-            <p className="mt-1 text-xs text-slate-500">
-              অর্ডারের প্রতিটি ধাপে গ্রাহককে কোন চ্যানেলে বার্তা যাবে তা এখানে ঠিক করুন। চ্যানেলগুলো দেখানো ক্রমেই চেষ্টা করা হয়
-              (SMS → WhatsApp → Email) — আগের চ্যানেল ব্যর্থ হলে পরেরটি চেষ্টা হবে। টেমপ্লেট খালি রাখলে ডিফল্ট বার্তা ব্যবহার হবে।
-            </p>
-            <p className="mt-2 text-xs text-slate-500">ব্যবহারযোগ্য ভেরিয়েবল: <span className="font-mono">{TEMPLATE_VARIABLE_HELP}</span></p>
-            {notifPanelError ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{notifPanelError}</p> : null}
-            {notifPanelNotice ? <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notifPanelNotice}</p> : null}
-            {!notifConfig ? (
-              <p className="mt-4 text-sm text-slate-400">{notifPanelError ? "সেটিংস লোড হয়নি — আবার খুলে চেষ্টা করুন।" : "লোড হচ্ছে…"}</p>
-            ) : (
-              <div className="mt-4 space-y-3">
-                {NOTIFICATION_EVENTS.map((eventKey) => {
-                  const ev = notifConfig[eventKey];
-                  if (!ev) return null;
-                  return (
-                    <div key={eventKey} className="space-y-2 rounded-xl border p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <label className="flex items-center gap-2 text-sm font-semibold">
-                          <input type="checkbox" checked={ev.enabled}
-                            onChange={(e) => setNotifConfig({ ...notifConfig, [eventKey]: { ...ev, enabled: e.target.checked } })} />
-                          {notificationEventLabel(eventKey)}
-                        </label>
-                        <div className="flex flex-wrap items-center gap-1">
-                          {NOTIFICATION_CHANNELS.map((ch) => {
-                            const on = ev.channels.includes(ch);
-                            return (
-                              <button key={ch} type="button" aria-pressed={on}
-                                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${on ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-500 ring-slate-200"}`}
-                                onClick={() => toggleNotifChannel(eventKey, ch)}>
-                                {notificationChannelLabel(ch)}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <details>
-                        <summary className="cursor-pointer text-xs font-semibold text-slate-600">টেমপ্লেট সম্পাদনা</summary>
-                        <div className="mt-2 space-y-2">
-                          {NOTIFICATION_CHANNELS.map((ch) => (
-                            <label key={ch} className="block text-xs font-medium text-slate-600">{notificationChannelLabel(ch)} টেমপ্লেট
-                              <textarea className="input mt-1 w-full" rows={2} placeholder="ডিফল্ট বার্তা ব্যবহার হবে"
-                                value={ev.templates[ch] ?? ""}
-                                onChange={(e) => setNotifConfig({
-                                  ...notifConfig,
-                                  [eventKey]: { ...ev, templates: { ...ev.templates, [ch]: e.target.value === "" ? null : e.target.value } },
-                                })} />
-                            </label>
-                          ))}
-                          <p className="text-[11px] text-slate-400">ভেরিয়েবল: <span className="font-mono">{TEMPLATE_VARIABLE_HELP}</span> — এর বাইরের ভেরিয়েবল দিলে সংরক্ষণে সার্ভারের ত্রুটি দেখাবে।</p>
-                        </div>
-                      </details>
-                    </div>
-                  );
-                })}
-                <button type="button" className="btn-primary btn-sm" disabled={notifPanelBusy !== ""} onClick={() => void saveNotifSettings()}>
-                  {notifPanelBusy === "save" ? "সংরক্ষণ হচ্ছে…" : "সেটিংস সংরক্ষণ করুন"}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : null}
+      <FraudSettingsPanel
+        fraudPanelOpen={fraudPanelOpen}
+        setFraudPanelOpen={setFraudPanelOpen}
+        fraudPanelError={fraudPanelError}
+        fraudPanelNotice={fraudPanelNotice}
+        fraudSettings={fraudSettings}
+        setFraudSettings={setFraudSettings}
+        fraudHighTaka={fraudHighTaka}
+        setFraudHighTaka={setFraudHighTaka}
+        fraudPanelBusy={fraudPanelBusy}
+        saveFraudSettings={saveFraudSettings}
+        blockForm={blockForm}
+        setBlockForm={setBlockForm}
+        blockedPhones={blockedPhones}
+        addBlockedPhone={addBlockedPhone}
+        deleteBlockedPhone={deleteBlockedPhone}
+        identTab={identTab}
+        setIdentTab={setIdentTab}
+        blockedIdents={blockedIdents}
+        trustedIdents={trustedIdents}
+        blockedIdentForm={blockedIdentForm}
+        setBlockedIdentForm={setBlockedIdentForm}
+        trustedForm={trustedForm}
+        setTrustedForm={setTrustedForm}
+        addBlockedIdent={addBlockedIdent}
+        deleteBlockedIdent={deleteBlockedIdent}
+        addTrustedIdent={addTrustedIdent}
+        deleteTrustedIdent={deleteTrustedIdent}
+        turnstileSecret={turnstileSecret}
+        setTurnstileSecret={setTurnstileSecret}
+        fraudAttempts={fraudAttempts}
+        fraudRules={fraudRules}
+        ruleDraft={ruleDraft}
+        setRuleDraft={setRuleDraft}
+        createFraudRule={createFraudRule}
+        toggleFraudRule={toggleFraudRule}
+        deleteFraudRule={deleteFraudRule}
+      />
+      <NotificationSettingsPanel
+        notifPanelOpen={notifPanelOpen}
+        setNotifPanelOpen={setNotifPanelOpen}
+        notifPanelError={notifPanelError}
+        notifPanelNotice={notifPanelNotice}
+        notifConfig={notifConfig}
+        setNotifConfig={setNotifConfig}
+        notifPanelBusy={notifPanelBusy}
+        toggleNotifChannel={toggleNotifChannel}
+        saveNotifSettings={saveNotifSettings}
+      />
     </div>
+  );
+}
+
+// ED12 (EB5): useSearchParams (URL-driven list state above) needs a
+// Suspense boundary in Next 15 — same wrapper pattern as
+// dashboard/commerce/print and dashboard/commerce/warehouse/labels.
+export default function OrdersPage() {
+  return (
+    <Suspense fallback={<p className="p-6 text-sm text-slate-500">লোড হচ্ছে…</p>}>
+      <OrdersPageInner />
+    </Suspense>
   );
 }

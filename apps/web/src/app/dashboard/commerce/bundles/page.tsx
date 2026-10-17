@@ -4,6 +4,8 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
+import { useConfirm, useToast } from "@repo/ui/client";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC29 — bundle management. A bundle sells 2–10 component
 // products together at one bundle price. regularTotalMinor comes
@@ -50,6 +52,8 @@ interface ComponentRow { productId: string; variantSku: string; qty: string }
 interface SlotRow { label: string; chooseQty: string; sourceType: "category" | "products"; categoryId: string; productIds: string[] }
 
 export default function BundlesPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
@@ -57,7 +61,6 @@ export default function BundlesPage() {
   // bundle's FULL slot set — saving replaces them wholesale).
   const [slotRows, setSlotRows] = useState<SlotRow[]>([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -165,7 +168,7 @@ export default function BundlesPage() {
         slots.push({ label, chooseQty, sourceType: "products", sourceRef: { productIds: s.productIds } });
       }
     }
-    setBusy("save"); setError(""); setNotice("");
+    setBusy("save"); setError("");
     const body = {
       name: name.trim(),
       description: description.trim() || null,
@@ -180,10 +183,10 @@ export default function BundlesPage() {
     try {
       if (editingId) {
         await apiFetch(`/organizations/${orgId}/commerce/bundles/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("বান্ডল আপডেট হয়েছে।");
+        toast({ title: "বান্ডল আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/bundles`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("বান্ডল তৈরি হয়েছে।");
+        toast({ title: "বান্ডল তৈরি হয়েছে।", tone: "success" });
       }
       resetForm();
       await load();
@@ -205,7 +208,7 @@ export default function BundlesPage() {
 
   async function remove(b: Bundle) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${b.name}" বান্ডলটি মুছে ফেলবেন?`)) return;
+    if (!(await confirm({ title: `"${b.name}" বান্ডলটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
     setBusy(`del-${b.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/bundles/${b.id}`, { method: "DELETE" });
@@ -216,6 +219,32 @@ export default function BundlesPage() {
   }
 
   const productName = (id: string) => products.find((p) => p.id === id)?.name ?? id;
+
+  // ED15/ED16 (EB6): bundle cell contents, status and row actions are
+  // shared verbatim by the desktop table and the ResponsiveTable
+  // mobile card — same handlers, same order.
+  const renderBundleContents = (b: Bundle) => (
+    <>
+      {(b.items ?? b.components ?? []).map((c, i) => (
+        <div key={i}>{(c as BundleComponent).name ?? productName(c.productId)}{c.variantSku ? ` (${c.variantSku})` : ""} × {c.qty}</div>
+      ))}
+      {(b.slots ?? []).map((s) => (
+        <div key={s.id ?? s.label} className="mt-0.5 rounded bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700">
+          🎛️ {s.label}: {s.chooseQty}টি বেছে নেবেন · পুলে {(s.options ?? []).length}টি পণ্য
+        </div>
+      ))}
+    </>
+  );
+  const renderBundleStatus = (b: Bundle) => (
+    b.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">সক্রিয়</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">বন্ধ</span>
+  );
+  const renderBundleActions = (b: Bundle) => (
+    <div className="flex gap-2">
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(b)}>সম্পাদনা</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(b)}>{b.active ? "বন্ধ করুন" : "চালু করুন"}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(b)}>মুছুন</button>
+    </div>
+  );
 
   return (
     <div className="space-y-8">
@@ -230,7 +259,6 @@ export default function BundlesPage() {
         <Link href="/dashboard/commerce" className="btn-primary">← Commerce Hub</Link>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="card p-5 space-y-4">
         <div className="font-semibold">{editingId ? "বান্ডল সম্পাদনা" : "নতুন বান্ডল"}</div>
@@ -277,17 +305,17 @@ export default function BundlesPage() {
                   const next = [...rows]; next[i] = { ...r, qty: e.target.value }; setRows(next);
                 }} />
               </label>
-              <button type="button" className="rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
+              <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                 disabled={rows.length <= 2}
                 onClick={() => setRows(rows.filter((_, x) => x !== i))}>সারি মুছুন</button>
             </div>
           ))}
-          <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+          <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
             disabled={rows.length >= 10}
             onClick={() => setRows([...rows, { productId: "", variantSku: "", qty: "1" }])}>
             + আরও পণ্য যোগ করুন
           </button>
-          <p className="text-xs text-slate-400">ভ্যারিয়েন্ট SKU দিলে বান্ডলটি ওই নির্দিষ্ট ভ্যারিয়েন্টই বিক্রি করবে; খালি রাখলে পণ্যের ডিফল্ট/মূল এন্ট্রি।</p>
+          <p className="text-xs text-slate-500">ভ্যারিয়েন্ট SKU দিলে বান্ডলটি ওই নির্দিষ্ট ভ্যারিয়েন্টই বিক্রি করবে; খালি রাখলে পণ্যের ডিফল্ট/মূল এন্ট্রি।</p>
         </div>
 
         {/* AB5 (AX8): mix-and-match slots — the buyer picks
@@ -295,7 +323,7 @@ export default function BundlesPage() {
             price does not change with the picks. */}
         <div className="space-y-3 border-t pt-4">
           <div className="font-semibold">🎛️ স্লট (Mix-and-Match) — ক্রেতা নিজে বেছে নেবেন ({slotRows.length}টি স্লট, সর্বোচ্চ ৬টি)</div>
-          <p className="text-xs text-slate-400">স্লট থাকলে ক্রেতাকে প্রতিটি স্লট থেকে ঠিক নির্দিষ্ট সংখ্যক পণ্য বেছে নিতে হবে — বান্ডলের দাম পিক অনুযায়ী বদলায় না। স্লট না রাখলে বান্ডলটি আগের মতোই শুধু নির্দিষ্ট পণ্যে বিক্রি হবে।</p>
+          <p className="text-xs text-slate-500">স্লট থাকলে ক্রেতাকে প্রতিটি স্লট থেকে ঠিক নির্দিষ্ট সংখ্যক পণ্য বেছে নিতে হবে — বান্ডলের দাম পিক অনুযায়ী বদলায় না। স্লট না রাখলে বান্ডলটি আগের মতোই শুধু নির্দিষ্ট পণ্যে বিক্রি হবে।</p>
           {slotRows.map((s, i) => (
             <div key={i} className="space-y-2 rounded-xl bg-slate-50 p-3">
               <div className="flex flex-wrap items-end gap-2">
@@ -314,7 +342,7 @@ export default function BundlesPage() {
                     <option value="products">নির্দিষ্ট পণ্য</option>
                   </select>
                 </label>
-                <button type="button" className="rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600"
+                <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600"
                   onClick={() => setSlotRows(slotRows.filter((_, x) => x !== i))}>স্লট মুছুন</button>
               </div>
               {s.sourceType === "category" ? (
@@ -324,7 +352,7 @@ export default function BundlesPage() {
                     <option value="">— ক্যাটাগরি বেছে নিন —</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
-                  <span className="mt-1 block text-xs font-normal text-slate-400">ওই ক্যাটাগরির সব সক্রিয় পণ্যই ক্রেতার পছন্দের তালিকায় থাকবে।</span>
+                  <span className="mt-1 block text-xs font-normal text-slate-500">ওই ক্যাটাগরির সব সক্রিয় পণ্যই ক্রেতার পছন্দের তালিকায় থাকবে।</span>
                 </label>
               ) : (
                 <div>
@@ -334,7 +362,7 @@ export default function BundlesPage() {
                       const on = s.productIds.includes(p.id);
                       return (
                         <button key={p.id} type="button"
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "border bg-white text-slate-600"}`}
+                          className={`inline-flex min-h-[44px] items-center rounded-full px-2.5 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "border bg-white text-slate-600"}`}
                           onClick={() => {
                             const n = [...slotRows];
                             n[i] = { ...s, productIds: on ? s.productIds.filter((x) => x !== p.id) : [...s.productIds, p.id] };
@@ -344,13 +372,13 @@ export default function BundlesPage() {
                         </button>
                       );
                     })}
-                    {products.length === 0 ? <span className="text-xs text-slate-400">কোনো পণ্য লোড হয়নি</span> : null}
+                    {products.length === 0 ? <span className="text-xs text-slate-500">কোনো পণ্য লোড হয়নি</span> : null}
                   </div>
                 </div>
               )}
             </div>
           ))}
-          <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+          <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
             disabled={slotRows.length >= 6}
             onClick={() => setSlotRows([...slotRows, { label: "", chooseQty: "1", sourceType: "category", categoryId: "", productIds: [] }])}>
             + স্লট যোগ করুন
@@ -370,10 +398,12 @@ export default function BundlesPage() {
         {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : bundles.length === 0 ? (
           <p className="text-sm text-slate-500">এখনো কোনো বান্ডল নেই।</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <ResponsiveTable
+            table={
+              <div>
+                <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-left text-xs text-slate-400">
+                <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 font-medium">নাম</th><th className="py-2 font-medium">কম্পোনেন্ট</th>
                   <th className="py-2 font-medium">বান্ডল দাম</th><th className="py-2 font-medium">আলাদা মোট</th>
                   <th className="py-2 font-medium">সাশ্রয়</th><th className="py-2 font-medium">ক্রম</th>
@@ -385,32 +415,54 @@ export default function BundlesPage() {
                   <tr key={b.id} className="border-b last:border-0 align-top">
                     <td className="py-2 font-semibold">{b.name}</td>
                     <td className="py-2 text-xs text-slate-600">
-                      {(b.items ?? b.components ?? []).map((c, i) => (
-                        <div key={i}>{(c as BundleComponent).name ?? productName(c.productId)}{c.variantSku ? ` (${c.variantSku})` : ""} × {c.qty}</div>
-                      ))}
-                      {(b.slots ?? []).map((s) => (
-                        <div key={s.id ?? s.label} className="mt-0.5 rounded bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700">
-                          🎛️ {s.label}: {s.chooseQty}টি বেছে নেবেন · পুলে {(s.options ?? []).length}টি পণ্য
-                        </div>
-                      ))}
+                      {renderBundleContents(b)}
                     </td>
                     <td className="py-2 font-semibold">{formatMinorTaka(b.bundlePriceMinor)}</td>
                     <td className="py-2">{formatMinorTaka(b.regularTotalMinor)}</td>
                     <td className="py-2 text-emerald-700">{b.savingsMinor && Number(b.savingsMinor) > 0 ? formatMinorTaka(b.savingsMinor) : "—"}</td>
                     <td className="py-2">{b.sortOrder}</td>
-                    <td className="py-2">{b.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">সক্রিয়</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">বন্ধ</span>}</td>
+                    <td className="py-2">{renderBundleStatus(b)}</td>
                     <td className="py-2">
-                      <div className="flex gap-2">
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(b)}>সম্পাদনা</button>
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(b)}>{b.active ? "বন্ধ করুন" : "চালু করুন"}</button>
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(b)}>মুছুন</button>
-                      </div>
+                      {renderBundleActions(b)}
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+                </table>
+              </div>
+            }
+            cards={bundles.map((b) => (
+              <div key={b.id} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-semibold">{b.name}</span>
+                  {renderBundleStatus(b)}
+                </div>
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex gap-2">
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">কম্পোনেন্ট</dt>
+                    <dd className="text-xs text-slate-600">{renderBundleContents(b)}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">বান্ডল দাম</dt>
+                    <dd className="font-semibold">{formatMinorTaka(b.bundlePriceMinor)}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">আলাদা মোট</dt>
+                    <dd>{formatMinorTaka(b.regularTotalMinor)}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">সাশ্রয়</dt>
+                    <dd className="text-emerald-700">{b.savingsMinor && Number(b.savingsMinor) > 0 ? formatMinorTaka(b.savingsMinor) : "—"}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">ক্রম</dt>
+                    <dd>{b.sortOrder}</dd>
+                  </div>
+                </dl>
+                <div className="mt-2">{renderBundleActions(b)}</div>
+              </div>
+            ))}
+          />
         )}
       </div>
     </div>

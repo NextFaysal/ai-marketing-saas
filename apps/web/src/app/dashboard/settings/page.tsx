@@ -15,6 +15,7 @@ import {
   NOTIFICATION_CATEGORIES, canRevokeOwnSession, isCategoryEnabled, toggleMutedCategory,
   type LoginHistoryRow, type OwnSession,
 } from "@/lib/gb6-team";
+import { BusinessKnowledgeSection } from "./knowledge-section";
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
 
@@ -33,7 +34,6 @@ function BrandingCard() {
   const [org, setOrg] = useState<OrgBranding | null>(null);
   const [brandName, setBrandName] = useState("");
   const [color, setColor] = useState("#4F46E5");
-  const [domain, setDomain] = useState("");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,7 +45,6 @@ function BrandingCard() {
       setOrg(o);
       setBrandName(o.brandName ?? "");
       setColor(o.primaryColor ?? "#4F46E5");
-      setDomain(o.customDomain ?? "");
     } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -56,7 +55,7 @@ function BrandingCard() {
     try {
       await apiFetch(`/organizations/${orgId}/branding`, {
         method: "PATCH",
-        body: JSON.stringify({ brandName, primaryColor: color, customDomain: domain }),
+        body: JSON.stringify({ brandName, primaryColor: color }),
       });
       setMsg("✅ ব্র্যান্ডিং সংরক্ষিত হয়েছে। সাইডবার, ইনভয়েস/লেবেল PDF আর ক্লায়েন্ট রিপোর্টে এখন থেকে এই ব্র্যান্ডিং দেখাবে।");
       await load();
@@ -143,16 +142,12 @@ function BrandingCard() {
             </label>
           </div>
 
-          <div className="rounded-xl bg-slate-50 p-4">
-            <label className="block text-sm font-medium text-slate-700">কাস্টম ডোমেইন (যেমন reports.youragency.com)
-              <input className="input mt-1" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="reports.youragency.com" maxLength={253} />
-            </label>
-            <div className="mt-3 space-y-1.5 text-[13px] leading-relaxed text-slate-600">
-              <p><b>কীভাবে চালু করবেন:</b></p>
-              <p>১. আপনার ডোমেইনের DNS-এ একটি <b>CNAME</b> রেকর্ড যোগ করুন: হোস্ট <code className="rounded bg-white px-1 ring-1 ring-slate-200">{domain || "reports.youragency.com"}</code> → টার্গেট এই অ্যাপের হোস্টিং ডোমেইন (যে ঠিকানায় অ্যাপটি এখন চলছে)।</p>
-              <p>২. হোস্টিং প্যানেলে (Dokploy) এই অ্যাপের Domains অংশে ডোমেইনটি যোগ করুন — SSL সার্টিফিকেট সেখান থেকেই ইস্যু হবে।</p>
-              <p className="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">⚠️ <b>সৎ নোট:</b> এই সেটিং শুধু আপনার উদ্দেশ্য সংরক্ষণ করে। DNS ও হোস্টিং প্যানেলের ধাপ দুটো শেষ না হওয়া পর্যন্ত ডোমেইনটি সক্রিয় হবে না — ডোমেইন রাউটিং অ্যাপের ভেতর থেকে চালু করা যায় না।</p>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-4 text-sm">
+            <span className="font-medium text-slate-700">কাস্টম ডোমেইন:</span>
+            {org.customDomain
+              ? <span className="font-mono font-bold text-slate-900">{org.customDomain}</span>
+              : <span className="text-slate-500">সেট করা নেই</span>}
+            <a href="/dashboard/commerce/storefront" className="font-semibold text-indigo-700 underline">দোকানের ডোমেইন সেটিংসে পরিচালনা করুন →</a>
           </div>
 
           <button className="btn-primary" disabled={busy} onClick={save}>{busy ? "অপেক্ষা করুন…" : "ব্র্যান্ডিং সংরক্ষণ করুন"}</button>
@@ -455,6 +450,7 @@ const HUB_NAV = [
   { id: "hub-delivery", icon: "🚚", label: "ডেলিভারি ও রিটার্ন" },
   { id: "hub-payment", icon: "💳", label: "পেমেন্ট" },
   { id: "hub-ai", icon: "🤖", label: "AI এর আচরণ" },
+  { id: "hub-knowledge", icon: "📚", label: "Business Knowledge" },
   { id: "hub-branding", icon: "🎨", label: "ব্র্যান্ডিং" },
   { id: "hub-org-verification", icon: "🏅", label: "প্রতিষ্ঠান যাচাইকরণ" },
   { id: "hub-verification", icon: "✅", label: "যাচাইকরণ (ইমেইল/ফোন)" },
@@ -1137,8 +1133,8 @@ function BusinessHub() {
       <div className="sticky bottom-3 z-20 sm:bottom-4">
         <div className="card flex flex-col gap-2.5 p-3.5 shadow-card-hover sm:flex-row sm:items-center sm:p-4">
           <button className="btn-primary min-h-[44px] w-full sm:w-auto" disabled={busy} onClick={save}>{busy ? "অপেক্ষা করুন…" : "💾 ব্যবসার তথ্য সংরক্ষণ করুন"}</button>
-          <a href="/dashboard/knowledge" className="btn-secondary min-h-[44px] w-full justify-center sm:w-auto">📚 নীতিমালা ও FAQ (Knowledge)</a>
-          <span className="text-xs leading-snug text-slate-400 sm:ml-auto sm:max-w-56 sm:text-right">নীতিমালা ও FAQ Knowledge পেজে সম্পাদনা হয় — Completeness এ সেগুলোও ধরা হয়।</span>
+          <a href="#hub-knowledge" className="btn-secondary min-h-[44px] w-full justify-center sm:w-auto">📚 নীতিমালা ও FAQ (Knowledge)</a>
+          <span className="text-xs leading-snug text-slate-400 sm:ml-auto sm:max-w-56 sm:text-right">নীতিমালা ও FAQ এই পেজের Business Knowledge সেকশনে সম্পাদনা হয় — Completeness এ সেগুলোও ধরা হয়।</span>
         </div>
       </div>
     </div>
@@ -1453,6 +1449,7 @@ export default function SettingsPage() {
           <BusinessHub />
 
           <OrgVerificationCard />
+          <BusinessKnowledgeSection />
 
           <section id="hub-security" className="card scroll-mt-24 p-5 sm:p-6">
             <SectionHead icon="🔐" title="আমার অ্যাকাউন্টের নিরাপত্তা — দ্বি-স্তর যাচাই (2FA)" hint={`চালু করলে লগইনে পাসওয়ার্ডের পর ফোনের Authenticator অ্যাপের ৬ সংখ্যার কোড লাগবে। অবস্থা: ${status === null ? "লোড হচ্ছে…" : status.totpEnabled ? "চালু আছে" : `বন্ধ${status.enrolmentInProgress ? " (Enrol শুরু হয়েছে, নিশ্চিত করা বাকি)" : ""}`}`} />

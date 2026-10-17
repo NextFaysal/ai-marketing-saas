@@ -43,11 +43,18 @@ import { CrossSellRail } from "../CrossSellRail";
 import { captureAffiliateRef, currentAffiliateCode } from "@/lib/affiliate-ref";
 import { getAttributionForCheckout, trackShopEvent } from "@/lib/shop-tracking";
 import { getDeviceHashForCheckout } from "@/lib/device-hash";
+import { effectiveThemeId, isV2Theme } from "@/lib/shop-theme";
+import { setBuyBarActive, setBuyBarLiftPx } from "@/lib/shop-bottom-chrome";
 
 interface ShopPublic {
   businessProfile: { codAvailable: boolean; bkashNumber: string | null; nagadNumber: string | null; paymentNote: string | null };
   settings?: {
     locale?: string;
+    // ED9: the public shop payload DOES carry settings.themeId
+    // (API shopHome returns `themeId: setting.themeId ??
+    // "classic"` — verified in apps/api storefront.service.ts);
+    // the client type simply omitted it until now.
+    themeId?: string;
     trackingPageEnabled?: boolean;
     returnPolicyText?: string | null;
     deliveryPromiseText?: string | null;
@@ -70,6 +77,24 @@ function money(minor: string): string {
   } catch {
     return minor;
   }
+}
+
+/**
+ * ED9 (v2 only): visual step chrome inserted BEFORE an existing
+ * checkout section — a numbered badge + label + connector rule.
+ * It re-parents nothing: the section it heads keeps its exact
+ * place, fields and handlers.
+ */
+function CheckoutStepHeader({ n, label, locale }: { n: number; label: string; locale: ShopLocale }) {
+  const bnDigits = "০১২৩৪৫৬৭৮৯";
+  const num = locale === "bn" ? String(n).replace(/\d/g, (d) => bnDigits[Number(d)]) : String(n);
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-xs font-black text-white">{num}</span>
+      <span className="text-xs font-black text-[var(--ink-strong)]">{label}</span>
+      <span className="h-px flex-1 bg-[var(--border-soft)]" aria-hidden="true" />
+    </div>
+  );
 }
 
 export default function ShopCheckoutPage() {
@@ -123,6 +148,15 @@ export default function ShopCheckoutPage() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const idempotency = useIdempotencyKey();
+  // ED9: v2 gating + sticky-bar plumbing. The gate is the shop
+  // payload's settings.themeId (see ShopPublic note), run
+  // through effectiveThemeId with the ?themePreview= value read
+  // from the URL — the same effective-theme rule the shop layout
+  // applies server-side via its preview header.
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const submitBtnRef = useRef<HTMLButtonElement | null>(null);
+  const stickyBarRef = useRef<HTMLDivElement | null>(null);
+  const [submitInView, setSubmitInView] = useState(true);
 
   // EC18: delivery slot picker (slots arrive on the quote).
   const [slotId, setSlotId] = useState("");
@@ -169,6 +203,51 @@ export default function ShopCheckoutPage() {
 
   const locale: ShopLocale = shopLocaleOf(shop?.settings?.locale);
   const t = shopT(locale);
+  const isV2 = isV2Theme(effectiveThemeId(shop?.settings?.themeId, previewId));
+
+  useEffect(() => {
+    try {
+      setPreviewId(new URLSearchParams(window.location.search).get("themePreview"));
+    } catch { /* no preview */ }
+  }, []);
+
+  // ED9: sticky-bar visibility — hide the bar while the main
+  // place-order button is on screen (IntersectionObserver on
+  // that button). Fallback (no IO): the bar stays always-on.
+  useEffect(() => {
+    if (!isV2 || loading) return;
+    const el = submitBtnRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setSubmitInView(false);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) setSubmitInView(entry.isIntersecting);
+      },
+      { threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [isV2, loading, cart]);
+
+  const stickyBarVisible = isV2 && !!quote && !submitInView && !placedDeposit;
+
+  // ED9: while the sticky bar shows it owns the bottom edge —
+  // the v2 bottom nav yields via setBuyBarActive, and overlays
+  // lift by the bar's measured height. Both clear on hide/unmount.
+  useEffect(() => {
+    if (!stickyBarVisible) return;
+    setBuyBarActive(true);
+    const measure = () => setBuyBarLiftPx(stickyBarRef.current?.offsetHeight || 64);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("resize", measure);
+      setBuyBarActive(false);
+      setBuyBarLiftPx(0);
+    };
+  }, [stickyBarVisible]);
   const deliverySlots = quote?.deliverySlots ?? [];
   // A slot that disappears from a fresh quote (district changed)
   // must not be submitted.
@@ -618,6 +697,7 @@ export default function ShopCheckoutPage() {
       <h1 className="mb-6 text-2xl font-black text-slate-900">{t.checkout.title}</h1>
       <form onSubmit={submit} className="grid gap-6 md:grid-cols-12">
         <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:col-span-7">
+          {isV2 ? <CheckoutStepHeader n={1} label={t.checkout.stepInfo} locale={locale} /> : null}
           <h2 className="border-b pb-2 text-base font-bold text-slate-900">{t.checkout.deliveryInfo}</h2>
           <div>
             <label className="mb-1 block text-xs font-bold text-slate-700">{t.checkout.nameLabel}</label>
@@ -645,6 +725,10 @@ export default function ShopCheckoutPage() {
               ))}
             </select>
           </div>
+          {/* ED9 (v2): step 2 heads the delivery-method block;
+              the delivery-slot picker stays in the summary column
+              exactly where it was — nothing is moved. */}
+          {isV2 ? <CheckoutStepHeader n={2} label={t.checkout.stepDelivery} locale={locale} /> : null}
           {/* EC30: delivery method — home delivery or pickup point */}
           <div className="space-y-2">
             <label className="block text-xs font-bold text-slate-700">{t.checkout.deliveryMethodLabel}</label>
@@ -675,6 +759,11 @@ export default function ShopCheckoutPage() {
                 ))}
               </div>
             ) : null}
+            {/* ED9 (v2): inline form of the existing pickup error
+                (the banner in the summary stays as fallback). */}
+            {isV2 && error === t.checkout.pickupRequired ? (
+              <p className="text-xs font-medium text-rose-600">{error}</p>
+            ) : null}
           </div>
           <div>
             <label className="mb-1 block text-[11px] font-semibold text-slate-500">{t.checkout.noteLabel}</label>
@@ -687,6 +776,11 @@ export default function ShopCheckoutPage() {
             answers={fieldAnswers}
             onChange={(k, v) => setFieldAnswers((prev) => ({ ...prev, [k]: v }))}
           />
+          {/* ED9 (v2): the existing missing-required-fields error,
+              also shown at the field group it belongs to. */}
+          {isV2 && error.startsWith("এই তথ্যগুলো আবশ্যক:") ? (
+            <p className="text-xs font-medium text-rose-600">{error}</p>
+          ) : null}
 
           {/* EC29: gift wrap (only when the shop enables it with a fee) */}
           {shop?.settings?.giftWrapEnabled && shop.settings.giftWrapFeeMinor ? (
@@ -712,6 +806,7 @@ export default function ShopCheckoutPage() {
             </div>
           ) : null}
 
+          {isV2 ? <CheckoutStepHeader n={3} label={t.checkout.stepPayment} locale={locale} /> : null}
           <div className="space-y-2 border-t pt-4">
             <label className="block text-xs font-bold text-slate-700">{t.checkout.paymentMethodLabel}</label>
             <label className={`flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50/60 p-3 text-sm font-bold text-emerald-950 ${quote?.codRules?.unavailableForTotal ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
@@ -761,7 +856,7 @@ export default function ShopCheckoutPage() {
         </div>
 
         <div className="md:col-span-5">
-          <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className={isV2 ? "space-y-4 rounded-[var(--radius-xl)] border border-[var(--border-soft)] bg-[var(--surface)] p-6 shadow-[var(--shadow-card)]" : "space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"}>
             <h2 className="border-b pb-2 text-base font-bold text-slate-900">{t.checkout.orderSummary}</h2>
             <ul className="space-y-1.5 text-xs text-slate-600">
               {cart.items.map((i) => (
@@ -974,6 +1069,10 @@ export default function ShopCheckoutPage() {
                     <p className="mt-1 text-[11px] text-slate-400">{t.checkout.slotHelp}</p>
                   </div>
                 ) : null}
+                {/* ED9 (v2): inline form of the existing slot error. */}
+                {isV2 && error === t.checkout.slotHelp ? (
+                  <p className="text-xs font-medium text-rose-600">{error}</p>
+                ) : null}
               </div>
             ) : null}
 
@@ -989,8 +1088,16 @@ export default function ShopCheckoutPage() {
                 </span>
               </label>
             ) : null}
+            {/* ED9 (v2): inline forms of the existing terms /
+                captcha errors (banner below stays as fallback). */}
+            {isV2 && error === t.checkout.termsRequiredError ? (
+              <p className="text-xs font-medium text-rose-600">{error}</p>
+            ) : null}
             {captchaSiteKeyFor(shop?.checkoutTrust, "checkout") ? (
               <TurnstileWidget siteKey={captchaSiteKeyFor(shop?.checkoutTrust, "checkout") ?? ""} onToken={setCaptchaToken} />
+            ) : null}
+            {isV2 && error === t.checkout.captchaRequiredError ? (
+              <p className="text-xs font-medium text-rose-600">{error}</p>
             ) : null}
             {quote?.codRules?.advanceRequiredForTotal ? (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{t.checkout.codAdvanceNotice}</p>
@@ -1010,7 +1117,7 @@ export default function ShopCheckoutPage() {
               </div>
             ) : null}
 
-            <button type="submit" disabled={submitting} className="w-full rounded-2xl bg-neutral-900 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-neutral-900/20 hover:bg-neutral-800 transition disabled:opacity-50">
+            <button ref={submitBtnRef} type="submit" disabled={submitting} className="btn-brand btn-brand-shadow w-full rounded-2xl py-3.5 text-sm font-extrabold disabled:opacity-50">
               {submitting ? t.checkout.placingOrder : t.checkout.placeOrder}
             </button>
             <Link href={`/shop/${orgSlug}/cart`} className="block text-center text-xs font-bold text-stone-600 hover:text-neutral-900 hover:underline">{t.checkout.backToCart}</Link>
@@ -1035,6 +1142,36 @@ export default function ShopCheckoutPage() {
           </div>
         </div>
       </form>
+
+      {/* ED9 (v2, <lg): sticky place-order bar. The total is the
+          summary's own quote total (quote.totalMinor — never
+          recomputed); the button does not submit anything itself,
+          it clicks the EXISTING submit button above, so the form's
+          onSubmit handler (validation, idempotency, placement) is
+          the one and only order path. Shown only while a quote
+          exists and the main submit button is out of view. */}
+      {stickyBarVisible && quote ? (
+        <div
+          ref={stickyBarRef}
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)] lg:hidden"
+          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        >
+          <div className="flex items-center gap-3 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold text-[var(--ink-muted)]">{t.checkout.total}</p>
+              <p className="text-base font-black text-[var(--ink-strong)]">{money(quote.totalMinor)}</p>
+            </div>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => submitBtnRef.current?.click()}
+              className="btn-brand btn-brand-shadow min-h-11 shrink-0 rounded-[var(--radius-lg)] px-5 py-3 text-sm font-extrabold disabled:opacity-50"
+            >
+              {submitting ? t.checkout.placingOrder : t.checkout.placeOrder}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* AB6 (AX14): cross-sell for the products in this cart. */}
       <div className="mt-8">

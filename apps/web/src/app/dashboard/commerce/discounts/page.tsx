@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC7 — tenant store discounts. These are the merchant's OWN codes
 // (StoreDiscount), unrelated to the SaaS-plan Coupon system.
@@ -212,6 +213,27 @@ export default function DiscountsPage() {
 
   const scopeOptions = scopeType === "products" ? products : scopeType === "categories" ? categories : [];
 
+  // ED15/ED16 (EB6): origin cell + row actions shared verbatim by
+  // the desktop table and the ResponsiveTable mobile card.
+  const renderDiscountSource = (d: Discount) => (
+    <>
+      <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${d.origin === "abandoned_recovery" ? "bg-amber-100 text-amber-800" : d.origin === "manual" ? "bg-slate-100 text-slate-600" : "bg-indigo-100 text-indigo-700"}`}>
+        {ORIGIN_LABEL[d.origin] ?? d.origin}
+      </span>
+      {d.sourceRef ? <div className="mt-1 font-mono text-[10px] text-slate-400">{d.sourceRef}</div> : null}
+      {d.firstOrderOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু প্রথম অর্ডারে</div> : null}
+      {d.repeatCustomerOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু পুরনো কাস্টমারের</div> : null}
+      {d.perCustomerLimit != null ? <div className="mt-1 text-[11px] text-slate-500">প্রতি কাস্টমার সর্বোচ্চ {d.perCustomerLimit}বার</div> : null}
+      {d.maxOrderMinor ? <div className="mt-1 text-[11px] text-slate-500">সর্বোচ্চ অর্ডার {money(d.maxOrderMinor)}</div> : null}
+    </>
+  );
+  const renderDiscountActions = (d: Discount) => (
+    <div className="flex gap-2">
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(d)}>সম্পাদনা</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(d)}>{d.active ? "বন্ধ করুন" : "চালু করুন"}</button>
+    </div>
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -265,7 +287,7 @@ export default function DiscountsPage() {
           </label>
           <label className="block text-sm">প্রতি কাস্টমারের সীমা (খালি = অসীম)
             <input className="input mt-1" type="number" min="1" value={perCustomerLimit} onChange={(e) => setPerCustomerLimit(e.target.value)} />
-            <span className="mt-1 block text-xs font-normal text-slate-400">সীমাটি অর্ডারে সংরক্ষিত কুপন-কোড স্ট্যাম্প থেকে গণনা করা হয়</span>
+            <span className="mt-1 block text-xs font-normal text-slate-500">সীমাটি অর্ডারে সংরক্ষিত কুপন-কোড স্ট্যাম্প থেকে গণনা করা হয়</span>
           </label>
         </div>
         <div className="flex flex-wrap gap-4 text-sm">
@@ -281,22 +303,22 @@ export default function DiscountsPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block text-sm">বাদ যাবে এমন পণ্য (আইডি)
             <input className="input mt-1" value={excludedProductIdsText} onChange={(e) => setExcludedProductIdsText(e.target.value)} placeholder="আইডি, আইডি, …" />
-            <span className="mt-1 block text-xs font-normal text-slate-400">কমা দিয়ে আলাদা করে পণ্যের আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
+            <span className="mt-1 block text-xs font-normal text-slate-500">কমা দিয়ে আলাদা করে পণ্যের আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
           </label>
           <label className="block text-sm">বাদ যাবে এমন ক্যাটাগরি (আইডি)
             <input className="input mt-1" value={excludedCategoryIdsText} onChange={(e) => setExcludedCategoryIdsText(e.target.value)} placeholder="আইডি, আইডি, …" />
-            <span className="mt-1 block text-xs font-normal text-slate-400">কমা দিয়ে আলাদা করে ক্যাটাগরির আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি ক্যাটাগরির পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
+            <span className="mt-1 block text-xs font-normal text-slate-500">কমা দিয়ে আলাদা করে ক্যাটাগরির আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি ক্যাটাগরির পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
           </label>
         </div>
         {scopeType !== "all" ? (
           <div>
             <div className="text-sm font-medium">{scopeType === "products" ? "পণ্য বেছে নিন" : "ক্যাটাগরি বেছে নিন"}</div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {scopeOptions.length === 0 ? <span className="text-xs text-slate-400">কোনো অপশন নেই</span> : scopeOptions.map((o) => {
+              {scopeOptions.length === 0 ? <span className="text-xs text-slate-500">কোনো অপশন নেই</span> : scopeOptions.map((o) => {
                 const on = scopeIds.includes(o.id);
                 return (
                   <button key={o.id} type="button" onClick={() => setScopeIds(on ? scopeIds.filter((x) => x !== o.id) : [...scopeIds, o.id])}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                    className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                     {o.name}
                   </button>
                 );
@@ -312,7 +334,7 @@ export default function DiscountsPage() {
               const mode = s.syncMode ?? "mirror";
               return (
                 <button key={s.id} type="button" onClick={() => setTargetStores(on ? targetStores.filter((x) => x !== s.id) : [...targetStores, s.id])}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                   {s.name} ({mode}){mode === "mirror" ? " — push যাবে না" : ""}
                 </button>
               );
@@ -345,7 +367,7 @@ export default function DiscountsPage() {
           <button className="btn-primary" disabled={busy !== ""} onClick={generate}>{busy === "gen" ? "তৈরি হচ্ছে…" : "কোড তৈরি করুন"}</button>
         </div>
         {genResult ? <p className="text-sm text-green-700">{genResult}</p> : null}
-        <p className="text-xs text-slate-400">এই কোডগুলো broadcast/ইনবক্স ক্যাম্পেইনে হাতে ব্যবহার করা যাবে; broadcast ইঞ্জিন থেকে স্বয়ংক্রিয় পাঠানো এই ব্যাচের বাইরে।</p>
+        <p className="text-xs text-slate-500">এই কোডগুলো broadcast/ইনবক্স ক্যাম্পেইনে হাতে ব্যবহার করা যাবে; broadcast ইঞ্জিন থেকে স্বয়ংক্রিয় পাঠানো এই ব্যাচের বাইরে।</p>
       </div>
 
       <div className="card p-5 space-y-3">
@@ -364,7 +386,7 @@ export default function DiscountsPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {stores.filter((s) => s.platform === "WOOCOMMERCE" || s.platform === "SHOPIFY").map((s) => (
-              <button key={s.id} className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => pull(s.id)}>
+              <button key={s.id} className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => pull(s.id)}>
                 {busy === `pull-${s.id}` ? "টানা হচ্ছে…" : `⬇ ${s.name} থেকে কুপন টানুন`}
               </button>
             ))}
@@ -373,10 +395,12 @@ export default function DiscountsPage() {
         {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : discounts.length === 0 ? (
           <p className="text-sm text-slate-500">এখনো কোনো ডিসকাউন্ট নেই।</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <ResponsiveTable
+            table={
+              <div>
+                <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-left text-xs text-slate-400">
+                <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 font-medium">কোড</th><th className="py-2 font-medium">ধরন / মান</th>
                   <th className="py-2 font-medium">সময়সীমা</th><th className="py-2 font-medium">ব্যবহার</th>
                   <th className="py-2 font-medium">উৎস</th><th className="py-2 font-medium">স্টোর Sync</th><th className="py-2 font-medium">অ্যাকশন</th>
@@ -386,31 +410,50 @@ export default function DiscountsPage() {
                 {discounts.map((d) => (
                   <tr key={d.id} className="border-b last:border-0 align-top">
                     <td className="py-2 font-mono font-semibold">{d.code}{!d.active ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">বন্ধ</span> : null}</td>
-                    <td className="py-2">{KIND_LABEL[d.kind] ?? d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value))}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-400">কমপক্ষে {money(d.minOrderMinor)} অর্ডারে</div> : null}</td>
+                    <td className="py-2">{KIND_LABEL[d.kind] ?? d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value))}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-500">কমপক্ষে {money(d.minOrderMinor)} অর্ডারে</div> : null}</td>
                     <td className="py-2 text-xs text-slate-500">{d.startsAt ? new Date(d.startsAt).toLocaleDateString("bn-BD") : "—"} → {d.endsAt ? new Date(d.endsAt).toLocaleDateString("bn-BD") : "অসীম"}</td>
                     <td className="py-2">{d.usedCount}{d.usageLimit != null ? ` / ${d.usageLimit}` : ""}</td>
                     <td className="py-2 text-xs">
-                      <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${d.origin === "abandoned_recovery" ? "bg-amber-100 text-amber-800" : d.origin === "manual" ? "bg-slate-100 text-slate-600" : "bg-indigo-100 text-indigo-700"}`}>
-                        {ORIGIN_LABEL[d.origin] ?? d.origin}
-                      </span>
-                      {d.sourceRef ? <div className="mt-1 font-mono text-[10px] text-slate-400">{d.sourceRef}</div> : null}
-                      {d.firstOrderOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু প্রথম অর্ডারে</div> : null}
-                      {d.repeatCustomerOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু পুরনো কাস্টমারের</div> : null}
-                      {d.perCustomerLimit != null ? <div className="mt-1 text-[11px] text-slate-500">প্রতি কাস্টমার সর্বোচ্চ {d.perCustomerLimit}বার</div> : null}
-                      {d.maxOrderMinor ? <div className="mt-1 text-[11px] text-slate-500">সর্বোচ্চ অর্ডার {money(d.maxOrderMinor)}</div> : null}
+                      {renderDiscountSource(d)}
                     </td>
-                    <td className="py-2"><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো স্টোরে নেই</span> : (d.syncs ?? []).map(syncChip)}</div></td>
+                    <td className="py-2"><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-500">কোনো স্টোরে নেই</span> : (d.syncs ?? []).map(syncChip)}</div></td>
                     <td className="py-2">
-                      <div className="flex gap-2">
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(d)}>সম্পাদনা</button>
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(d)}>{d.active ? "বন্ধ করুন" : "চালু করুন"}</button>
-                      </div>
+                      {renderDiscountActions(d)}
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+                </table>
+              </div>
+            }
+            cards={discounts.map((d) => (
+              <div key={d.id} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-mono font-semibold">{d.code}{!d.active ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">বন্ধ</span> : null}</span>
+                  <span>{d.usedCount}{d.usageLimit != null ? ` / ${d.usageLimit}` : ""}</span>
+                </div>
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">ধরন / মান</dt>
+                    <dd>{KIND_LABEL[d.kind] ?? d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value))}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-500">কমপক্ষে {money(d.minOrderMinor)} অর্ডারে</div> : null}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">সময়সীমা</dt>
+                    <dd className="text-xs text-slate-500">{d.startsAt ? new Date(d.startsAt).toLocaleDateString("bn-BD") : "—"} → {d.endsAt ? new Date(d.endsAt).toLocaleDateString("bn-BD") : "অসীম"}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">উৎস</dt>
+                    <dd className="text-xs">{renderDiscountSource(d)}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">স্টোর Sync</dt>
+                    <dd><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-500">কোনো স্টোরে নেই</span> : (d.syncs ?? []).map(syncChip)}</div></dd>
+                  </div>
+                </dl>
+                <div className="mt-2">{renderDiscountActions(d)}</div>
+              </div>
+            ))}
+          />
         )}
       </div>
     </div>

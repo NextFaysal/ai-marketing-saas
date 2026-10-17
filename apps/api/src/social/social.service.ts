@@ -22,10 +22,11 @@ import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind, defaultMediaFileName } from "../inbox/media-sniff";
 import { SOCIAL_MEDIA_KINDS, SOCIAL_POST_STATUSES } from "./social.constants";
 import {
-  CreateHashtagSetDto, CreateSocialPostDto, CreateSocialPostGroupDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
+  CreateCaptionTestDto, CreateHashtagSetDto, CreateSocialPostDto, CreateSocialPostGroupDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
   ScheduleSocialPostDto, UpdateHashtagSetDto, UpdateSocialPostDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { validateForPlatform, videoOnlyViolation } from "./social-preflight";
+import { effectiveTiktokAppConfig } from "../common/platform-config";
 import { SocialLinkService } from "./social-link.service";
 import { PublicMediaService } from "../storage/public-media.service";
 import { storedAssetPublicUrl } from "../storage/media-url";
@@ -36,6 +37,14 @@ import { parseCsv } from "./social-csv";
 // the rest of the pre-flight rules); re-exported here so existing
 // imports from this module keep working.
 export { videoOnlyViolation };
+
+/**
+ * SN2: the client-approval gate's block reason, verbatim. Every
+ * gated path (schedule, bulk reschedule, publish-now, the publish
+ * worker) reports exactly this string — the tenant and the client
+ * see one consistent reason, never a paraphrase.
+ */
+export const CLIENT_APPROVAL_PENDING_MSG = "ক্লায়েন্ট অনুমোদন বাকি";
 
 /**
  * SP3: normalize tenant-supplied hashtag tags — pure and exported
@@ -232,11 +241,16 @@ export class SocialService {
       // the UI only learns WHETHER one exists.)
       autoDraftKind: row.autoDraftKind ?? null,
       autoDraftRef: row.autoDraftRef ?? null,
+      // SN10: caption-test pair id (null = not in a test; two
+      // drafts sharing one id are compared in Analytics).
+      captionTestId: row.captionTestId ?? null,
       // SU8: YouTube metadata + cover + story flag.
       youtubeTitle: row.youtubeTitle ?? null,
       youtubeTags: Array.isArray(row.youtubeTags) ? row.youtubeTags : null,
       youtubeCategoryId: row.youtubeCategoryId ?? null,
       youtubeIsShort: row.youtubeIsShort ?? false,
+      // SN1: chosen YouTube playlist (null = none).
+      youtubePlaylistId: row.youtubePlaylistId ?? null,
       coverAssetId: row.coverAssetId ?? null,
       isStory: row.isStory ?? false,
       hasTrackedLink: !!row.linkToken,
@@ -291,6 +305,82 @@ export class SocialService {
       return org?.socialApprovalTwoStep === true;
     } catch {
       return false;
+    }
+  }
+
+  // ---------- SN2: client-approval helpers ----------
+
+  /**
+   * Is the org's CLIENT approval requirement on
+   * (Organization.socialRequireClientApproval)? Same defensive
+   * read as approvalSettingOn: any lookup problem reads as OFF,
+   * so the pre-SN2 behaviour is preserved byte-for-byte while
+   * the setting is off or unknown.
+   */
+  async clientApprovalRequired(organizationId: string): Promise<boolean> {
+    try {
+      const model = (this.prisma as any).organization;
+      if (!model?.findFirst) return false;
+      const org = await model.findFirst({ where: { id: organizationId } });
+      return org?.socialRequireClientApproval === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The post's CURRENT client word: its latest
+   * SocialPostClientReview (reviews are append-only history; a
+   * newer review supersedes an older one, which stays on record
+   * for the timeline). Model-optional + failure-isolated like
+   * the other SN-era reads: any problem reads as "no review".
+   * On a createdAt tie the later-stored row wins (insertion
+   * order is the only honest tiebreak available).
+   */
+  async latestClientReview(organizationId: string, postId: string): Promise<any | null> {
+    try {
+      const model = (this.prisma as any).socialPostClientReview;
+      if (!model?.findMany) return null;
+      const rows = await model.findMany({ where: { organizationId, postId } });
+      let latest: any | null = null;
+      for (const r of Array.isArray(rows) ? rows : []) {
+        if (!latest || new Date(r.createdAt ?? 0).getTime() >= new Date(latest.createdAt ?? 0).getTime()) {
+          latest = r;
+        }
+      }
+      return latest;
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when the post's latest client review is "approved". */
+  async hasClientApproval(organizationId: string, postId: string): Promise<boolean> {
+    const latest = await this.latestClientReview(organizationId, postId);
+    return latest?.decision === "approved";
+  }
+
+  /**
+   * Setting-aware gate verdict: while the requirement is OFF
+   * every post passes (the exact pre-SN2 behaviour); while ON a
+   * post passes only with a latest "approved" client review —
+   * "never reviewed" and "changes_requested" both fail.
+   */
+  async clientApprovalSatisfied(organizationId: string, postId: string): Promise<boolean> {
+    if (!(await this.clientApprovalRequired(organizationId))) return true;
+    return this.hasClientApproval(organizationId, postId);
+  }
+
+  /**
+   * The throwing form of the gate, for the request paths
+   * (schedulePost here; SocialPublishService.publishNow carries
+   * its own copy of the check, mirroring how SP7's
+   * approvalRequired lives in both services). The reason is
+   * CLIENT_APPROVAL_PENDING_MSG verbatim.
+   */
+  async assertClientApproval(organizationId: string, postId: string): Promise<void> {
+    if (!(await this.clientApprovalSatisfied(organizationId, postId))) {
+      throw new ConflictException(CLIENT_APPROVAL_PENDING_MSG);
     }
   }
 
@@ -1026,6 +1116,20 @@ export class SocialService {
     return (this.prisma as any).socialAccount.findFirst({ where: { id: accountId, organizationId } });
   }
 
+  /**
+   * SN1: the TikTok audit gate as the CURRENT platform-config
+   * snapshot sees it (the publish path re-resolves it fresh via
+   * ensurePlatformConfig — that read is authoritative). A lookup
+   * problem reads as OFF (fail closed: photo posts refuse).
+   */
+  private tiktokAuditedFlag(): boolean {
+    try {
+      return effectiveTiktokAppConfig()?.audited === true;
+    } catch {
+      return false;
+    }
+  }
+
   // SU1: validate/normalize the SU1/SU2 create-time fields.
   private normalizeFirstComment(value: string | null | undefined): string | null {
     const trimmed = typeof value === "string" ? value.trim() : "";
@@ -1037,12 +1141,15 @@ export class SocialService {
   private su8CreateFields(dto: {
     youtubeTitle?: string | null; youtubeTags?: string[] | null; youtubeCategoryId?: string | null;
     youtubeIsShort?: boolean; coverAssetId?: string | null; isStory?: boolean;
+    youtubePlaylistId?: string | null;
   }): Record<string, unknown> {
     return {
       youtubeTitle: typeof dto.youtubeTitle === "string" && dto.youtubeTitle.trim() ? dto.youtubeTitle : null,
       youtubeTags: Array.isArray(dto.youtubeTags) ? dto.youtubeTags : null,
       youtubeCategoryId: typeof dto.youtubeCategoryId === "string" && dto.youtubeCategoryId ? dto.youtubeCategoryId : null,
       youtubeIsShort: dto.youtubeIsShort === true,
+      // SN1: chosen YouTube playlist (empty/absent = none).
+      youtubePlaylistId: typeof dto.youtubePlaylistId === "string" && dto.youtubePlaylistId ? dto.youtubePlaylistId : null,
       coverAssetId: typeof dto.coverAssetId === "string" && dto.coverAssetId ? dto.coverAssetId : null,
       isStory: dto.isStory === true,
     };
@@ -1269,6 +1376,7 @@ export class SocialService {
         youtubeTags: Array.isArray(source.youtubeTags) ? [...source.youtubeTags] : null,
         youtubeCategoryId: source.youtubeCategoryId ?? null,
         youtubeIsShort: source.youtubeIsShort ?? false,
+        youtubePlaylistId: source.youtubePlaylistId ?? null,
         coverAssetId: source.coverAssetId ?? null,
         isStory: source.isStory ?? false,
       },
@@ -1280,6 +1388,68 @@ export class SocialService {
     });
     const account = await this.accountSummary(organizationId, post.socialAccountId);
     return this.serializePost(post, account);
+  }
+
+  /**
+   * SN10 — Caption Test: pair ONE draft with a fresh clone draft
+   * sharing a captionTestId, so the two can later be scheduled at
+   * different times and compared honestly in Analytics (no winner
+   * is ever declared — see SocialInsightsService.listCaptionTests).
+   * A pair holds at most two posts: a source already in a full
+   * pair is refused; a source in a half pair (partner deleted)
+   * reuses its existing test id. The partner is built by clonePost
+   * (fresh draft, new group when grouped, captionTestId NOT
+   * carried by clone itself) and then stamped with the test id —
+   * and, only when a non-blank replacement caption is supplied,
+   * that caption.
+   */
+  async createCaptionTest(organizationId: string, actorId: string, postId: string, dto?: CreateCaptionTestDto) {
+    const source = await this.getPostRow(organizationId, postId);
+    if (source.status !== "draft") {
+      throw new BadRequestException("Caption Test শুধু Draft পোস্ট থেকে তৈরি করা যায়।");
+    }
+    let captionTestId: string = source.captionTestId ?? "";
+    let updatedSource: any = source;
+    if (captionTestId) {
+      const existing = await (this.prisma as any).socialPost.findMany({
+        where: { organizationId, captionTestId },
+      }).catch(() => []);
+      const count = Array.isArray(existing) ? existing.length : 0;
+      if (count >= 2) {
+        throw new BadRequestException("Caption Test-এর জোড়া ইতিমধ্যে পূর্ণ — একটি টেস্টে সর্বোচ্চ দুটি পোস্ট থাকে।");
+      }
+    } else {
+      captionTestId = randomUUID();
+      updatedSource = await (this.prisma as any).socialPost.update({
+        where: { id: source.id },
+        data: { captionTestId },
+      });
+    }
+    const cloned = await this.clonePost(organizationId, actorId, postId);
+    const partnerId = (cloned as any).id as string;
+    const override = typeof dto?.caption === "string" ? dto.caption.trim() : "";
+    const partnerData: Record<string, unknown> = { captionTestId };
+    if (override) partnerData.caption = override;
+    await (this.prisma as any).socialPost.update({
+      where: { id: partnerId },
+      data: partnerData,
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "social.caption_test_created",
+      entityType: "SocialPost", entityId: partnerId,
+      metadata: { sourcePostId: source.id, captionTestId },
+    });
+    // Re-read both rows so the serializations carry the stamped
+    // captionTestId (clonePost's own return predates the stamp).
+    const sourceRow = await this.getPostRow(organizationId, source.id).catch(() => updatedSource);
+    const partnerRow = await this.getPostRow(organizationId, partnerId);
+    const sourceAccount = await this.accountSummary(organizationId, sourceRow.socialAccountId);
+    const partnerAccount = await this.accountSummary(organizationId, partnerRow.socialAccountId);
+    return {
+      captionTestId,
+      source: this.serializePost(sourceRow, sourceAccount),
+      partner: this.serializePost(partnerRow, partnerAccount),
+    };
   }
 
   /**
@@ -1329,7 +1499,7 @@ export class SocialService {
         continue;
       }
       const violation = validateForPlatform(
-        { caption: source.caption, mediaRefs },
+        { caption: source.caption, mediaRefs, tiktokAudited: this.tiktokAuditedFlag() },
         account.platform ?? "",
       );
       if (violation) {
@@ -1350,6 +1520,7 @@ export class SocialService {
           youtubeTags: Array.isArray(source.youtubeTags) ? [...source.youtubeTags] : null,
           youtubeCategoryId: source.youtubeCategoryId ?? null,
           youtubeIsShort: source.youtubeIsShort ?? false,
+          youtubePlaylistId: source.youtubePlaylistId ?? null,
           coverAssetId: source.coverAssetId ?? null,
           isStory: false,
         },
@@ -1463,6 +1634,10 @@ export class SocialService {
       }
     }
     const approvalOn = action === "reschedule" ? await this.approvalSettingOn(organizationId) : false;
+    // SN2: the client-approval setting is read ONCE per bulk
+    // reschedule (the approvalOn pattern); each post's own
+    // latest client review is then checked per item below.
+    const clientApprovalOn = action === "reschedule" ? await this.clientApprovalRequired(organizationId) : false;
     const results: { id: string; ok: boolean; error?: string }[] = [];
     for (const id of ids) {
       const post = await (this.prisma as any).socialPost.findFirst({ where: { id, organizationId } }).catch(() => null);
@@ -1488,9 +1663,15 @@ export class SocialService {
         results.push({ id, ok: false, error: "পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে শিডিউলের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।" });
         continue;
       }
+      // SN2: per-post client gate (post-based even inside a
+      // group — each variant needs its OWN client approval).
+      if (clientApprovalOn && !(await this.hasClientApproval(organizationId, post.id))) {
+        results.push({ id, ok: false, error: CLIENT_APPROVAL_PENDING_MSG });
+        continue;
+      }
       const account = await this.accountSummary(organizationId, post.socialAccountId);
       const violation = validateForPlatform(
-        { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory ?? null },
+        { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory ?? null, tiktokAudited: this.tiktokAuditedFlag() },
         account?.platform ?? "",
       );
       if (violation) {
@@ -1646,6 +1827,7 @@ export class SocialService {
     if (dto.youtubeTags !== undefined) data.youtubeTags = Array.isArray(dto.youtubeTags) ? dto.youtubeTags : null;
     if (dto.youtubeCategoryId !== undefined) data.youtubeCategoryId = dto.youtubeCategoryId ? dto.youtubeCategoryId : null;
     if (dto.youtubeIsShort !== undefined) data.youtubeIsShort = dto.youtubeIsShort === true;
+    if (dto.youtubePlaylistId !== undefined) data.youtubePlaylistId = dto.youtubePlaylistId ? dto.youtubePlaylistId : null;
     if (dto.coverAssetId !== undefined) data.coverAssetId = dto.coverAssetId ? dto.coverAssetId : null;
     if (dto.isStory !== undefined) data.isStory = dto.isStory === true;
     // SU9: a version is recorded ONLY when a content field
@@ -1717,6 +1899,10 @@ export class SocialService {
     if ((await this.approvalSettingOn(organizationId)) && post.approvalStatus !== "approved") {
       throw new ConflictException("পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে শিডিউলের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।");
     }
+    // SN2 client-approval gate: beside the internal gate above —
+    // while socialRequireClientApproval is on, the post also
+    // needs the client's latest review to be "approved".
+    await this.assertClientApproval(organizationId, post.id);
     // SP8/SP9: a TikTok/YouTube post without exactly one video
     // can NEVER publish — refuse at schedule time with the reason,
     // instead of letting the tenant discover it at publish time.
@@ -1727,7 +1913,7 @@ export class SocialService {
     // video check, whose message validateForPlatform returns
     // verbatim for TikTok/YouTube).
     const mediaViolation = validateForPlatform(
-      { caption: post.caption, mediaRefs: post.mediaRefs }, schedAccount?.platform ?? "",
+      { caption: post.caption, mediaRefs: post.mediaRefs, tiktokAudited: this.tiktokAuditedFlag() }, schedAccount?.platform ?? "",
     );
     if (mediaViolation) throw new BadRequestException(mediaViolation);
     const when = new Date(dto.scheduledAt);
@@ -1909,6 +2095,8 @@ export class SocialService {
    * REAL source this module has:
    * - versions (SocialPostVersion rows),
    * - notes (SocialPostNote rows),
+   * - client reviews (SN2: SocialPostClientReview rows — the
+   *   real records, with reviewer / decision / comment),
    * - approval events from the AuditLog: social audit rows are
    *   written with entityType "SocialPost" + entityId = the post
    *   id CONSISTENTLY (see every audit.log call in this service),
@@ -1951,6 +2139,30 @@ export class SocialService {
           at: n.createdAt, kind: "note",
           label: `নোট — ${n.authorId}: ${excerpt}`,
           meta: { noteId: n.id, authorId: n.authorId },
+        });
+      }
+    }
+
+    // SN2: client reviews — the REAL SocialPostClientReview
+    // records (never derived from the post row): who reviewed,
+    // what they decided, and the comment they left. Share-link
+    // creation/revoke deliberately do NOT appear here (they are
+    // AuditLog-only events, per the SN2 plan).
+    const reviewModel = (this.prisma as any).socialPostClientReview;
+    if (reviewModel?.findMany) {
+      const reviews = await reviewModel.findMany({
+        where: { organizationId, postId: post.id },
+      }).catch(() => []);
+      for (const r of Array.isArray(reviews) ? reviews : []) {
+        entries.push({
+          at: r.createdAt, kind: "client_review",
+          label: r.decision === "approved"
+            ? `ক্লায়েন্ট অনুমোদন দিয়েছেন — ${r.reviewerName}`
+            : `ক্লায়েন্ট পরিবর্তন চেয়েছেন — ${r.reviewerName}`,
+          meta: {
+            reviewId: r.id, reviewerName: r.reviewerName,
+            decision: r.decision, comment: r.comment ?? null,
+          },
         });
       }
     }
@@ -2061,16 +2273,21 @@ export class SocialService {
       socialRequireApproval: await this.approvalSettingOn(organizationId),
       // SU9: the optional second approval step (default false).
       socialApprovalTwoStep: await this.twoStepSettingOn(organizationId),
+      // SN2: the optional CLIENT approval requirement (default
+      // false) — beside the two internal toggles, same read
+      // discipline.
+      socialRequireClientApproval: await this.clientApprovalRequired(organizationId),
     };
   }
 
   /** OWNER/ADMIN only (controller-enforced). Audited. A PATCH
    * touches only the fields it carries — an absent field keeps
    * its current value. */
-  async updateSocialSettings(organizationId: string, actorId: string, dto: { socialRequireApproval?: unknown; socialApprovalTwoStep?: unknown }) {
+  async updateSocialSettings(organizationId: string, actorId: string, dto: { socialRequireApproval?: unknown; socialApprovalTwoStep?: unknown; socialRequireClientApproval?: unknown }) {
     const data: Record<string, unknown> = {};
     if (dto?.socialRequireApproval !== undefined) data.socialRequireApproval = dto.socialRequireApproval === true;
     if (dto?.socialApprovalTwoStep !== undefined) data.socialApprovalTwoStep = dto.socialApprovalTwoStep === true;
+    if (dto?.socialRequireClientApproval !== undefined) data.socialRequireClientApproval = dto.socialRequireClientApproval === true;
     if (Object.keys(data).length > 0) {
       await (this.prisma as any).organization.update({
         where: { id: organizationId }, data,

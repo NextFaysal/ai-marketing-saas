@@ -11,6 +11,8 @@ import {
   type PushConfig,
 } from "@/lib/shop-push";
 import { fetchMe, getShopSession } from "@/lib/storefront-account";
+import { useOverlayGrant } from "@/lib/shop-overlay-queue";
+import { useBottomLiftPx } from "@/lib/shop-bottom-chrome";
 
 /**
  * AB7 (AX16) — shop push-notification prompt.
@@ -31,6 +33,10 @@ import { fetchMe, getShopSession } from "@/lib/storefront-account";
  */
 export function ShopPushPrompt({ orgSlug }: { orgSlug: string }) {
   const [visible, setVisible] = useState(false);
+  // ED9: queue grant + bottom lift (dismissal memory stays in
+  // this component, exactly as before — the queue owns none).
+  const granted = useOverlayGrant("push", visible);
+  const lift = useBottomLiftPx();
   const [busy, setBusy] = useState(false);
   const configRef = useRef<PushConfig | null>(null);
 
@@ -137,9 +143,12 @@ export function ShopPushPrompt({ orgSlug }: { orgSlug: string }) {
     }
   }
 
-  if (!visible) return null;
+  if (!visible || !granted) return null;
   return (
-    <div className="fixed bottom-5 left-5 z-50 w-[calc(100vw-2.5rem)] max-w-xs rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+    <div
+      className="fixed bottom-5 left-5 z-50 w-[calc(100vw-2.5rem)] max-w-xs rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+      style={lift > 0 ? { bottom: `calc(1.25rem + ${lift}px)` } : undefined}
+    >
       <p className="text-sm font-semibold leading-relaxed text-slate-800">
         অফার ও অর্ডারের আপডেট পেতে নোটিফিকেশন চালু করবেন?
       </p>

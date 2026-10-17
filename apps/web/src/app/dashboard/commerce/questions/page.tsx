@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 
 // EC28 — staff product Q&A moderation. Consumes
 // organizations/:orgId/product-questions:
@@ -43,10 +44,11 @@ function statusBadge(status: string): string {
 }
 
 export default function ProductQuestionsPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [items, setItems] = useState<StaffQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [statusFilter, setStatusFilter] = useState("pending");
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, string>>({});
@@ -68,10 +70,10 @@ export default function ProductQuestionsPage() {
   useEffect(() => { load(); }, [load]);
 
   async function act(id: string, key: string, run: () => Promise<unknown>, okMessage: string) {
-    setError(""); setNotice(""); setBusy(`${key}-${id}`);
+    setError(""); setBusy(`${key}-${id}`);
     try {
       await run();
-      setNotice(okMessage);
+      toast({ title: okMessage, tone: "success" });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "অ্যাকশনটি করা যায়নি");
@@ -101,7 +103,6 @@ export default function ProductQuestionsPage() {
       </div>
 
       {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">{notice}</p> : null}
 
       {loading ? (
         <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
@@ -165,8 +166,8 @@ export default function ProductQuestionsPage() {
                   <button
                     type="button"
                     disabled={busy === `del-${q.id}`}
-                    onClick={() => {
-                      if (!window.confirm("এই প্রশ্নটি মুছে ফেলবেন?")) return;
+                    onClick={async () => {
+                      if (!(await confirm({ title: "এই প্রশ্নটি মুছে ফেলবেন?", danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
                       const orgId = getOrganizationId(); if (!orgId) return;
                       void act(q.id, "del", () => apiFetch(`/organizations/${orgId}/product-questions/${q.id}`, {
                         method: "DELETE",

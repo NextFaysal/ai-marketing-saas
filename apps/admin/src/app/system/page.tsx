@@ -2,7 +2,7 @@
 
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState, Tabs } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, Tabs, askInput, toast } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -46,6 +46,18 @@ interface EnvCheck {
   platformConfig: { area: string; label: string; source: string; secretConfigured: boolean }[];
 }
 
+/** ADNX11: a long error/log line — clamped to 2 lines on mobile
+ * with a বিস্তারিত/লুকান toggle; full text always on sm+. */
+function ErrText({ text }: { text: string }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <span className="min-w-0">
+      <span className={open ? "" : "line-clamp-2 sm:line-clamp-none"}>{text}</span>
+      <button type="button" className="ml-1 font-semibold text-indigo-300 sm:hidden" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? "লুকান" : "বিস্তারিত"}</button>
+    </span>
+  );
+}
+
 function fmtBytes(n: number | null): string {
   if (n === null) return "—";
   if (n < 1024) return `${n} B`;
@@ -69,7 +81,6 @@ export default function SystemPage() {
   const [logQ, setLogQ] = React.useState("");
   const [inboxHealth, setInboxHealth] = React.useState<any>(null);
   const [dlq, setDlq] = React.useState<any>(null);
-  const [msg, setMsg] = React.useState("");
   const [bkLocation, setBkLocation] = React.useState("");
   const [bkNote, setBkNote] = React.useState("");
   const [bkAt, setBkAt] = React.useState("");
@@ -77,6 +88,13 @@ export default function SystemPage() {
   const [whProvider, setWhProvider] = React.useState("");
   const [whErrorsOnly, setWhErrorsOnly] = React.useState(false);
   const [whDetail, setWhDetail] = React.useState<WebhookEventDetail | null>(null);
+  // ADNX11: webhooks/logs get honest load states — before, a failed
+  // fetch silently became the "কোনো … নেই" empty text (a false
+  // empty, the same class of bug ADX12 fixed on Alerts).
+  const [whLoaded, setWhLoaded] = React.useState(false);
+  const [whError, setWhError] = React.useState("");
+  const [logLoaded, setLogLoaded] = React.useState(false);
+  const [logError, setLogError] = React.useState("");
   // ADX8: the page's cards regrouped into tabs (content unchanged).
   // "logs" is a declared sixth tab — the Activity Log card exists on
   // the page today and needs a home; the plan's five tabs cover the
@@ -88,7 +106,10 @@ export default function SystemPage() {
     if (provider.trim()) params.set("provider", provider.trim());
     if (errorsOnly) params.set("hasError", "true");
     params.set("take", "50");
-    setWebhooks(await apiFetch<WebhookEventRow[]>(`/admin/system/webhooks?${params.toString()}`).catch(() => []));
+    setWhLoaded(false); setWhError("");
+    try { setWebhooks(await apiFetch<WebhookEventRow[]>(`/admin/system/webhooks?${params.toString()}`)); }
+    catch (e) { setWebhooks([]); setWhError(e instanceof Error ? e.message : "Webhook Event লোড ব্যর্থ হয়েছে"); }
+    finally { setWhLoaded(true); }
   }
   async function openWebhook(id: string) {
     const detail = await apiFetch<WebhookEventDetail>(`/admin/system/webhooks/${id}`).catch(() => null);
@@ -115,40 +136,49 @@ export default function SystemPage() {
     setLoadDone(true);
   }, []);
   React.useEffect(() => { load(); }, [load]);
-  React.useEffect(() => {
-    apiFetch<LogRow[]>(`/admin/system/logs?take=60${logQ ? `&q=${encodeURIComponent(logQ)}` : ""}`).then(setLogs).catch(() => setLogs([]));
+  const loadLogs = React.useCallback(async () => {
+    setLogLoaded(false); setLogError("");
+    try { setLogs(await apiFetch<LogRow[]>(`/admin/system/logs?take=60${logQ ? `&q=${encodeURIComponent(logQ)}` : ""}`)); }
+    catch (e) { setLogs([]); setLogError(e instanceof Error ? e.message : "Log লোড ব্যর্থ হয়েছে"); }
+    finally { setLogLoaded(true); }
   }, [logQ]);
+  React.useEffect(() => { loadLogs(); }, [loadLogs]);
 
   // AB3 / AN12: queue operator actions — reason বাধ্যতামূলক (Audit-এ
   // থাকে), API-র ফলাফল হুবহু দেখানো হয়। Drain/Delete জাতীয় কোনো
   // ধ্বংসাত্মক action এখানে নেই।
   async function queueAction(queue: string, action: "pause" | "resume" | "retry-failed") {
-    const reason = window.prompt(`${queue} queue — ${action === "pause" ? "Pause" : action === "resume" ? "Resume" : "ব্যর্থ Job আবার চেষ্টা"} করার কারণ (Audit-এ থাকবে):`);
-    if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া এই action করা যাবে না।"); return; }
+    const reason = await askInput({ title: `${queue} queue`, description: `${action === "pause" ? "Pause" : action === "resume" ? "Resume" : "ব্যর্থ Job আবার চেষ্টা"} করার কারণ (Audit-এ থাকবে):`, inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
     try {
       const out = await apiFetch<any>(`/admin/system/queues/${queue}/${action}`, { method: "POST", body: JSON.stringify({ reason }) });
+      // ADNX11: queue-action feedback rides toast; the ✅/❌/⚠
+      // prefixes are dropped — the toast kind carries the outcome
+      // (the NB2 rule). Wording otherwise unchanged.
       if (out.available === false) {
-        setMsg(`⚠ ${queue}: action করা যায়নি — ${out.reason ?? out.error ?? "queue উপলব্ধ নয়"}`);
+        toast(`${queue}: action করা যায়নি — ${out.reason ?? out.error ?? "queue উপলব্ধ নয়"}`, "error");
       } else if (action === "retry-failed") {
         const fails = (out.results ?? []).filter((r: any) => !r.retried).map((r: any) => `#${r.id}: ${r.error}`).join("; ");
-        setMsg(`✅ ${queue}: ${out.requested}টি ব্যর্থ Job-এর মধ্যে ${out.retried}টি আবার queue-তে গেছে (Failed ছিল ${out.failedBefore} → এখন ${out.failedAfter})।${fails ? ` হয়নি: ${fails}` : ""}`);
+        toast(`${queue}: ${out.requested}টি ব্যর্থ Job-এর মধ্যে ${out.retried}টি আবার queue-তে গেছে (Failed ছিল ${out.failedBefore} → এখন ${out.failedAfter})।${fails ? ` হয়নি: ${fails}` : ""}`);
       } else {
-        setMsg(`✅ ${queue}: ${action === "pause" ? "Pause করা হয়েছে" : "Resume করা হয়েছে"} (Paused: ${out.paused ? "হ্যাঁ" : "না"})।`);
+        toast(`${queue}: ${action === "pause" ? "Pause করা হয়েছে" : "Resume করা হয়েছে"} (Paused: ${out.paused ? "হ্যাঁ" : "না"})।`);
       }
       await load();
     } catch (e) {
-      setMsg(`❌ ${queue}: ${e instanceof Error ? e.message : "action ব্যর্থ হয়েছে"}`);
+      toast(`${queue}: ${e instanceof Error ? e.message : "action ব্যর্থ হয়েছে"}`, "error");
     }
   }
 
   // ADX12: per-card pending slot (loading vs failed + retry).
+  // ADNX11: the in-flight half is a skeleton, so EVERY tab's cards
+  // now carry skeleton (in flight) / error+retry (failed) states.
   const pending = (label: string) => loadDone
     ? <ErrorState message={`${label} লোড হয়নি — আবার চেষ্টা করুন।`} onRetry={load} />
-    : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>;
+    : <div className="space-y-2" aria-label="লোড হচ্ছে"><div className="askel h-4 w-2/3" /><div className="askel h-4 w-1/2" /><div className="askel h-4 w-3/5" /></div>;
 
   return (
     <AdminShell title="🖥 System & Reliability">
-      {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      <PageHead sub="Deploy, Queue, Error, Backup, Webhook ও Activity Log — Tab অনুযায়ী ভাগ করা।" />
       {/* ADX8: the AA1 deploy-readiness banner moved to page level —
           identical text/logic as inside the env card before, now
           visible regardless of the active tab (it already was the
@@ -176,7 +206,7 @@ export default function SystemPage() {
       </div>
       {tab === "deploy" ? (<>
       <div className="acard mb-4 space-y-2">
-        <div className="font-semibold">🚀 Deploy প্রস্তুতি <span className="text-xs font-normal text-slate-500">(শুধু আছে/নেই — কোনো মান কখনো দেখানো হয় না)</span></div>
+        <div className="font-semibold">🚀 Deploy প্রস্তুতি <span className="text-xs font-normal text-slate-400">(শুধু আছে/নেই — কোনো মান কখনো দেখানো হয় না)</span></div>
         {!envCheck ? pending("Deploy Readiness") : (
           <div className="space-y-2">
             <div className="space-y-1">
@@ -200,7 +230,7 @@ export default function SystemPage() {
             </div>
             <div className="border-t border-slate-800 pt-2 text-sm">
               Migration: প্রয়োগ হয়েছে <b>{envCheck.migrations ? envCheck.migrations.applied : "—"}</b>
-              {envCheck.migrations?.repoTotal != null ? <> · repo-তে মোট {envCheck.migrations.repoTotal} · <b>বাকি {envCheck.migrations.pending ?? 0}টি</b>{envCheck.migrations.pendingNames.length ? <span className="text-xs text-slate-400"> ({envCheck.migrations.pendingNames.join(", ")})</span> : null}</> : <span className="text-xs text-slate-500"> · repo-র migration তালিকা এই প্রসেস থেকে পড়া যায়নি, তাই বাকি সংখ্যা বলা যাচ্ছে না</span>}
+              {envCheck.migrations?.repoTotal != null ? <> · repo-তে মোট {envCheck.migrations.repoTotal} · <b>বাকি {envCheck.migrations.pending ?? 0}টি</b>{envCheck.migrations.pendingNames.length ? <span className="text-xs text-slate-400"> ({envCheck.migrations.pendingNames.join(", ")})</span> : null}</> : <span className="text-xs text-slate-400"> · repo-র migration তালিকা এই প্রসেস থেকে পড়া যায়নি, তাই বাকি সংখ্যা বলা যাচ্ছে না</span>}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {envCheck.platformConfig.map((a) => (
@@ -219,7 +249,7 @@ export default function SystemPage() {
               <div>চালু আছে: {fmtUptime(version.uptimeSeconds)} (Boot {fmtDateTime(version.bootTime)})</div>
               <div>Database: {version.database.reachable ? <span className="abadge-green">পৌঁছানো যাচ্ছে · {version.database.latencyMs}ms</span> : <span className="abadge-red">পৌঁছানো যাচ্ছে না</span>}</div>
               <div>Migration প্রয়োগ হয়েছে: <b>{version.migrations ? version.migrations.applied : "—"}</b>{version.migrations?.latest ? ` · সর্বশেষ ${version.migrations.latest}` : ""}</div>
-              <p className="text-xs text-slate-500">Dokploy তে GIT_SHA / APP_VERSION env দিলে এখানে Deploy এর পরিচয় দেখাবে। Migration সংখ্যা আসে সরাসরি Database থেকে।</p>
+              <p className="text-xs text-slate-400">Dokploy তে GIT_SHA / APP_VERSION env দিলে এখানে Deploy এর পরিচয় দেখাবে। Migration সংখ্যা আসে সরাসরি Database থেকে।</p>
             </div>
           )}
         </div>
@@ -230,14 +260,14 @@ export default function SystemPage() {
           {!queues ? pending("Queue তথ্য") : (
             <div className="space-y-1.5 text-sm">
               <div>Scheduled Job: মোট {queues.scheduledJobs.total} · চালু {queues.scheduledJobs.enabled} · <b>এখন Due {queues.scheduledJobs.dueNow}</b></div>
-              {queues.scheduledJobs.recentlyFailed.map((j, i) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ {j.name} ({j.type}) — {j.lastError}</div>)}
+              {queues.scheduledJobs.recentlyFailed.map((j, i) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ {j.name} ({j.type}) — <ErrText text={j.lastError} /></div>)}
               <div>Store Sync: চলমান {queues.syncJobs.running} · শেষ ২৪ ঘণ্টায় ব্যর্থ {queues.syncJobs.failedLast24h}</div>
-              {queues.syncJobs.latestFailures.map((j, i) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ {j.kind} sync — {j.error ?? ""}</div>)}
+              {queues.syncJobs.latestFailures.map((j, i) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ {j.kind} sync — <ErrText text={j.error ?? ""} /></div>)}
               <div>Message Delivery (২৪ ঘণ্টা): মোট {queues.deliveries.last24h} · ব্যর্থ {queues.deliveries.failedLast24h} · Pending {queues.deliveries.pending}</div>
               <div>Workflow Run: চলমান {queues.workflowRuns.running} · সাম্প্রতিক Error {queues.workflowRuns.latestErrors.length}</div>
               <div className="border-t border-slate-800 pt-2">
                 <div className="mb-1 font-medium">🛠 Worker Process (AA2)</div>
-                {!queues.worker ? <p className="text-xs text-slate-500">Worker তথ্য পাওয়া যায়নি।</p> : queues.worker.reachable ? (
+                {!queues.worker ? <p className="text-xs text-slate-400">Worker তথ্য পাওয়া যায়নি।</p> : queues.worker.reachable ? (
                   <div className="space-y-1 text-sm">
                     <div>
                       {queues.worker.health?.status === "degraded"
@@ -273,9 +303,9 @@ export default function SystemPage() {
                         </tr>
                       ))}</tbody>
                     </table>
-                  ) : <p className="mt-1 text-xs text-slate-500">BullMQ count পাওয়া যাচ্ছে না: {queues.bullmq.reason ?? queues.bullmq.error ?? ""}</p>
+                  ) : <p className="mt-1 text-xs text-slate-400">BullMQ count পাওয়া যাচ্ছে না: {queues.bullmq.reason ?? queues.bullmq.error ?? ""}</p>
                 ) : null}
-                {queues.bullmq?.available ? <p className="mt-1 text-xs text-slate-500">Queue action (Pause/Resume/Retry) শুধু SUPER Admin-এর জন্য, প্রতিটিতে কারণ বাধ্যতামূলক ও Audit-এ থাকে। Queue খালি করা (drain) বা Job মোছার কোনো action ইচ্ছা করেই রাখা হয়নি।</p> : null}
+                {queues.bullmq?.available ? <p className="mt-1 text-xs text-slate-400">Queue action (Pause/Resume/Retry) শুধু SUPER Admin-এর জন্য, প্রতিটিতে কারণ বাধ্যতামূলক ও Audit-এ থাকে। Queue খালি করা (drain) বা Job মোছার কোনো action ইচ্ছা করেই রাখা হয়নি।</p> : null}
               </div>
             </div>
           )}
@@ -286,7 +316,7 @@ export default function SystemPage() {
         {!inboxHealth ? pending("Inbox Health") : (
           <div className="space-y-1.5 text-sm">
             <div>ব্যর্থ Send (২৪ ঘণ্টা): <b>{inboxHealth.failedSends24h}</b> · Webhook Error (২৪ ঘণ্টা): <b>{inboxHealth.webhookErrors24h}</b></div>
-            {inboxHealth.latestFailures?.map((f: any, i: number) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ Send ব্যর্থ — {f.error ?? ""}</div>)}
+            {inboxHealth.latestFailures?.map((f: any, i: number) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ Send ব্যর্থ — <ErrText text={f.error ?? ""} /></div>)}
             <div>অ্যাসাইনবিহীন খোলা কথোপকথন: <b>{inboxHealth.unassignedOpenBacklog}</b>{inboxHealth.oldestUnassignedAt ? ` · সবচেয়ে পুরনো: ${fmtDateTime(inboxHealth.oldestUnassignedAt)}` : ""}</div>
             <div>সংরক্ষিত মিডিয়া (Pipeline): <b>{inboxHealth.mediaStoredTotal}</b>টি ফাইল</div>
             <div className="text-xs text-slate-400">{inboxHealth.realtime}</div>
@@ -294,7 +324,7 @@ export default function SystemPage() {
               {(inboxHealth.channelStates ?? []).map((c: any, i: number) => (
                 <span key={i} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${c.status === "CONNECTED" && !c.hasError ? "bg-emerald-500/15 text-emerald-500" : "bg-red-500/15 text-red-400"}`}>{c.provider}: {c.status}{c.hasError ? " (error)" : ""}</span>
               ))}
-              {(inboxHealth.channelStates ?? []).length === 0 ? <span className="text-xs text-slate-500">কোনো Channel Integration নেই</span> : null}
+              {(inboxHealth.channelStates ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো Channel Integration নেই</span> : null}
             </div>
           </div>
         )}
@@ -303,14 +333,14 @@ export default function SystemPage() {
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">☠️ Dead-Letter Queue (M57) {dlq ? `— মুলতুবি ${dlq.pending}টি` : ""}</div>
         {!dlq ? pending("DLQ তথ্য") : dlq.entries.length === 0 ? (
-          <p className="text-sm text-slate-500">কোনো Dead-letter Job নেই — সব নির্ধারিত Job সফল বা Retry তে আছে।</p>
+          <p className="text-sm text-slate-400">কোনো Dead-letter Job নেই — সব নির্ধারিত Job সফল বা Retry তে আছে।</p>
         ) : (
           <div className="space-y-1.5">
             {dlq.entries.map((e: any) => (
               <div key={e.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">
                 <span className="font-semibold">{e.jobType ?? "job"}</span>
                 <span className="text-slate-400">{e.createdAt ? fmtDateTime(e.createdAt) : ""} · {e.attempts} বার চেষ্টা</span>
-                <span className="min-w-0 flex-1 truncate" title={e.error}>{e.error}</span>
+                <span className="min-w-0 flex-1"><ErrText text={e.error ?? ""} /></span>
                 {e.replayedAt ? <span className="text-emerald-500">↻ Replay হয়েছে</span> : (
                   <button className="rounded bg-white/10 px-2 py-0.5 font-semibold hover:bg-white/20" onClick={async () => {
                     await apiFetch(`/admin/system/dlq/${e.id}/replay`, { method: "POST" }).catch(() => undefined);
@@ -321,7 +351,7 @@ export default function SystemPage() {
             ))}
           </div>
         )}
-        <p className="mt-2 text-[11px] text-slate-500">Worker ৩ বার ব্যর্থ হলে Job এখানে আসে। Replay করলে আবার Queue তে (বা Inline) চলবে।</p>
+        <p className="mt-2 text-[11px] text-slate-400">Worker ৩ বার ব্যর্থ হলে Job এখানে আসে। Replay করলে আবার Queue তে (বা Inline) চলবে।</p>
       </div>
       </>) : null}
       {tab === "webhooks" ? (<>
@@ -334,14 +364,14 @@ export default function SystemPage() {
           </label>
           <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={() => loadWebhooks()}>↻ আবার লোড</button>
         </div>
-        {webhooks.length === 0 ? <p className="text-sm text-slate-500">কোনো Webhook Event নেই।</p> : (
+        {!whLoaded ? <div className="askel-table" /> : whError ? <ErrorState message={`Webhook Event লোড হয়নি: ${whError}`} onRetry={() => loadWebhooks()} /> : webhooks.length === 0 ? <EmptyState title="কোনো Webhook Event নেই।" /> : (
           <div className="space-y-1.5">
             {webhooks.slice(0, 20).map((w) => (
               <button key={w.id} className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-left text-sm hover:bg-slate-700/70" onClick={() => openWebhook(w.id)}>
                 <span className="font-medium">{w.provider}</span>
                 <span className="text-slate-400">{w.topic ?? "—"}</span>
-                {w.organizationId ? <a className="text-indigo-300 hover:underline" href={`/orgs/${w.organizationId}`} onClick={(e) => e.stopPropagation()}>{w.organizationName ?? w.organizationId}</a> : <span className="text-slate-500">—</span>}
-                <span className="text-xs text-slate-500">{fmtDateTime(w.receivedAt)}</span>
+                {w.organizationId ? <a className="text-indigo-300 hover:underline" href={`/orgs/${w.organizationId}`} onClick={(e) => e.stopPropagation()}>{w.organizationName ?? w.organizationId}</a> : <span className="text-slate-400">—</span>}
+                <span className="text-xs text-slate-400">{fmtDateTime(w.receivedAt)}</span>
                 {w.error ? <span className="text-xs text-red-400">{w.error}</span> : null}
               </button>
             ))}
@@ -362,13 +392,13 @@ export default function SystemPage() {
       {tab === "errors" ? (<>
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">🔥 Error Summary (শেষ {errors?.windowHours ?? 24} ঘণ্টা) — মোট {errors?.totalErrors ?? "…"}</div>
-        {!errors ? pending("Error Summary") : (
+        {!errors ? pending("Error Summary") : errors.sources.length === 0 ? <EmptyState title="কোনো Error নেই।" /> : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {errors.sources.map((s) => (
               <div key={s.source} className="rounded-xl border border-slate-800 p-3">
                 <div className="flex items-center justify-between"><b className="text-sm">{s.source}</b><span className={s.count > 0 ? "abadge-red" : "abadge-green"}>{s.count}</span></div>
-                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-600">{fmtDateTime(e.at)}</span></div>)}
-                {s.count === 0 ? <p className="mt-1 text-xs text-slate-500">কোনো Error নেই।</p> : null}
+                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-400">{fmtDateTime(e.at)}</span></div>)}
+                {s.count === 0 ? <p className="mt-1 text-xs text-slate-400">কোনো Error নেই।</p> : null}
               </div>
             ))}
           </div>
@@ -378,7 +408,7 @@ export default function SystemPage() {
       {tab === "backup" ? (<>
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="acard">
-          <div className="mb-2 font-semibold">🗄 Database Growth <span className="text-xs font-normal text-slate-500">({growth?.source ?? "…"})</span></div>
+          <div className="mb-2 font-semibold">🗄 Database Growth <span className="text-xs font-normal text-slate-400">({growth?.source ?? "…"})</span></div>
           {!growth ? pending("Database Growth") : (
             <table className="atable">
               <thead><tr><th className="ath">Table</th><th className="ath">আনুমানিক Row</th><th className="ath">আকার</th></tr></thead>
@@ -387,19 +417,20 @@ export default function SystemPage() {
               ))}</tbody>
             </table>
           )}
-          {growth?.totalBytes ? <p className="mt-2 text-xs text-slate-500">মোট (শীর্ষ Table গুলো): {fmtBytes(growth.totalBytes)}</p> : null}
+          {growth && growth.tables.length === 0 ? <EmptyState title="কোনো Table তথ্য নেই।" /> : null}
+          {growth?.totalBytes ? <p className="mt-2 text-xs text-slate-400">মোট (শীর্ষ Table গুলো): {fmtBytes(growth.totalBytes)}</p> : null}
         </div>
         <div className="acard space-y-3">
           <div className="font-semibold">💾 Backup Status</div>
-          <p className="text-xs text-slate-500">আসল Backup হয় অ্যাপের বাইরে (Dokploy/Postgres)। অ্যাপ যেটা যাচাই করতে পারে তা হলো ডেটার বর্তমান Integrity — নিচের Manifest টি লাইভ Row Count থেকে তৈরি। বাইরের Backup এর তথ্য Operator রেকর্ড করেন।</p>
+          <p className="text-xs text-slate-400">আসল Backup হয় অ্যাপের বাইরে (Dokploy/Postgres)। অ্যাপ যেটা যাচাই করতে পারে তা হলো ডেটার বর্তমান Integrity — নিচের Manifest টি লাইভ Row Count থেকে তৈরি। বাইরের Backup এর তথ্য Operator রেকর্ড করেন।</p>
           {backup?.manifest ? (
             <div className="rounded-xl bg-slate-800 px-3 py-2 text-sm">
               ✅ সর্বশেষ যাচাই {fmtDateTime(backup.manifest.at)} — মোট <b>{backup.manifest.totalRows.toLocaleString()}</b> Row, {Object.keys(backup.manifest.tables).length} টি Core Table · যাচাই করেছেন {backup.manifest.verifiedBy}
             </div>
-          ) : <p className="text-sm text-slate-500">এখনো কোনো Integrity যাচাই হয়নি।</p>}
+          ) : <p className="text-sm text-slate-400">এখনো কোনো Integrity যাচাই হয়নি।</p>}
           <button className="abtn" onClick={async () => {
-            try { const m = await apiFetch<{ totalRows: number }>("/admin/system/backup-verify", { method: "POST", body: "{}" }); setMsg(`Integrity Manifest তৈরি হয়েছে — মোট ${m.totalRows.toLocaleString()} Row।`); await load(); }
-            catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+            try { const m = await apiFetch<{ totalRows: number }>("/admin/system/backup-verify", { method: "POST", body: "{}" }); toast(`Integrity Manifest তৈরি হয়েছে — মোট ${m.totalRows.toLocaleString()} Row।`); await load(); }
+            catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
           }}>এখনই Integrity যাচাই করুন</button>
           <div className="border-t border-slate-800 pt-3 space-y-2">
             <div className="text-sm font-medium">বাইরের Backup এর রেকর্ড</div>
@@ -407,10 +438,10 @@ export default function SystemPage() {
             <label className="block text-sm">স্থান <input className="ainput mt-1" value={bkLocation} onChange={(e) => setBkLocation(e.target.value)} placeholder="Dokploy scheduled backup / S3 bucket…" /></label>
             <label className="block text-sm">নোট <input className="ainput mt-1" value={bkNote} onChange={(e) => setBkNote(e.target.value)} placeholder="Restore drill: …" /></label>
             <button className="abtn-secondary" onClick={async () => {
-              try { await apiFetch("/admin/system/backup-info", { method: "PATCH", body: JSON.stringify({ lastBackupAt: bkAt ? new Date(bkAt).toISOString() : null, location: bkLocation, note: bkNote }) }); setMsg("Backup তথ্য সেভ হয়েছে।"); await load(); }
-              catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+              try { await apiFetch("/admin/system/backup-info", { method: "PATCH", body: JSON.stringify({ lastBackupAt: bkAt ? new Date(bkAt).toISOString() : null, location: bkLocation, note: bkNote }) }); toast("Backup তথ্য সেভ হয়েছে।"); await load(); }
+              catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
             }}>রেকর্ড সেভ করুন</button>
-            {backup?.info ? <p className="text-xs text-slate-500">রেকর্ড করেছেন {backup.info.recordedBy} · শেষ Backup: {backup.info.lastBackupAt ? fmtDateTime(backup.info.lastBackupAt) : "—"} · {backup.info.location}</p> : null}
+            {backup?.info ? <p className="text-xs text-slate-400">রেকর্ড করেছেন {backup.info.recordedBy} · শেষ Backup: {backup.info.lastBackupAt ? fmtDateTime(backup.info.lastBackupAt) : "—"} · {backup.info.location}</p> : null}
           </div>
         </div>
       </div>
@@ -421,14 +452,15 @@ export default function SystemPage() {
           <span className="font-semibold">📜 Activity Log (Audit Trail)</span>
           <input className="ainput max-w-xs" placeholder="Action দিয়ে খুঁজুন — যেমন payment" value={logQ} onChange={(e) => setLogQ(e.target.value)} />
         </div>
-        <p className="mb-2 text-xs text-slate-500">সার্ভারের Process Log অ্যাপের ভেতর থেকে পড়া যায় না — এখানে দেখানো হচ্ছে সম্পূর্ণ Audit Trail, যেখানে প্রতিটি গুরুত্বপূর্ণ ঘটনা রেকর্ড থাকে।</p>
+        <p className="mb-2 text-xs text-slate-400">সার্ভারের Process Log অ্যাপের ভেতর থেকে পড়া যায় না — এখানে দেখানো হচ্ছে সম্পূর্ণ Audit Trail, যেখানে প্রতিটি গুরুত্বপূর্ণ ঘটনা রেকর্ড থাকে।</p>
+        {!logLoaded ? <div className="askel-table" /> : logError ? <ErrorState message={`Log লোড হয়নি: ${logError}`} onRetry={loadLogs} /> : logs.length === 0 ? <EmptyState title="কোনো Log নেই।" /> : (
         <table className="atable">
           <thead><tr><th className="ath">সময়</th><th className="ath">Action</th><th className="ath">Entity</th><th className="ath">Org</th><th className="ath">IP</th></tr></thead>
           <tbody>{logs.map((l, i) => (
             <tr key={i} className="border-t border-slate-800"><td className="atd text-slate-400">{fmtDateTime(l.at)}</td><td className="atd font-medium">{l.action}</td><td className="atd">{l.entityType ?? "—"}</td><td className="atd">{l.organizationId ? l.organizationId.slice(0, 8) + "…" : "platform"}</td><td className="atd">{(l as any).ip ?? "—"}</td></tr>
           ))}</tbody>
         </table>
-        {logs.length === 0 ? <p className="p-3 text-sm text-slate-500">কোনো Log নেই।</p> : null}
+        )}
       </div>
       </>) : null}
     </AdminShell>

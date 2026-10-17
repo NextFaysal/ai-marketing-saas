@@ -1,11 +1,61 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, askInput, toast, useLastFilters, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
 interface OrgRow { id: string; name: string; slug: string; status: string; country: string; createdAt: string; memberCount: number; orderCount: number; subscription?: { plan: string; status: string } | null }
+
+interface TombstoneRow { id: string; slug: string; deletedOrgName: string | null; deletedAt: string; expiresAt: string; releasedAt: string | null; releasedById: string | null; active: boolean }
+
+/** TD11: slug cooldown list — a permanently deleted org's slug
+ * stays parked for 180 days so its old shop address cannot be
+ * taken over. A SUPER admin can release a name early; the note
+ * is mandatory and lands in the audit trail (same prompt pattern
+ * as this page's bulk actions). Renders nothing when there are
+ * no tombstones or the list cannot be loaded. */
+function SlugTombstonesCard() {
+  const [rows, setRows] = React.useState<TombstoneRow[]>([]);
+  const [msg, setMsg] = React.useState("");
+  const load = React.useCallback(async () => {
+    const out = await apiFetch<{ tombstones: TombstoneRow[] }>(`/admin/slug-tombstones`).catch(() => null);
+    if (out) setRows(out.tombstones);
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  const release = async (t: TombstoneRow) => {
+    const note = window.prompt(`"${t.slug}" নামটি cooldown থেকে মুক্ত করুন — কারণ লিখুন (Audit-এ থাকবে):`);
+    if (!note || note.trim().length < 3) return;
+    try {
+      await apiFetch(`/admin/slug-tombstones/${encodeURIComponent(t.slug)}/release`, { method: "POST", body: JSON.stringify({ note }) });
+      setMsg(`"${t.slug}" মুক্ত হয়েছে — নামটি এখন আবার ব্যবহার করা যাবে।`);
+      await load();
+    } catch (e) { setMsg(e instanceof Error ? e.message : "মুক্তি ব্যর্থ হয়েছে"); }
+  };
+  if (rows.length === 0) return null;
+  return (
+    <div className="acard mt-4 p-4">
+      <h3 className="text-sm font-semibold text-slate-200">🪦 Slug Cooldown — মুছে ফেলা দোকানের সংরক্ষিত নাম</h3>
+      <p className="mt-1 text-xs text-slate-500">চিরতরে মুছে ফেলা Organization-এর slug ১৮০ দিন সংরক্ষিত থাকে — ওই সময়ের মধ্যে নতুন কেউ ওই নামে দোকান খুলতে পারে না (পুরনো ঠিকানা দখল রোধ)। জরুরি হলে SUPER অ্যাডমিন কারণ লিখে আগেই মুক্ত করতে পারেন।</p>
+      {msg ? <p className="mt-2 rounded-lg bg-indigo-500/10 p-2.5 text-sm text-indigo-200">{msg}</p> : null}
+      <table className="atable mt-3">
+        <thead><tr>
+          <th className="ath">Slug</th><th className="ath">মুছে ফেলা দোকান</th><th className="ath">মোছা হয়েছে</th><th className="ath">Cooldown শেষ</th><th className="ath">অবস্থা</th><th className="ath"></th>
+        </tr></thead>
+        <tbody>{rows.map((t) => (
+          <tr key={t.id} className="arow border-t border-slate-800">
+            <td className="atd font-mono text-indigo-300">{t.slug}<span className="text-slate-500">.qosprey.com</span></td>
+            <td className="atd">{t.deletedOrgName ?? "—"}</td>
+            <td className="atd text-slate-400">{fmtDateTime(t.deletedAt, "date")}</td>
+            <td className="atd text-slate-400">{fmtDateTime(t.expiresAt, "date")}</td>
+            <td className="atd">{t.active ? <span className="abadge-amber">Cooldown চলছে</span> : t.releasedAt ? <span className="abadge-green">মুক্ত করা হয়েছে</span> : <span className="abadge-red">মেয়াদ শেষ</span>}</td>
+            <td className="atd">{t.active ? <button type="button" className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => release(t)}>মুক্ত করুন</button> : null}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
 
 const STATUS_BADGE = (s: string) => (s === "ACTIVE" ? "abadge-green" : s === "SUSPENDED" ? "abadge-amber" : "abadge-red");
 
@@ -13,7 +63,6 @@ export default function OrgsPage() {
   const [rows, setRows] = React.useState<OrgRow[]>([]);
   const [q, setQ] = React.useState("");
   const [selected, setSelected] = React.useState<string[]>([]);
-  const [bulkMsg, setBulkMsg] = React.useState("");
   // ADX6: status/plan filters are CLIENT-side over the rows the
   // existing API already returned — GET /admin/orgs accepts only
   // q/page/take (verified in admin.controller.ts), so no new
@@ -34,15 +83,19 @@ export default function OrgsPage() {
     setLoading(false);
   }, [q]);
   React.useEffect(() => { load(); }, [load]);
+  // ADNX15: one apply function for saved views AND last-used
+  // filter persistence (restored on mount, stored on change).
+  const applyFilters = (s: Record<string, string>) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setPlanFilter(s.planFilter ?? ""); };
+  useLastFilters("orgs", { q, statusFilter, planFilter }, applyFilters);
 
   const bulk = async (status: string) => {
-    const reason = window.prompt(`Bulk ${status} — ${selected.length}টি Org — কারণ (প্রতিটির Audit এ থাকবে):`);
-    if (!reason || reason.trim().length < 3) return;
+    const reason = await askInput({ title: `Bulk ${status} — ${selected.length}টি Org`, description: "কারণ (প্রতিটির Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
     try {
       const out = await apiFetch<{ succeeded: number; total: number }>(`/admin/orgs/bulk-status`, { method: "POST", body: JSON.stringify({ organizationIds: selected, status, reason }) });
-      setBulkMsg(`${out.succeeded}/${out.total} টি Org ${status} হয়েছে।`);
+      toast(`${out.succeeded}/${out.total} টি Org ${status} হয়েছে।`);
       setSelected([]); await load();
-    } catch (e) { setBulkMsg(e instanceof Error ? e.message : "Bulk action ব্যর্থ"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "Bulk action ব্যর্থ", "error"); }
   };
 
   const onSort = (key: string) => {
@@ -63,7 +116,7 @@ export default function OrgsPage() {
 
   return (
     <AdminShell title="🏢 Organizations">
-      {bulkMsg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{bulkMsg}</p> : null}
+      <PageHead sub="সব Tenant Organization — অবস্থা, Plan, সদস্য ও Order এক তালিকায়।" />
       {selected.length > 0 ? (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/40 bg-indigo-500/10 px-4 py-2.5 text-sm">
           <b>{selected.length}টি বাছাই হয়েছে</b> — Bulk (শুধু SUPER):
@@ -75,7 +128,7 @@ export default function OrgsPage() {
       ) : null}
       {error ? <div className="mb-3"><ErrorState message={error} onRetry={load} /></div> : null}
       <div className="acard overflow-hidden p-0">
-        <FilterBar collapsible>
+        <FilterBar collapsible activeCount={(q ? 1 : 0) + (statusFilter ? 1 : 0) + (planFilter ? 1 : 0)}>
           <input className="ainput max-w-sm" placeholder="নাম বা slug দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
           <select className="ainput" aria-label="অবস্থা দিয়ে ছাঁকুন" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -86,17 +139,28 @@ export default function OrgsPage() {
             <option value="">সব Plan</option>
             {planOptions.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
-          <span className="text-xs text-slate-500">{sorted.length}টি দেখাচ্ছে</span>
+          <span className="text-xs text-slate-400">{sorted.length}টি দেখাচ্ছে</span>
         </FilterBar>
+        {/* ADNX8: active-filter chips — visible even while the
+            mobile FilterBar is collapsed; each chip clears only
+            its own filter (same state setters as the bar). */}
+        {(q || statusFilter || planFilter) ? (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800 px-4 py-2">
+            {q ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">খোঁজ: {q}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="খোঁজ মুছুন" onClick={() => setQ("")}>✕</button></span> : null}
+            {statusFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">অবস্থা: {statusFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="অবস্থা ফিল্টার মুছুন" onClick={() => setStatusFilter("")}>✕</button></span> : null}
+            {planFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">Plan: {planFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="Plan ফিল্টার মুছুন" onClick={() => setPlanFilter("")}>✕</button></span> : null}
+            <button type="button" className="text-xs font-medium text-indigo-300 hover:text-indigo-200" onClick={() => { setQ(""); setStatusFilter(""); setPlanFilter(""); }}>সব ফিল্টার মুছুন</button>
+          </div>
+        ) : null}
         {/* ADX14: saved views over this page's existing filter state */}
         <div className="border-b border-slate-800">
           <SavedViewsBar
             page="orgs"
             current={{ q, statusFilter, planFilter }}
-            onApply={(s) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setPlanFilter(s.planFilter ?? ""); }}
+            onApply={applyFilters}
           />
         </div>
-        <table className="atable atable-sticky">
+        <DataTable>
           <thead className="bg-slate-900"><tr><th className="ath"></th>
             <SortableTh label="Organization" sortKey="name" current={sortKey} dir={sortDir} onSort={onSort} />
             <th className="ath">Plan</th>
@@ -109,19 +173,21 @@ export default function OrgsPage() {
           <tbody>{sorted.map((o) => (
             <tr key={o.id} className="arow border-t border-slate-800 hover:bg-slate-800/40">
               <td className="atd"><input type="checkbox" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td>
-              <td className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-500">{o.slug} · {o.country}</div></td>
-              <td className="atd">{o.subscription ? `${o.subscription.plan} (${o.subscription.status})` : "—"}</td>
-              <td className="atd">{o.memberCount}</td>
-              <td className="atd">{o.orderCount}</td>
-              <td className="atd"><span className={STATUS_BADGE(o.status)}>{o.status}</span></td>
-              <td className="atd text-slate-400">{fmtDateTime(o.createdAt, "date")}</td>
+              <td data-label="Organization" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-400">{o.slug} · {o.country}</div></td>
+              <td data-label="Plan" className="atd">{o.subscription ? `${o.subscription.plan} (${o.subscription.status})` : "—"}</td>
+              <td data-label="সদস্য" className="atd">{o.memberCount}</td>
+              <td data-label="Order" className="atd">{o.orderCount}</td>
+              <td data-label="অবস্থা" className="atd"><span className={STATUS_BADGE(o.status)}>{o.status}</span></td>
+              <td data-label="তৈরি" className="atd text-slate-400">{fmtDateTime(o.createdAt, "date")}</td>
               <td className="atd"><button type="button" className="abtn-secondary atable-row-actions !px-2 !py-1 text-xs" onClick={() => setQuick(o)}>দ্রুত দেখুন</button></td>
             </tr>
           ))}</tbody>
-        </table>
+        </DataTable>
         {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
         {sorted.length === 0 && !loading && !error ? <EmptyState title="কোনো Organization পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
       </div>
+
+      <SlugTombstonesCard />
 
       <DetailDrawer
         open={quick !== null}
@@ -137,7 +203,7 @@ export default function OrgsPage() {
             <div><span className="text-slate-400">সদস্য:</span> {quick.memberCount}জন · <span className="text-slate-400">Order:</span> {quick.orderCount}টি</div>
             <div><span className="text-slate-400">তৈরি:</span> {fmtDateTime(quick.createdAt, "date")}</div>
             {quick.subscription?.status === "PAST_DUE" ? <p className="aerror">এই Org-এর Subscription PAST_DUE — Billing ঝুঁকিতে আছে।</p> : null}
-            <p className="pt-1 text-xs text-slate-500">এটি তালিকার সারির সারসংক্ষেপ — সব তথ্য ও অ্যাকশন সম্পূর্ণ বিবরণ পেজে।</p>
+            <p className="pt-1 text-xs text-slate-400">এটি তালিকার সারির সারসংক্ষেপ — সব তথ্য ও অ্যাকশন সম্পূর্ণ বিবরণ পেজে।</p>
           </div>
         ) : null}
       </DetailDrawer>

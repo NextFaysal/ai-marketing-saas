@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -61,6 +62,12 @@ import {
   slugifyShopPageTitle,
   validateShopPageBlocks,
 } from "./shop-pages";
+import {
+  PLATFORM_CUSTOM_DOMAIN_MESSAGE,
+  customDomainCandidates,
+  isPlatformHostedDomain,
+  normalizeCustomDomainInput,
+} from "../common/custom-domain";
 import type {
   CartContactDto,
   CheckoutDto,
@@ -4083,21 +4090,51 @@ export class StorefrontService {
 
   // ================= Public: by-domain =================
 
-  async byDomain(domain: string) {
-    const normalized = String(domain ?? "")
-      .trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .replace(/\/.*$/, "");
-    if (!normalized) throw new NotFoundException("ডোমেইনটি পাওয়া যায়নি");
-    const org = await this.t("organization").findFirst({ where: { customDomain: normalized } });
-    if (!org) throw new NotFoundException("ডোমেইনটি পাওয়া যায়নি");
+  /**
+   * TD9: the ONE verified-domain resolution, shared by byDomain
+   * and domainAllowed. A domain resolves ONLY when an org's stored
+   * customDomain matches the input OR its www/apex variant AND
+   * that org's StorefrontSetting has domainVerifiedAt set (the
+   * EC8 condition). Returns null — never throws — when nothing
+   * verified matches.
+   */
+  async resolveVerifiedDomain(domain: string): Promise<{ org: any; setting: any } | null> {
+    const candidates = customDomainCandidates(domain);
+    if (candidates.length === 0) return null;
+    const org = await this.t("organization").findFirst({
+      where: { customDomain: { in: candidates } },
+    });
+    if (!org) return null;
     const setting = await this.getSetting(org.id);
+    if (!setting?.domainVerifiedAt) return null;
+    return { org, setting };
+  }
+
+  async byDomain(domain: string) {
+    const resolved = await this.resolveVerifiedDomain(domain);
+    if (!resolved) throw new NotFoundException("ডোমেইনটি পাওয়া যায়নি");
     // Only a VERIFIED domain resolves. Enabled-state is deliberately
     // not required here: routing to a disabled shop then honestly
-    // 404s at the shop routes.
-    if (!setting?.domainVerifiedAt) throw new NotFoundException("ডোমেইনটি পাওয়া যায়নি");
-    return { organizationSlug: org.slug, domain: normalized };
+    // 404s at the shop routes. The returned domain is the STORED
+    // value (normalised), not the caller's variant: a shop stored
+    // as www.example.com answers an apex lookup with its www form.
+    return {
+      organizationSlug: resolved.org.slug,
+      domain: normalizeCustomDomainInput(resolved.org.customDomain ?? ""),
+    };
+  }
+
+  /**
+   * TD10: the ask endpoint's service half — true exactly when the
+   * domain (or its www/apex variant) resolves to a VERIFIED shop,
+   * false for unverified / unknown / empty input. Never throws.
+   */
+  async domainAllowed(rawDomain: string): Promise<boolean> {
+    try {
+      return (await this.resolveVerifiedDomain(rawDomain)) !== null;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -5731,11 +5768,82 @@ export class StorefrontService {
   // ================= Staff: custom domain =================
 
   private normalizeDomain(raw: string): string {
-    return String(raw ?? "")
-      .trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .replace(/\/.*$/, "");
+    return normalizeCustomDomainInput(raw);
+  }
+
+  /**
+   * TD9: the storefront-owned write path for Organization.
+   * customDomain — the ONLY one that resets verification on
+   * change. (The branding path in OrganizationsService predates
+   * this and now applies the same reset; see TD9 there.)
+   *
+   * Rules, mirroring the branding path's messages where they
+   * overlap:
+   *  - raw null/empty REMOVES the domain.
+   *  - Format must match the branding regex exactly.
+   *  - The platform's own domain / any platform subdomain is
+   *    refused (PLATFORM_CUSTOM_DOMAIN_MESSAGE, shared wording).
+   *  - Another org holding the domain OR its www/apex variant is
+   *    a Conflict.
+   *  - A real CHANGE (old normalised value ≠ new value, removal
+   *    included) resets the StorefrontSetting's verify token +
+   *    verifiedAt: the old domain's proof must never carry over
+   *    to a new domain. Re-setting the SAME value resets nothing.
+   */
+  async setCustomDomain(orgId: string, actorId: string, raw: string | null) {
+    const org = await this.t("organization").findFirst({ where: { id: orgId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const previousDomain = org.customDomain
+      ? normalizeCustomDomainInput(org.customDomain) || null
+      : null;
+
+    let domain: string | null = null;
+    const normalized = normalizeCustomDomainInput(raw ?? "");
+    if (normalized !== "") {
+      if (!/^(?=.{4,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/.test(normalized)) {
+        throw new BadRequestException(
+          "ডোমেইনটি সঠিক ফরম্যাটে লিখুন (যেমন reports.youragency.com) — প্রোটোকল বা পাথ ছাড়া",
+        );
+      }
+      if (isPlatformHostedDomain(normalized)) {
+        throw new BadRequestException(PLATFORM_CUSTOM_DOMAIN_MESSAGE);
+      }
+      const taken = await this.t("organization").findFirst({
+        where: {
+          customDomain: { in: customDomainCandidates(normalized) },
+          NOT: { id: orgId },
+        },
+      });
+      if (taken) {
+        throw new ConflictException("এই ডোমেইনটি অন্য একটি Organization ইতিমধ্যে সংরক্ষণ করেছে");
+      }
+      domain = normalized;
+    }
+
+    const changed = previousDomain !== domain;
+    const verificationReset = changed;
+    await this.t("organization").update({
+      where: { id: orgId },
+      data: { customDomain: domain },
+    });
+    if (changed) {
+      const setting = await this.getSetting(orgId);
+      if (setting) {
+        await this.t("storefrontSetting").update({
+          where: { id: setting.id },
+          data: { domainVerifyToken: null, domainVerifiedAt: null },
+        });
+      }
+    }
+    await this.audit?.log({
+      organizationId: orgId,
+      userId: actorId,
+      action: domain === null ? "storefront.custom_domain_removed" : "storefront.custom_domain_set",
+      entityType: "Organization",
+      entityId: orgId,
+      metadata: { domain, previousDomain, verificationReset },
+    });
+    return { domain, previousDomain, verificationReset };
   }
 
   async issueDomainVerifyToken(orgId: string, actorId: string) {

@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { EmptyState, ErrorState } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, PageHead } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -36,6 +36,7 @@ export default function AdminsPage() {
 
   return (
     <AdminShell title="🧑‍💼 Admins (রোস্টার)">
+      <PageHead sub="প্ল্যাটফর্মের সব Admin এক তালিকায় — Tier, Status, TOTP ও সর্বশেষ Login এক নজরে।" />
       <p className="mb-3 text-sm text-slate-400">
         প্ল্যাটফর্মের সব Admin এক জায়গায়। এই পেজটি শুধু দেখার জন্য — Admin Grant/Revoke ও Tier বদল প্রতিটি User-এর Detail পেজ থেকে হয় (নামে ক্লিক করুন)।
         TOTP সেট না করা SUPER Admin লগইন করে শুধু পড়তে পারেন, কোনো পরিবর্তন (Mutation) করতে পারেন না — তাই সেটি লাল করে দেখানো হয়েছে।
@@ -46,10 +47,15 @@ export default function AdminsPage() {
         </p>
       ) : null}
       {error ? <div className="mb-3"><ErrorState message={error} onRetry={load} /></div> : null}
-      {/* ADX12: the roster is plain text/badges, so it opts into the
-          mobile card form (.atable-cards + data-label per cell). */}
+      {/* ADNX10: the roster now uses the ONE DataTable v3 pattern
+          (NB1 deferred this page's one-off v3 card-table marker to
+          here) — mobile card form with data-label per cell, so the
+          Tier badge and সর্বশেষ Login stay visible on the card. */}
       <div className="acard overflow-hidden p-0">
-        <table className="atable atable-cards">
+        <DataTable empty={<>
+          {loading && admins.length === 0 ? <div className="askel-table m-4" /> : null}
+          {admins.length === 0 && !error && !loading ? <div className="p-4"><EmptyState title="কোনো Admin পাওয়া যায়নি।" /></div> : null}
+        </>}>
           <thead className="bg-slate-900"><tr>
             <th className="ath">নাম</th><th className="ath">Email</th><th className="ath">Tier</th><th className="ath">Status</th>
             <th className="ath">TOTP</th><th className="ath">সর্বশেষ Login</th><th className="ath">Admin হয়েছেন</th>
@@ -72,9 +78,7 @@ export default function AdminsPage() {
               </tr>
             );
           })}</tbody>
-        </table>
-        {loading && admins.length === 0 ? <div className="askel-table m-4" /> : null}
-        {admins.length === 0 && !error && !loading ? <div className="p-4"><EmptyState title="কোনো Admin পাওয়া যায়নি।" /></div> : null}
+        </DataTable>
       </div>
     </AdminShell>
   );

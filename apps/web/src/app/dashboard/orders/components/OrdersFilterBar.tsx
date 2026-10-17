@@ -50,6 +50,7 @@ export function OrdersFilterBar({
           </span>
           <input
             type="text"
+            aria-label="অর্ডার খুঁজুন (অর্ডার নম্বর, কাস্টমার নাম, ফোন নম্বর বা পণ্য দিয়ে)"
             className="w-full rounded-xl border border-slate-200 bg-slate-50/60 py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 transition hover:bg-white focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10"
             placeholder="অর্ডার নম্বর, কাস্টমার নাম, ফোন নম্বর বা পণ্য দিয়ে রিয়েল-টাইম খুঁজুন..."
             value={searchQuery}
@@ -59,7 +60,8 @@ export function OrdersFilterBar({
             <button
               type="button"
               onClick={() => onSearchQueryChange("")}
-              className="absolute inset-y-0 right-0 flex items-center pr-3 text-xs text-slate-400 hover:text-slate-600"
+              className="absolute inset-y-0 right-0 flex min-w-[44px] items-center justify-center pr-3 text-xs text-slate-500 hover:text-slate-600"
+              aria-label="খোঁজ মুছুন"
             >
               ✕
             </button>
@@ -89,7 +91,7 @@ export function OrdersFilterBar({
               key={s}
               type="button"
               onClick={() => onStatusChange(s)}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+              className={`inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
                 isActive
                   ? "bg-indigo-600 text-white shadow-sm"
                   : "bg-slate-100/70 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"

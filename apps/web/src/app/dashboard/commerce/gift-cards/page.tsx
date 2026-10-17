@@ -4,6 +4,7 @@ import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { ResponsiveTable } from "@repo/ui";
 
 // AB2 (AX3) — gift cards staff page: settings, liability,
 // manual issue, card list + ledger detail with void / adjust.
@@ -366,7 +367,7 @@ export default function GiftCardsPage() {
               <p>সময়কালে বাতিল: <b>{money(liability.voidedMinor)}</b></p>
               <p>সময়কালে সংশোধন (নিট): <b>{signedMoney(liability.adjustedNetMinor)}</b></p>
             </div>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               সময়কাল: {dateFmt(liability.from)} — {dateFmt(liability.to)}
               {liability.truncated ? " · কার্ডের সংখ্যা অনেক বেশি হওয়ায় হিসাব আংশিক হতে পারে" : ""}
             </p>
@@ -403,8 +404,8 @@ export default function GiftCardsPage() {
             <input className="input mt-1" value={issueNote} onChange={(e) => setIssueNote(e.target.value)} placeholder="যেমন: ক্যাম্পেইন বিজয়ীর পুরস্কার" />
           </label>
         </div>
-        {!issueNote.trim() ? <p className="text-xs text-slate-400">নোট দেওয়া বাধ্যতামূলক — প্রতিটি ম্যানুয়াল ইস্যু লেজারে কারণসহ লেখা থাকে।</p> : null}
-        {!issueEmail.trim() && !issuePhone.trim() ? <p className="text-xs text-slate-400">প্রাপকের ইমেইল বা ফোন অন্তত একটি দিন — নইলে কোড কারো কাছে পৌঁছাবে না।</p> : null}
+        {!issueNote.trim() ? <p className="text-xs text-slate-500">নোট দেওয়া বাধ্যতামূলক — প্রতিটি ম্যানুয়াল ইস্যু লেজারে কারণসহ লেখা থাকে।</p> : null}
+        {!issueEmail.trim() && !issuePhone.trim() ? <p className="text-xs text-slate-500">প্রাপকের ইমেইল বা ফোন অন্তত একটি দিন — নইলে কোড কারো কাছে পৌঁছাবে না।</p> : null}
         <button type="submit" className="btn-primary" disabled={issueBusy || !issueReady}>
           {issueBusy ? "ইস্যু হচ্ছে…" : "গিফট কার্ড ইস্যু করুন"}
         </button>
@@ -418,7 +419,7 @@ export default function GiftCardsPage() {
             <input
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              placeholder="শেষ ৪ সংখ্যা দিয়ে খুঁজুন"
+              placeholder="শেষ ৪ সংখ্যা দিয়ে খুঁজুন" aria-label="শেষ ৪ সংখ্যা দিয়ে খুঁজুন"
               className="w-56 rounded-lg border px-3 py-2 font-mono text-sm"
             />
             <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="rounded-lg border px-3 py-2 text-sm">
@@ -428,8 +429,10 @@ export default function GiftCardsPage() {
           {listBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : items.length === 0 ? (
             <p className="text-sm text-slate-500">কোনো গিফট কার্ড পাওয়া যায়নি।</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+            <ResponsiveTable
+              table={
+                <div>
+                  <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b text-xs text-slate-500">
                     <th className="py-2 pr-2">কোড</th>
@@ -455,15 +458,47 @@ export default function GiftCardsPage() {
                       <td className="py-2">{c.expiresAt ? dateFmt(c.expiresAt) : "মেয়াদ নেই"}</td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                  </tbody>
+                  </table>
+                </div>
+              }
+              cards={items.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => void openDetail(c.id)}
+                  className={`cursor-pointer rounded-lg border p-3 hover:bg-slate-50 ${detail?.id === c.id ? "bg-pink-50/60" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-mono font-semibold">{c.codePrefix} ••••{c.codeLast4 ?? ""}</span>
+                    <span>{STATUS_LABELS[c.status] ?? c.status}</span>
+                  </div>
+                  <dl className="mt-2 space-y-1.5 text-sm">
+                    <div className="flex gap-2">
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">প্রাথমিক</dt>
+                      <dd>{money(c.initialAmountMinor)}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">ব্যালেন্স</dt>
+                      <dd className="font-semibold">{money(c.balanceMinor)}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">উৎস</dt>
+                      <dd>{c.source === "manual" ? "ম্যানুয়াল" : c.source === "purchase" ? "অর্ডার" : (c.source ?? "—")}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">মেয়াদ</dt>
+                      <dd>{c.expiresAt ? dateFmt(c.expiresAt) : "মেয়াদ নেই"}</dd>
+                    </div>
+                  </dl>
+                </div>
+              ))}
+            />
           )}
           {totalPages > 1 ? (
             <div className="flex items-center justify-center gap-2">
-              <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">আগের পেজ</button>
+              <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)} className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">আগের পেজ</button>
               <span className="text-xs font-semibold text-slate-500">পেজ {page} / {totalPages} · মোট {total}টি</span>
-              <button type="button" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">পরের পেজ</button>
+              <button type="button" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">পরের পেজ</button>
             </div>
           ) : null}
         </div>
@@ -513,7 +548,7 @@ export default function GiftCardsPage() {
                 <div className="space-y-4 border-t pt-3">
                   <div className="space-y-2">
                     <p className="text-sm font-semibold text-rose-700">কার্ড বাতিল করুন</p>
-                    <input value={voidNote} onChange={(e) => { setVoidNote(e.target.value); setConfirming(null); }} placeholder="বাতিলের কারণ (নোট) *" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                    <input value={voidNote} onChange={(e) => { setVoidNote(e.target.value); setConfirming(null); }} placeholder="বাতিলের কারণ (নোট) *" aria-label="বাতিলের কারণ (নোট)" className="w-full rounded-lg border px-3 py-2 text-sm" />
                     <button
                       type="button"
                       disabled={actionBusy || !voidNote.trim()}
@@ -526,8 +561,8 @@ export default function GiftCardsPage() {
                   </div>
                   <div className="space-y-2">
                     <p className="text-sm font-semibold">ব্যালেন্স সংশোধন করুন</p>
-                    <input value={adjustDelta} onChange={(e) => { setAdjustDelta(e.target.value); setConfirming(null); }} type="number" step="0.01" placeholder="পরিমাণ (৳) — বাড়াতে +, কমাতে −" className="w-full rounded-lg border px-3 py-2 text-sm" />
-                    <input value={adjustNote} onChange={(e) => { setAdjustNote(e.target.value); setConfirming(null); }} placeholder="সংশোধনের কারণ (নোট) *" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                    <input value={adjustDelta} onChange={(e) => { setAdjustDelta(e.target.value); setConfirming(null); }} type="number" step="0.01" placeholder="পরিমাণ (৳) — বাড়াতে +, কমাতে −" aria-label="সংশোধনের পরিমাণ (টাকা) — বাড়াতে +, কমাতে −" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                    <input value={adjustNote} onChange={(e) => { setAdjustNote(e.target.value); setConfirming(null); }} placeholder="সংশোধনের কারণ (নোট) *" aria-label="সংশোধনের কারণ (নোট)" className="w-full rounded-lg border px-3 py-2 text-sm" />
                     <button
                       type="button"
                       disabled={actionBusy || !adjustNote.trim() || !adjustDelta.trim()}

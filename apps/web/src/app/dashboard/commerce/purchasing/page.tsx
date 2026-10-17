@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, takaToMinorString, minorToTakaString } from "@/lib/storefront-money";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC20 — Purchasing: suppliers, purchase orders (+ receive), reorder suggestions.
 // Money: API minor-unit strings (poisha); forms take taka, converted via takaToMinorString.
@@ -202,7 +203,25 @@ export default function PurchasingPage() {
 
   const tabBtn = (key: typeof tab, label: string) => (
     <button type="button" key={key} onClick={() => setTab(key)}
-      className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === key ? "bg-slate-900 text-white" : "border bg-white"}`}>{label}</button>
+      className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === key ? "bg-slate-900 text-white" : "border bg-white"}`}>{label}</button>
+  );
+
+  // EB6: row actions shared verbatim between each desktop table and
+  // its ResponsiveTable mobile card — same handlers, same order.
+  const renderSupplierActions = (s: Supplier) => (
+    <div className="flex gap-2">
+      <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-blue-700" onClick={() => { setEditingSup(s); setSupForm({ name: s.name, phone: s.phone ?? "", email: s.email ?? "", address: s.address ?? "", note: s.note ?? "" }); }}>সম্পাদনা</button>
+      {s.active ? <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deactivateSupplier(s)}>নিষ্ক্রিয় করুন</button> : null}
+    </div>
+  );
+  const renderPoActions = (po: PO) => (
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-blue-700" onClick={() => openDetail(po)}>বিস্তারিত / গ্রহণ</button>
+      {po.status === "draft" ? <>
+        <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-indigo-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => patchPo(po, "ordered")}>অর্ডার করা হয়েছে</button>
+        <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => patchPo(po, "cancelled")}>বাতিল</button>
+      </> : null}
+    </div>
   );
 
   return (
@@ -222,11 +241,11 @@ export default function PurchasingPage() {
       {tab === "suppliers" ? (
         <div className="space-y-4">
           <form onSubmit={saveSupplier} className="card grid gap-2 p-5 sm:grid-cols-3">
-            <input className="input" placeholder="নাম *" value={supForm.name} onChange={(e) => setSupForm({ ...supForm, name: e.target.value })} required />
-            <input className="input" placeholder="ফোন" value={supForm.phone} onChange={(e) => setSupForm({ ...supForm, phone: e.target.value })} />
-            <input className="input" placeholder="ইমেইল" value={supForm.email} onChange={(e) => setSupForm({ ...supForm, email: e.target.value })} />
-            <input className="input sm:col-span-2" placeholder="ঠিকানা" value={supForm.address} onChange={(e) => setSupForm({ ...supForm, address: e.target.value })} />
-            <input className="input" placeholder="নোট" value={supForm.note} onChange={(e) => setSupForm({ ...supForm, note: e.target.value })} />
+            <input aria-label="সরবরাহকারীর নাম" className="input" placeholder="নাম *" value={supForm.name} onChange={(e) => setSupForm({ ...supForm, name: e.target.value })} required />
+            <input aria-label="সরবরাহকারীর ফোন" className="input" placeholder="ফোন" value={supForm.phone} onChange={(e) => setSupForm({ ...supForm, phone: e.target.value })} />
+            <input aria-label="সরবরাহকারীর ইমেইল" className="input" placeholder="ইমেইল" value={supForm.email} onChange={(e) => setSupForm({ ...supForm, email: e.target.value })} />
+            <input aria-label="সরবরাহকারীর ঠিকানা" className="input sm:col-span-2" placeholder="ঠিকানা" value={supForm.address} onChange={(e) => setSupForm({ ...supForm, address: e.target.value })} />
+            <input aria-label="সরবরাহকারীর নোট" className="input" placeholder="নোট" value={supForm.note} onChange={(e) => setSupForm({ ...supForm, note: e.target.value })} />
             <div className="flex gap-2 sm:col-span-3">
               <button className="btn-primary" disabled={busy !== ""}>{busy === "supplier" ? "হচ্ছে…" : editingSup ? "আপডেট করুন" : "সরবরাহকারী যোগ করুন"}</button>
               {editingSup ? <button type="button" className="btn-secondary" onClick={() => { setEditingSup(null); setSupForm({ name: "", phone: "", email: "", address: "", note: "" }); }}>বাতিল</button> : null}
@@ -234,20 +253,32 @@ export default function PurchasingPage() {
           </form>
           <div className="card p-5">
             {suppliers.length === 0 ? <p className="text-sm text-slate-500">কোনো সরবরাহকারী নেই।</p> : (
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">নাম</th><th className="py-2 pr-3">যোগাযোগ</th><th className="py-2 pr-3">ক্রয় অর্ডার</th><th className="py-2 pr-3">অবস্থা</th><th className="py-2">অ্যাকশন</th></tr></thead>
                 <tbody>{suppliers.map((s) => (
                   <tr key={s.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3 font-medium">{s.name}{s.address ? <span className="block text-xs text-slate-400">{s.address}</span> : null}</td>
-                    <td className="py-2 pr-3">{s.phone ?? "—"}{s.email ? <span className="block text-xs text-slate-400">{s.email}</span> : null}</td>
+                    <td className="py-2 pr-3 font-medium">{s.name}{s.address ? <span className="block text-xs text-slate-500">{s.address}</span> : null}</td>
+                    <td className="py-2 pr-3">{s.phone ?? "—"}{s.email ? <span className="block text-xs text-slate-500">{s.email}</span> : null}</td>
                     <td className="py-2 pr-3">{s.purchaseOrderCount ?? 0}টি</td>
                     <td className="py-2 pr-3"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${s.active ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}`}>{s.active ? "সক্রিয়" : "নিষ্ক্রিয়"}</span></td>
-                    <td className="py-2"><div className="flex gap-2">
-                      <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => { setEditingSup(s); setSupForm({ name: s.name, phone: s.phone ?? "", email: s.email ?? "", address: s.address ?? "", note: s.note ?? "" }); }}>সম্পাদনা</button>
-                      {s.active ? <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deactivateSupplier(s)}>নিষ্ক্রিয় করুন</button> : null}
-                    </div></td>
+                    <td className="py-2">{renderSupplierActions(s)}</td>
                   </tr>))}
                 </tbody></table></div>
+                }
+                cards={suppliers.map((s) => (
+                  <div key={s.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <dl className="space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">নাম</dt><dd className="text-right font-medium">{s.name}{s.address ? <span className="block text-xs font-normal text-slate-500">{s.address}</span> : null}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">যোগাযোগ</dt><dd className="text-right">{s.phone ?? "—"}{s.email ? <span className="block text-xs text-slate-500">{s.email}</span> : null}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ক্রয় অর্ডার</dt><dd className="text-right">{s.purchaseOrderCount ?? 0}টি</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${s.active ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}`}>{s.active ? "সক্রিয়" : "নিষ্ক্রিয়"}</span></dd></div>
+                    </dl>
+                    <div className="mt-2">{renderSupplierActions(s)}</div>
+                  </div>
+                ))}
+              />
             )}
           </div>
         </div>
@@ -263,12 +294,12 @@ export default function PurchasingPage() {
                 {suppliers.filter((s) => s.active).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <label className="block text-sm">প্রত্যাশিত তারিখ<input type="date" className="input mt-1" value={poForm.expectedDate} onChange={(e) => setPoForm({ ...poForm, expectedDate: e.target.value })} /></label>
-              <input className="input self-end" placeholder="নোট" value={poForm.note} onChange={(e) => setPoForm({ ...poForm, note: e.target.value })} />
+              <input aria-label="ক্রয় অর্ডারের নোট" className="input self-end" placeholder="নোট" value={poForm.note} onChange={(e) => setPoForm({ ...poForm, note: e.target.value })} />
             </div>
             <div className="space-y-2">
               {rows.map((r) => (
                 <div key={r.key} className="grid gap-2 sm:grid-cols-5">
-                  <select className="input sm:col-span-2" value={r.productId} onChange={(e) => {
+                  <select aria-label="পণ্য বেছে নিন" className="input sm:col-span-2" value={r.productId} onChange={(e) => {
                     const pid = e.target.value;
                     setRows((prev) => prev.map((x) => (x.key === r.key ? { ...x, productId: pid, variantId: "", variants: [] } : x)));
                     const row = { ...r, productId: pid }; void loadVariants(row, pid);
@@ -276,14 +307,14 @@ export default function PurchasingPage() {
                     <option value="">পণ্য বেছে নিন</option>
                     {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ""}</option>)}
                   </select>
-                  <select className="input" value={r.variantId} onChange={(e) => setRows((prev) => prev.map((x) => (x.key === r.key ? { ...x, variantId: e.target.value } : x)))}>
+                  <select aria-label="ভ্যারিয়েন্ট বেছে নিন" className="input" value={r.variantId} onChange={(e) => setRows((prev) => prev.map((x) => (x.key === r.key ? { ...x, variantId: e.target.value } : x)))}>
                     <option value="">ভ্যারিয়েন্ট নেই / মূল পণ্য</option>
                     {r.variants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
-                  <input className="input" type="number" min={1} placeholder="পরিমাণ" value={r.qty} onChange={(e) => setRows((prev) => prev.map((x) => (x.key === r.key ? { ...x, qty: e.target.value } : x)))} />
+                  <input aria-label="পরিমাণ" className="input" type="number" min={1} placeholder="পরিমাণ" value={r.qty} onChange={(e) => setRows((prev) => prev.map((x) => (x.key === r.key ? { ...x, qty: e.target.value } : x)))} />
                   <div className="flex gap-2">
-                    <input className="input" inputMode="decimal" placeholder="একক দাম (৳)" value={r.unitCostTaka} onChange={(e) => setRows((prev) => prev.map((x) => (x.key === r.key ? { ...x, unitCostTaka: e.target.value } : x)))} />
-                    <button type="button" className="btn-ghost btn-sm text-red-600" onClick={() => setRows((prev) => (prev.length > 1 ? prev.filter((x) => x.key !== r.key) : prev))}>✕</button>
+                    <input aria-label="একক দাম (টাকা)" className="input" inputMode="decimal" placeholder="একক দাম (৳)" value={r.unitCostTaka} onChange={(e) => setRows((prev) => prev.map((x) => (x.key === r.key ? { ...x, unitCostTaka: e.target.value } : x)))} />
+                    <button type="button" aria-label="এই পণ্যের লাইনটি সরান" className="btn-ghost btn-sm inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-red-600" onClick={() => setRows((prev) => (prev.length > 1 ? prev.filter((x) => x.key !== r.key) : prev))}>✕</button>
                   </div>
                 </div>
               ))}
@@ -294,24 +325,34 @@ export default function PurchasingPage() {
 
           <div className="card p-5">
             {pos.length === 0 ? <p className="text-sm text-slate-500">কোনো ক্রয় অর্ডার নেই।</p> : (
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">সরবরাহকারী</th><th className="py-2 pr-3">অবস্থা</th><th className="py-2 pr-3">আইটেম</th><th className="py-2 pr-3">অর্ডার মোট</th><th className="py-2 pr-3">গৃহীত মোট</th><th className="py-2">অ্যাকশন</th></tr></thead>
                 <tbody>{pos.map((po) => (
                   <tr key={po.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3 font-medium">{po.supplierName ?? po.supplierId}{po.expectedDate ? <span className="block text-xs text-slate-400">প্রত্যাশিত: {new Date(po.expectedDate).toLocaleDateString("bn-BD")}</span> : null}</td>
+                    <td className="py-2 pr-3 font-medium">{po.supplierName ?? po.supplierId}{po.expectedDate ? <span className="block text-xs text-slate-500">প্রত্যাশিত: {new Date(po.expectedDate).toLocaleDateString("bn-BD")}</span> : null}</td>
                     <td className="py-2 pr-3"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusCls(po.status)}`}>{STATUS_BN[po.status] ?? po.status}</span></td>
                     <td className="py-2 pr-3">{po.itemCount ?? po.items?.length ?? 0}টি</td>
                     <td className="py-2 pr-3">{formatMinorTaka(po.orderedTotalMinor)}</td>
                     <td className="py-2 pr-3">{formatMinorTaka(po.receivedTotalMinor)}</td>
-                    <td className="py-2"><div className="flex flex-wrap gap-2">
-                      <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => openDetail(po)}>বিস্তারিত / গ্রহণ</button>
-                      {po.status === "draft" ? <>
-                        <button type="button" className="text-xs font-semibold text-indigo-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => patchPo(po, "ordered")}>অর্ডার করা হয়েছে</button>
-                        <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => patchPo(po, "cancelled")}>বাতিল</button>
-                      </> : null}
-                    </div></td>
+                    <td className="py-2">{renderPoActions(po)}</td>
                   </tr>))}
                 </tbody></table></div>
+                }
+                cards={pos.map((po) => (
+                  <div key={po.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <dl className="space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সরবরাহকারী</dt><dd className="text-right font-medium">{po.supplierName ?? po.supplierId}{po.expectedDate ? <span className="block text-xs font-normal text-slate-500">প্রত্যাশিত: {new Date(po.expectedDate).toLocaleDateString("bn-BD")}</span> : null}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusCls(po.status)}`}>{STATUS_BN[po.status] ?? po.status}</span></dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আইটেম</dt><dd className="text-right">{po.itemCount ?? po.items?.length ?? 0}টি</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অর্ডার মোট</dt><dd className="text-right">{formatMinorTaka(po.orderedTotalMinor)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গৃহীত মোট</dt><dd className="text-right">{formatMinorTaka(po.receivedTotalMinor)}</dd></div>
+                    </dl>
+                    <div className="mt-2">{renderPoActions(po)}</div>
+                  </div>
+                ))}
+              />
             )}
           </div>
 
@@ -319,25 +360,46 @@ export default function PurchasingPage() {
             <div className="card space-y-3 p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="font-semibold">বিস্তারিত — {detail.supplierName ?? detail.supplierId} <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${statusCls(detail.status)}`}>{STATUS_BN[detail.status] ?? detail.status}</span></div>
-                <button type="button" className="btn-ghost btn-sm" onClick={() => setDetail(null)}>বন্ধ করুন</button>
+                <button type="button" className="btn-ghost btn-sm inline-flex min-h-[44px] items-center" onClick={() => setDetail(null)}>বন্ধ করুন</button>
               </div>
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">পণ্য</th><th className="py-2 pr-3">অর্ডার</th><th className="py-2 pr-3">গৃহীত</th><th className="py-2 pr-3">বাকি</th><th className="py-2 pr-3">একক দাম</th><th className="py-2 pr-3">এবার গ্রহণ</th><th className="py-2">দাম override (৳)</th></tr></thead>
                 <tbody>{(detail.items ?? []).map((it) => (
                   <tr key={it.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3 font-medium">{it.productName ?? it.productId}{it.variantName ? <span className="block text-xs text-slate-400">{it.variantName}</span> : null}{it.sku ? <span className="block text-xs text-slate-400">SKU: {it.sku}</span> : null}</td>
+                    <td className="py-2 pr-3 font-medium">{it.productName ?? it.productId}{it.variantName ? <span className="block text-xs text-slate-500">{it.variantName}</span> : null}{it.sku ? <span className="block text-xs text-slate-500">SKU: {it.sku}</span> : null}</td>
                     <td className="py-2 pr-3">{it.qtyOrdered}</td>
                     <td className="py-2 pr-3">{it.qtyReceived}</td>
                     <td className="py-2 pr-3 font-semibold">{it.remaining}</td>
                     <td className="py-2 pr-3">{it.unitCostMinor ? formatMinorTaka(it.unitCostMinor) : "—"}</td>
-                    <td className="py-2 pr-3"><input className="input w-24" type="number" min={0} max={it.remaining} value={receiveQty[it.id] ?? ""} onChange={(e) => setReceiveQty({ ...receiveQty, [it.id]: e.target.value })} /></td>
-                    <td className="py-2"><input className="input w-28" inputMode="decimal" placeholder={it.unitCostMinor ? minorToTakaString(it.unitCostMinor) : "ঐচ্ছিক"} value={receiveCost[it.id] ?? ""} onChange={(e) => setReceiveCost({ ...receiveCost, [it.id]: e.target.value })} /></td>
+                    <td className="py-2 pr-3"><input aria-label="এবার গ্রহণ পরিমাণ" className="input w-24" type="number" min={0} max={it.remaining} value={receiveQty[it.id] ?? ""} onChange={(e) => setReceiveQty({ ...receiveQty, [it.id]: e.target.value })} /></td>
+                    <td className="py-2"><input aria-label="দাম override (টাকা)" className="input w-28" inputMode="decimal" placeholder={it.unitCostMinor ? minorToTakaString(it.unitCostMinor) : "ঐচ্ছিক"} value={receiveCost[it.id] ?? ""} onChange={(e) => setReceiveCost({ ...receiveCost, [it.id]: e.target.value })} /></td>
                   </tr>))}
                 </tbody></table></div>
+                }
+                cards={(detail.items ?? []).map((it) => (
+                  <div key={it.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <dl className="space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পণ্য</dt><dd className="text-right font-medium">{it.productName ?? it.productId}{it.variantName ? <span className="block text-xs font-normal text-slate-500">{it.variantName}</span> : null}{it.sku ? <span className="block text-xs font-normal text-slate-500">SKU: {it.sku}</span> : null}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অর্ডার</dt><dd className="text-right">{it.qtyOrdered}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গৃহীত</dt><dd className="text-right">{it.qtyReceived}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বাকি</dt><dd className="text-right font-semibold">{it.remaining}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">একক দাম</dt><dd className="text-right">{it.unitCostMinor ? formatMinorTaka(it.unitCostMinor) : "—"}</dd></div>
+                    </dl>
+                    <label className="mt-2 block text-xs font-semibold text-slate-500">এবার গ্রহণ
+                      <input aria-label="এবার গ্রহণ পরিমাণ" className="input mt-1 w-24" type="number" min={0} max={it.remaining} value={receiveQty[it.id] ?? ""} onChange={(e) => setReceiveQty({ ...receiveQty, [it.id]: e.target.value })} />
+                    </label>
+                    <label className="mt-2 block text-xs font-semibold text-slate-500">দাম override (৳)
+                      <input aria-label="দাম override (টাকা)" className="input mt-1 w-28" inputMode="decimal" placeholder={it.unitCostMinor ? minorToTakaString(it.unitCostMinor) : "ঐচ্ছিক"} value={receiveCost[it.id] ?? ""} onChange={(e) => setReceiveCost({ ...receiveCost, [it.id]: e.target.value })} />
+                    </label>
+                  </div>
+                ))}
+              />
               {detail.status !== "received" && detail.status !== "cancelled" ? (
                 <button type="button" className="btn-primary" disabled={busy !== ""} onClick={receivePo}>{busy === "receive" ? "রেকর্ড হচ্ছে…" : "গ্রহণ রেকর্ড করুন"}</button>
               ) : null}
-              <p className="text-xs text-slate-400">গ্রহণ রেকর্ড হলেই সংশ্লিষ্ট পণ্যের স্টক বাড়ে। দাম override না দিলে PO-র একক দামই ব্যবহৃত হয়।</p>
+              <p className="text-xs text-slate-500">গ্রহণ রেকর্ড হলেই সংশ্লিষ্ট পণ্যের স্টক বাড়ে। দাম override না দিলে PO-র একক দামই ব্যবহৃত হয়।</p>
             </div>
           ) : null}
         </div>
@@ -348,17 +410,19 @@ export default function PurchasingPage() {
           <div className="font-semibold">পুনঃঅর্ডার পরামর্শ</div>
           <p className="mt-1 text-sm text-slate-500">স্টক threshold-এর নিচে নেমে যাওয়া পণ্য — পরামর্শটি আসল স্টক ও শেষ ক্রয়ের রেকর্ড থেকে।</p>
           {suggestions.length === 0 ? <p className="mt-3 text-sm text-slate-500">এখন কোনো পণ্যের পুনঃঅর্ডার দরকার নেই।</p> : (
+            <ResponsiveTable
+              table={
             <div className="mt-3 overflow-x-auto"><table className="w-full text-sm">
               <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">পণ্য</th><th className="py-2 pr-3">বর্তমান স্টক</th><th className="py-2 pr-3">Threshold</th><th className="py-2 pr-3">পরামর্শিত পরিমাণ</th><th className="py-2 pr-3">শেষ সরবরাহকারী</th><th className="py-2">অ্যাকশন</th></tr></thead>
               <tbody>{suggestions.map((s) => (
                 <tr key={`${s.productId}-${s.variantId ?? ""}`} className="border-b last:border-0">
-                  <td className="py-2 pr-3 font-medium">{s.productName}{s.variantName ? <span className="block text-xs text-slate-400">{s.variantName}</span> : null}{s.sku ? <span className="block text-xs text-slate-400">SKU: {s.sku}</span> : null}</td>
+                  <td className="py-2 pr-3 font-medium">{s.productName}{s.variantName ? <span className="block text-xs text-slate-500">{s.variantName}</span> : null}{s.sku ? <span className="block text-xs text-slate-500">SKU: {s.sku}</span> : null}</td>
                   <td className="py-2 pr-3">{s.currentStock}</td>
                   <td className="py-2 pr-3">{s.threshold}</td>
                   <td className="py-2 pr-3 font-semibold">{s.suggestedQty}</td>
-                  <td className="py-2 pr-3">{s.lastSupplier ? <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-400">শেষ দাম: {formatMinorTaka(s.lastUnitCostMinor)}</span> : null}</> : <span className="text-slate-400">জানা নেই</span>}</td>
+                  <td className="py-2 pr-3">{s.lastSupplier ? <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">শেষ দাম: {formatMinorTaka(s.lastUnitCostMinor)}</span> : null}</> : <span className="text-slate-400">জানা নেই</span>}</td>
                   <td className="py-2">
-                    <button type="button" className="btn-primary btn-sm disabled:opacity-50" disabled={!s.lastSupplier || busy !== ""}
+                    <button type="button" className="btn-primary btn-sm inline-flex min-h-[44px] items-center disabled:opacity-50" disabled={!s.lastSupplier || busy !== ""}
                       title={!s.lastSupplier ? "আগের সরবরাহকারী জানা নেই" : undefined}
                       onClick={() => createPoFromSuggestion(s)}>
                       {busy === `sug-${s.productId}-${s.variantId ?? ""}` ? "তৈরি হচ্ছে…" : "PO তৈরি করুন"}
@@ -367,6 +431,27 @@ export default function PurchasingPage() {
                   </td>
                 </tr>))}
               </tbody></table></div>
+              }
+              cards={suggestions.map((s) => (
+                <div key={`${s.productId}-${s.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                  <dl className="space-y-1.5">
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পণ্য</dt><dd className="text-right font-medium">{s.productName}{s.variantName ? <span className="block text-xs font-normal text-slate-500">{s.variantName}</span> : null}{s.sku ? <span className="block text-xs font-normal text-slate-500">SKU: {s.sku}</span> : null}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বর্তমান স্টক</dt><dd className="text-right">{s.currentStock}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Threshold</dt><dd className="text-right">{s.threshold}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরামর্শিত পরিমাণ</dt><dd className="text-right font-semibold">{s.suggestedQty}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শেষ সরবরাহকারী</dt><dd className="text-right">{s.lastSupplier ? <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">শেষ দাম: {formatMinorTaka(s.lastUnitCostMinor)}</span> : null}</> : <span className="text-slate-400">জানা নেই</span>}</dd></div>
+                  </dl>
+                  <div className="mt-2">
+                    <button type="button" className="btn-primary btn-sm inline-flex min-h-[44px] items-center disabled:opacity-50" disabled={!s.lastSupplier || busy !== ""}
+                      title={!s.lastSupplier ? "আগের সরবরাহকারী জানা নেই" : undefined}
+                      onClick={() => createPoFromSuggestion(s)}>
+                      {busy === `sug-${s.productId}-${s.variantId ?? ""}` ? "তৈরি হচ্ছে…" : "PO তৈরি করুন"}
+                    </button>
+                    {!s.lastSupplier ? <span className="mt-1 block text-xs text-amber-700">আগের সরবরাহকারী জানা নেই</span> : null}
+                  </div>
+                </div>
+              ))}
+            />
           )}
         </div>
       ) : null}

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 import { BlocksEditor, cleanBlocks, normalizeBlock, type EditableBlock } from "../BlocksEditor";
 
 // AB6 (AX12) — staff blog manager. Consumes the staff routes:
@@ -40,11 +41,12 @@ function parseTags(text: string): string[] {
 }
 
 export default function StorefrontBlogManager() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [orgSlug, setOrgSlug] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [filter, setFilter] = useState<StatusFilter>("all");
 
@@ -99,7 +101,7 @@ export default function StorefrontBlogManager() {
     setESeoDescription(p.seoDescription ?? "");
     setEStatus(p.status === "published" ? "published" : "draft");
     setBlocks(Array.isArray(p.blocks) ? p.blocks.map((b) => normalizeBlock(b)) : []);
-    setError(""); setNotice("");
+    setError("");
   }
 
   function startNew() {
@@ -110,13 +112,13 @@ export default function StorefrontBlogManager() {
     setEAuthorName(""); setESeoTitle(""); setESeoDescription("");
     setEStatus("draft");
     setBlocks([]);
-    setError(""); setNotice("");
+    setError("");
   }
 
   async function save() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (!eTitle.trim()) { setError("পোস্টের শিরোনাম দিন।"); return; }
-    setBusy("save"); setError(""); setNotice("");
+    setBusy("save"); setError("");
     const body: Record<string, any> = {
       title: eTitle.trim(),
       slug: eSlug.trim() || undefined,
@@ -136,13 +138,13 @@ export default function StorefrontBlogManager() {
           method: "PATCH", body: JSON.stringify(body),
         });
         savedId = out?.post?.id ?? out?.id ?? selectedId;
-        setNotice("ব্লগ পোস্ট আপডেট হয়েছে।");
+        toast({ title: "ব্লগ পোস্ট আপডেট হয়েছে।", tone: "success" });
       } else {
         const out = await apiFetch<any>(`/organizations/${orgId}/storefront/blog`, {
           method: "POST", body: JSON.stringify(body),
         });
         savedId = out?.post?.id ?? out?.id ?? null;
-        setNotice("নতুন ব্লগ পোস্ট তৈরি হয়েছে।");
+        toast({ title: "নতুন ব্লগ পোস্ট তৈরি হয়েছে।", tone: "success" });
       }
       const list = await load();
       const saved = list.find((p) => p.id === savedId);
@@ -153,12 +155,12 @@ export default function StorefrontBlogManager() {
 
   async function setStatus(p: BlogPost, status: "draft" | "published") {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy(`status-${p.id}`); setError(""); setNotice("");
+    setBusy(`status-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/blog/${p.id}`, {
         method: "PATCH", body: JSON.stringify({ status }),
       });
-      setNotice(status === "published" ? `"${p.title}" প্রকাশিত হয়েছে।` : `"${p.title}" খসড়ায় ফিরিয়ে নেওয়া হয়েছে।`);
+      toast({ title: status === "published" ? `"${p.title}" প্রকাশিত হয়েছে।` : `"${p.title}" খসড়ায় ফিরিয়ে নেওয়া হয়েছে।`, tone: "success" });
       if (selectedId === p.id) setEStatus(status);
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "স্ট্যাটাস বদল ব্যর্থ"); }
@@ -167,11 +169,11 @@ export default function StorefrontBlogManager() {
 
   async function deletePost(p: BlogPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${p.title}" পোস্টটি মুছে ফেলবেন? পাবলিক লিংকটি বন্ধ হয়ে যাবে।`)) return;
-    setBusy(`del-${p.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: `"${p.title}" পোস্টটি মুছে ফেলবেন?`, body: `পাবলিক লিংকটি বন্ধ হয়ে যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setBusy(`del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/blog/${p.id}`, { method: "DELETE" });
-      setNotice("ব্লগ পোস্ট মুছে ফেলা হয়েছে।");
+      toast({ title: "ব্লগ পোস্ট মুছে ফেলা হয়েছে।", tone: "success" });
       if (selectedId === p.id) { setSelectedId(null); setEditorOpen(false); }
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -201,7 +203,6 @@ export default function StorefrontBlogManager() {
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="grid items-start gap-6 lg:grid-cols-[320px_1fr]">
         <div className="card space-y-3 p-5">

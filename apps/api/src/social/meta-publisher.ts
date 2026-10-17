@@ -1,4 +1,4 @@
-import { graphGet, graphPost } from "../common/meta-graph";
+import { graphGet, graphPost, graphPostMultipart } from "../common/meta-graph";
 import { PermanentPublishError } from "./social-publish.service";
 
 /**
@@ -336,6 +336,42 @@ export class MetaSocialPublisher {
     }
     const res = await graphGet(token, `/${externalId}`, { fields: "fan_count" }, this.fetchFn);
     return typeof res?.fan_count === "number" ? res.fan_count : null;
+  }
+
+  /** SN1 — Meta's documented thumbnail limit: 10 MB. */
+  static readonly VIDEO_THUMBNAIL_MAX_BYTES = 10 * 1024 * 1024;
+
+  /**
+   * SN1 — Facebook Page video cover (custom thumbnail), the
+   * spike's BUILD path (docs/social-sn1-fb-cover-spike.md §৩
+   * পথ খ): AFTER the video is published, POST
+   * /{video_id}/thumbnails with the image as multipart `source`
+   * and `is_preferred=true` (uploading alone does not make it
+   * the cover — the preferred flag does). Success is claimed
+   * ONLY on Meta's { success: true }; anything else is an
+   * honest plain Error (publishPhotoStory discipline) and
+   * Meta's own errors propagate verbatim via the multipart
+   * helper. Over the documented 10 MB limit no attempt is
+   * made at all — the caller turns this verbatim reason into
+   * the post's publishNote while the video stays published.
+   * Only Page videos support this edge (the caller gates it).
+   */
+  async setVideoThumbnail(
+    token: string,
+    videoId: string,
+    bytes: Buffer,
+    contentType: string,
+    fileName: string,
+  ): Promise<void> {
+    if (bytes.length > MetaSocialPublisher.VIDEO_THUMBNAIL_MAX_BYTES) {
+      throw new Error(`Cover ছবিটি 10 MB সীমার বেশি (${bytes.length} bytes) — Facebook Page video thumbnail সর্বোচ্চ 10 MB হতে পারে।`);
+    }
+    const res = await graphPostMultipart(token, `/${videoId}/thumbnails`, {
+      is_preferred: "true",
+    }, { bytes, contentType, fileName, fieldName: "source" }, this.fetchFn);
+    if (res?.success !== true) {
+      throw new Error("Meta video thumbnail সেট করা যায়নি — Meta success:true ফেরত দেয়নি");
+    }
   }
 
   /**

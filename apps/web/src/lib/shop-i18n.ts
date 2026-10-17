@@ -7,8 +7,8 @@
  * payload (`settings.locale`). The dashboard and the
  * single-product / landing checkouts stay Bengali by design.
  *
- * Keys are grouped: common.* home.* product.* cart.* checkout.*
- * success.* track.*. Both locales MUST expose exactly the same
+ * Keys are grouped: common.* chrome.* home.* product.* cart.*
+ * checkout.* success.* track.*. Both locales MUST expose exactly the same
  * key set — pinned by shop-i18n.test.ts.
  */
 
@@ -19,6 +19,7 @@ const bnDict = {
     home: "হোম",
     cart: "কার্ট",
     account: "অ্যাকাউন্ট",
+    manageShop: "দোকান পরিচালনা করুন",
     wishlist: "উইশলিস্ট",
     loading: "লোড হচ্ছে…",
     shopNotFound: "দোকান পাওয়া যায়নি",
@@ -28,6 +29,7 @@ const bnDict = {
     nagad: "নগদ",
     supportPhoneLabel: "সাপোর্ট",
     returnPolicyLabel: "রিটার্ন নীতি",
+    skipToContent: "মূল কন্টেন্টে যান",
   },
   sort: {
     label: "সাজান",
@@ -40,6 +42,18 @@ const bnDict = {
   },
   popup: {
     close: "বন্ধ করুন",
+  },
+  offline: {
+    title: "ইন্টারনেট সংযোগ নেই",
+    text: "আপনি এখন অফলাইনে আছেন। আগে দেখা পেজগুলো হয়তো ক্যাশ থেকে খুলবে — সংযোগ ফিরে এলে আবার চেষ্টা করুন।",
+    retry: "আবার চেষ্টা করুন",
+  },
+  chrome: {
+    search: "খুঁজুন",
+    menu: "মেনু",
+    close: "বন্ধ করুন",
+    filter: "ফিল্টার",
+    categories: "ক্যাটাগরি",
   },
   brand: {
     freeDeliveryBadge: "ফ্রি ডেলিভারি",
@@ -170,6 +184,7 @@ const bnDict = {
     continueShopping: "← আরও কেনাকাটা করুন",
     bundleContents: "ভিতরে যা আছে",
     bundleBadge: "বান্ডল",
+    fullCartPage: "কার্ট পেজ",
   },
   checkout: {
     title: "চেকআউট",
@@ -181,6 +196,9 @@ const bnDict = {
     emptyText: "চেকআউটের আগে কার্টে পণ্য যোগ করুন।",
     shopNow: "কেনাকাটা করুন",
     deliveryInfo: "📍 ডেলিভারি তথ্য",
+    stepInfo: "তথ্য",
+    stepDelivery: "ডেলিভারি",
+    stepPayment: "পেমেন্ট",
     nameLabel: "আপনার নাম *",
     namePlaceholder: "যেমন: মোঃ সাব্বির আহমেদ",
     phoneLabel: "মোবাইল নম্বর *",
@@ -405,6 +423,7 @@ const enDict: ShopDict = {
     home: "Home",
     cart: "Cart",
     account: "Account",
+    manageShop: "Manage shop",
     wishlist: "Wishlist",
     loading: "Loading…",
     shopNotFound: "Shop not found",
@@ -414,6 +433,7 @@ const enDict: ShopDict = {
     nagad: "Nagad",
     supportPhoneLabel: "Support",
     returnPolicyLabel: "Return policy",
+    skipToContent: "Skip to main content",
   },
   sort: {
     label: "Sort",
@@ -426,6 +446,18 @@ const enDict: ShopDict = {
   },
   popup: {
     close: "Close",
+  },
+  offline: {
+    title: "No internet connection",
+    text: "You are offline right now. Pages you visited before may still open from cache — reconnect and try again.",
+    retry: "Try again",
+  },
+  chrome: {
+    search: "Search",
+    menu: "Menu",
+    close: "Close",
+    filter: "Filter",
+    categories: "Categories",
   },
   brand: {
     freeDeliveryBadge: "Free delivery",
@@ -556,6 +588,7 @@ const enDict: ShopDict = {
     continueShopping: "← Continue shopping",
     bundleContents: "What's inside",
     bundleBadge: "Bundle",
+    fullCartPage: "Cart page",
   },
   checkout: {
     title: "Checkout",
@@ -567,6 +600,9 @@ const enDict: ShopDict = {
     emptyText: "Add products to your cart before checkout.",
     shopNow: "Shop now",
     deliveryInfo: "📍 Delivery information",
+    stepInfo: "Information",
+    stepDelivery: "Delivery",
+    stepPayment: "Payment",
     nameLabel: "Your name *",
     namePlaceholder: "e.g. Md. Sabbir Ahmed",
     phoneLabel: "Mobile number *",

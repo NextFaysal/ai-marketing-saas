@@ -1,5 +1,6 @@
 "use client";
 import React, { useState } from "react";
+import { ResponsiveTable } from "@repo/ui";
 import type { CourierRule, CourierPerformance, ReviewRow, ChaseRow } from "./types";
 import { PERF_PROVIDER_LABEL } from "./types";
 
@@ -109,7 +110,8 @@ export function CourierHubModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-sm hover:bg-slate-100 hover:text-slate-700"
+            className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-sm hover:bg-slate-100 hover:text-slate-700"
+            aria-label="বন্ধ করুন"
           >
             ✕
           </button>
@@ -179,7 +181,7 @@ export function CourierHubModal({
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="font-bold text-slate-900 text-sm">Steadfast Courier</span>
-                    <span className="ml-2 text-xs text-slate-400">এপিআই সংযোগ</span>
+                    <span className="ml-2 text-xs text-slate-500">এপিআই সংযোগ</span>
                   </div>
                   <span
                     className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
@@ -225,7 +227,7 @@ export function CourierHubModal({
                       required
                     />
                     <div className="sm:col-span-2 flex items-center justify-between">
-                      <p className="text-[11px] text-slate-400">Key Steadfast Merchant Portal থেকে পাবেন।</p>
+                      <p className="text-[11px] text-slate-500">Key Steadfast Merchant Portal থেকে পাবেন।</p>
                       <button
                         type="submit"
                         disabled={courierBusy !== ""}
@@ -391,7 +393,7 @@ export function CourierHubModal({
                       </div>
                     ))}
                   {conns.filter((c) => c.connected).length === 0 && (
-                    <p className="text-xs text-slate-400">কোনো সক্রিয় কুরিয়ার সংযোগ নেই।</p>
+                    <p className="text-xs text-slate-500">কোনো সক্রিয় কুরিয়ার সংযোগ নেই।</p>
                   )}
                 </div>
               </div>
@@ -413,7 +415,7 @@ export function CourierHubModal({
                   বিদ্যমান অটো-সিলেক্ট নিয়মাবলী
                 </span>
                 {courierRules.length === 0 ? (
-                  <p className="text-xs text-slate-400">এখনো কোনো নিয়ম তৈরি করা হয়নি।</p>
+                  <p className="text-xs text-slate-500">এখনো কোনো নিয়ম তৈরি করা হয়নি।</p>
                 ) : (
                   <div className="space-y-2">
                     {[...courierRules]
@@ -582,9 +584,11 @@ export function CourierHubModal({
               </div>
 
               {!perf || perf.providers.length === 0 ? (
-                <p className="text-xs text-slate-400">এই সময়ে কোনো ডেটা পাওয়া যায়নি।</p>
+                <p className="text-xs text-slate-500">এই সময়ে কোনো ডেটা পাওয়া যায়নি।</p>
               ) : (
-                <div className="overflow-x-auto rounded-2xl border border-slate-200/80">
+                <ResponsiveTable
+                  table={
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200/80">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 border-b text-slate-500">
                       <tr>
@@ -624,7 +628,27 @@ export function CourierHubModal({
                       })}
                     </tbody>
                   </table>
-                </div>
+                    </div>
+                  }
+                  cards={[...perf.providers, perf.totals].map((row) => {
+                    const isTotal = row.provider === "total";
+                    const rate = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
+                    return (
+                      <div key={row.provider} className={`rounded-xl border bg-white p-3 shadow-sm ${isTotal ? "bg-slate-50 font-bold" : ""}`}>
+                        <div className="font-bold text-slate-900">{PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</div>
+                        <dl className="mt-2 space-y-1 text-xs">
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">বুকিং</dt><dd className="font-medium">{row.booked}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভার্ড</dt><dd className="font-medium text-emerald-700">{row.delivered}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন</dt><dd className="font-medium text-rose-600">{row.returned}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">বাতিল</dt><dd className="font-medium">{row.cancelled}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">পথে আছে</dt><dd className="font-medium text-indigo-600">{row.inFlight}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভারি হার</dt><dd className="font-bold text-emerald-700">{rate(row.deliveryRate)}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন হার</dt><dd className="font-bold text-rose-600">{rate(row.returnRate)}</dd></div>
+                        </dl>
+                      </div>
+                    );
+                  })}
+                />
               )}
             </div>
           )}
@@ -636,7 +660,7 @@ export function CourierHubModal({
                 🎯 থেমে যাওয়া অর্ডার বট সেশন
               </span>
               {chases.length === 0 ? (
-                <p className="text-xs text-slate-400">কোনো থেমে যাওয়া সেশন নেই।</p>
+                <p className="text-xs text-slate-500">কোনো থেমে যাওয়া সেশন নেই।</p>
               ) : (
                 <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200/80">
                   {chases.slice(0, 30).map((c) => (
