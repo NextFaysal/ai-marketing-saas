@@ -5,8 +5,13 @@ import { getOrganizationId } from "@/lib/org";
 import { smsSegments } from "@/lib/sms-segments";
 import { couponSnippetHtml, couponSnippetText } from "@/lib/composer-blocks";
 import { BLOCK_LABELS_BN, cleanBlock, moveBlock, newEmailBlock, type EmailBlock, type EmailBlockType } from "@/lib/email-blocks";
+import dynamic from "next/dynamic";
 import { EmptyState } from "@repo/ui";
-import { FestivalBlastHub } from "./FestivalBlastHub";
+
+const FestivalBlastHub = dynamic(
+  () => import("./FestivalBlastHub").then((m) => m.FestivalBlastHub),
+  { ssr: false }
+);
 
 interface Template { id: string; name: string; channel: string; subject?: string | null; body: string; htmlBody?: string | null; blocks?: EmailBlock[] | null; version?: number }
 // MX7: builder support shapes (brand kit comes from Org Settings
