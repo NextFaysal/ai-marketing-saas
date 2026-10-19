@@ -327,3 +327,23 @@ table.atable-v3 thead th { @apply sticky top-0 z-10; }
 @media (max-width: 640px) {
   .apalette-panel { max-height: 82vh; }
 }
+
+/* ============================================================
+   ML2 (Multi-Language MB1): per-locale font application.
+   AdminLocale sets <html lang> + <html data-locale> from the
+   stored/resolved UI locale; fonts themselves are already
+   self-hosted via Fontsource imports in the root layout
+   (Inter Variable + Hind Siliguri bengali subset 400–700) —
+   no new font files. bn gets the Hind Siliguri-first stack
+   with the roomier 1.7 line-height Bengali type needs (ML
+   format spec A); en keeps the admin Inter-first stack
+   (spec B, incl. the Noto Sans Bengali fallback used by the
+   base admin stack above).
+   ============================================================ */
+[data-locale="bn"] body {
+  font-family: "Hind Siliguri", "Inter Variable", Inter, "Noto Sans Bengali", sans-serif;
+  line-height: 1.7;
+}
+[data-locale="en"] body {
+  font-family: "Inter Variable", Inter, "Hind Siliguri", "Noto Sans Bengali", sans-serif;
+}

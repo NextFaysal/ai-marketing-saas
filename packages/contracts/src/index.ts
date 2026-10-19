@@ -244,5 +244,5 @@ export type CsvProductImportInput = z.infer<typeof csvProductImportSchema>;
 
 // ---------- Multi-Language (MB1: ML1 locale core, ML2 format, ML3 glossary) ----------
 export * from "./i18n";
-// export * from "./i18n-format"; // ML2 commit re-enables
+export * from "./i18n-format";
 // export * from "./i18n-glossary"; // ML3 commit re-enables
