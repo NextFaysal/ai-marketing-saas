@@ -10,15 +10,17 @@ import { monthGrid, planCalendarDate, sameDay } from "@/lib/campaign-cn10";
 import { fmtMoneyBn, fmtNumBn } from "@/lib/money-bn";
 import { relTimeBn } from "@/lib/rel-time-bn";
 import { layerSourceViews, type AudienceSourceEntry } from "@/lib/funnel-sources";
+import dynamic from "next/dynamic";
 import {
   CAMPAIGN_STATUS_META,
   CAMPAIGN_OBJECTIVES,
   getCampaignStatusBadge,
   getCampaignObjectiveMeta,
 } from "@/lib/campaign-status";
-import { AbTestHub } from "./ab-test-hub";
-import { GrowthCopilotHub } from "./components/GrowthCopilotHub";
-import { FestivalPlaybookHub } from "./festival-playbook-hub";
+
+const AbTestHub = dynamic(() => import("./ab-test-hub").then((mod) => mod.AbTestHub), { ssr: false });
+const GrowthCopilotHub = dynamic(() => import("./components/GrowthCopilotHub").then((mod) => mod.GrowthCopilotHub), { ssr: false });
+const FestivalPlaybookHub = dynamic(() => import("./festival-playbook-hub").then((mod) => mod.FestivalPlaybookHub), { ssr: false });
 
 interface Plan {
   id: string;
