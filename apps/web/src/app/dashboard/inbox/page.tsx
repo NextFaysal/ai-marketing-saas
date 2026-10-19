@@ -5,8 +5,13 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { subscribeInboxStream } from "@/lib/inbox-stream";
 import { EmptyState } from "@repo/ui";
+import dynamic from "next/dynamic";
 import { ContactAvatar } from "@/components/inbox-avatar";
-import { ChannelChip, ConvAvatar, EmojiPickerPanel, MediaView, ShipmentWidget, VoiceRecorder } from "@/components/inbox-extras";
+import { ChannelChip, ConvAvatar, ShipmentWidget } from "@/components/inbox-extras";
+
+const EmojiPickerPanel = dynamic(() => import("@/components/inbox-extras").then((m) => m.EmojiPickerPanel), { ssr: false });
+const VoiceRecorder = dynamic(() => import("@/components/inbox-extras").then((m) => m.VoiceRecorder), { ssr: false });
+const MediaView = dynamic(() => import("@/components/inbox-extras").then((m) => m.MediaView), { ssr: false });
 import { insertAtCursor, toggleBulletLines, wrapSelection } from "@/lib/composer-format";
 import { mergeTimeline } from "@/lib/timeline";
 import { SNOOZE_PRESETS, isActivelySnoozed, snoozeBodyForCustom, snoozeBodyForMinutes } from "@/lib/snooze";
