@@ -92,7 +92,7 @@ export function BundleSelector({
       subtitle: `${t.boosters.tier2SubtitlePrefix}${takaFn(20000)}${t.boosters.tier2SubtitleSuffix}`,
       priceMinor: Math.max(0, baseNum * 2 - 20000),
       badge: t.boosters.tier2Badge,
-      savings: `${t.boosters.tier2SavingsPrefix}${takaFn(20000)}${t.boosters.tier2SavingsSuffix}`,
+      savings: t.boosters.tier2Savings.replace("{amount}", takaFn(20000)),
     },
     {
       qty: 3,
@@ -100,7 +100,7 @@ export function BundleSelector({
       subtitle: `${t.boosters.tier3SubtitlePrefix}${takaFn(40000)}${t.boosters.tier3SubtitleSuffix}`,
       priceMinor: Math.max(0, baseNum * 3 - 40000),
       badge: t.boosters.tier3Badge,
-      savings: `${t.boosters.tier3SavingsPrefix}${takaFn(40000)}${t.boosters.tier3SavingsSuffix}`,
+      savings: t.boosters.tier3Savings.replace("{amount}", takaFn(40000)),
     },
   ];
 
@@ -212,7 +212,7 @@ export function StickyBuyBar({
               </span>
               {quantity > 1 && (
                 <span className="text-[11px] font-semibold text-slate-500">
-                  ({fmtNumber(loc, quantity)}{t.boosters.qtySuffix})
+                  {t.boosters.qtyLabel.replace("{count}", fmtNumber(loc, quantity))}
                 </span>
               )}
             </div>

@@ -116,7 +116,7 @@ export default function PublicBookingPage() {
           <p className="text-2xl">✅</p>
           <h1 className="mt-2 text-lg font-semibold">{t.booking.receivedTitle}</h1>
           <p className="mt-2 text-sm text-slate-600">
-            {service?.name ?? t.booking.serviceFallback}{t.booking.onDateMid}{date}{t.booking.onDateSuffix}{slotTimeLabel(done.startAt, slotsTz)}{t.booking.atSuffix}
+            {t.booking.bookingSummary.replace("{service}", service?.name ?? t.booking.serviceFallback).replace("{date}", date).replace("{time}", slotTimeLabel(done.startAt, slotsTz))}
           </p>
           <p className="mt-2 text-sm">
             {t.booking.statusLabel}<span className={`rounded-full px-2 py-0.5 text-xs ${chip.cls}`}>{chip.label}</span>

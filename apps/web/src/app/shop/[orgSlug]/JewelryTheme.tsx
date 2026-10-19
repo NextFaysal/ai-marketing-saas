@@ -293,7 +293,7 @@ export function JewelryRingSizeModal({
               }}
               className="mt-3 w-full rounded-xl bg-amber-500 py-2.5 text-xs font-bold text-stone-950 hover:bg-amber-400"
             >
-              {t.themeJewelry.confirmSizePrefix}{selectedRingSize}{t.themeJewelry.confirmSizeSuffix}
+              {t.themeJewelry.confirmSize.replace("{size}", selectedRingSize)}
             </button>
           </div>
         ) : (

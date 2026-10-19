@@ -45,7 +45,7 @@ export function ShopOffers({ offers, accent, locale = "bn" }: { offers: PublicSh
             <span className="rounded bg-slate-100 px-2 py-0.5 font-mono font-bold tracking-wide">{o.code}</span>
             {o.minOrderMinor ? (
               <span className="text-xs text-slate-500">
-                {t.shopWidgets.offerMinPrefix}{fmtMoneyMinor(locale === "en" ? "en" : "bn", Number(o.minOrderMinor))}{t.shopWidgets.offerMinSuffix}
+                {t.shopWidgets.offerMin.replace("{amount}", fmtMoneyMinor(locale === "en" ? "en" : "bn", Number(o.minOrderMinor)))}
               </span>
             ) : null}
             {o.appOnly ? (

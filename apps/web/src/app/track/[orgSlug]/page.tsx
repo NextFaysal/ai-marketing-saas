@@ -652,7 +652,7 @@ export default function TrackOrderPage() {
                           {t.track.download}
                         </a>
                         {l.expiresAt ? (
-                          <span className="block text-xs text-slate-400">{t.track.linkExpiryPrefix}{fmtDateTime(locale, l.expiresAt)}{t.track.linkExpirySuffix}</span>
+                          <span className="block text-xs text-slate-400">{t.track.linkExpiry.replace("{date}", fmtDateTime(locale, l.expiresAt))}</span>
                         ) : null}
                       </li>
                     ))}
@@ -692,7 +692,7 @@ export default function TrackOrderPage() {
                 <p className="text-sm font-semibold text-amber-800">{t.track.shortageText}</p>
                 <ul className="mt-1 space-y-0.5 text-xs text-amber-700">
                   {licenseShortages.map((s, i) => (
-                    <li key={`${s.productName}-${i}`}>{s.productName}: {t.track.shortageLinePrefix}{fmtNumber(locale, s.needed)}{t.track.shortageLineMid}{fmtNumber(locale, s.assigned)}{t.track.shortageLineSuffix}</li>
+                    <li key={`${s.productName}-${i}`}>{s.productName}: {t.track.shortageLine.replace("{needed}", fmtNumber(locale, s.needed)).replace("{assigned}", fmtNumber(locale, s.assigned))}</li>
                   ))}
                 </ul>
               </section>

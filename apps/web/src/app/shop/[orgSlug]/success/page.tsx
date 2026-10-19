@@ -462,7 +462,7 @@ function SuccessInner() {
                 onClick={() => void payOnline(option)}
                 className="block w-full rounded-xl bg-emerald-600 py-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
               >
-                {payBusy === `${option.provider}:${option.source}` ? t.successExtra.redirecting : `${t.successExtra.payWithPrefix}${payOptionLabel(option)}${t.successExtra.payWithSuffix}`}
+                {payBusy === `${option.provider}:${option.source}` ? t.successExtra.redirecting : t.successExtra.payWith.replace("{method}", payOptionLabel(option))}
               </button>
             ))}
           </div>

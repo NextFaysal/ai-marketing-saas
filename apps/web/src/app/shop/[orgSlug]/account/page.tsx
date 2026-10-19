@@ -703,7 +703,7 @@ function AccountInner() {
                     <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-white px-4 py-2.5 text-sm">
                       <span className="font-mono font-black text-indigo-800">{c.code}</span>
                       <span className="font-bold text-emerald-700">{fmtNumber(locale, c.value)}{t.accountExtra.discountSuffix}</span>
-                      {c.sourceOrderNumber ? <span className="text-xs text-slate-500">{t.accountExtra.fromOrderPrefix}{c.sourceOrderNumber}{t.accountExtra.fromOrderSuffix}</span> : null}
+                      {c.sourceOrderNumber ? <span className="text-xs text-slate-500">{t.accountExtra.fromOrder.replace("{order}", c.sourceOrderNumber)}</span> : null}
                       <span className="text-xs text-slate-500">{c.endsAt ? `${t.accountExtra.expiryPrefix}${dateFmt(c.endsAt)}` : t.accountExtra.noExpiry}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${state.cls}`}>{state.label}</span>
                     </li>

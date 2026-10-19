@@ -342,7 +342,7 @@ export function GroceryMonthlyBazarBundle({
           </span>
           <div>
             <h3 className="text-sm font-black text-slate-900">{t.themeGrocery.comboTitle}</h3>
-            <p className="text-[11px] text-slate-500">{t.themeGrocery.comboSubPrefix}{fmtMoneyMinor(locale === "en" ? "en" : "bn", 25000)}{t.themeGrocery.comboSubSuffix}</p>
+            <p className="text-[11px] text-slate-500">{t.themeGrocery.comboSub.replace("{price}", fmtMoneyMinor(locale === "en" ? "en" : "bn", 25000))}</p>
           </div>
         </div>
         <span className="rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-black text-white">

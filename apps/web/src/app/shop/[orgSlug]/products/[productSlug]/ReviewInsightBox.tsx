@@ -63,7 +63,7 @@ export function ReviewInsightBox({ orgSlug, productSlug }: { orgSlug: string; pr
         <h2 className="text-base font-black text-slate-900">{t.shopWidgets.reviewSummaryTitle}</h2>
         {generatedLabel ? <span className="text-xs text-slate-500">{t.shopWidgets.reviewGeneratedPrefix}{generatedLabel}</span> : null}
         {insight.reviewCount > 0 ? (
-          <span className="text-xs text-slate-500">{bn(insight.reviewCount)}{t.shopWidgets.reviewAnalyzedSuffix}</span>
+          <span className="text-xs text-slate-500">{t.shopWidgets.reviewAnalyzed.replace("{count}", bn(insight.reviewCount))}</span>
         ) : null}
       </div>
       <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{insight.summaryText}</p>
