@@ -4,7 +4,10 @@
  * - `./dict`   — typed bn/en dictionary (bn is the shape source
  *   of truth) + getDict/localeOf. Pure, no contracts import.
  * - `./lookup` — dotted-key lookup with whole-string bn fallback
- *   + once-per-key missing-key warning (ML-L2/L6). Pure.
+ *   + once-per-key missing-key warning (ML-L2/L6), the MB2
+ *   parameterised helper `tr(...)` (+ `interpolate`), and the
+ *   Bengali count-classifier / English plural helper
+ *   `countWithClassifier`. Pure.
  * - `./shop`   — the EC19 shop-surface dictionary, now the
  *   `shop` namespace of this unified module.
  * - `./provider` — LocaleProvider / useLocale / LanguageSwitcher

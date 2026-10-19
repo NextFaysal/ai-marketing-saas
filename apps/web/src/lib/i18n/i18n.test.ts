@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dicts, getDict } from "./dict";
-import { lookup } from "./lookup";
+import { countWithClassifier, interpolate, lookup, placeholdersOf, tr } from "./lookup";
 import { shopDicts } from "./shop";
 
 // Pure dictionary tests — deliberately imported from ./dict,
@@ -51,6 +51,52 @@ describe("dashboard i18n dictionary (ML1/ML3)", () => {
     expect(getDict("bn")).toBe(dicts.bn);
     expect(getDict("fr")).toBe(dicts.bn);
     expect(getDict(undefined)).toBe(dicts.bn);
+  });
+});
+
+describe("tr (MB2 STEP-0 parameterised lookup + count pattern)", () => {
+  // A parameterised fixture in the exact dashboard shape: bn keeps
+  // the classifier suffix on the count, en pluralises the noun.
+  const paramDicts = {
+    bn: { orders: { countLabel: "{count}টি অর্ডার", people: "{count}জন গ্রাহক" } },
+    en: { orders: { countLabel: "{count} orders", people: "{count} customers" } },
+  };
+
+  it("interpolates named params after resolving the locale string", () => {
+    expect(tr(paramDicts, "bn", "orders.countLabel", { count: "৩" })).toBe("৩টি অর্ডার");
+    expect(tr(paramDicts, "en", "orders.countLabel", { count: 3 })).toBe("3 orders");
+    expect(tr(paramDicts, "en", "orders.people", { count: 5 })).toBe("5 customers");
+  });
+
+  it("falls back to the whole bn string (params still filled) when en is missing", () => {
+    const partial = { bn: paramDicts.bn, en: { orders: { countLabel: "", people: "{count} customers" } } };
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(tr(partial, "en", "orders.countLabel", { count: 7 })).toBe("7টি অর্ডার");
+  });
+
+  it("leaves an unsupplied placeholder visible instead of blanking it", () => {
+    expect(interpolate("{count} orders", {})).toBe("{count} orders");
+    expect(interpolate("{count} orders")).toBe("{count} orders");
+    expect(tr(paramDicts, "en", "orders.countLabel")).toBe("{count} orders");
+  });
+
+  it("pins equal placeholder sets for bn/en on every real dictionary key", () => {
+    const bn = flatten(dicts.bn);
+    const en = flatten(dicts.en);
+    for (const [key, bnValue] of bn) {
+      expect(placeholdersOf(en.get(key) ?? ""), key).toEqual(placeholdersOf(bnValue));
+    }
+  });
+
+  it("countWithClassifier: bn suffix on the count, en plural on the noun", () => {
+    const forms = { bnSuffix: "টি", enOne: "order", enOther: "orders" };
+    expect(countWithClassifier("bn", 3, { ...forms, formattedCount: "৩" })).toBe("৩টি");
+    expect(countWithClassifier("bn", 1, { ...forms, formattedCount: "১" })).toBe("১টি");
+    expect(countWithClassifier("en", 3, forms)).toBe("3 orders");
+    expect(countWithClassifier("en", 1, forms)).toBe("1 order");
+    expect(countWithClassifier("bn", 5, { enOne: "customer", enOther: "customers", bnSuffix: "জন", formattedCount: "৫" })).toBe("৫জন");
+    // Unknown locale normalises to bn (localeOf), suffix still applies.
+    expect(countWithClassifier("fr", 2, forms)).toBe("2টি");
   });
 });
 

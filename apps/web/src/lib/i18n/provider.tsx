@@ -3,7 +3,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { resolveUiLocale, type UiLocale } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { getDict, type Dict } from "./dict";
+import { getDict, dicts, type Dict } from "./dict";
+import { countWithClassifier, tr, type CountClassifierForms, type TrParams } from "./lookup";
 
 /**
  * ML1/ML3 (Multi-Language MB1) — dashboard locale provider.
@@ -41,6 +42,15 @@ export interface LocaleContextValue {
   setUserPref: (loc: UiLocale | null) => Promise<void>;
   /** Re-fetch /auth/me + the current org and re-resolve. */
   refresh: () => Promise<void>;
+  /**
+   * Parameterised dictionary lookup bound to the effective locale
+   * (MB2 STEP-0): t("orders.countLabel", { count: fmtNumber(locale, n) }).
+   * Falls back to the key itself when the key exists in neither
+   * locale (lookup already logged the gap).
+   */
+  t: (path: string, params?: TrParams) => string;
+  /** Bengali count-classifier / English plural helper (MB2 STEP-0). */
+  count: (countValue: number, forms: CountClassifierForms) => string;
 }
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
@@ -125,9 +135,19 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     [orgDefault],
   );
 
+  const t = useCallback(
+    (path: string, params?: TrParams) => tr(dicts, locale, path, params) ?? path,
+    [locale],
+  );
+  const count = useCallback(
+    (countValue: number, forms: CountClassifierForms) =>
+      countWithClassifier(locale, countValue, forms),
+    [locale],
+  );
+
   const value = useMemo<LocaleContextValue>(
-    () => ({ locale, dict: getDict(locale), userPref, orgDefault, setUserPref, refresh }),
-    [locale, userPref, orgDefault, setUserPref, refresh],
+    () => ({ locale, dict: getDict(locale), userPref, orgDefault, setUserPref, refresh, t, count }),
+    [locale, userPref, orgDefault, setUserPref, refresh, t, count],
   );
 
   return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;
