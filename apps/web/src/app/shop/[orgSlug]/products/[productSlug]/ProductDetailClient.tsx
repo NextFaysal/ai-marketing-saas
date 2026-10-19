@@ -14,26 +14,19 @@ import { displayPriceCaption } from "@/lib/translations";
 import { WishlistHeart } from "../../WishlistHeart";
 import { StockAlertForm } from "../../StockAlertForm";
 import {
-  FashionSizeGuideModal,
-  FashionFitAssistantModal,
-  FashionRestockAlertModal,
   FashionModelStats,
   FashionFabricCareGuide,
   FashionCompleteTheLook,
 } from "../../FashionTheme";
 import {
-  ElectronicsEmiCalculatorModal,
   ElectronicsWarrantyBox,
   ElectronicsBranchStock,
   ElectronicsAccessoriesCombo,
-  ElectronicsCompareModal,
-  ElectronicsWarrantyLookupModal,
   ElectronicsCompatibilityChecker,
 } from "../../ElectronicsTheme";
 import {
   GroceryWeightSelector,
   GroceryMonthlyBazarBundle,
-  GroceryPurityCertModal,
   GroceryNutritionFacts,
   GroceryDeliverySlotPicker,
 } from "../../GroceryTheme";
@@ -41,18 +34,13 @@ import {
   BeautyShadeSelector,
   BeautyRoutineBundle,
   BeautyIngredientsGuide,
-  BeautyAuthenticityModal,
-  BeautySkinQuizModal,
 } from "../../BeautyTheme";
 import {
   FurnitureFinishSelector,
   FurnitureDimensionSpecs,
   FurnitureRoomSetBundle,
-  FurnitureWarrantyModal,
-  FurnitureRoomVisualizerModal,
 } from "../../FurnitureTheme";
 import {
-  BooksLookInsideModal,
   BooksBindingSelector,
   BooksDetailSpecs,
   BooksAuthorBox,
@@ -61,25 +49,20 @@ import {
 import {
   KidsAgeSelector,
   KidsSafetySpecs,
-  KidsSafetyModal,
   KidsGiftHamperBundle,
 } from "../../KidsTheme";
 import {
-  AutomotiveFitmentModal,
   AutomotiveViscositySelector,
   AutomotivePartSpecs,
   AutomotiveTuneupBundle,
 } from "../../AutomotiveTheme";
 import {
-  SportsAssemblyModal,
   SportsWeightSelector,
   SportsEquipmentSpecs,
   SportsWorkoutBundle,
 } from "../../SportsTheme";
 import {
   JewelryKaratSelector,
-  JewelryCertificateModal,
-  JewelryRingSizeModal,
   JewelryBridalBundle,
 } from "../../JewelryTheme";
 import { generateWhatsAppProductOrderUrl } from "@/lib/whatsapp-catalog-bot";
@@ -99,6 +82,76 @@ const ExpressCheckout = dynamic(
 const ProductLightbox = dynamic(
   () => import("./ProductLightbox").then((m) => m.ProductLightbox),
   { ssr: false, loading: () => null },
+);
+
+// Dynamic theme modal dialogs — deferred until user triggers them
+const FashionSizeGuideModal = dynamic(
+  () => import("../../FashionTheme").then((m) => m.FashionSizeGuideModal),
+  { ssr: false },
+);
+const FashionFitAssistantModal = dynamic(
+  () => import("../../FashionTheme").then((m) => m.FashionFitAssistantModal),
+  { ssr: false },
+);
+const FashionRestockAlertModal = dynamic(
+  () => import("../../FashionTheme").then((m) => m.FashionRestockAlertModal),
+  { ssr: false },
+);
+const ElectronicsEmiCalculatorModal = dynamic(
+  () => import("../../ElectronicsTheme").then((m) => m.ElectronicsEmiCalculatorModal),
+  { ssr: false },
+);
+const ElectronicsCompareModal = dynamic(
+  () => import("../../ElectronicsTheme").then((m) => m.ElectronicsCompareModal),
+  { ssr: false },
+);
+const ElectronicsWarrantyLookupModal = dynamic(
+  () => import("../../ElectronicsTheme").then((m) => m.ElectronicsWarrantyLookupModal),
+  { ssr: false },
+);
+const GroceryPurityCertModal = dynamic(
+  () => import("../../GroceryTheme").then((m) => m.GroceryPurityCertModal),
+  { ssr: false },
+);
+const BeautyAuthenticityModal = dynamic(
+  () => import("../../BeautyTheme").then((m) => m.BeautyAuthenticityModal),
+  { ssr: false },
+);
+const BeautySkinQuizModal = dynamic(
+  () => import("../../BeautyTheme").then((m) => m.BeautySkinQuizModal),
+  { ssr: false },
+);
+const FurnitureWarrantyModal = dynamic(
+  () => import("../../FurnitureTheme").then((m) => m.FurnitureWarrantyModal),
+  { ssr: false },
+);
+const FurnitureRoomVisualizerModal = dynamic(
+  () => import("../../FurnitureTheme").then((m) => m.FurnitureRoomVisualizerModal),
+  { ssr: false },
+);
+const BooksLookInsideModal = dynamic(
+  () => import("../../BooksTheme").then((m) => m.BooksLookInsideModal),
+  { ssr: false },
+);
+const KidsSafetyModal = dynamic(
+  () => import("../../KidsTheme").then((m) => m.KidsSafetyModal),
+  { ssr: false },
+);
+const AutomotiveFitmentModal = dynamic(
+  () => import("../../AutomotiveTheme").then((m) => m.AutomotiveFitmentModal),
+  { ssr: false },
+);
+const SportsAssemblyModal = dynamic(
+  () => import("../../SportsTheme").then((m) => m.SportsAssemblyModal),
+  { ssr: false },
+);
+const JewelryCertificateModal = dynamic(
+  () => import("../../JewelryTheme").then((m) => m.JewelryCertificateModal),
+  { ssr: false },
+);
+const JewelryRingSizeModal = dynamic(
+  () => import("../../JewelryTheme").then((m) => m.JewelryRingSizeModal),
+  { ssr: false },
 );
 export function ProductDetailClient({
   orgSlug,
@@ -1289,124 +1342,156 @@ export function ProductDetailClient({
       ) : null}
 
       {/* Sizing Modal */}
-      <FashionSizeGuideModal open={sizeGuideOpen} onClose={() => setSizeGuideOpen(false)} />
+      {sizeGuideOpen ? <FashionSizeGuideModal open={sizeGuideOpen} onClose={() => setSizeGuideOpen(false)} /> : null}
 
       {/* Find My Fit AI Assistant Modal */}
-      <FashionFitAssistantModal
-        open={fitModalOpen}
-        onClose={() => setFitModalOpen(false)}
-        availableSizes={product.variants.map((v) => v.name)}
-        onApplySize={(recSize) => {
-          const matched = product.variants.find((v) => {
-            const vName = v.name.toUpperCase();
-            const rName = recSize.toUpperCase();
-            return vName.includes(rName) || rName.includes(vName);
-          });
-          if (matched) setVariantId(matched.id);
-        }}
-      />
+      {fitModalOpen ? (
+        <FashionFitAssistantModal
+          open={fitModalOpen}
+          onClose={() => setFitModalOpen(false)}
+          availableSizes={product.variants.map((v) => v.name)}
+          onApplySize={(recSize) => {
+            const matched = product.variants.find((v) => {
+              const vName = v.name.toUpperCase();
+              const rName = recSize.toUpperCase();
+              return vName.includes(rName) || rName.includes(vName);
+            });
+            if (matched) setVariantId(matched.id);
+          }}
+        />
+      ) : null}
 
       {/* Restock Notification Alert Modal */}
-      <FashionRestockAlertModal
-        open={restockOpen}
-        onClose={() => setRestockOpen(false)}
-        productName={product.name}
-        sizeName={restockSize}
-      />
+      {restockOpen ? (
+        <FashionRestockAlertModal
+          open={restockOpen}
+          onClose={() => setRestockOpen(false)}
+          productName={product.name}
+          sizeName={restockSize}
+        />
+      ) : null}
 
       {/* Electronics EMI Calculator Modal */}
-      <ElectronicsEmiCalculatorModal
-        open={emiModalOpen}
-        onClose={() => setEmiModalOpen(false)}
-        productPriceMinor={unitMinor}
-        productName={product.name}
-      />
+      {emiModalOpen ? (
+        <ElectronicsEmiCalculatorModal
+          open={emiModalOpen}
+          onClose={() => setEmiModalOpen(false)}
+          productPriceMinor={unitMinor}
+          productName={product.name}
+        />
+      ) : null}
 
       {/* Electronics Gadget Compare Modal */}
-      <ElectronicsCompareModal
-        open={compareModalOpen}
-        onClose={() => setCompareModalOpen(false)}
-        productA={product}
-        productB={relatedProducts[0] ?? null}
-        orgSlug={orgSlug}
-      />
+      {compareModalOpen ? (
+        <ElectronicsCompareModal
+          open={compareModalOpen}
+          onClose={() => setCompareModalOpen(false)}
+          productA={product}
+          productB={relatedProducts[0] ?? null}
+          orgSlug={orgSlug}
+        />
+      ) : null}
 
       {/* Electronics Online Warranty Lookup Modal */}
-      <ElectronicsWarrantyLookupModal
-        open={warrantyLookupOpen}
-        onClose={() => setWarrantyLookupOpen(false)}
-      />
+      {warrantyLookupOpen ? (
+        <ElectronicsWarrantyLookupModal
+          open={warrantyLookupOpen}
+          onClose={() => setWarrantyLookupOpen(false)}
+        />
+      ) : null}
 
       {/* Grocery Purity Lab Test Certificate Modal */}
-      <GroceryPurityCertModal
-        open={purityCertOpen}
-        onClose={() => setPurityCertOpen(false)}
-        productName={product.name}
-      />
+      {purityCertOpen ? (
+        <GroceryPurityCertModal
+          open={purityCertOpen}
+          onClose={() => setPurityCertOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
 
       {/* Beauty Authenticity & Skin Quiz Modals */}
-      <BeautyAuthenticityModal
-        open={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        productName={product.name}
-      />
-      <BeautySkinQuizModal
-        open={skinQuizOpen}
-        onClose={() => setSkinQuizOpen(false)}
-      />
+      {authModalOpen ? (
+        <BeautyAuthenticityModal
+          open={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
+      {skinQuizOpen ? (
+        <BeautySkinQuizModal
+          open={skinQuizOpen}
+          onClose={() => setSkinQuizOpen(false)}
+        />
+      ) : null}
 
       {/* Furniture Warranty & Room Visualizer Modals */}
-      <FurnitureWarrantyModal
-        open={furnitureWarrantyOpen}
-        onClose={() => setFurnitureWarrantyOpen(false)}
-        productName={product.name}
-      />
-      <FurnitureRoomVisualizerModal
-        open={visualizerOpen}
-        onClose={() => setVisualizerOpen(false)}
-        productName={product.name}
-      />
+      {furnitureWarrantyOpen ? (
+        <FurnitureWarrantyModal
+          open={furnitureWarrantyOpen}
+          onClose={() => setFurnitureWarrantyOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
+      {visualizerOpen ? (
+        <FurnitureRoomVisualizerModal
+          open={visualizerOpen}
+          onClose={() => setVisualizerOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
 
       {/* Books Look Inside Reader Modal */}
-      <BooksLookInsideModal
-        open={lookInsideModalOpen}
-        onClose={() => setLookInsideModalOpen(false)}
-        productName={product.name}
-      />
+      {lookInsideModalOpen ? (
+        <BooksLookInsideModal
+          open={lookInsideModalOpen}
+          onClose={() => setLookInsideModalOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
 
       {/* Kids Safety & Pediatric Certificate Modal */}
-      <KidsSafetyModal
-        open={kidsSafetyModalOpen}
-        onClose={() => setKidsSafetyModalOpen(false)}
-        productName={product.name}
-      />
+      {kidsSafetyModalOpen ? (
+        <KidsSafetyModal
+          open={kidsSafetyModalOpen}
+          onClose={() => setKidsSafetyModalOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
 
       {/* Automotive Fitment Checker Modal */}
-      <AutomotiveFitmentModal
-        open={fitmentModalOpen}
-        onClose={() => setFitmentModalOpen(false)}
-        productName={product.name}
-      />
+      {fitmentModalOpen ? (
+        <AutomotiveFitmentModal
+          open={fitmentModalOpen}
+          onClose={() => setFitmentModalOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
 
       {/* Sports Home Gym Assembly Modal */}
-      <SportsAssemblyModal
-        open={assemblyModalOpen}
-        onClose={() => setAssemblyModalOpen(false)}
-        productName={product.name}
-      />
+      {assemblyModalOpen ? (
+        <SportsAssemblyModal
+          open={assemblyModalOpen}
+          onClose={() => setAssemblyModalOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
 
       {/* Jewelry Certificate & Ring Size Modals */}
-      <JewelryCertificateModal
-        open={certModalOpen}
-        onClose={() => setCertModalOpen(false)}
-        productName={product.name}
-      />
-      <JewelryRingSizeModal
-        open={ringSizeModalOpen}
-        onClose={() => setRingSizeModalOpen(false)}
-        productName={product.name}
-        onSelectSize={(s) => setSelectedRingSize(s)}
-      />
+      {certModalOpen ? (
+        <JewelryCertificateModal
+          open={certModalOpen}
+          onClose={() => setCertModalOpen(false)}
+          productName={product.name}
+        />
+      ) : null}
+      {ringSizeModalOpen ? (
+        <JewelryRingSizeModal
+          open={ringSizeModalOpen}
+          onClose={() => setRingSizeModalOpen(false)}
+          productName={product.name}
+          onSelectSize={(s) => setSelectedRingSize(s)}
+        />
+      ) : null}
     </div>
   );
 
