@@ -1,3 +1,8 @@
+import { inboxBn, inboxEn } from "./i18n/inbox";
+import { interpolate } from "./i18n/lookup";
+
+type Loc = "bn" | "en";
+const D = (locale?: string) => (locale === "en" ? inboxEn : inboxBn);
 // IN4 (Inbox Next): presentation helpers for the layered SLA
 // chain. The SERVER computes each conversation's SLA position
 // (slaState "warning" at 75% of its effective limit, "breached"
@@ -14,7 +19,9 @@ export interface SlaChip {
 export function slaChipInfo(
   conv: { slaState?: string | null; slaDueAt?: string | null },
   nowMs: number,
+  locale: Loc = "bn",
 ): SlaChip | null {
+  const dd = D(locale);
   if (!conv.slaState || !conv.slaDueAt) return null;
   const due = new Date(conv.slaDueAt).getTime();
   if (!Number.isFinite(due)) return null;
@@ -22,14 +29,14 @@ export function slaChipInfo(
     const over = Math.floor((nowMs - due) / 60000);
     return {
       tone: "breached",
-      label: over > 0 ? `🚨 SLA breach — ${over} মিনিট পেরিয়ে গেছে` : "🚨 SLA breach",
+      label: over > 0 ? interpolate(dd.slaBreachOver, { over }) : "🚨 SLA breach",
     };
   }
   if (conv.slaState === "warning") {
     const left = Math.max(0, Math.ceil((due - nowMs) / 60000));
     return {
       tone: "warning",
-      label: left > 0 ? `⏰ SLA সতর্কতা — আর ${left} মিনিট` : "⏰ SLA সতর্কতা — সময় প্রায় শেষ",
+      label: left > 0 ? interpolate(dd.slaWarningLeft, { left }) : dd.slaWarningEnding,
     };
   }
   return null;

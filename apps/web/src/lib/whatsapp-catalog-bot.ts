@@ -1,3 +1,8 @@
+import { fmtMoney } from "@repo/contracts";
+import { messagingBn, messagingEn } from "./i18n/messaging";
+
+type Loc = "bn" | "en";
+const M = (locale?: string) => (locale === "en" ? messagingEn : messagingBn);
 /**
  * WhatsApp Conversational Catalog & 1-Click Order Bot Engine
  * Tailored for Bangladeshi e-commerce merchants and marketers running WhatsApp/CTWA campaigns.
@@ -39,20 +44,38 @@ export interface ParsedCustomerOrder {
 
 export const DEFAULT_BOT_CONFIG: WhatsAppBotConfig = {
   businessPhone: "8801700000000",
-  botName: "স্মার্ট শপ সহকারী",
-  welcomeMessage:
-    "আসসালামু আলাইকুম! আমাদের শপে আপনাকে স্বাগতম। আমি আপনার ভার্চুয়াল শপিং সহকারী। কীভাবে সাহায্য করতে পারি? নিচের যেকোনো অপশনে ক্লিক করুন বা রিপ্লাই দিন:",
+  botName: messagingBn.botName,
+  welcomeMessage: messagingBn.botWelcome,
   menuOptions: [
-    { key: "1", label: "🛍️ সেরা প্রডাক্ট ক্যাটালগ দেখুন", action: "catalog" },
-    { key: "2", label: "🔥 আজকের স্পেশাল ধামাকা অফার", action: "deals" },
-    { key: "3", label: "📦 বর্তমান অর্ডারের অবস্থান জানুন", action: "track" },
-    { key: "4", label: "💬 কাস্টমার কেয়ার প্রতিনিধির সাথে কথা", action: "human" },
+    { key: "1", label: messagingBn.botMenuCatalog, action: "catalog" },
+    { key: "2", label: messagingBn.botMenuDeals, action: "deals" },
+    { key: "3", label: messagingBn.botMenuTrack, action: "track" },
+    { key: "4", label: messagingBn.botMenuHuman, action: "human" },
   ],
-  orderPromptMessage:
-    "ক্যাশ অন ডেলিভারিতে অর্ডার নিশ্চিত করতে অনুগ্রহ করে নিচের তথ্যগুলো লিখে পাঠান:\n১. আপনার নাম\n২. ১১ ডিজিটের সচল মোবাইল নম্বর\n৩. সম্পূর্ণ ডেলিভারি ঠিকানা (জেলা, থানা ও এলাকা)",
-  deliveryNotice: "ঢাকা সিটিতে ২৪-৪৮ ঘণ্টা, সারা বাংলাদেশে ২-৩ দিনে ক্যাশ অন ডেলিভারি।",
+  orderPromptMessage: messagingBn.botOrderPrompt,
+  deliveryNotice: messagingBn.botDeliveryNotice,
   codEnabled: true,
 };
+
+/** Default bot config in the requested locale (bn = DEFAULT_BOT_CONFIG). */
+export function botConfigFor(locale: Loc = "bn"): WhatsAppBotConfig {
+  if (locale === "bn") return DEFAULT_BOT_CONFIG;
+  const m = messagingEn;
+  return {
+    businessPhone: DEFAULT_BOT_CONFIG.businessPhone,
+    botName: m.botName,
+    welcomeMessage: m.botWelcome,
+    menuOptions: [
+      { key: "1", label: m.botMenuCatalog, action: "catalog" },
+      { key: "2", label: m.botMenuDeals, action: "deals" },
+      { key: "3", label: m.botMenuTrack, action: "track" },
+      { key: "4", label: m.botMenuHuman, action: "human" },
+    ],
+    orderPromptMessage: m.botOrderPrompt,
+    deliveryNotice: m.botDeliveryNotice,
+    codEnabled: true,
+  };
+}
 
 /** Normalize Bangladeshi phone number to international format without + or dashes */
 export function normalizeBdPhoneNumber(phone: string): string {
@@ -82,31 +105,33 @@ export function generateWhatsAppClickToChatUrl(phone: string, prefilledText?: st
 export function formatWhatsAppProductSnippet(
   product: WhatsAppProductItem,
   storeName?: string,
-  landingSlug?: string
+  landingSlug?: string,
+  locale: Loc = "bn"
 ): string {
+  const m = M(locale);
   const price = (Number(product.priceMinor) || 0) / 100;
   const compareAt = product.compareAtMinor ? Number(product.compareAtMinor) / 100 : null;
-  const priceFmt = `৳${price.toLocaleString("en-IN")}`;
+  const priceFmt = fmtMoney(locale, price);
 
   let discountLine = "";
   if (compareAt && compareAt > price) {
     const savings = Math.round(((compareAt - price) / compareAt) * 100);
-    const regularFmt = `৳${compareAt.toLocaleString("en-IN")}`;
-    discountLine = `\n~${regularFmt}~ *${savings}% ছাড়!*`;
+    const regularFmt = fmtMoney(locale, compareAt);
+    discountLine = `\n~${regularFmt}~ *${savings}${m.botDiscountSuffix}`;
   }
 
   const lines = [
     `*🛍️ ${product.name}*`,
-    storeName ? `_অরিজিনাল কালেকশন by ${storeName}_` : "",
+    storeName ? `_${m.botOriginalCollection} by ${storeName}_` : "",
     "",
-    `💰 বিশেষ মূল্য: *${priceFmt}*${discountLine}`,
-    "🚚 ক্যাশ অন ডেলিভারি সুবিধা (পণ্য দেখে পেমেন্ট)",
+    `💰 ${m.botSpecialPrice}: *${priceFmt}*${discountLine}`,
+    m.botCodAvailable,
     "",
-    product.description ? `📝 বিবরণ: ${product.description.slice(0, 140)}...` : "",
+    product.description ? `📝 ${m.botDescription}: ${product.description.slice(0, 140)}...` : "",
     "",
     landingSlug
-      ? `👉 ১-ক্লিকে বিস্তারিত দেখুন ও সরাসরি অর্ডার করুন:\nhttps://myshop.com/l/${landingSlug}`
-      : "👉 অর্ডার করতে সরাসরি 'অর্ডার' লিখে আপনার নাম, ঠিকানা ও ফোন নম্বর পাঠান।",
+      ? `${m.botOrderCtaLink}\nhttps://myshop.com/l/${landingSlug}`
+      : m.botOrderCtaPlain,
   ];
 
   return lines.filter(Boolean).join("\n");
@@ -179,30 +204,31 @@ export function generateWhatsAppOrderSummaryReceipt(order: {
   quantity: number;
   totalMinor: number | string;
   deliveryChargeMinor?: number | string;
-}): string {
+}, locale: Loc = "bn"): string {
+  const m = M(locale);
   const total = (Number(order.totalMinor) || 0) / 100;
   const delivery = (Number(order.deliveryChargeMinor) || 0) / 100;
   const due = total;
 
   return [
-    "🎉 *অর্ডার কনফার্মেশন স্লিপ (Order Confirmed)*",
-    `অর্ডার আইডি: *#${order.orderNumber}*`,
+    m.receiptTitle,
+    `${m.receiptOrderId}: *#${order.orderNumber}*`,
     "--------------------------------",
-    `👤 গ্রাহক: *${order.customerName}*`,
-    `📞 মোবাইল: *${order.phone}*`,
-    `📍 ঠিকানা: ${order.address}`,
+    `👤 ${m.receiptCustomer}: *${order.customerName}*`,
+    `📞 ${m.receiptMobile}: *${order.phone}*`,
+    `📍 ${m.receiptAddress}: ${order.address}`,
     "",
-    "📦 *অর্ডারকৃত পণ্য:*",
-    `• ${order.productName} (পরিমাণ: ${order.quantity}টি)`,
+    m.receiptItems,
+    `• ${order.productName} (${m.receiptQuantity}: ${order.quantity}${m.receiptQtySuffix})`,
     "",
-    `💵 পণ্যের মূল্য: ৳${(total - delivery).toLocaleString("en-IN")}`,
-    `🚚 ডেলিভারি চার্জ: ৳${delivery.toLocaleString("en-IN")}`,
-    `💳 *ক্যাশ অন ডেলিভারি (মোট প্রদেয়): ৳${due.toLocaleString("en-IN")}*`,
+    `💵 ${m.receiptProductPrice}: ${fmtMoney(locale, total - delivery)}`,
+    `🚚 ${m.receiptDeliveryCharge}: ${fmtMoney(locale, delivery)}`,
+    `💳 *${m.receiptCodTotal}: ${fmtMoney(locale, due)}*`,
     "--------------------------------",
-    "✅ পার্সেলটি খুব শীঘ্রই প্যাকেজিং হয়ে কুরিয়ারে হস্তান্তর করা হবে।",
-    "📦 পার্সেল হাতে পেয়ে খুলে চেক করে তবেই ডেলিভারি ম্যানকে টাকা পরিশোধ করবেন।",
+    m.receiptPackingNote,
+    m.receiptCheckNote,
     "",
-    "আমাদের সাথে কেনাকাটা করার জন্য ধন্যবাদ! ❤️",
+    m.receiptThanks,
   ].join("\n");
 }
 
@@ -213,22 +239,23 @@ export function generateWhatsAppProductOrderUrl(opts: {
   priceMinor: number | string;
   variantName?: string | null;
   productUrl?: string | null;
-}): string {
+}, locale: Loc = "bn"): string {
+  const m = M(locale);
   const price = Math.round((Number(opts.priceMinor) || 0) / 100);
-  const priceFmt = `৳${price.toLocaleString("bn-BD")}`;
+  const priceFmt = fmtMoney(locale, price);
   const lines = [
-    "আসসালামু আলাইকুম,",
-    "আমি এই প্রোডাক্টটি ক্যাশ অন ডেলিভারিতে অর্ডার করতে চাই:",
+    m.orderGreeting,
+    m.orderWantCod,
     "",
-    `🛍️ প্রোডাক্ট: ${opts.productName}`,
-    opts.variantName ? `🏷️ ভ্যারিয়েন্ট/সাইজ: ${opts.variantName}` : "",
-    `💰 মূল্য: ${priceFmt}`,
-    opts.productUrl ? `🔗 লিঙ্ক: ${opts.productUrl}` : "",
+    `🛍️ ${m.orderProduct}: ${opts.productName}`,
+    opts.variantName ? `🏷️ ${m.orderVariant}: ${opts.variantName}` : "",
+    `💰 ${m.orderPrice}: ${priceFmt}`,
+    opts.productUrl ? `🔗 ${m.orderLink}: ${opts.productUrl}` : "",
     "",
-    "ডেলিভারির জন্য আমার তথ্য:",
-    "১. নাম:",
-    "২. মোবাইল নম্বর:",
-    "৩. সম্পূর্ণ ঠিকানা (জেলা, থানা ও এলাকা):",
+    m.orderMyInfo,
+    m.orderInfoName,
+    m.orderInfoMobile,
+    m.orderInfoAddress,
   ];
   const text = lines.filter(Boolean).join("\n");
   return generateWhatsAppClickToChatUrl(opts.phone, text);

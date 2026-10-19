@@ -1,3 +1,4 @@
+import { inboxBn, inboxEn } from "./i18n/inbox";
 /**
  * CX8 (Packing Label Scan + Image Product Recognition) — web-side
  * pure helpers. Everything here is display/draft logic only: the
@@ -31,20 +32,22 @@ export interface LabelScanResultView {
 
 /** The honesty wording that must ship verbatim in the recognition
  *  panel: this is description-text matching, NOT image similarity. */
-export const PRODUCT_MATCH_HONESTY =
-  "এটি ছবির সাথে ছবির মিল নয় — AI ছবিটি বর্ণনা করে, সেই বর্ণনা দিয়ে catalog খোঁজা হয়";
+export const PRODUCT_MATCH_HONESTY = inboxBn.productMatchHonesty;
+export const productMatchHonesty = (locale?: string): string => (locale === "en" ? inboxEn : inboxBn).productMatchHonesty;
 
 /** Vision-unavailable line for both CX8 surfaces. */
-export const VISION_UNAVAILABLE_TEXT = "AI ছবি পড়া এখন সেটআপ করা নেই";
+export const VISION_UNAVAILABLE_TEXT = inboxBn.visionUnavailable;
+export const visionUnavailableText = (locale?: string): string => (locale === "en" ? inboxEn : inboxBn).visionUnavailable;
 
 /** Human summary of what the scan extracted — shown especially in
  *  the no-match state so the human can search manually with the
  *  very values the AI read (never hidden, never embellished). */
-export function extractedSummary(result: LabelScanResultView): string {
+export function extractedSummary(result: LabelScanResultView, locale: "bn" | "en" = "bn"): string {
+  const dd = locale === "en" ? inboxEn : inboxBn;
   const parts: string[] = [];
   if (result.extracted.trackingCode) parts.push(`Tracking: ${result.extracted.trackingCode}`);
-  if (result.extracted.orderNumber) parts.push(`অর্ডার নম্বর: ${result.extracted.orderNumber}`);
-  if (result.extracted.phoneLast4) parts.push(`ফোনের শেষ ৪ ডিজিট: ${result.extracted.phoneLast4}`);
+  if (result.extracted.orderNumber) parts.push(`${dd.extractedOrderNumber}: ${result.extracted.orderNumber}`);
+  if (result.extracted.phoneLast4) parts.push(`${dd.extractedPhoneLast4}: ${result.extracted.phoneLast4}`);
   return parts.join(" · ");
 }
 
@@ -72,6 +75,7 @@ export interface ProductCandidateView {
  * the agent reviews and presses send themselves. This flow never
  * auto-sends and never messages the customer on its own.
  */
-export function productMatchDraftText(candidate: ProductCandidateView): string {
-  return `"${candidate.name}" — দাম ${candidate.priceText}।`;
+export function productMatchDraftText(candidate: ProductCandidateView, locale: "bn" | "en" = "bn"): string {
+  const dd = locale === "en" ? inboxEn : inboxBn;
+  return locale === "en" ? `"${candidate.name}" — ${dd.draftPriceWord} ${candidate.priceText}.` : `"${candidate.name}" — ${dd.draftPriceWord} ${candidate.priceText}।`;
 }

@@ -24,7 +24,7 @@ import {
   GraphEdgeKind,
   KNOWN_STEP_TYPES,
   RawStep,
-  STEP_TYPE_META,
+  stepTypeMetaFor,
   WorkflowDefinition,
   WorkflowGraph,
   applyDraftToStep,
@@ -41,25 +41,34 @@ import {
   type StepDraftLike,
 } from "@/lib/workflow-graph";
 import { StepFields, TemplateOption, WaTemplateOption } from "./step-fields";
+import { useLocale } from "@/lib/i18n/provider";
+import { workflowsBn, workflowsEn } from "@/lib/i18n/workflows";
 
-const TRIGGERS = [
-  { value: "order_created", label: "নতুন Order তৈরি হলে" },
-  { value: "order_delivered", label: "Order ডেলিভারি হলে" },
-  { value: "order_cod_confirmed", label: "COD Order কনফার্ম হলে" },
-  { value: "order_status_changed", label: "Order এর Status বদলালে" },
-  { value: "order_refunded", label: "Order Refund হলে" },
-  { value: "cart_abandoned", label: "কার্ট ফেলে রেখে গেলে (Cart Abandoned)" },
-  { value: "shipment_status_changed", label: "পার্সেলের Status বদলালে" },
-  { value: "shipment_delivered", label: "পার্সেল ডেলিভারি হলে" },
-  { value: "shipment_returned", label: "পার্সেল রিটার্ন হলে" },
-  { value: "lead_created", label: "নতুন Lead তৈরি হলে" },
-  { value: "lead_stage_changed", label: "Lead এর Stage বদলালে" },
-  { value: "inbox_message_received", label: "Inbox এ নতুন বার্তা এলে" },
-  { value: "inbox_unanswered", label: "Inbox বার্তার উত্তর না হলে (সময়ভিত্তিক)" },
-  { value: "conversation_assigned", label: "কথোপকথন Assign হলে" },
-  { value: "conversation_closed", label: "কথোপকথন বন্ধ হলে" },
-  { value: "schedule", label: "প্রতিদিন নির্দিষ্ট সময়ে (Schedule)" },
-];
+type Loc = "bn" | "en";
+const W = (locale?: string) => (locale === "en" ? workflowsEn : workflowsBn);
+
+const TRIGGERS = triggersFor("bn");
+function triggersFor(locale: Loc = "bn") {
+  const w = W(locale);
+  return [
+    { value: "order_created", label: w.trigOrderCreated },
+    { value: "order_delivered", label: w.trigOrderDelivered },
+    { value: "order_cod_confirmed", label: w.trigCodConfirmed },
+    { value: "order_status_changed", label: w.trigOrderStatus },
+    { value: "order_refunded", label: w.trigOrderRefunded },
+    { value: "cart_abandoned", label: w.trigCartAbandoned },
+    { value: "shipment_status_changed", label: w.trigShipmentStatus },
+    { value: "shipment_delivered", label: w.trigShipmentDelivered },
+    { value: "shipment_returned", label: w.trigShipmentReturned },
+    { value: "lead_created", label: w.trigLeadCreated },
+    { value: "lead_stage_changed", label: w.trigLeadStage },
+    { value: "inbox_message_received", label: w.trigInboxMessage },
+    { value: "inbox_unanswered", label: w.trigInboxUnanswered },
+    { value: "conversation_assigned", label: w.trigConvAssigned },
+    { value: "conversation_closed", label: w.trigConvClosed },
+    { value: "schedule", label: w.trigSchedule },
+  ];
+}
 const OPS = ["eq", "neq", "gt", "gte", "lt", "lte", "contains"];
 
 interface StepNodeData {
@@ -77,12 +86,13 @@ interface StepNodeData {
 type FlowNode = Node<StepNodeData>;
 type FlowEdge = Edge<{ kind: GraphEdgeKind }>;
 
-function nodeLabel(kind: StepNodeData["kind"], step?: RawStep, name?: string): { label: string; summary: string; color: string } {
-  if (kind === "trigger") return { label: name || "Workflow শুরু", summary: "Trigger", color: "#0f172a" };
-  if (kind === "end") return { label: "শেষ", summary: "Flow এখানে শেষ", color: "#475569" };
-  if (kind === "stop") return { label: "থামবে", summary: "শর্ত না মিললে Run এখানেই শেষ", color: "#dc2626" };
-  const meta = STEP_TYPE_META[step?.type ?? ""] ?? STEP_TYPE_META.unknown;
-  return { label: meta.label, summary: step ? stepSummary(step) : "", color: meta.color };
+function nodeLabel(kind: StepNodeData["kind"], step?: RawStep, name?: string, locale: Loc = "bn"): { label: string; summary: string; color: string } {
+  const w = W(locale);
+  if (kind === "trigger") return { label: name || w.nodeStart, summary: "Trigger", color: "#0f172a" };
+  if (kind === "end") return { label: w.nodeEnd, summary: w.nodeEndSummary, color: "#475569" };
+  if (kind === "stop") return { label: w.nodeStop, summary: w.nodeStopSummary, color: "#dc2626" };
+  const meta = stepTypeMetaFor(locale)[step?.type ?? ""] ?? stepTypeMetaFor(locale).unknown;
+  return { label: meta.label, summary: step ? stepSummary(step, locale) : "", color: meta.color };
 }
 
 function StepNode({ data, selected }: NodeProps<FlowNode>) {
@@ -109,9 +119,10 @@ function StepNode({ data, selected }: NodeProps<FlowNode>) {
 
 const nodeTypes = { step: StepNode };
 
-function graphToFlow(graph: WorkflowGraph, meta: { name: string; trigger: string }): { nodes: FlowNode[]; edges: FlowEdge[] } {
+function graphToFlow(graph: WorkflowGraph, meta: { name: string; trigger: string }, locale: Loc = "bn"): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const w = W(locale);
   const nodes: FlowNode[] = graph.nodes.map((n) => {
-    const info = nodeLabel(n.kind, n.step, meta.name);
+    const info = nodeLabel(n.kind, n.step, meta.name, locale);
     return {
       id: n.id,
       type: "step",
@@ -124,7 +135,7 @@ function graphToFlow(graph: WorkflowGraph, meta: { name: string; trigger: string
         stepIndex: n.stepIndex,
         step: n.step,
         label: n.kind === "trigger" ? info.label : info.label,
-        summary: n.kind === "trigger" ? (TRIGGERS.find((t) => t.value === meta.trigger)?.label ?? meta.trigger) : info.summary,
+        summary: n.kind === "trigger" ? (triggersFor(locale).find((t) => t.value === meta.trigger)?.label ?? meta.trigger) : info.summary,
         color: info.color,
         locked: n.kind === "step" && !!n.step && !isKnownStepType(n.step.type),
         isCondition: n.kind === "step" && n.step?.type === "condition",
@@ -136,7 +147,7 @@ function graphToFlow(graph: WorkflowGraph, meta: { name: string; trigger: string
     source: e.source,
     target: e.target,
     sourceHandle: e.kind === "no" ? "no" : "out",
-    label: e.kind === "yes" ? "হ্যাঁ" : e.kind === "no" ? "না" : undefined,
+    label: e.kind === "yes" ? w.edgeYes : e.kind === "no" ? w.edgeNo : undefined,
     deletable: e.kind !== "no",
     selectable: e.kind !== "no",
     animated: e.kind === "no",
@@ -187,6 +198,7 @@ function CanvasInner({
   workflowId?: string;
   members?: { userId: string; name: string; role: string }[];
 }) {
+  const { t, locale } = useLocale();
   const storageKey = `wfc-pos:${scopeKey}`;
   const [meta, setMeta] = useState({
     name: initialDefinition.name ?? "",
@@ -199,7 +211,7 @@ function CanvasInner({
       const raw = typeof window !== "undefined" ? window.localStorage.getItem(storageKey) : null;
       if (raw) stored = JSON.parse(raw);
     } catch { /* corrupted storage -> auto-layout */ }
-    return graphToFlow(definitionToGraph(initialDefinition, stored), { name: initialDefinition.name, trigger: initialDefinition.trigger });
+    return graphToFlow(definitionToGraph(initialDefinition, stored), { name: initialDefinition.name, trigger: initialDefinition.trigger }, locale);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initial.nodes);
@@ -242,12 +254,12 @@ function CanvasInner({
     (graph: WorkflowGraph, keepMeta = true, selectId = "") => {
       const m = keepMeta ? meta : { name: graph.name, trigger: graph.trigger, conditions: graph.conditions };
       if (!keepMeta) setMeta(m);
-      const flow = graphToFlow(graph, m);
+      const flow = graphToFlow(graph, m, locale);
       setNodes(flow.nodes);
       setEdges(flow.edges);
       setSelectedId(selectId);
     },
-    [meta, setNodes, setEdges],
+    [meta, setNodes, setEdges, locale],
   );
 
   const onConnect = useCallback(
@@ -256,21 +268,21 @@ function CanvasInner({
       const { source, target, sourceHandle } = conn;
       if (!source || !target) return;
       if (sourceHandle === "no") {
-        setError("“না” পথটি Engine-এর নিয়ম — শর্ত না মিললে Run থেমে যায়, এটি বদলানো যায় না।");
+        setError(t("workflows.errNoPath"));
         return;
       }
       const targetNode = nodes.find((n) => n.id === target);
       const sourceNode = nodes.find((n) => n.id === source);
       if (!targetNode || (targetNode.data.kind !== "step" && targetNode.data.kind !== "end")) {
-        setError("সংযোগ শুধু কোনো ধাপে বা শেষ ধাপে দেওয়া যায়।");
+        setError(t("workflows.errConnectTarget"));
         return;
       }
       if (edges.some((e) => e.source === source && e.data?.kind !== "no")) {
-        setError("এই ধাপের একটি বহির্গামী সংযোগ আগেই আছে — আগে সেটি মুছে তারপর নতুন সংযোগ দিন।");
+        setError(t("workflows.errOutgoingExists"));
         return;
       }
       if (edges.some((e) => e.target === target)) {
-        setError("এই ধাপে আগেই একটি সংযোগ এসেছে — আগে সেটি মুছে তারপর নতুন সংযোগ দিন।");
+        setError(t("workflows.errIncomingExists"));
         return;
       }
       // cycle check: walking forward from target must never reach source
@@ -279,7 +291,7 @@ function CanvasInner({
       let cursor: string | undefined = target;
       const guard = new Set<string>();
       while (cursor) {
-        if (cursor === source) { setError("এই সংযোগে বৃত্ত (cycle) তৈরি হবে — Workflow এগিয়ে যাওয়ার পথে লুপ হতে পারে না।"); return; }
+        if (cursor === source) { setError(t("workflows.errCycle")); return; }
         if (guard.has(cursor)) break;
         guard.add(cursor);
         cursor = forward.get(cursor);
@@ -290,7 +302,7 @@ function CanvasInner({
           {
             ...conn,
             id: `e-${source}-${target}-${Date.now()}`,
-            label: kind === "yes" ? "হ্যাঁ" : undefined,
+            label: kind === "yes" ? t("workflows.edgeYes") : undefined,
             style: kind === "yes" ? { stroke: "#16a34a", strokeWidth: 2 } : { stroke: "#64748b", strokeWidth: 1.5 },
             data: { kind },
           } as FlowEdge,
@@ -298,14 +310,14 @@ function CanvasInner({
         ),
       );
     },
-    [edges, nodes, setEdges],
+    [edges, nodes, setEdges, t],
   );
 
   const addStepAt = useCallback(
     (type: string, afterStepIndex: number, position?: { x: number; y: number }) => {
       const graph = insertStep(graphNow(), type, afterStepIndex);
       if (position) {
-        const def = graphToDefinitionLenient(graph);
+        const def = graphToDefinitionLenient(graph, locale);
         const idx = Math.max(0, Math.min(afterStepIndex + 1, def.steps.length - 1));
         const positions: Record<string, { x: number; y: number }> = {};
         for (const n of graph.nodes) positions[n.id] = n.position;
@@ -330,7 +342,7 @@ function CanvasInner({
     if (wasCondition !== isCondition) {
       // topology changes (stop node appears/disappears): rebuild
       const graph = graphNow();
-      const def = graphToDefinitionLenient(graph);
+      const def = graphToDefinitionLenient(graph, locale);
       def.steps[selectedNode.data.stepIndex] = nextStep;
       const positions: Record<string, { x: number; y: number }> = {};
       for (const n of graph.nodes) positions[n.id] = n.position;
@@ -339,7 +351,7 @@ function CanvasInner({
       const graph = replaceStep(graphNow(), selectedNode.data.stepIndex, nextStep);
       rebuildFrom(graph, true, selectedNode.id);
     }
-    setNotice("ধাপের পরিবর্তন ক্যানভাসে প্রয়োগ হয়েছে — সংরক্ষণ না করলে সার্ভারে যাবে না।");
+    setNotice(t("workflows.noticeStepApplied"));
   }
 
   function deleteSelectedStep() {
@@ -350,7 +362,7 @@ function CanvasInner({
   function moveSelected(dir: -1 | 1) {
     if (selectedNode?.data.kind !== "step") return;
     const graph = graphNow();
-    const def = graphToDefinitionLenient(graph);
+    const def = graphToDefinitionLenient(graph, locale);
     const i = selectedNode.data.stepIndex;
     const j = i + dir;
     if (j < 0 || j >= def.steps.length) return;
@@ -371,25 +383,25 @@ function CanvasInner({
   async function save() {
     setError(""); setNotice(""); setBusy(true);
     try {
-      const def = graphToDefinition(graphNow());
-      if (!def.name.trim()) throw new Error("Workflow এর নাম দিন");
-      if (def.steps.length === 0) throw new Error("কমপক্ষে একটি ধাপ যোগ করুন");
+      const def = graphToDefinition(graphNow(), locale);
+      if (!def.name.trim()) throw new Error(t("workflows.errNameRequired"));
+      if (def.steps.length === 0) throw new Error(t("workflows.errStepRequired"));
       const orgId = getOrganizationId();
-      if (!orgId) throw new Error("Organization পাওয়া যায়নি");
+      if (!orgId) throw new Error(t("workflows.errOrgMissing"));
       const payload: Record<string, unknown> = { name: def.name, trigger: def.trigger, steps: def.steps };
       if (def.conditions && def.conditions.length > 0) payload.conditions = def.conditions;
       if (workflowId) {
         // Workflows W1: edit in place. Runs already in
         // flight keep their start-time snapshot.
         await apiFetch(`/organizations/${orgId}/workflows/${workflowId}`, { method: "PATCH", body: JSON.stringify(payload) });
-        setNotice("Workflow আপডেট হয়েছে। চলমান Run গুলো আগের ধাপেই চলবে (Snapshot)।");
+        setNotice(t("workflows.noticeUpdated"));
       } else {
         await apiFetch(`/organizations/${orgId}/workflows`, { method: "POST", body: JSON.stringify(payload) });
-        setNotice("Workflow তৈরি হয়েছে ও সক্রিয় আছে।");
+        setNotice(t("workflows.noticeCreated"));
       }
       await onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("workflows.errSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -402,7 +414,7 @@ function CanvasInner({
     <div className="space-y-3">
       {sourceNote ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{sourceNote}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-slate-500">ধাপ যোগ করুন (টেনে ক্যানভাসে ছাড়ুন অথবা ক্লিক করুন):</span>
+        <span className="text-xs font-semibold text-slate-500">{t("workflows.addStepLabel")}</span>
         {KNOWN_STEP_TYPES.map((t) => (
           <button
             key={t}
@@ -411,14 +423,14 @@ function CanvasInner({
             onDragStart={(e) => { e.dataTransfer.setData("application/workflow-step", t); e.dataTransfer.effectAllowed = "move"; }}
             onClick={() => addStepAt(t, selectedStepIndex >= 0 ? selectedStepIndex : lastStepIndex)}
             className="rounded-full border bg-white px-3 py-1 text-xs font-medium hover:bg-slate-50"
-            style={{ borderLeft: `4px solid ${STEP_TYPE_META[t].color}` }}
+            style={{ borderLeft: `4px solid ${stepTypeMetaFor(locale)[t].color}` }}
           >
-            + {STEP_TYPE_META[t].label}
+            + {stepTypeMetaFor(locale)[t].label}
           </button>
         ))}
         <span className="mx-1 h-5 w-px bg-slate-200" />
-        <button type="button" className="rounded-lg border px-3 py-1.5 text-xs" onClick={tidy}>সাজানো (Tidy)</button>
-        <button type="button" className="btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? "সংরক্ষণ হচ্ছে..." : "Workflow তৈরি করুন"}</button>
+        <button type="button" className="rounded-lg border px-3 py-1.5 text-xs" onClick={tidy}>{t("workflows.tidy")}</button>
+        <button type="button" className="btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? t("workflows.saving") : t("workflows.createWorkflow")}</button>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
@@ -457,30 +469,30 @@ function CanvasInner({
         <div className="w-full shrink-0 space-y-3 rounded-xl border bg-white p-4 xl:w-96">
           {!selectedNode || selectedNode.data.kind === "trigger" ? (
             <div className="space-y-3">
-              <div className="font-semibold">Workflow এর তথ্য (Trigger)</div>
-              <label className="block text-sm">নাম<input className="input mt-1" value={meta.name} onChange={(e) => setMeta({ ...meta, name: e.target.value })} placeholder="বড় Order এ ধন্যবাদ" /></label>
+              <div className="font-semibold">{t("workflows.metaTitle")}</div>
+              <label className="block text-sm">{t("workflows.nameLabel")}<input className="input mt-1" value={meta.name} onChange={(e) => setMeta({ ...meta, name: e.target.value })} placeholder={t("workflows.namePlaceholder")} /></label>
               <label className="block text-sm">Trigger
                 <select className="input mt-1" value={meta.trigger} onChange={(e) => setMeta({ ...meta, trigger: e.target.value })}>
-                  {TRIGGERS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  {triggersFor(locale).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </label>
-              <label className="block text-sm">শর্তের Field (ঐচ্ছিক)
+              <label className="block text-sm">{t("workflows.conditionFieldLabel")}
                 <select className="input mt-1" value={firstCondition?.field ?? ""} onChange={(e) => {
                   const field = e.target.value;
                   if (!field) setMeta({ ...meta, conditions: extraConditions });
                   else setMeta({ ...meta, conditions: [{ field, op: firstCondition?.op ?? "gte", value: firstCondition?.value ?? "" }, ...extraConditions] });
                 }}>
-                  <option value="">কোনো শর্ত নেই</option>
-                  <option value="total">Order Total (টাকায়)</option>
+                  <option value="">{t("workflows.condNone")}</option>
+                  <option value="total">{t("workflows.condTotal")}</option>
                   <option value="stage">Lead Stage</option>
                   <option value="source">Source</option>
                   <option value="status">Order Status</option>
-                  <option value="cartValue">কার্টের মোট মূল্য (টাকা)</option>
-                  <option value="itemsCount">কার্টের আইটেম সংখ্যা</option>
-                  <option value="intent">গ্রাহকের Intent (complaint/order)</option>
-                  <option value="refundAmount">রিফান্ড পরিমাণ (টাকায়)</option>
-                  <option value="shipmentStatus">পার্সেল স্ট্যাটাস</option>
-                  <option value="scheduleTime">Schedule সময় (HH:MM)</option>
+                  <option value="cartValue">{t("workflows.condCartValue")}</option>
+                  <option value="itemsCount">{t("workflows.condItemsCount")}</option>
+                  <option value="intent">{t("workflows.condIntent")}</option>
+                  <option value="refundAmount">{t("workflows.condRefundAmount")}</option>
+                  <option value="shipmentStatus">{t("workflows.condShipmentStatus")}</option>
+                  <option value="scheduleTime">{t("workflows.condScheduleTime")}</option>
                 </select>
               </label>
               {firstCondition ? <>
@@ -489,40 +501,40 @@ function CanvasInner({
                     {OPS.map((op) => <option key={op} value={op}>{op}</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">শর্তের মান<input className="input mt-1" value={firstCondition.value === undefined ? "" : String(firstCondition.value)} onChange={(e) => setMeta({ ...meta, conditions: [{ ...firstCondition, value: parseConditionValue(e.target.value) }, ...extraConditions] })} placeholder="1000 অথবা qualified" /></label>
+                <label className="block text-sm">{t("workflows.conditionValueLabel")}<input className="input mt-1" value={firstCondition.value === undefined ? "" : String(firstCondition.value)} onChange={(e) => setMeta({ ...meta, conditions: [{ ...firstCondition, value: parseConditionValue(e.target.value) }, ...extraConditions] })} placeholder={t("workflows.conditionValuePlaceholder")} /></label>
               </> : null}
               {extraConditions.length > 0 ? (
                 <p className="rounded-lg bg-slate-50 p-2 text-xs text-slate-500">
-                  আরও {extraConditions.length}টি শর্ত আছে — ক্যানভাস সেগুলো বদলায় না, যেমন আছে তেমনই সংরক্ষণ হবে: <code>{JSON.stringify(extraConditions)}</code>
+                  {t("workflows.extraConditionsNote", { count: extraConditions.length })} <code>{JSON.stringify(extraConditions)}</code>
                 </p>
               ) : null}
-              <p className="text-xs text-slate-400">কোনো ধাপ বেছে নিলে তার ফিল্ড এখানে বদলানো যাবে। ধাপের ক্রম বদলাতে ধাপ বেছে ↑ ↓ বোতাম ব্যবহার করুন, অথবা সংযোগ মুছে নতুন করে যুক্ত করুন।</p>
+              <p className="text-xs text-slate-400">{t("workflows.panelHelp")}</p>
             </div>
           ) : selectedNode.data.kind === "stop" || selectedNode.data.kind === "end" ? (
             <div className="space-y-2">
               <div className="font-semibold">{selectedNode.data.label}</div>
-              <p className="text-sm text-slate-500">এটি Engine-এর আচরণের ছবি মাত্র — আলাদা কোনো ধাপ নয়, সংরক্ষণেও যায় না। শর্ত না মিললে Workflow Run এখানেই শেষ হয়।</p>
+              <p className="text-sm text-slate-500">{t("workflows.stopPanelText")}</p>
             </div>
           ) : selectedNode.data.locked ? (
             <div className="space-y-2">
-              <div className="font-semibold">অজানা ধাপ 🔒</div>
-              <p className="text-sm text-slate-500">এই ধাপের ধরন (<code>{selectedNode.data.step?.type}</code>) ক্যানভাস চেনে না — সম্ভবত ভবিষ্যৎ বা অন্য টুলের তৈরি। এটি বদলানো যাবে না, তবে সংরক্ষণে **হুবহু যেমন আছে তেমনই** থেকে যাবে:</p>
+              <div className="font-semibold">{t("workflows.unknownStepTitle")}</div>
+              <p className="text-sm text-slate-500">{t("workflows.unknownStepTextPrefix")}<code>{selectedNode.data.step?.type}</code>{t("workflows.unknownStepTextSuffix")}</p>
               <pre className="max-h-64 overflow-auto rounded-lg bg-slate-50 p-2 text-xs">{JSON.stringify(selectedNode.data.step, null, 2)}</pre>
-              <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600" onClick={deleteSelectedStep}>ধাপটি মুছুন</button>
+              <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600" onClick={deleteSelectedStep}>{t("workflows.deleteThisStep")}</button>
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="font-semibold">ধাপ সম্পাদনা</div>
+              <div className="font-semibold">{t("workflows.editStepTitle")}</div>
               {draft ? (
                 <StepFields draft={draft} onChange={setDraft} templates={templates} waTemplates={waTemplates} members={members} />
               ) : null}
               <div className="flex flex-wrap gap-2 border-t pt-3">
-                <button type="button" className="btn-primary btn-sm" onClick={applyPanel}>প্রয়োগ করুন</button>
-                <button type="button" className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => moveSelected(-1)}>↑ উপরে</button>
-                <button type="button" className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => moveSelected(1)}>↓ নিচে</button>
-                <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600" onClick={deleteSelectedStep}>ধাপ মুছুন</button>
+                <button type="button" className="btn-primary btn-sm" onClick={applyPanel}>{t("workflows.apply")}</button>
+                <button type="button" className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => moveSelected(-1)}>{t("workflows.moveUp")}</button>
+                <button type="button" className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => moveSelected(1)}>{t("workflows.moveDown")}</button>
+                <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600" onClick={deleteSelectedStep}>{t("workflows.deleteStep")}</button>
               </div>
-              <p className="text-xs text-slate-400">ফর্ম এডিটরের একই ফিল্ড ও একই যাচাই ব্যবহৃত হচ্ছে। “প্রয়োগ করুন” শুধু ক্যানভাসে বদলায়; সার্ভারে যেতে উপরের “Workflow তৈরি করুন” চাপুন।</p>
+              <p className="text-xs text-slate-400">{t("workflows.editStepHelp")}</p>
             </div>
           )}
         </div>

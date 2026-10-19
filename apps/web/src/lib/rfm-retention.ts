@@ -3,6 +3,15 @@
  * Tailored for Bangladeshi e-commerce merchants and retail stores.
  */
 
+import { fmtMoney } from "@repo/contracts";
+import type { UiLocale } from "@repo/contracts";
+import { crmBn, crmEn } from "./i18n/crm";
+import { interpolate } from "./i18n/lookup";
+
+/** crm dictionary for the given UI locale (bn is the default). */
+const D = (locale?: string) => (locale === "en" ? crmEn : crmBn);
+const locOf = (locale?: string): "bn" | "en" => (locale === "en" ? "en" : "bn");
+
 export type RfmSegmentKey =
   | "champions"
   | "loyal"
@@ -35,6 +44,20 @@ export interface RfmRetentionCampaignTemplate {
   discountSummary: string;
 }
 
+const CHURN_LABEL_KEY = {
+  low: "crmZChurnLow",
+  medium: "crmZChurnMedium",
+  high: "crmZChurnHigh",
+  critical: "crmZChurnCritical",
+} as const;
+
+/** Localised churn-risk label for a level (bn default). The bn text
+ * lives in the crm dictionary; `levelLabelBangla` on the prediction
+ * result below is sourced from the same keys. */
+export function churnLevelLabel(level: ChurnRiskLevel, locale: UiLocale = "bn"): string {
+  return D(locale)[CHURN_LABEL_KEY[level]];
+}
+
 /**
  * Calculates customer churn probability (0-100%) based on order recency vs repurchase frequency
  */
@@ -61,27 +84,23 @@ export function calculateChurnProbability(
   }
 
   let level: ChurnRiskLevel = "low";
-  let levelLabelBangla = "ঝুঁকিহীন (সক্রিয়)";
   let badgeCls = "bg-emerald-100 text-emerald-800 border-emerald-300";
 
   if (churnPct >= 75) {
     level = "critical";
-    levelLabelBangla = "চূর্ণ সংকট (জরুরি উইন-ব্যাক প্রয়োজন)";
     badgeCls = "bg-red-100 text-red-800 border-red-300";
   } else if (churnPct >= 50) {
     level = "high";
-    levelLabelBangla = "উচ্চ ঝুঁকি (At-Risk)";
     badgeCls = "bg-amber-100 text-amber-800 border-amber-300";
   } else if (churnPct >= 25) {
     level = "medium";
-    levelLabelBangla = "মাঝারি ঝুঁকি";
     badgeCls = "bg-yellow-100 text-yellow-800 border-yellow-300";
   }
 
   return {
     churnPct,
     level,
-    levelLabelBangla,
+    levelLabelBangla: churnLevelLabel(level, "bn"),
     badgeCls,
   };
 }
@@ -92,7 +111,8 @@ export function calculateChurnProbability(
 export function predict12MonthClv(
   monetaryMinor: bigint | number | string,
   frequency: number,
-  recencyDays: number
+  recencyDays: number,
+  locale: UiLocale = "bn"
 ): ClvPredictionResult {
   const pastSpend = BigInt(monetaryMinor || 0);
   const safeFreq = Math.max(1, Number(frequency) || 1);
@@ -113,7 +133,7 @@ export function predict12MonthClv(
 
   const predicted12MonthSpendMinor = aovMinor * BigInt(expectedOrdersNextYear);
   const takaNum = Number(predicted12MonthSpendMinor) / 100;
-  const formattedTaka = `৳${Math.round(takaNum).toLocaleString("en-IN")}`;
+  const formattedTaka = fmtMoney(locOf(locale), Math.round(takaNum), { maximumFractionDigits: 0 });
 
   return {
     predicted12MonthSpendMinor,
@@ -123,14 +143,13 @@ export function predict12MonthClv(
 }
 
 /**
- * Formats minor units to Bengali Taka representation with Bengali digits
+ * Formats minor units to a whole-Taka amount in the given locale
+ * (bn default: Bengali digits + Taka sign via the contracts money formatter).
  */
-export function formatClvTaka(minor: bigint | number | string | null | undefined): string {
-  if (minor == null) return "৳০";
+export function formatClvTaka(minor: bigint | number | string | null | undefined, locale: UiLocale = "bn"): string {
+  if (minor == null) return fmtMoney(locOf(locale), 0, { maximumFractionDigits: 0 });
   const num = Math.round(Number(minor) / 100);
-  const formatted = num.toLocaleString("en-IN");
-  const bnFormatted = formatted.replace(/[0-9]/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]);
-  return `৳${bnFormatted}`;
+  return fmtMoney(locOf(locale), num, { maximumFractionDigits: 0 });
 }
 
 /**
@@ -169,32 +188,35 @@ export function extractSegmentPhoneNumbers(
   };
 }
 
+const CAMPAIGN_MESSAGE_KEY: Record<RfmSegmentKey, keyof typeof crmBn> = {
+  champions: "crmZCampaignChampions",
+  at_risk: "crmZCampaignAtRisk",
+  loyal: "crmZCampaignLoyal",
+  big_spenders: "crmZCampaignBigSpenders",
+  lost: "crmZCampaignLost",
+  new: "crmZCampaignNew",
+  regular: "crmZCampaignRegular",
+};
+
 /**
- * Generates ready-to-blast personalized campaign copy for WhatsApp or SMS
+ * Generates ready-to-blast personalized campaign copy for WhatsApp or SMS.
+ * The copy lives in the crm dictionary (crmZCampaign*); `locale` picks
+ * the message language (bn default). `storeName` defaults to the
+ * dictionary's rfmOurShop for the locale.
  */
 export function buildSegmentCampaignMessage(
   segment: RfmSegmentKey,
   customerName: string,
   promoCode: string,
-  storeName = "আমাদের শপ"
+  storeName?: string,
+  locale: UiLocale = "bn"
 ): string {
-  const name = customerName.trim() || "সম্মানিত গ্রাহক";
-
-  switch (segment) {
-    case "champions":
-      return `আসসালামু আলাইকুম ${name}! ${storeName}-এর সবচেয়ে সম্মানিত VIP কাস্টমার হিসেবে আপনাকে অভিনন্দন। আপনার জন্য বিশেষ উপহার: *${promoCode}* কোড ব্যবহারে ২০% অতিরিক্ত ছাড় ও ফ্রি ডেলিভারি উপভোগ করুন। ধন্যবাদ আমাদের সাথে থাকার জন্য!`;
-    case "at_risk":
-      return `আসসালামু আলাইকুম ${name}! ${storeName} থেকে অনেক দিন আপনার কোনো অর্ডার পাইনি, আপনাকে ভীষণ মিস করছি! আপনার জন্য বিশেষ ১৫% উইন-ব্যাক ভাউচার: *${promoCode}*। যেকোনো কেনাকাটায় এখনই ব্যবহার করতে পারেন।`;
-    case "loyal":
-      return `আসসালামু আলাইকুম ${name}! ${storeName}-এর প্রতি আপনার বিশ্বস্ততার জন্য কৃতজ্ঞতা। আপনার পছন্দের কালেকশনে বিশেষ ১৫% ছাড় পেতে কুপন কোড: *${promoCode}* ব্যবহার করুন।`;
-    case "big_spenders":
-      return `আসসালামু আলাইকুম ${name}! ${storeName}-এর এক্সক্লুসিভ প্রিমিয়াম কালেকশনে আপনার জন্য ৳৫০০ ফ্ল্যাট ডিসকাউন্ট ভাউচার কোড: *${promoCode}*। নতুন লিমিটেড এডিশন স্টক দেখতে যোগাযোগ করুন।`;
-    case "lost":
-      return `আসসালামু আলাইকুম ${name}! ${storeName}-এর বিশেষ রি-অ্যাক্টিভেশন ধামাকা অফারে পাচ্ছেন ফ্ল্যাট ২০% ছাড়। কুপন কোড: *${promoCode}*। সীমিত সময়ের এই অফারটি মিস করবেন না!`;
-    case "new":
-      return `আসসালামু আলাইকুম ${name}! ${storeName} থেকে প্রথম অর্ডারের জন্য আন্তরিক ধন্যবাদ। আপনার দ্বিতীয় অর্ডারে ১০% ইনস্ট্যান্ট ছাড়ের জন্য কুপন কোড: *${promoCode}*।`;
-    case "regular":
-    default:
-      return `আসসালামু আলাইকুম ${name}! ${storeName}-এ আপনার জন্য বিশেষ উপহার কুপন: *${promoCode}*। নতুন কালেকশন দেখতে ও সেরা অফার উপভোগ করতে যোগাযোগ করুন।`;
-  }
+  const d = D(locale);
+  const name = customerName.trim() || d.crmZCampaignDefaultName;
+  const store = storeName ?? d.rfmOurShop;
+  return interpolate(d[CAMPAIGN_MESSAGE_KEY[segment] ?? "crmZCampaignRegular"], {
+    name,
+    store,
+    code: promoCode,
+  });
 }

@@ -1,3 +1,7 @@
+import { inboxBn, inboxEn } from "./i18n/inbox";
+
+type Loc = "bn" | "en";
+const D = (locale?: string) => (locale === "en" ? inboxEn : inboxBn);
 // IN6 (Inbox Next): message-lifecycle presentation helpers.
 //
 // Honesty rules baked in:
@@ -18,12 +22,14 @@ export type DeliveryTick = { glyph: string; label: string; blue: boolean } | nul
 export function deliveryTick(
   channel: string | null | undefined,
   msg: { direction: string; deliveryStatus?: string | null },
+  locale: Loc = "bn",
 ): DeliveryTick {
+  const dd = D(locale);
   if (msg.direction !== "out" || !msg.deliveryStatus) return null;
   if (channel === "whatsapp") {
-    if (msg.deliveryStatus === "sent") return { glyph: "✓", label: "পাঠানো হয়েছে", blue: false };
-    if (msg.deliveryStatus === "delivered") return { glyph: "✓✓", label: "পৌঁছেছে", blue: false };
-    if (msg.deliveryStatus === "read") return { glyph: "✓✓", label: "পড়া হয়েছে", blue: true };
+    if (msg.deliveryStatus === "sent") return { glyph: "✓", label: dd.tickSent, blue: false };
+    if (msg.deliveryStatus === "delivered") return { glyph: "✓✓", label: dd.tickDelivered, blue: false };
+    if (msg.deliveryStatus === "read") return { glyph: "✓✓", label: dd.tickRead, blue: true };
     return null; // failed is rendered by the existing failed state
   }
   if (channel === "messenger" || channel === "instagram") {

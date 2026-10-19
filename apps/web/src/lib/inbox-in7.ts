@@ -1,3 +1,7 @@
+import { inboxBn, inboxEn } from "./i18n/inbox";
+
+type Loc = "bn" | "en";
+const D = (locale?: string) => (locale === "en" ? inboxEn : inboxBn);
 /**
  * IN7 — AI next-step helpers for the inbox UI (pure).
  *
@@ -52,7 +56,7 @@ export function isRunnableAction(action: NextAction): boolean {
 }
 
 /**
- * The patch an explicit "গ্রহণ করুন" click applies through the
+ * The patch an explicit Accept click applies through the
  * normal updateConversation (PATCH) path. Only fields the
  * proposal actually carries are included; tags merge with the
  * thread's current tags (never replace, never duplicate).
@@ -72,11 +76,12 @@ export function proposalAcceptPatch(
 /** Honest one-line report of a handover-summary outcome, shown
  * after take-over / assign. null outcome (older responses, or no
  * handover happened) -> no line at all. */
-export function handoverSummaryNotice(outcome: HandoverSummaryOutcome | null | undefined): string | null {
+export function handoverSummaryNotice(outcome: HandoverSummaryOutcome | null | undefined, locale: Loc = "bn"): string | null {
   if (!outcome) return null;
-  if (outcome.created) return "🤖 AI হ্যান্ডওভার সারসংক্ষেপটি অভ্যন্তরীণ নোটে যোগ হয়েছে।";
-  if (outcome.attempted) return "🤖 AI সারসংক্ষেপ তৈরি হয়নি — কারণসহ একটি সিস্টেম নোট যোগ হয়েছে।";
-  return "🤖 AI সারসংক্ষেপ হয়নি (AI বন্ধ/সীমা) — হ্যান্ডওভার সম্পন্ন হয়েছে।";
+  const dd = D(locale);
+  if (outcome.created) return dd.handoverCreated;
+  if (outcome.attempted) return dd.handoverAttempted;
+  return dd.handoverSkipped;
 }
 
 /** IN7e: the body an accepted knowledge-kind draft proposal

@@ -55,23 +55,41 @@ interface Detail {
   risk?: { band: string; score: number | null; history: { total: number; delivered: number; returned: number; cancelledOrFailed: number; refunded: number }; reasons: string[]; suggestion: string | null } | null;
   courierRecord?: { decided: number; delivered: number; returned: number; cancelledOrFailed: number; refunded: number; successRatePct: number | null; perCourier: { provider: string; decided: number; delivered: number; successRatePct: number | null }[]; lastDeliveryAt: string | null; totalShipments: number; riskBand: string; riskScore: number | null } | null;
 }
-const RISK_LABEL: Record<string, { text: string; cls: string }> = {
-  high: { text: "ঝুঁকি: উচ্চ", cls: "bg-red-100 text-red-700" },
-  medium: { text: "ঝুঁকি: মাঝারি", cls: "bg-amber-100 text-amber-700" },
-  low: { text: "ঝুঁকি: কম", cls: "bg-emerald-100 text-emerald-700" },
-  unknown: { text: "ঝুঁকি: তথ্য নেই", cls: "bg-slate-100 text-slate-500" },
-};
+import { useLocale } from "@/lib/i18n/provider";
+import { crmBn, crmEn } from "@/lib/i18n/crm";
+import { fmtNumber, fmtMoneyMinor, fmtDate } from "@repo/contracts";
+import type { UiLocale } from "@repo/contracts";
 
-const money = (minor?: string | null, currency = "BDT") =>
-  minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+const CD = (locale?: string) => (locale === "en" ? crmEn : crmBn);
+const RISK_KEY: Record<string, keyof typeof crmBn> = { high: "riskHigh", medium: "riskMedium", low: "riskLow", unknown: "riskNone" };
+
+/** Badge classes per risk band. The label TEXT always comes from the
+ * crm dictionary (both locales) via RISK_KEY — no bn literals here. */
+const RISK_LABEL_BASE: Record<string, { cls: string }> = {
+  high: { cls: "bg-red-100 text-red-700" },
+  medium: { cls: "bg-amber-100 text-amber-700" },
+  low: { cls: "bg-emerald-100 text-emerald-700" },
+  unknown: { cls: "bg-slate-100 text-slate-500" },
+};
+function riskLabelFor(locale: string): Record<string, { text: string; cls: string }> {
+  const out: Record<string, { text: string; cls: string }> = {};
+  for (const [k, v] of Object.entries(RISK_LABEL_BASE)) out[k] = { text: RISK_KEY[k] ? CD(locale)[RISK_KEY[k]] : k, cls: v.cls };
+  return out;
+}
+
+const money = (minor?: string | null, currency = "BDT", locale: UiLocale = "bn") =>
+  minor == null ? "—" : fmtMoneyMinor(locale, Number(minor), { currency });
 
 export default function CustomersPage() {
+  const { t: tr, locale } = useLocale();
+  const RISK_LABEL = riskLabelFor(locale);
+  const moneyL = (minor?: string | null, currency = "BDT") => money(minor, currency, locale);
   const confirm = useConfirm();
   const { toast } = useToast();
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [stores, setStores] = useState<{ id: string; name: string; platform?: string; syncMode?: string }[]>([]);
   const [q, setQ] = useState("");
-  // ON7: due-only filter + the খাতা (ledger) section state.
+  // ON7: due-only filter + the khata (ledger) section state.
   const [hasDue, setHasDue] = useState(false);
   // GB6 (GC15): type / tag / segment list filters + segments manager.
   const [customerType, setCustomerType] = useState("all");
@@ -95,7 +113,7 @@ export default function CustomersPage() {
   const [crmError, setCrmError] = useState("");
   const [khata, setKhata] = useState<CustomerKhata | null>(null);
   const [khataError, setKhataError] = useState("");
-  // AB5 (AX7): খাতা overdue-only filter (?overdue=1).
+  // AB5 (AX7): khata overdue-only filter (?overdue=1).
   const [khataOverdueOnly, setKhataOverdueOnly] = useState(false);
   // AB5 (AX7): B2B customer groups + per-group price list editor.
   interface CustomerGroup { id: string; name: string; memberCount: number; hasPriceList: boolean }
@@ -195,16 +213,16 @@ export default function CustomersPage() {
         await apiFetch(`/organizations/${orgId}/customers/segments/${editingSegmentId}`, {
           method: "PATCH", body: JSON.stringify(payload),
         });
-        toast({ title: "সেগমেন্ট হালনাগাদ হয়েছে।", tone: "success" });
+        toast({ title: tr("crm.segUpdated"), tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/customers/segments`, {
           method: "POST", body: JSON.stringify(payload),
         });
-        toast({ title: "সেগমেন্ট তৈরি হয়েছে।", tone: "success" });
+        toast({ title: tr("crm.segCreated"), tone: "success" });
       }
       setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); setSegTagInput(""); setEditingSegmentId("");
       await loadSegments();
-    } catch (e) { setSegError(e instanceof Error ? e.message : "সেগমেন্ট সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setSegError(e instanceof Error ? e.message : tr("crm.segSaveFailed")); }
     finally { setSegBusy(""); }
   }
 
@@ -216,15 +234,15 @@ export default function CustomersPage() {
 
   async function deleteSegment(s: CrmSegment) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `“${s.name}” সেগমেন্টটি মুছে ফেলবেন?`, body: `গ্রাহকদের কোনো তথ্য মুছবে না — শুধু এই সেগমেন্টের সংজ্ঞাটি যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: tr("crm.segDeleteConfirm", { name: s.name }), body: tr("crm.segDeleteNote"), danger: true, confirmLabel: tr("crm.deleteIt") }))) return;
     setSegBusy(`del-${s.id}`); setSegError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/segments/${s.id}`, { method: "DELETE" });
       if (segmentId === s.id) setSegmentId("");
       if (editingSegmentId === s.id) { setEditingSegmentId(""); setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); }
-      toast({ title: "সেগমেন্ট মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: tr("crm.segDeleted"), tone: "success" });
       await loadSegments();
-    } catch (e) { setSegError(e instanceof Error ? e.message : "সেগমেন্ট মোছা ব্যর্থ"); }
+    } catch (e) { setSegError(e instanceof Error ? e.message : tr("crm.segDeleteFailed")); }
     finally { setSegBusy(""); }
   }
 
@@ -242,7 +260,7 @@ export default function CustomersPage() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
     const tagError = validateTags(crmTags);
     if (tagError) { setCrmError(tagError); return; }
-    if (crmBlockedReason.length > 300) { setCrmError("ব্লকের কারণ সর্বোচ্চ ৩০০ অক্ষরের হতে হবে।"); return; }
+    if (crmBlockedReason.length > 300) { setCrmError(tr("crm.blockReasonTooLong")); return; }
     setBusy("crm"); setCrmError("");
     try {
       const out = await apiFetch<Detail>(`/organizations/${orgId}/customers/${detail.customer.id}`, {
@@ -261,10 +279,10 @@ export default function CustomersPage() {
       setCrmVip(!!out.customer.isVip);
       setCrmBlocked(!!out.customer.isBlocked);
       setCrmBlockedReason(out.customer.blockedReason ?? "");
-      toast({ title: "CRM তথ্য সেভ হয়েছে।", tone: "success" });
+      toast({ title: tr("crm.crmSaved"), tone: "success" });
       await load();
       await loadSegments();
-    } catch (e) { setCrmError(e instanceof Error ? e.message : "CRM সেভ ব্যর্থ"); }
+    } catch (e) { setCrmError(e instanceof Error ? e.message : tr("crm.crmSaveFailed")); }
     finally { setBusy(""); }
   }
 
@@ -275,7 +293,7 @@ export default function CustomersPage() {
     setCrmTagInput(""); setCrmTagError("");
   }
 
-  /** ON7: load the customer's খাতা (ledger) — open orders with
+  /** ON7: load the customer's khata (ledger) — open orders with
    * paid/due split, aging buckets and the credit limit. A failed
    * load says so; it never renders as "no dues". */
   const loadKhata = useCallback(async (customerId: string, overdueOnly = false) => {
@@ -286,7 +304,7 @@ export default function CustomersPage() {
       setCreditTaka(k.creditLimitMinor ? minorToTaka(k.creditLimitMinor) : "");
     } catch (e) {
       setKhata(null);
-      setKhataError(e instanceof Error ? e.message : "খাতা লোড ব্যর্থ");
+      setKhataError(e instanceof Error ? e.message : tr("crm.khataLoadFailed"));
     }
   }, []);
 
@@ -309,37 +327,37 @@ export default function CustomersPage() {
 
   async function saveGroup() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!groupName.trim()) { setGroupError("গ্রুপের নাম দিন।"); return; }
+    if (!groupName.trim()) { setGroupError(tr("crm.groupNameRequired")); return; }
     setGroupBusy("save"); setGroupError("");
     try {
       if (editingGroupId) {
         await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${editingGroupId}`, {
           method: "PATCH", body: JSON.stringify({ name: groupName.trim() }),
         });
-        toast({ title: "গ্রুপের নাম বদলানো হয়েছে।", tone: "success" });
+        toast({ title: tr("crm.groupRenamed"), tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/customer-groups`, {
           method: "POST", body: JSON.stringify({ name: groupName.trim() }),
         });
-        toast({ title: "গ্রুপ তৈরি হয়েছে।", tone: "success" });
+        toast({ title: tr("crm.groupCreated"), tone: "success" });
       }
       setGroupName(""); setEditingGroupId("");
       await loadGroups();
-    } catch (e) { setGroupError(e instanceof Error ? e.message : "গ্রুপ সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setGroupError(e instanceof Error ? e.message : tr("crm.groupSaveFailed")); }
     finally { setGroupBusy(""); }
   }
 
   async function deleteGroup(g: CustomerGroup) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `“${g.name}” গ্রুপটি মুছে ফেলবেন?`, body: `এই গ্রুপের ${g.memberCount} জন সদস্য গ্রুপছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং গ্রুপের প্রাইস লিস্টও মুছে যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: tr("crm.groupDeleteConfirm", { name: g.name }), body: tr("crm.groupDeleteBody", { count: fmtNumber(locale, g.memberCount) }), danger: true, confirmLabel: tr("crm.deleteIt") }))) return;
     setGroupBusy(`del-${g.id}`); setGroupError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${g.id}`, { method: "DELETE" });
       if (plGroupId === g.id) { setPlGroupId(""); setPlItems([]); }
       if (editingGroupId === g.id) { setEditingGroupId(""); setGroupName(""); }
-      toast({ title: "গ্রুপ মুছে ফেলা হয়েছে — সদস্যরা গ্রুপছাড়া হয়েছেন।", tone: "success" });
+      toast({ title: tr("crm.groupDeleted"), tone: "success" });
       await loadGroups();
-    } catch (e) { setGroupError(e instanceof Error ? e.message : "গ্রুপ মোছা ব্যর্থ"); }
+    } catch (e) { setGroupError(e instanceof Error ? e.message : tr("crm.groupDeleteFailed")); }
     finally { setGroupBusy(""); }
   }
 
@@ -349,7 +367,7 @@ export default function CustomersPage() {
     try {
       const out = await apiFetch<{ items: PriceListItemRow[] }>(`/organizations/${orgId}/commerce/customer-groups/${groupId}/price-list`);
       setPlItems(out.items ?? []);
-    } catch (e) { setGroupError(e instanceof Error ? e.message : "প্রাইস লিস্ট লোড ব্যর্থ"); }
+    } catch (e) { setGroupError(e instanceof Error ? e.message : tr("crm.priceListLoadFailed")); }
     finally { setPlLoading(false); }
   }, []);
 
@@ -364,9 +382,9 @@ export default function CustomersPage() {
 
   async function addPlItem() {
     const orgId = getOrganizationId(); if (!orgId || !plGroupId) return;
-    if (!plProductId) { setGroupError("আইটেম যোগ করতে পণ্য বেছে নিন।"); return; }
+    if (!plProductId) { setGroupError(tr("crm.pickProductFirst")); return; }
     const priceMinor = takaToMinor(plPriceTaka.trim());
-    if (priceMinor === null) { setGroupError("দাম টাকায় ঠিকভাবে লিখুন (যেমন: 450 বা 450.50)।"); return; }
+    if (priceMinor === null) { setGroupError(tr("crm.priceInvalid")); return; }
     setGroupBusy("pl-add"); setGroupError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/items`, {
@@ -376,7 +394,7 @@ export default function CustomersPage() {
       setPlPriceTaka("");
       await loadPriceList(plGroupId);
       await loadGroups();
-    } catch (e) { setGroupError(e instanceof Error ? e.message : "আইটেম যোগ ব্যর্থ"); }
+    } catch (e) { setGroupError(e instanceof Error ? e.message : tr("crm.itemAddFailed")); }
     finally { setGroupBusy(""); }
   }
 
@@ -387,7 +405,7 @@ export default function CustomersPage() {
       await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/items/${item.id}`, { method: "DELETE" });
       await loadPriceList(plGroupId);
       await loadGroups();
-    } catch (e) { setGroupError(e instanceof Error ? e.message : "আইটেম সরানো ব্যর্থ"); }
+    } catch (e) { setGroupError(e instanceof Error ? e.message : tr("crm.itemRemoveFailed")); }
     finally { setGroupBusy(""); }
   }
 
@@ -395,17 +413,17 @@ export default function CustomersPage() {
     const orgId = getOrganizationId(); if (!orgId || !plGroupId) return;
     const percentOff = Number(bulkPercent);
     if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 99) {
-      setGroupError("ছাড়ের হার ১–৯৯ শতাংশের পূর্ণ সংখ্যা হতে হবে।"); return;
+      setGroupError(tr("crm.discountInvalid")); return;
     }
     setGroupBusy("bulk"); setGroupError(""); setBulkResult("");
     try {
       const out = await apiFetch<{ written: number }>(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/bulk-percent`, {
         method: "POST", body: JSON.stringify({ percentOff }),
       });
-      setBulkResult(`${out.written}টি পণ্যে ${percentOff}% ছাড়ের দাম লেখা হয়েছে।`);
+      setBulkResult(tr("crm.bulkDiscountDone", { count: fmtNumber(locale, out.written), pct: fmtNumber(locale, percentOff) }));
       await loadPriceList(plGroupId);
       await loadGroups();
-    } catch (e) { setGroupError(e instanceof Error ? e.message : "বাল্ক ছাড় ব্যর্থ"); }
+    } catch (e) { setGroupError(e instanceof Error ? e.message : tr("crm.bulkDiscountFailed")); }
     finally { setGroupBusy(""); }
   }
 
@@ -419,7 +437,7 @@ export default function CustomersPage() {
       setLoyalty(l); setLoyaltyError("");
     } catch (e) {
       setLoyalty(null);
-      setLoyaltyError(e instanceof Error ? e.message : "লয়্যালটি লোড ব্যর্থ");
+      setLoyaltyError(e instanceof Error ? e.message : tr("crm.loyaltyLoadFailed"));
     }
   }, []);
 
@@ -430,18 +448,18 @@ export default function CustomersPage() {
   async function adjustLoyalty() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
     const delta = Number(adjustDelta);
-    if (!Number.isInteger(delta) || delta === 0) { setAdjustError("পয়েন্টের পরিমাণ শূন্য নয় এমন পূর্ণ সংখ্যা দিন (যোগ করতে ধনাত্মক, কাটতে ঋণাত্মক)।"); return; }
-    if (!adjustNote.trim()) { setAdjustError("সমন্বয়ের নোট দেওয়া বাধ্যতামূলক।"); return; }
+    if (!Number.isInteger(delta) || delta === 0) { setAdjustError(tr("crm.pointsInvalid")); return; }
+    if (!adjustNote.trim()) { setAdjustError(tr("crm.adjustNoteRequired")); return; }
     setAdjustBusy(true); setAdjustError("");
     try {
       const out = await apiFetch<{ balance: number }>(`/organizations/${orgId}/commerce/loyalty/customers/${detail.customer.id}/adjust`, {
         method: "POST",
         body: JSON.stringify({ deltaPoints: delta, note: adjustNote.trim() }),
       });
-      toast({ title: `সমন্বয় সম্পন্ন — নতুন ব্যালেন্স ${out.balance} পয়েন্ট।`, tone: "success" });
+      toast({ title: tr("crm.adjustDone", { balance: fmtNumber(locale, out.balance) }), tone: "success" });
       setAdjustDelta(""); setAdjustNote("");
       await loadLoyalty(detail.customer.id);
-    } catch (e) { setAdjustError(e instanceof Error ? e.message : "সমন্বয় ব্যর্থ"); }
+    } catch (e) { setAdjustError(e instanceof Error ? e.message : tr("crm.adjustFailed")); }
     finally { setAdjustBusy(false); }
   }
 
@@ -457,7 +475,7 @@ export default function CustomersPage() {
       setCustTier(t.tier); setCustCredit(c); setMembershipError("");
     } catch (e) {
       setCustTier(null); setCustCredit(null);
-      setMembershipError(e instanceof Error ? e.message : "মেম্বারশিপ/ক্রেডিট লোড ব্যর্থ");
+      setMembershipError(e instanceof Error ? e.message : tr("crm.membershipLoadFailed"));
     }
   }, []);
 
@@ -467,17 +485,17 @@ export default function CustomersPage() {
   async function grantCredit() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
     const payload = buildGrantPayload({ amountTaka: grantTaka, note: grantNote });
-    if (!payload) { setGrantError("পরিমাণ (টাকায়) ও কারণ — দুটোই আবশ্যক।"); return; }
+    if (!payload) { setGrantError(tr("crm.creditAmountReasonRequired")); return; }
     setGrantBusy(true); setGrantError("");
     try {
       const out = await apiFetch<{ balanceMinor: string }>(`/organizations/${orgId}/customers/${detail.customer.id}/store-credit/grant`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      toast({ title: `ক্রেডিট দেওয়া হয়েছে — নতুন ব্যালেন্স ${money(out.balanceMinor)}।`, tone: "success" });
+      toast({ title: `__X__`, tone: "success" });
       setGrantTaka(""); setGrantNote("");
       await loadMembership(detail.customer.id);
-    } catch (e) { setGrantError(e instanceof Error ? e.message : "ক্রেডিট দেওয়া ব্যর্থ"); }
+    } catch (e) { setGrantError(e instanceof Error ? e.message : tr("crm.creditFailed")); }
     finally { setGrantBusy(false); }
   }
 
@@ -487,7 +505,7 @@ export default function CustomersPage() {
     try {
       const out = await apiFetch<{ items: TierView[] }>(`/organizations/${orgId}/membership/tiers`);
       setTiers(out.items ?? []); setTierError("");
-    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার লোড ব্যর্থ"); }
+    } catch (e) { setTierError(e instanceof Error ? e.message : tr("crm.tierLoadFailed")); }
   }, []);
 
   useEffect(() => { void loadTiers(); }, [loadTiers]);
@@ -495,29 +513,29 @@ export default function CustomersPage() {
   async function createTier() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const payload = buildTierPayload({ name: tierName, minSpendTaka: tierMinTaka, sortOrder: tierSort });
-    if (!payload) { setTierError("টিয়ারের নাম ও সঠিক ন্যূনতম খরচ (টাকায়) আবশ্যক।"); return; }
+    if (!payload) { setTierError(tr("crm.tierNameSpendRequired")); return; }
     setTierBusy("create"); setTierError("");
     try {
       await apiFetch(`/organizations/${orgId}/membership/tiers`, { method: "POST", body: JSON.stringify(payload) });
-      toast({ title: "টিয়ার তৈরি হয়েছে — সব কাস্টমারের টিয়ার নতুন হিসাবে আপডেট হয়েছে।", tone: "success" });
+      toast({ title: tr("crm.tierCreated"), tone: "success" });
       setTierName(""); setTierMinTaka(""); setTierSort("0");
       await loadTiers();
       if (detail) await loadMembership(detail.customer.id);
-    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার তৈরি ব্যর্থ"); }
+    } catch (e) { setTierError(e instanceof Error ? e.message : tr("crm.tierCreateFailed")); }
     finally { setTierBusy(""); }
   }
 
   async function deleteTier(t: TierView) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `“${t.name}” টিয়ারটি মুছে ফেলবেন?`, body: "এই টিয়ারের সদস্যরা টিয়ারছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং টিয়ারের প্রাইস লিস্টও মুছে যাবে।", danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: tr("crm.tierDeleteConfirm", { name: t.name }), body: tr("crm.tierDeleteBody"), danger: true, confirmLabel: tr("crm.deleteIt") }))) return;
     setTierBusy(t.id); setTierError("");
     try {
       await apiFetch(`/organizations/${orgId}/membership/tiers/${t.id}`, { method: "DELETE" });
-      toast({ title: "টিয়ার মোছা হয়েছে।", tone: "success" });
+      toast({ title: tr("crm.tierDeleted"), tone: "success" });
       if (tierPlTierId === t.id) { setTierPlTierId(""); setTierPlItems([]); }
       await loadTiers();
       if (detail) await loadMembership(detail.customer.id);
-    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার মোছা ব্যর্থ"); }
+    } catch (e) { setTierError(e instanceof Error ? e.message : tr("crm.tierDeleteFailed")); }
     finally { setTierBusy(""); }
   }
 
@@ -527,13 +545,13 @@ export default function CustomersPage() {
     try {
       const out = await apiFetch<{ items: PriceListItemRow[] }>(`/organizations/${orgId}/commerce/tiers/${tierId}/price-list`);
       setTierPlItems(out.items ?? []);
-    } catch (e) { setTierError(e instanceof Error ? e.message : "টিয়ার প্রাইস লিস্ট লোড ব্যর্থ"); }
+    } catch (e) { setTierError(e instanceof Error ? e.message : tr("crm.tierPriceListLoadFailed")); }
   }, []);
 
   async function addTierPlItem() {
     const orgId = getOrganizationId(); if (!orgId || !tierPlTierId) return;
     const minor = takaToMinor(tierPlPriceTaka);
-    if (!tierPlProductId.trim() || minor === null) { setTierError("পণ্যের আইডি ও সঠিক দাম (টাকায়) আবশ্যক।"); return; }
+    if (!tierPlProductId.trim() || minor === null) { setTierError(tr("crm.productPriceRequired")); return; }
     setTierBusy("pl-add"); setTierError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/tiers/${tierPlTierId}/price-list/items`, {
@@ -542,7 +560,7 @@ export default function CustomersPage() {
       });
       setTierPlProductId(""); setTierPlPriceTaka("");
       await loadTierPriceList(tierPlTierId);
-    } catch (e) { setTierError(e instanceof Error ? e.message : "আইটেম যোগ ব্যর্থ"); }
+    } catch (e) { setTierError(e instanceof Error ? e.message : tr("crm.itemAddFailed")); }
     finally { setTierBusy(""); }
   }
 
@@ -552,7 +570,7 @@ export default function CustomersPage() {
     try {
       await apiFetch(`/organizations/${orgId}/commerce/tiers/${tierPlTierId}/price-list/items/${item.id}`, { method: "DELETE" });
       await loadTierPriceList(tierPlTierId);
-    } catch (e) { setTierError(e instanceof Error ? e.message : "আইটেম মোছা ব্যর্থ"); }
+    } catch (e) { setTierError(e instanceof Error ? e.message : tr("crm.itemDeleteFailed")); }
     finally { setTierBusy(""); }
   }
 
@@ -565,7 +583,7 @@ export default function CustomersPage() {
     let creditLimitMinor: string | null = null;
     if (raw) {
       const m = takaToMinor(raw);
-      if (m === null) { setCreditError("ক্রেডিট সীমা টাকায় ঠিকভাবে লিখুন (যেমন: 5000 বা 5000.50)।"); return; }
+      if (m === null) { setCreditError(tr("crm.creditLimitInvalid")); return; }
       creditLimitMinor = m;
     }
     setCreditBusy(true); setCreditError("");
@@ -573,10 +591,10 @@ export default function CustomersPage() {
       await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}`, {
         method: "PATCH", body: JSON.stringify({ creditLimitMinor }),
       });
-      toast({ title: creditLimitMinor === null ? "ক্রেডিট সীমা তুলে নেওয়া হয়েছে।" : "ক্রেডিট সীমা সংরক্ষণ হয়েছে।", tone: "success" });
+      toast({ title: creditLimitMinor === null ? tr("crm.creditLimitRemoved") : tr("crm.creditLimitSaved"), tone: "success" });
       await loadKhata(detail.customer.id);
       await load();
-    } catch (e) { setCreditError(e instanceof Error ? e.message : "ক্রেডিট সীমা সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setCreditError(e instanceof Error ? e.message : tr("crm.creditLimitSaveFailed")); }
     finally { setCreditBusy(false); }
   }
   useEffect(() => { load(); }, [load]);
@@ -594,8 +612,8 @@ export default function CustomersPage() {
     setBusy(`push-${storeId}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}/push-to-store/${storeId}`, { method: "POST" });
-      toast({ title: "Push Outbox-এ জমা হয়েছে — Sync Center-এ ফলাফল দেখা যাবে।", tone: "success" });
-    } catch (e) { setError(e instanceof Error ? e.message : "Push ব্যর্থ"); }
+      toast({ title: tr("crm.pushQueued"), tone: "success" });
+    } catch (e) { setError(e instanceof Error ? e.message : tr("crm.pushFailed")); }
     finally { setBusy(""); }
   }
 
@@ -611,7 +629,7 @@ export default function CustomersPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "customers-export.csv"; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : tr("crm.exportFailed")); }
   }
 
   async function open(id: string) {
@@ -670,9 +688,9 @@ export default function CustomersPage() {
       });
       setDetail(out);
       setEditCf(customFieldsToRaw(custDefs, out.customer.customFields));
-      toast({ title: "কাস্টমারের তথ্য সেভ হয়েছে।", tone: "success" });
+      toast({ title: tr("crm.customerSaved"), tone: "success" });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : tr("crm.saveFailed")); }
     finally { setBusy(""); }
   }
 
@@ -680,32 +698,32 @@ export default function CustomersPage() {
   // financial records stay; the confirm dialog says so plainly.
   async function doErase() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
-    if (!(await confirm({ title: "ব্যক্তিগত তথ্য স্থায়ীভাবে মুছে ফেলবেন?", body: "এই কাস্টমারের ব্যক্তিগত তথ্য (নাম, ফোন, ইমেইল, ঠিকানা) স্থায়ীভাবে মুছে ফেলা হবে — এটি ফেরত আনা যাবে না। অর্ডারের আর্থিক রেকর্ড (টাকার হিসাব) থেকে যাবে, কিন্তু অর্ডারের ঠিকানা মুছে যাবে।", danger: true, confirmLabel: "স্থায়ীভাবে মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: tr("crm.eraseConfirmTitle"), body: tr("crm.eraseConfirmBody"), danger: true, confirmLabel: tr("crm.eraseIt") }))) return;
     setBusy("erase"); setError(""); setEraseReport(null);
     try {
       const report = await apiFetch<{ customerId: string; ordersAnonymized: number; identitiesDeleted: number; reviewsRedacted: number; abandonedCheckoutsDeleted: number }>(
         `/organizations/${orgId}/customers/${detail.customer.id}/erase`, { method: "POST" },
       );
       setEraseReport(report);
-      toast({ title: "কাস্টমারের ব্যক্তিগত তথ্য মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: tr("crm.erasedDone"), tone: "success" });
       await load();
       await open(report.customerId);
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : tr("crm.eraseFailed")); }
     finally { setBusy(""); }
   }
 
   async function doMerge() {
     const orgId = getOrganizationId(); if (!orgId || !detail || !mergeTarget) return;
-    if (!(await confirm({ title: "কাস্টমার রেকর্ড মার্জ করবেন?", body: "এই কাস্টমার রেকর্ডটি নির্বাচিত রেকর্ডে মার্জ হবে। অর্ডার ও কথোপকথন সরে যাবে; মূল রেকর্ডটি লুকানো থাকবে (মুছে যাবে না)।", confirmLabel: "মার্জ করুন" }))) return;
+    if (!(await confirm({ title: tr("crm.mergeConfirmTitle"), body: tr("crm.mergeBody"), confirmLabel: tr("crm.mergeIt") }))) return;
     setBusy("merge");
     try {
       const merged = await apiFetch<Detail>(`/organizations/${orgId}/customers/merge`, {
         method: "POST", body: JSON.stringify({ sourceId: detail.customer.id, targetId: mergeTarget }),
       });
       setDetail(merged);
-      toast({ title: "মার্জ সম্পন্ন হয়েছে।", tone: "success" });
+      toast({ title: tr("crm.mergeDone"), tone: "success" });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Merge ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : tr("crm.mergeFailed")); }
     finally { setBusy(""); }
   }
 
@@ -714,7 +732,7 @@ export default function CustomersPage() {
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="page-title">Customers 360 & LTV Retention</h1>
-          <p className="text-slate-500">প্রতিটি গ্রাহকের সম্পূর্ণ ছবি: অর্ডার, কথোপকথন, পার্সেল, RFM সেগমেন্টেশন ও গ্রাহক ধরে রাখার বিজ্ঞানসম্মত টুলস।</p>
+          <p className="text-slate-500">{tr("crm.pageIntro")}</p>
         </div>
       </div>
       {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
@@ -729,7 +747,7 @@ export default function CustomersPage() {
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          <span>👥 কাস্টমার ডিরেক্টরি (360 ভিউ)</span>
+          <span>{tr("crm.directoryTitle")}</span>
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{rows.length}</span>
         </button>
 
@@ -741,7 +759,7 @@ export default function CustomersPage() {
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          <span>💎 RFM সেগমেন্টেশন ও LTV Retention Studio</span>
+          <span>{tr("crm.rfmStudioTitle")}</span>
           <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-700">
             AI CRM
           </span>
@@ -757,63 +775,63 @@ export default function CustomersPage() {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" aria-label="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input className="input w-72" placeholder={tr("crm.searchPlaceholder")} aria-label={tr("crm.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} />
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={hasDue} onChange={(e) => setHasDue(e.target.checked)} />
-              শুধু বকেয়া আছে
+              {tr("crm.dueOnlyLabel")}
             </label>
-            <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={downloadExport}>📤 CSV এক্সপোর্ট</button>
+            <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={downloadExport}>{tr("crm.csvExport")}</button>
           </div>
           {/* GB6 (GC15): CRM filters — type / exact tag / segment, all
               wired to the real list query params. */}
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-sm">গ্রাহকের ধরন
+            <label className="flex items-center gap-2 text-sm">{tr("crm.customerTypeLabel")}
               <select className="input w-40" value={customerType} onChange={(e) => setCustomerType(e.target.value)}>
                 {CUSTOMER_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </label>
-            <input className="input w-52" placeholder="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" aria-label="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
-            <label className="flex items-center gap-2 text-sm">সেগমেন্ট
+            <input className="input w-52" placeholder={tr("crm.tagFilterLabel")} aria-label={tr("crm.tagFilterLabel")} value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
+            <label className="flex items-center gap-2 text-sm">{tr("crm.segmentLabel")}
               <select className="input w-56" value={segmentId} onChange={(e) => setSegmentId(e.target.value)}>
-                <option value="">সব সেগমেন্ট</option>
-                {segments.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.memberCount} জন)</option>)}
+                <option value="">{tr("crm.allSegments")}</option>
+                {segments.map((s) => <option key={s.id} value={s.id}>{s.name} ({tr("crm.membersSuffix", { count: fmtNumber(locale, s.memberCount) })})</option>)}
               </select>
             </label>
             {(customerType !== "all" || tagFilter || segmentId) ? (
-              <button className="rounded-lg border bg-white px-3 py-2 text-sm" onClick={() => { setCustomerType("all"); setTagFilter(""); setSegmentId(""); }}>ফিল্টার পরিষ্কার করুন</button>
+              <button className="rounded-lg border bg-white px-3 py-2 text-sm" onClick={() => { setCustomerType("all"); setTagFilter(""); setSegmentId(""); }}>{tr("crm.clearFilters")}</button>
             ) : null}
           </div>
           <div className="grid gap-4 lg:grid-cols-5">
         <div className="card overflow-hidden p-0 lg:col-span-2">
-          {loading ? <p className="p-4 text-sm text-slate-400">লোড হচ্ছে...</p> : rows.length === 0 ? (
-            <div className="p-4"><EmptyState title="কোনো কাস্টমার নেই" description="অর্ডার Sync বা চ্যাট থেকে কাস্টমার তৈরি হলে এখানে দেখা যাবে।" /></div>
+          {loading ? <p className="p-4 text-sm text-slate-400">{tr("crm.loading")}</p> : rows.length === 0 ? (
+            <div className="p-4"><EmptyState title={tr("crm.noCustomers")} description={tr("crm.noCustomersHint")} /></div>
           ) : rows.map((c) => (
             <button key={c.id} onClick={() => open(c.id)} className={`block w-full border-b px-4 py-3 text-left transition hover:bg-slate-50 ${detail?.customer.id === c.id ? "bg-indigo-50/60" : ""}`}>
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium">{c.name || "নাম নেই"}</span>
-                <span className="text-sm font-semibold">{money(c.totalSpentMinor)}</span>
+                <span className="font-medium">{c.name || tr("crm.noName")}</span>
+                <span className="text-sm font-semibold">{moneyL(c.totalSpentMinor)}</span>
               </div>
-              <div className="mt-0.5 text-xs text-slate-500">{c.phone ?? c.email ?? "—"} · {c.orderCount}টি অর্ডার · {c.source}</div>
+              <div className="mt-0.5 text-xs text-slate-500">{c.phone ?? c.email ?? "—"} · {tr("crm.ordersSuffix", { count: fmtNumber(locale, c.orderCount) })} · {c.source}</div>
               {/* GB6 (GC15): sold-bucket figures — sold orders,
                   lifetime value and AOV ("—" when no sold order). */}
               <div className="mt-0.5 text-xs text-slate-500">
-                বিক্রি সম্পন্ন: {c.soldOrderCount ?? 0}টি · লাইফটাইম মূল্য: {money(c.lifetimeValueMinor ?? "0")} · গড় অর্ডার মূল্য (AOV): {c.aovMinor != null ? money(c.aovMinor) : "—"}
+                {tr("crm.soldLine")} {tr("crm.countTi", { count: fmtNumber(locale, c.soldOrderCount ?? 0) })} · {tr("crm.lifetimeValueLabel")} {moneyL(c.lifetimeValueMinor ?? "0")} · {tr("crm.aovLabel")} {c.aovMinor != null ? moneyL(c.aovMinor) : "—"}
               </div>
               {(c.isRepeat || c.isVip || c.isBlocked || (c.tags ?? []).length > 0) ? (
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {c.isRepeat ? <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">পুনরাবৃত্ত</span> : null}
+                  {c.isRepeat ? <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{tr("crm.repeatBadge")}</span> : null}
                   {c.isVip ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">⭐ VIP</span> : null}
-                  {c.isBlocked ? <span className="rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">ব্লক করা</span> : null}
+                  {c.isBlocked ? <span className="rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">{tr("crm.blockedBadge")}</span> : null}
                   {(c.tags ?? []).map((t) => <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">#{t}</span>)}
                 </div>
               ) : null}
-              {/* ON7: বকেয়া (open due) on the list row — "—" when nothing is due. */}
+              {/* ON7: due (open due) on the list row — "—" when nothing is due. */}
               <div className="mt-0.5 text-xs">
-                <span className="text-slate-500">বকেয়া: </span>
+                <span className="text-slate-500">{tr("crm.dueLabel")} </span>
                 {(() => { let due = 0n; try { due = BigInt(c.dueMinor ?? "0"); } catch { due = 0n; } return due > 0n
-                  ? <span className="font-bold text-red-600">{money(c.dueMinor)}</span>
+                  ? <span className="font-bold text-red-600">{moneyL(c.dueMinor)}</span>
                   : <span className="text-slate-500">—</span>; })()}
-                {c.creditLimitMinor ? <span className="ml-2 text-slate-500">· ক্রেডিট সীমা: {money(c.creditLimitMinor)}</span> : null}
+                {c.creditLimitMinor ? <span className="ml-2 text-slate-500">· {tr("crm.creditLimitSuffix")} {moneyL(c.creditLimitMinor)}</span> : null}
               </div>
             </button>
           ))}
@@ -824,139 +842,138 @@ export default function CustomersPage() {
               <div className="card">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-bold">{detail.customer.name || "নাম নেই"}</h2>
+                    <h2 className="text-lg font-bold">{detail.customer.name || tr("crm.noName")}</h2>
                     <p className="text-sm text-slate-500">{detail.customer.phone ?? "—"} · {detail.customer.email ?? "—"}</p>
-                    <p className="text-xs text-slate-500">সূত্র: {detail.customer.source} · যোগ দিয়েছেন {new Date(detail.customer.createdAt).toLocaleDateString()}{detail.lead ? ` · Lead: ${detail.lead.stage}` : ""}</p>
+                    <p className="text-xs text-slate-500">{tr("crm.sourcePrefix")} {detail.customer.source} · {tr("crm.joinedPrefix")} {fmtDate(locale, detail.customer.createdAt)}{detail.lead ? ` · Lead: ${detail.lead.stage}` : ""}</p>
                   </div>
                   <div className="text-right">
-                    <div className="text-xl font-black">{money(detail.lifetime.totalSpentMinor, detail.lifetime.currency)}</div>
-                    <div className="text-xs text-slate-500">মোট কেনাকাটা (বাতিল ছাড়া) · {detail.lifetime.orderCount}টি অর্ডার</div>
+                    <div className="text-xl font-black">{moneyL(detail.lifetime.totalSpentMinor, detail.lifetime.currency)}</div>
+                    <div className="text-xs text-slate-500">{tr("crm.lifetimeLine")} · {tr("crm.ordersSuffix", { count: fmtNumber(locale, detail.lifetime.orderCount) })}</div>
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
-                  <label className="block text-sm">এই রেকর্ডটি মার্জ করুন যার মধ্যে:
+                  <label className="block text-sm">{tr("crm.mergeIntoLabel")}
                     <select className="input ml-2 w-56" value={mergeTarget} onChange={(e) => setMergeTarget(e.target.value)}>
-                      <option value="">কাস্টমার বেছে নিন</option>
-                      {rows.filter((r) => r.id !== detail.customer.id).map((r) => <option key={r.id} value={r.id}>{r.name || r.phone || r.id.slice(0, 8)} ({r.orderCount} অর্ডার)</option>)}
+                      <option value="">{tr("crm.pickCustomer")}</option>
+                      {rows.filter((r) => r.id !== detail.customer.id).map((r) => <option key={r.id} value={r.id}>{r.name || r.phone || r.id.slice(0, 8)} ({tr("crm.ordersCountSuffix", { count: fmtNumber(locale, r.orderCount) })})</option>)}
                     </select>
                   </label>
-                  <button className="btn-warning" disabled={!mergeTarget || busy !== ""} onClick={doMerge}>{busy === "merge" ? "মার্জ হচ্ছে..." : "মার্জ করুন"}</button>
+                  <button className="btn-warning" disabled={!mergeTarget || busy !== ""} onClick={doMerge}>{busy === "merge" ? tr("crm.merging") : tr("crm.mergeIt")}</button>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-red-100 pt-3">
                   <button className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={doErase}>
-                    {busy === "erase" ? "মোছা হচ্ছে..." : "🗑️ ব্যক্তিগত তথ্য মুছে ফেলুন (GDPR)"}
+                    {busy === "erase" ? tr("crm.erasing") : tr("crm.eraseBtn")}
                   </button>
-                  <span className="text-xs text-slate-500">শুধু Owner/Admin পারবেন। অর্ডারের আর্থিক রেকর্ড থেকে যাবে, ব্যক্তিগত তথ্য থাকবে না।</span>
+                  <span className="text-xs text-slate-500">{tr("crm.eraseOwnerNote")}</span>
                 </div>
                 {eraseReport ? (
                   <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                    মোছার হিসাব: অর্ডার ঠিকানা মোছা হয়েছে {eraseReport.ordersAnonymized}টি · স্টোর পরিচিতি মোছা {eraseReport.identitiesDeleted}টি · রিভিউ পরিচয় গোপন {eraseReport.reviewsRedacted}টি · Abandoned checkout মোছা {eraseReport.abandonedCheckoutsDeleted}টি
-                  </p>
+                    {tr("crm.eraseReportLine", { orders: fmtNumber(locale, eraseReport.ordersAnonymized), identities: fmtNumber(locale, eraseReport.identitiesDeleted) })}</p>
                 ) : null}
               </div>
               <div className="card space-y-3">
-                <h3 className="font-semibold">✏️ তথ্য সম্পাদনা</h3>
+                <h3 className="font-semibold">{tr("crm.editInfo")}</h3>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block text-sm">নামের প্রথম অংশ
+                  <label className="block text-sm">{tr("crm.firstNameLabel")}
                     <input className="input mt-1" value={editForm.firstName} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} />
                   </label>
-                  <label className="block text-sm">নামের শেষ অংশ
+                  <label className="block text-sm">{tr("crm.lastNameLabel")}
                     <input className="input mt-1" value={editForm.lastName} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} />
                   </label>
-                  <label className="block text-sm">ফোন
+                  <label className="block text-sm">{tr("crm.phoneLabel")}
                     <input className="input mt-1" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
                   </label>
-                  <label className="block text-sm">ইমেইল
+                  <label className="block text-sm">{tr("crm.emailLabel")}
                     <input className="input mt-1" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
                   </label>
                   <CustomFieldsEditor defs={custDefs} raw={editCf} onChange={(k, v) => setEditCf({ ...editCf, [k]: v })} />
                   <label className="flex items-center gap-2 text-sm md:col-span-2">
                     <input type="checkbox" checked={editWholesale} onChange={(e) => setEditWholesale(e.target.checked)} />
-                    পাইকারি ক্রেতা (দোকানে চেকআউটে পাইকারি স্তরের দাম প্রযোজ্য হবে)
+                    {tr("crm.wholesaleLabel")}
                   </label>
                   {/* AB5 (AX7): B2B group + net credit terms. */}
-                  <label className="block text-sm">কাস্টমার গ্রুপ (B2B)
+                  <label className="block text-sm">{tr("crm.groupLabelB2b")}
                     <select className="input mt-1" value={editGroupId} onChange={(e) => setEditGroupId(e.target.value)}>
-                      <option value="">কোনো গ্রুপ নয়</option>
+                      <option value="">{tr("crm.noGroup")}</option>
                       {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
-                    <span className="mt-1 block text-xs font-normal text-slate-500">গ্রুপের প্রাইস লিস্ট থাকলে চেকআউটে ওই দামই প্রযোজ্য হবে।</span>
+                    <span className="mt-1 block text-xs font-normal text-slate-500">{tr("crm.groupPriceNote")}</span>
                   </label>
-                  <label className="block text-sm">ক্রেডিট শর্ত (বকেয়ার মেয়াদ)
+                  <label className="block text-sm">{tr("crm.creditTermsLabel")}
                     <select className="input mt-1" value={editCreditTerms} onChange={(e) => setEditCreditTerms(e.target.value)}>
-                      <option value="0">০ দিন (শর্ত নেই)</option>
-                      <option value="7">৭ দিন</option>
-                      <option value="14">১৪ দিন</option>
-                      <option value="30">৩০ দিন</option>
+                      <option value="0">{tr("crm.terms0")}</option>
+                      <option value="7">{tr("crm.terms7")}</option>
+                      <option value="14">{tr("crm.terms14")}</option>
+                      <option value="30">{tr("crm.terms30")}</option>
                     </select>
                   </label>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <button className="btn-primary" disabled={busy !== ""} onClick={saveEdit}>{busy === "edit" ? "সেভ হচ্ছে..." : "সেভ করুন"}</button>
-                  <span className="text-xs text-slate-500">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
+                  <button className="btn-primary" disabled={busy !== ""} onClick={saveEdit}>{busy === "edit" ? tr("crm.saving") : tr("crm.audSave")}</button>
+                  <span className="text-xs text-slate-500">{tr("crm.customFieldsNote1")} <a className="underline" href="/dashboard/leads">Leads & CRM {tr("crm.customFieldsNote2")}</a> {tr("crm.customFieldsWord")} {tr("crm.customFieldsNote3")}</span>
                 </div>
               </div>
               {/* GB6 (GC15): CRM — tags / VIP / staff notes / block. */}
               <div className="card space-y-3">
-                <h3 className="font-semibold">🏷️ CRM — ট্যাগ, VIP, নোট ও ব্লক</h3>
+                <h3 className="font-semibold">{tr("crm.crmSectionTitle")}</h3>
                 {detail.customer.isBlocked ? (
                   <div className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white">
-                    🚫 এই গ্রাহক ব্লক করা{detail.customer.blockedReason ? ` — কারণ: ${detail.customer.blockedReason}` : ""}। ব্লক থাকলে দোকানে চেকআউট আটকে যাবে।
+                    {tr("crm.blockedBanner")}{detail.customer.blockedReason ? ` — ${tr("crm.blockedReasonPrefix")} ${detail.customer.blockedReason}` : ""}{tr("crm.blockedBannerSuffix")} {tr("crm.blockedCheckoutNote")}
                   </div>
                 ) : null}
                 {crmError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{crmError}</p> : null}
                 <div>
-                  <div className="mb-1 text-sm font-medium">ট্যাগ (সর্বোচ্চ ১০টি, প্রতিটি ১–৩০ অক্ষর)</div>
+                  <div className="mb-1 text-sm font-medium">{tr("crm.tagsLabel")}</div>
                   <div className="flex flex-wrap gap-1.5">
                     {crmTags.map((t) => (
                       <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                         #{t}
-                        <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                        <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={tr("crm.tagRemoveTitle", { tag: t })}
                           onClick={() => setCrmTags(crmTags.filter((x) => x !== t))}>×</button>
                       </span>
                     ))}
-                    {crmTags.length === 0 ? <span className="text-xs text-slate-500">কোনো ট্যাগ নেই</span> : null}
+                    {crmTags.length === 0 ? <span className="text-xs text-slate-500">{tr("crm.noTags")}</span> : null}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <input className="input w-56" placeholder="নতুন ট্যাগ লিখুন" aria-label="নতুন ট্যাগ লিখুন" value={crmTagInput}
+                    <input className="input w-56" placeholder={tr("crm.newTagPlaceholder")} aria-label={tr("crm.newTagPlaceholder")} value={crmTagInput}
                       onChange={(e) => setCrmTagInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCrmTag(); } }} />
-                    <button type="button" className="btn-secondary btn-sm" onClick={addCrmTag}>ট্যাগ যোগ করুন</button>
+                    <button type="button" className="btn-secondary btn-sm" onClick={addCrmTag}>{tr("crm.addTag")}</button>
                   </div>
                   {crmTagError ? <p className="mt-1 text-xs text-red-600">{crmTagError}</p> : null}
                 </div>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={crmVip} onChange={(e) => setCrmVip(e.target.checked)} />
-                  ⭐ VIP গ্রাহক
+                  {tr("crm.vipLabel")}
                 </label>
-                <label className="block text-sm font-medium">অভ্যন্তরীণ নোট
-                  <span className="mb-1 block text-xs font-normal text-amber-700">শুধুমাত্র কর্মীদের জন্য — গ্রাহক এটি দেখতে পান না</span>
+                <label className="block text-sm font-medium">{tr("crm.internalNoteLabel")}
+                  <span className="mb-1 block text-xs font-normal text-amber-700">{tr("crm.internalNoteNote")}</span>
                   <textarea className="input mt-1 w-full" rows={3} value={crmNotes} onChange={(e) => setCrmNotes(e.target.value)}
-                    placeholder="যেমন: সবসময় COD পছন্দ করেন, সন্ধ্যায় ফোন ধরেন…" />
+                    placeholder={tr("crm.internalNotePlaceholder")} />
                 </label>
                 <div className="space-y-2 rounded-xl bg-red-50/60 p-3">
                   <label className="flex items-center gap-2 text-sm font-medium text-red-700">
                     <input type="checkbox" checked={crmBlocked} onChange={(e) => setCrmBlocked(e.target.checked)} />
-                    🚫 এই গ্রাহককে ব্লক করুন (চেকআউট আটকে যাবে)
+                    {tr("crm.blockLabel")}
                   </label>
                   {crmBlocked ? (
-                    <label className="block text-sm">ব্লকের কারণ (সর্বোচ্চ ৩০০ অক্ষর)
+                    <label className="block text-sm">{tr("crm.blockReasonLabel")}
                       <input className="input mt-1 w-full" value={crmBlockedReason} onChange={(e) => setCrmBlockedReason(e.target.value)}
-                        placeholder="যেমন: বারবার ভুয়া অর্ডার" maxLength={320} />
-                      <span className="mt-1 block text-xs font-normal text-slate-500">কারণটিও শুধুমাত্র কর্মীরা দেখতে পান — গ্রাহককে সাধারণ বার্তা দেখানো হয়। ব্লক তুললে কারণ মুছে যাবে।</span>
+                        placeholder={tr("crm.blockReasonPlaceholder")} maxLength={320} />
+                      <span className="mt-1 block text-xs font-normal text-slate-500">{tr("crm.blockReasonNote")}</span>
                     </label>
                   ) : null}
                 </div>
-                <button className="btn-primary" disabled={busy !== ""} onClick={saveCrm}>{busy === "crm" ? "সেভ হচ্ছে..." : "CRM সেভ করুন"}</button>
+                <button className="btn-primary" disabled={busy !== ""} onClick={saveCrm}>{busy === "crm" ? tr("crm.saving") : tr("crm.crmSave")}</button>
               </div>
               <div className="card space-y-3">
-                <h3 className="font-semibold">🏪 স্টোর পরিচিতি (Store Identities)</h3>
-                <p className="text-xs text-slate-500">একই মানুষ একাধিক স্টোরে আলাদা customer id-তে থাকতে পারেন — পরিচিতিগুলো এখানে একসাথে দেখা যায়। Push কখনো স্বয়ংক্রিয় নয়; বোতাম চাপলেই Outbox-এ যায় (mirror মোডের স্টোরে push হয় না)।</p>
+                <h3 className="font-semibold">{tr("crm.identitiesTitle")}</h3>
+                <p className="text-xs text-slate-500">{tr("crm.identitiesNote")}</p>
                 {(detail.storeIdentities ?? []).length === 0 ? (
-                  <p className="text-sm text-slate-400">কোনো স্টোর পরিচিতি নেই — স্টোর থেকে Customer Sync হলে বা নিচে Push করলে তৈরি হবে।</p>
+                  <p className="text-sm text-slate-400">{tr("crm.noIdentities")}</p>
                 ) : (detail.storeIdentities ?? []).map((si) => (
                   <div key={si.storeId} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0">
-                    <span><span className="font-medium">{si.storeName ?? "স্টোর"}</span> <span className="badge-slate ml-1">{si.platform ?? ""}</span>
+                    <span><span className="font-medium">{si.storeName ?? tr("crm.storeFallback")}</span> <span className="badge-slate ml-1">{si.platform ?? ""}</span>
                       <span className="ml-2 text-slate-500">ID: {si.externalId}</span>
                       {si.emailSnapshot ? <span className="ml-2 text-xs text-slate-500">{si.emailSnapshot}</span> : null}
                     </span>
@@ -969,20 +986,20 @@ export default function CustomersPage() {
                     return (
                       <button key={s.id} className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                         disabled={busy !== "" || mode === "mirror"}
-                        title={mode === "mirror" ? "Mirror মোডে push হয় না — Sync Center থেকে মোড বদলান" : undefined}
+                        title={mode === "mirror" ? tr("crm.mirrorNoPush") : undefined}
                         onClick={() => pushToStore(s.id)}>
-                        {busy === `push-${s.id}` ? "যাচ্ছে…" : has ? `🔄 ${s.name}-এ আপডেট Push` : `➕ ${s.name}-এ Push`}
-                        {mode === "mirror" ? " (mirror — হবে না)" : ""}
+                        {busy === `push-${s.id}` ? tr("crm.pushingLabel") : has ? tr("crm.pushUpdateLabel", { name: s.name }) : tr("crm.pushNewLabel", { name: s.name })}
+                        {mode === "mirror" ? tr("crm.mirrorSuffix") : ""}
                       </button>
                     );
                   })}
-                  {stores.length === 0 ? <span className="text-xs text-slate-500">কোনো স্টোর সংযুক্ত নেই</span> : null}
+                  {stores.length === 0 ? <span className="text-xs text-slate-500">{tr("crm.noStoreConnected")}</span> : null}
                 </div>
               </div>
               {detail.risk ? (
                 <div className="card space-y-1">
-                  <h3 className="font-semibold">↩️ রিটার্ন ঝুঁকি <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${RISK_LABEL[detail.risk.band]?.cls ?? ""}`}>{RISK_LABEL[detail.risk.band]?.text ?? detail.risk.band}{detail.risk.score != null ? ` · স্কোর ${detail.risk.score}/১০০` : ""}</span></h3>
-                  <p className="text-sm text-slate-600">মোট {detail.risk.history.total}টি অর্ডার · ডেলিভারি {detail.risk.history.delivered}টি · রিটার্ন {detail.risk.history.returned}টি · বাতিল/ব্যর্থ {detail.risk.history.cancelledOrFailed}টি · রিফান্ড {detail.risk.history.refunded}টি</p>
+                  <h3 className="font-semibold">{tr("crm.returnRisk")} <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${RISK_LABEL[detail.risk.band]?.cls ?? ""}`}>{RISK_LABEL[detail.risk.band]?.text ?? detail.risk.band}{detail.risk.score != null ? ` · ${tr("crm.scoreSuffix", { score: fmtNumber(locale, detail.risk.score) })}/${fmtNumber(locale, 100)}` : ""}</span></h3>
+                  <p className="text-sm text-slate-600">{tr("crm.riskHistoryLine", { total: fmtNumber(locale, detail.risk.history.total), delivered: fmtNumber(locale, detail.risk.history.delivered), returned: fmtNumber(locale, detail.risk.history.returned), cancelled: fmtNumber(locale, detail.risk.history.cancelledOrFailed), refunded: fmtNumber(locale, detail.risk.history.refunded) })}</p>
                   <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-500">
                     {detail.risk.reasons.slice(0, 4).map((r, i) => <li key={i}>{r}</li>)}
                   </ul>
@@ -993,28 +1010,28 @@ export default function CustomersPage() {
                 <div className="card space-y-2">
                   <h3 className="font-semibold">🚚 Courier Record</h3>
                   {detail.courierRecord.decided === 0 ? (
-                    <p className="text-sm text-slate-500">এখনো কোনো ডেলিভারি ইতিহাস নেই</p>
+                    <p className="text-sm text-slate-500">{tr("crm.noDeliveryHistory")}</p>
                   ) : (
                     <>
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                         <span className="text-3xl font-bold text-emerald-700">{detail.courierRecord.successRatePct}%</span>
-                        <span className="text-sm font-medium text-slate-600">ডেলিভারি সফলতার হার</span>
-                        <span className="text-xs text-slate-500">(সিদ্ধান্ত হয়েছে এমন {detail.courierRecord.decided}টি অর্ডারের মধ্যে ডেলিভারি {detail.courierRecord.delivered}টি — এই হারটি রিটার্ন ঝুঁকির স্কোরের উল্টো নয়, দুটি আলাদা হিসাব)</span>
+                        <span className="text-sm font-medium text-slate-600">{tr("crm.deliveryRateTitle")}</span>
+                        <span className="text-xs text-slate-500">{tr("crm.courierDecidedNote", { decided: fmtNumber(locale, detail.courierRecord.decided), delivered: fmtNumber(locale, detail.courierRecord.delivered) })}</span>
                       </div>
-                      <p className="text-sm text-slate-600">রিটার্ন {detail.courierRecord.returned}টি · বাতিল/ব্যর্থ {detail.courierRecord.cancelledOrFailed}টি · রিফান্ড {detail.courierRecord.refunded}টি · মোট শিপমেন্ট {detail.courierRecord.totalShipments}টি{detail.courierRecord.lastDeliveryAt ? ` · সর্বশেষ ডেলিভারি: ${new Date(detail.courierRecord.lastDeliveryAt).toLocaleDateString("bn-BD")}` : ""}</p>
+                      <p className="text-sm text-slate-600">{tr("crm.courierLine2", { returned: fmtNumber(locale, detail.courierRecord.returned), cancelled: fmtNumber(locale, detail.courierRecord.cancelledOrFailed), refunded: fmtNumber(locale, detail.courierRecord.refunded) })} · {tr("crm.totalShipmentsSuffix", { count: fmtNumber(locale, detail.courierRecord.totalShipments) })}{detail.courierRecord.lastDeliveryAt ? ` · ${tr("crm.lastDeliverySuffix")} ${fmtDate(locale, detail.courierRecord.lastDeliveryAt)}` : ""}</p>
                       {detail.courierRecord.perCourier.length > 0 ? (
                         <ResponsiveTable
                           table={
                             <table className="w-full text-sm">
                           <thead>
-                            <tr className="border-b text-left text-xs text-slate-500"><th className="py-1 font-medium">কুরিয়ার</th><th className="py-1 font-medium">সিদ্ধান্ত হয়েছে</th><th className="py-1 font-medium">ডেলিভারি</th><th className="py-1 font-medium">সফলতার হার</th></tr>
+                            <tr className="border-b text-left text-xs text-slate-500"><th className="py-1 font-medium">{tr("crm.courierCol")}</th><th className="py-1 font-medium">{tr("crm.decidedCol")}</th><th className="py-1 font-medium">{tr("crm.deliveredCol")}</th><th className="py-1 font-medium">{tr("crm.successRateCol")}</th></tr>
                           </thead>
                           <tbody>
                             {detail.courierRecord.perCourier.map((p) => (
                               <tr key={p.provider} className="border-b last:border-0">
                                 <td className="py-1 font-medium">{p.provider}</td>
-                                <td className="py-1">{p.decided}টি</td>
-                                <td className="py-1">{p.delivered}টি</td>
+                                <td className="py-1">{tr("crm.countTi", { count: fmtNumber(locale, p.decided) })}</td>
+                                <td className="py-1">{tr("crm.countTi", { count: fmtNumber(locale, p.delivered) })}</td>
                                 <td className="py-1">{p.successRatePct != null ? `${p.successRatePct}%` : "—"}</td>
                               </tr>
                             ))}
@@ -1029,12 +1046,12 @@ export default function CustomersPage() {
                               </div>
                               <dl className="mt-2 space-y-1.5 text-sm">
                                 <div className="flex gap-2">
-                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">সিদ্ধান্ত হয়েছে</dt>
-                                  <dd>{p.decided}টি</dd>
+                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.decidedCol")}</dt>
+                                  <dd>{tr("crm.countTi", { count: fmtNumber(locale, p.decided) })}</dd>
                                 </div>
                                 <div className="flex gap-2">
-                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">ডেলিভারি</dt>
-                                  <dd>{p.delivered}টি</dd>
+                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.deliveredCol")}</dt>
+                                  <dd>{tr("crm.countTi", { count: fmtNumber(locale, p.delivered) })}</dd>
                                 </div>
                               </dl>
                             </div>
@@ -1047,28 +1064,28 @@ export default function CustomersPage() {
               ) : null}
               {custReviews.filter((r) => r.rating != null).length > 0 ? (
                 <div className="card space-y-1">
-                  <h3 className="font-semibold">⭐ গ্রাহকের রিভিউ</h3>
+                  <h3 className="font-semibold">{tr("crm.reviewsTitle")}</h3>
                   {custReviews.filter((r) => r.rating != null).map((r) => (
                     <div key={r.id} className="border-b py-1.5 text-sm last:border-0">
                       <span className="text-amber-500">{"★★★★★".slice(0, r.rating ?? 0)}{"☆☆☆☆☆".slice(0, 5 - (r.rating ?? 0))}</span>
                       <span className="ml-2 font-medium">#{r.orderNumber ?? r.orderId.slice(0, 8)}</span>
                       {r.comment ? <span className="ml-2 text-slate-700">“{r.comment}”</span> : null}
-                      {r.receivedAt ? <span className="ml-2 text-xs text-slate-500">{new Date(r.receivedAt).toLocaleDateString("bn-BD")}</span> : null}
+                      {r.receivedAt ? <span className="ml-2 text-xs text-slate-500">{fmtDate(locale, r.receivedAt)}</span> : null}
                     </div>
                   ))}
                 </div>
               ) : null}
-              {/* ON7: খাতা — the customer's ledger: total due,
+              {/* ON7: khata — the customer's ledger: total due,
                   aging buckets, credit limit and the open
                   orders behind the numbers. */}
               <div className="card space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-semibold">📒 খাতা (বকেয়ার হিসাব)</h3>
+                  <h3 className="font-semibold">{tr("crm.khataTitle")}</h3>
                   {/* AB5 (AX7): net terms in the header + overdue-only filter. */}
                   <div className="flex flex-wrap items-center gap-3 text-sm">
                     {khata ? (
                       <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                        ক্রেডিট শর্ত: {(khata.creditTermsDays ?? 0) > 0 ? `${khata.creditTermsDays} দিন` : "নেই (০ দিন)"}
+                        {tr("crm.creditTermsLabel")}: {(khata.creditTermsDays ?? 0) > 0 ? tr("crm.creditTermsSuffix", { days: fmtNumber(locale, khata.creditTermsDays ?? 0) }) : tr("crm.noTerms")}
                       </span>
                     ) : null}
                     <label className="flex items-center gap-2 text-xs font-medium">
@@ -1076,53 +1093,53 @@ export default function CustomersPage() {
                         setKhataOverdueOnly(e.target.checked);
                         if (detail) void loadKhata(detail.customer.id, e.target.checked);
                       }} />
-                      শুধু মেয়াদোত্তীর্ণ
+                      {tr("crm.overdueOnly")}
                     </label>
                   </div>
                 </div>
                 {khataError ? (
                   <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{khataError}</p>
                 ) : !khata ? (
-                  <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+                  <p className="text-sm text-slate-400">{tr("crm.loadingEllipsis")}</p>
                 ) : (
                   <>
                     <div className="flex flex-wrap items-center gap-3">
                       <div>
-                        <div className="text-2xl font-black text-red-600">{money(khata.totalDueMinor)}</div>
-                        <div className="text-xs text-slate-500">মোট বকেয়া</div>
+                        <div className="text-2xl font-black text-red-600">{moneyL(khata.totalDueMinor)}</div>
+                        <div className="text-xs text-slate-500">{tr("crm.totalDue")}</div>
                       </div>
                       {isOverLimit(khata) ? (
-                        <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-bold text-white">⚠️ ক্রেডিট সীমা ছাড়িয়ে গেছে</span>
+                        <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-bold text-white">{tr("crm.creditLimitExceeded")}</span>
                       ) : null}
                       {khata.availableCreditMinor != null ? (
                         <div className="text-sm">
-                          <span className="text-slate-500">ব্যবহারযোগ্য ক্রেডিট: </span>
-                          <b className={isOverLimit(khata) ? "text-red-600" : "text-emerald-700"}>{money(khata.availableCreditMinor)}</b>
+                          <span className="text-slate-500">{tr("crm.usableCredit")} </span>
+                          <b className={isOverLimit(khata) ? "text-red-600" : "text-emerald-700"}>{moneyL(khata.availableCreditMinor)}</b>
                         </div>
                       ) : null}
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {agingRows(khata).map((r) => (
                         <div key={r.key} className="rounded-lg bg-slate-50 px-3 py-2 text-center">
-                          <div className="text-sm font-bold">{money(r.amountMinor)}</div>
+                          <div className="text-sm font-bold">{moneyL(r.amountMinor)}</div>
                           <div className="text-[11px] text-slate-500">{r.label}</div>
                         </div>
                       ))}
                     </div>
                     <div className="space-y-2 border-t pt-3">
-                      <label className="block text-sm font-medium">ক্রেডিট সীমা (৳) — খালি রাখলে সীমা থাকবে না
+                      <label className="block text-sm font-medium">{tr("crm.creditLimitFormLabel")}
                         <span className="mt-1 flex flex-wrap items-center gap-2">
-                          <input className="input w-44" inputMode="decimal" placeholder="যেমন: 5000" value={creditTaka} onChange={(e) => setCreditTaka(e.target.value)} />
+                          <input className="input w-44" inputMode="decimal" placeholder={tr("crm.exAmount5000")} value={creditTaka} onChange={(e) => setCreditTaka(e.target.value)} />
                           <button type="button" className="btn-primary btn-sm" disabled={creditBusy} onClick={() => void saveCreditLimit()}>
-                            {creditBusy ? "সংরক্ষণ হচ্ছে…" : "সীমা সংরক্ষণ করুন"}
+                            {creditBusy ? tr("crm.savingEllipsis") : tr("crm.saveLimit")}
                           </button>
-                          <span className="text-xs text-slate-500">বর্তমান: {khata.creditLimitMinor ? money(khata.creditLimitMinor) : "সীমা নির্ধারণ করা নেই"}</span>
+                          <span className="text-xs text-slate-500">{tr("crm.currentPrefix")} {khata.creditLimitMinor ? moneyL(khata.creditLimitMinor) : tr("crm.noLimitSet")}</span>
                         </span>
                       </label>
                       {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
                     </div>
                     {khata.orders.length === 0 ? (
-                      <p className="text-sm text-slate-400">{khataOverdueOnly ? "মেয়াদোত্তীর্ণ কোনো বকেয়া অর্ডার নেই।" : "এই কাস্টমারের কোনো অর্ডার খাতায় নেই।"}</p>
+                      <p className="text-sm text-slate-400">{khataOverdueOnly ? tr("crm.khataEmptyOverdue") : tr("crm.khataEmpty")}</p>
                     ) : (
                       <ResponsiveTable
                         table={
@@ -1130,29 +1147,29 @@ export default function CustomersPage() {
                             <table className="w-full text-left text-sm">
                           <thead>
                             <tr className="border-b text-xs text-slate-500">
-                              <th className="py-1.5 pr-2 font-semibold">অর্ডার</th>
-                              <th className="py-1.5 pr-2 font-semibold">তারিখ</th>
-                              <th className="py-1.5 pr-2 font-semibold">মোট</th>
-                              <th className="py-1.5 pr-2 font-semibold">পরিশোধিত</th>
-                              <th className="py-1.5 pr-2 font-semibold">বকেয়া</th>
-                              <th className="py-1.5 pr-2 font-semibold">পরিশোধের শেষ তারিখ</th>
-                              <th className="py-1.5 font-semibold">স্ট্যাটাস</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colOrder")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colDate")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.sourceTotal")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colPaid")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colDue")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colDueDate")}</th>
+                              <th className="py-1.5 font-semibold">{tr("crm.colStatus")}</th>
                             </tr>
                           </thead>
                           <tbody>
                             {khata.orders.map((o) => (
                               <tr key={o.id} className="border-b last:border-0">
                                 <td className="py-1.5 pr-2 font-medium">#{o.number ?? o.id.slice(0, 8)}</td>
-                                <td className="py-1.5 pr-2">{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</td>
-                                <td className="py-1.5 pr-2">{money(o.totalMinor)}</td>
-                                <td className="py-1.5 pr-2">{money(o.paidMinor)}</td>
+                                <td className="py-1.5 pr-2">{o.placedAt ? fmtDate(locale, o.placedAt) : "—"}</td>
+                                <td className="py-1.5 pr-2">{moneyL(o.totalMinor)}</td>
+                                <td className="py-1.5 pr-2">{moneyL(o.paidMinor)}</td>
                                 <td className="py-1.5 pr-2">{(() => { let d = 0n; try { d = BigInt(o.dueMinor); } catch { d = 0n; } return d > 0n
-                                  ? <span className="font-bold text-red-600">{money(o.dueMinor)}</span>
+                                  ? <span className="font-bold text-red-600">{moneyL(o.dueMinor)}</span>
                                   : <span className="text-slate-400">—</span>; })()}</td>
-                                <td className="py-1.5 pr-2">{o.creditDueDate ? new Date(o.creditDueDate).toLocaleDateString("bn-BD") : "—"}</td>
+                                <td className="py-1.5 pr-2">{o.creditDueDate ? fmtDate(locale, o.creditDueDate) : "—"}</td>
                                 <td className="py-1.5">
                                   <span className="badge-slate">{o.status}</span>
-                                  {o.overdue ? <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">মেয়াদ উত্তীর্ণ</span> : null}
+                                  {o.overdue ? <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">{tr("crm.overdueBadge")}</span> : null}
                                 </td>
                               </tr>
                             ))}
@@ -1166,31 +1183,31 @@ export default function CustomersPage() {
                               <span className="font-medium">#{o.number ?? o.id.slice(0, 8)}</span>
                               <span>
                                 <span className="badge-slate">{o.status}</span>
-                                {o.overdue ? <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">মেয়াদ উত্তীর্ণ</span> : null}
+                                {o.overdue ? <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">{tr("crm.overdueBadge")}</span> : null}
                               </span>
                             </div>
                             <dl className="mt-2 space-y-1.5 text-sm">
                               <div className="flex gap-2">
-                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
-                                <dd>{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</dd>
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colDate")}</dt>
+                                <dd>{o.placedAt ? fmtDate(locale, o.placedAt) : "—"}</dd>
                               </div>
                               <div className="flex gap-2">
-                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">মোট</dt>
-                                <dd>{money(o.totalMinor)}</dd>
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.sourceTotal")}</dt>
+                                <dd>{moneyL(o.totalMinor)}</dd>
                               </div>
                               <div className="flex gap-2">
-                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধিত</dt>
-                                <dd>{money(o.paidMinor)}</dd>
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colPaid")}</dt>
+                                <dd>{moneyL(o.paidMinor)}</dd>
                               </div>
                               <div className="flex gap-2">
-                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">বকেয়া</dt>
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colDue")}</dt>
                                 <dd>{(() => { let d = 0n; try { d = BigInt(o.dueMinor); } catch { d = 0n; } return d > 0n
-                                  ? <span className="font-bold text-red-600">{money(o.dueMinor)}</span>
+                                  ? <span className="font-bold text-red-600">{moneyL(o.dueMinor)}</span>
                                   : <span className="text-slate-500">—</span>; })()}</dd>
                               </div>
                               <div className="flex gap-2">
-                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধের শেষ তারিখ</dt>
-                                <dd>{o.creditDueDate ? new Date(o.creditDueDate).toLocaleDateString("bn-BD") : "—"}</dd>
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colDueDate")}</dt>
+                                <dd>{o.creditDueDate ? fmtDate(locale, o.creditDueDate) : "—"}</dd>
                               </div>
                             </dl>
                           </div>
@@ -1198,7 +1215,7 @@ export default function CustomersPage() {
                       />
                     )}
                     {khata.ordersTruncated ? (
-                      <p className="text-xs text-amber-700">আরও অর্ডার আছে — খাতায় শুধু সাম্প্রতিকগুলো দেখানো হচ্ছে; মোট বকেয়া সব অর্ডার মিলিয়েই হিসাব করা।</p>
+                      <p className="text-xs text-amber-700">{tr("crm.khataMoreNote")}</p>
                     ) : null}
                   </>
                 )}
@@ -1207,27 +1224,27 @@ export default function CustomersPage() {
                   referral reward coupons and the staff adjust
                   form (note required). */}
               <div className="card space-y-3">
-                <h3 className="font-semibold">⭐ লয়্যালটি পয়েন্ট</h3>
+                <h3 className="font-semibold">{tr("crm.loyaltyTitle")}</h3>
                 {loyaltyError ? (
                   <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{loyaltyError}</p>
                 ) : !loyalty ? (
-                  <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+                  <p className="text-sm text-slate-400">{tr("crm.loadingEllipsis")}</p>
                 ) : (
                   <>
                     <div className="flex flex-wrap items-center gap-3">
                       <div>
-                        <div className={`text-2xl font-black ${loyalty.balance < 0 ? "text-red-600" : ""}`}>{loyalty.balance} পয়েন্ট</div>
-                        <div className="text-xs text-slate-500">বর্তমান ব্যালেন্স · মূল্য {formatPaisaNumber(loyalty.balanceValueMinor)} (১ পয়েন্ট = {formatPaisaNumber(loyalty.redeemValueMinorPerPoint)})</div>
+                        <div className={`text-2xl font-black ${loyalty.balance < 0 ? "text-red-600" : ""}`}>{tr("crm.pointsSuffix", { count: fmtNumber(locale, loyalty.balance) })}</div>
+                        <div className="text-xs text-slate-500">{tr("crm.balanceValueLine", { value: formatPaisaNumber(loyalty.balanceValueMinor), rate: formatPaisaNumber(loyalty.redeemValueMinorPerPoint) })}</div>
                       </div>
                       {!loyalty.enabled ? (
-                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">লয়্যালটি প্রোগ্রাম বর্তমানে বন্ধ</span>
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{tr("crm.loyaltyOff")}</span>
                       ) : null}
                       {loyalty.balance < 0 ? (
-                        <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">ঋণাত্মক ব্যালেন্স — অর্জন করে শোধ না করা পর্যন্ত পয়েন্ট খরচ বন্ধ</span>
+                        <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">{tr("crm.negativeBalance")}</span>
                       ) : null}
                     </div>
                     {loyalty.entries.length === 0 ? (
-                      <p className="text-sm text-slate-400">এখনো কোনো পয়েন্টের লেনদেন নেই।</p>
+                      <p className="text-sm text-slate-400">{tr("crm.noPointTx")}</p>
                     ) : (
                       <ResponsiveTable
                         table={
@@ -1235,25 +1252,25 @@ export default function CustomersPage() {
                             <table className="w-full text-left text-sm">
                           <thead>
                             <tr className="border-b text-xs text-slate-500">
-                              <th className="py-1.5 pr-2 font-semibold">ধরন</th>
-                              <th className="py-1.5 pr-2 font-semibold">পয়েন্ট</th>
-                              <th className="py-1.5 pr-2 font-semibold">ব্যালেন্স (পরে)</th>
-                              <th className="py-1.5 pr-2 font-semibold">অর্ডার</th>
-                              <th className="py-1.5 font-semibold">তারিখ</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.cfTypeLabel")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colPoints")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colBalanceAfter")}</th>
+                              <th className="py-1.5 pr-2 font-semibold">{tr("crm.colOrder")}</th>
+                              <th className="py-1.5 font-semibold">{tr("crm.colDate")}</th>
                             </tr>
                           </thead>
                           <tbody>
                             {loyalty.entries.map((en) => (
                               <tr key={en.id} className="border-b last:border-0 align-top">
                                 <td className="py-1.5 pr-2">
-                                  <span className="font-medium">{loyaltyEntryLabel(en)}</span>
+                                  <span className="font-medium">{loyaltyEntryLabel(en, locale)}</span>
                                   {loyaltyEntryNote(en) ? <span className="block text-xs text-slate-500">{loyaltyEntryNote(en)}</span> : null}
-                                  {en.expiresAt ? <span className="block text-xs text-slate-500">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</span> : null}
+                                  {en.expiresAt ? <span className="block text-xs text-slate-500">{tr("crm.expiryPrefix")} {fmtDate(locale, en.expiresAt)}{en.remainingPoints != null ? ` · ${tr("crm.remainingPointsSuffix", { count: fmtNumber(locale, en.remainingPoints) })}` : ""}</span> : null}
                                 </td>
                                 <td className={`py-1.5 pr-2 font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)}</td>
                                 <td className="py-1.5 pr-2">{en.balanceAfter}</td>
                                 <td className="py-1.5 pr-2">{en.orderNumber ? `#${en.orderNumber}` : en.orderId ? `#${en.orderId.slice(0, 8)}` : "—"}</td>
-                                <td className="py-1.5 text-slate-500">{new Date(en.createdAt).toLocaleDateString("bn-BD")}</td>
+                                <td className="py-1.5 text-slate-500">{fmtDate(locale, en.createdAt)}</td>
                               </tr>
                             ))}
                             </tbody>
@@ -1263,23 +1280,23 @@ export default function CustomersPage() {
                         cards={loyalty.entries.map((en) => (
                           <div key={en.id} className="rounded-lg border p-3">
                             <div className="flex items-start justify-between gap-2">
-                              <span className="font-medium">{loyaltyEntryLabel(en)}</span>
+                              <span className="font-medium">{loyaltyEntryLabel(en, locale)}</span>
                               <span className={`font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)}</span>
                             </div>
                             {loyaltyEntryNote(en) ? <div className="mt-0.5 text-xs text-slate-500">{loyaltyEntryNote(en)}</div> : null}
-                            {en.expiresAt ? <div className="mt-0.5 text-xs text-slate-500">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</div> : null}
+                            {en.expiresAt ? <div className="mt-0.5 text-xs text-slate-500">{tr("crm.expiryPrefix")} {fmtDate(locale, en.expiresAt)}{en.remainingPoints != null ? ` · ${tr("crm.remainingPointsSuffix", { count: fmtNumber(locale, en.remainingPoints) })}` : ""}</div> : null}
                             <dl className="mt-2 space-y-1.5 text-sm">
                               <div className="flex gap-2">
-                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">ব্যালেন্স (পরে)</dt>
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colBalanceAfter")}</dt>
                                 <dd>{en.balanceAfter}</dd>
                               </div>
                               <div className="flex gap-2">
-                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colOrder")}</dt>
                                 <dd>{en.orderNumber ? `#${en.orderNumber}` : en.orderId ? `#${en.orderId.slice(0, 8)}` : "—"}</dd>
                               </div>
                               <div className="flex gap-2">
-                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
-                                <dd className="text-slate-500">{new Date(en.createdAt).toLocaleDateString("bn-BD")}</dd>
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colDate")}</dt>
+                                <dd className="text-slate-500">{fmtDate(locale, en.createdAt)}</dd>
                               </div>
                             </dl>
                           </div>
@@ -1288,33 +1305,33 @@ export default function CustomersPage() {
                     )}
                     {(loyalty.referralRewards?.coupons ?? []).length > 0 ? (
                       <div className="space-y-1 border-t pt-3">
-                        <div className="text-sm font-semibold">🎁 রেফারেল পুরস্কারে পাওয়া কুপন</div>
+                        <div className="text-sm font-semibold">{tr("crm.referralCouponsTitle")}</div>
                         {(loyalty.referralRewards?.coupons ?? []).map((c) => (
                           <div key={c.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
                             <span className="font-mono font-semibold">{c.code}</span>
-                            <span>{c.kind === "percent" ? `${c.value}% ছাড়` : c.value}</span>
-                            {c.sourceOrderNumber ? <span className="text-xs text-slate-500">রেফার করা অর্ডার #{c.sourceOrderNumber}</span> : null}
-                            {c.endsAt ? <span className="text-xs text-slate-500">মেয়াদ: {new Date(c.endsAt).toLocaleDateString("bn-BD")}</span> : null}
-                            {!c.active ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">বাতিল/নিষ্ক্রিয়</span>
-                              : c.usedCount > 0 ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600">ব্যবহৃত ({c.usedCount}বার)</span>
-                              : <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">সক্রিয়</span>}
+                            <span>{c.kind === "percent" ? tr("crm.percentOffSuffix", { pct: fmtNumber(locale, c.value) }) : c.value}</span>
+                            {c.sourceOrderNumber ? <span className="text-xs text-slate-500">{tr("crm.referredOrderPrefix")} #{c.sourceOrderNumber}</span> : null}
+                            {c.endsAt ? <span className="text-xs text-slate-500">{tr("crm.expiryPrefix")} {fmtDate(locale, c.endsAt)}</span> : null}
+                            {!c.active ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">{tr("crm.couponInactive")}</span>
+                              : c.usedCount > 0 ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600">{tr("crm.couponUsed", { count: fmtNumber(locale, c.usedCount) })}</span>
+                              : <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">{tr("crm.couponActive")}</span>}
                           </div>
                         ))}
                       </div>
                     ) : null}
                     <div className="space-y-2 border-t pt-3">
-                      <div className="text-sm font-semibold">পয়েন্ট সমন্বয় (স্টাফ)</div>
-                      <p className="text-xs text-slate-500">ধনাত্মক সংখ্যা = পয়েন্ট যোগ, ঋণাত্মক = পয়েন্ট কাটা। নোট দেওয়া বাধ্যতামূলক — নোটটি লেজারে থেকে যাবে।</p>
+                      <div className="text-sm font-semibold">{tr("crm.adjustTitle")}</div>
+                      <p className="text-xs text-slate-500">{tr("crm.adjustNote")}</p>
                       {adjustError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{adjustError}</p> : null}
                       <div className="flex flex-wrap items-end gap-2">
-                        <label className="block text-sm">পয়েন্ট (+/−)
-                          <input className="input mt-1 w-36" type="number" step="1" value={adjustDelta} onChange={(e) => setAdjustDelta(e.target.value)} placeholder="যেমন: ৫০ বা −২০" />
+                        <label className="block text-sm">{tr("crm.pointsPmLabel")}
+                          <input className="input mt-1 w-36" type="number" step="1" value={adjustDelta} onChange={(e) => setAdjustDelta(e.target.value)} placeholder={tr("crm.exPoints")} />
                         </label>
-                        <label className="block flex-1 text-sm">নোট (বাধ্যতামূলক)
-                          <input className="input mt-1 w-full" value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder="সমন্বয়ের কারণ লিখুন" />
+                        <label className="block flex-1 text-sm">{tr("crm.noteRequiredLabel")}
+                          <input className="input mt-1 w-full" value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder={tr("crm.adjustReasonPlaceholder")} />
                         </label>
                         <button type="button" className="btn-primary" disabled={adjustBusy || !adjustNote.trim() || !adjustDelta.trim() || Number(adjustDelta) === 0} onClick={() => void adjustLoyalty()}>
-                          {adjustBusy ? "হচ্ছে…" : "সমন্বয় করুন"}
+                          {adjustBusy ? tr("crm.doingEllipsis") : tr("crm.adjustBtn")}
                         </button>
                       </div>
                     </div>
@@ -1326,27 +1343,27 @@ export default function CustomersPage() {
                   balance, history, staff grant with required
                   reason). */}
               <div className="card space-y-3">
-                <h3 className="font-semibold">🏅 মেম্বারশিপ টিয়ার ও স্টোর ক্রেডিট</h3>
+                <h3 className="font-semibold">{tr("crm.membershipTitle")}</h3>
                 {membershipError ? (
                   <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{membershipError}</p>
                 ) : !custCredit ? (
-                  <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+                  <p className="text-sm text-slate-400">{tr("crm.loadingEllipsis")}</p>
                 ) : (
                   <>
                     <div className="flex flex-wrap items-center gap-3">
                       <div>
-                        <div className="text-2xl font-black">{money(custCredit.balanceMinor)}</div>
-                        <div className="text-xs text-slate-500">স্টোর ক্রেডিট ব্যালেন্স (লেজার থেকে হিসাব করা)</div>
+                        <div className="text-2xl font-black">{moneyL(custCredit.balanceMinor)}</div>
+                        <div className="text-xs text-slate-500">{tr("crm.storeCreditBalance")}</div>
                       </div>
                       {custTier?.tierName ? (
-                        <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">🏅 {custTier.tierName} টিয়ার</span>
+                        <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">🏅 {tr("crm.tierSuffix", { name: custTier.tierName })}</span>
                       ) : (
-                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">কোনো টিয়ার নয়</span>
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{tr("crm.noTier")}</span>
                       )}
-                      <span className="text-xs text-slate-500">সারা জীবনের সম্পন্ন খরচ: {money(custTier?.lifetimeSpendMinor ?? "0")} (শুধু completed/delivered অর্ডার)</span>
+                      <span className="text-xs text-slate-500">{tr("crm.lifetimeSpendPrefix")} {moneyL(custTier?.lifetimeSpendMinor ?? "0")} {tr("crm.completedOnlyNote")}</span>
                     </div>
                     {custCredit.entries.length === 0 ? (
-                      <p className="text-sm text-slate-400">এখনো কোনো ক্রেডিট লেনদেন নেই।</p>
+                      <p className="text-sm text-slate-400">{tr("crm.noCreditTx")}</p>
                     ) : (
                       <div className="space-y-1">
                         {custCredit.entries.map((en) => (
@@ -1354,28 +1371,28 @@ export default function CustomersPage() {
                             <span>
                               <span className="font-medium">{creditReasonLabel(en.reason)}</span>
                               {en.note ? <span className="block text-xs text-slate-500">{en.note}</span> : null}
-                              <span className="block text-xs text-slate-400">{en.createdAt ? new Date(en.createdAt).toLocaleDateString("bn-BD") : ""}</span>
+                              <span className="block text-xs text-slate-400">{en.createdAt ? fmtDate(locale, en.createdAt) : ""}</span>
                             </span>
                             <span className={`font-semibold ${en.deltaMinor.startsWith("-") ? "text-red-600" : "text-emerald-700"}`}>
-                              {creditDeltaLabel(en.deltaMinor)} পয়সা · ব্যালেন্স {money(en.balanceAfter)}
+                              {creditDeltaLabel(en.deltaMinor)} {tr("crm.paisaWord")} · {tr("crm.balanceWord")} {moneyL(en.balanceAfter)}
                             </span>
                           </div>
                         ))}
                       </div>
                     )}
                     <div className="space-y-2 border-t pt-3">
-                      <div className="text-sm font-semibold">ক্রেডিট দিন (স্টাফ)</div>
-                      <p className="text-xs text-slate-500">কারণ দেওয়া বাধ্যতামূলক — কারণটি লেজারে থেকে যাবে। ক্রেডিট শুধু এই কাস্টমারেরই; অন্য কেউ এটি খরচ বা দেখতে পারবে না।</p>
+                      <div className="text-sm font-semibold">{tr("crm.creditGiveTitle")}</div>
+                      <p className="text-xs text-slate-500">{tr("crm.creditGiveNote")}</p>
                       {grantError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{grantError}</p> : null}
                       <div className="flex flex-wrap items-end gap-2">
-                        <label className="block text-sm">পরিমাণ (টাকা)
-                          <input className="input mt-1 w-36" inputMode="decimal" value={grantTaka} onChange={(e) => setGrantTaka(e.target.value)} placeholder="যেমন: 250" />
+                        <label className="block text-sm">{tr("crm.amountTakaLabel")}
+                          <input className="input mt-1 w-36" inputMode="decimal" value={grantTaka} onChange={(e) => setGrantTaka(e.target.value)} placeholder={tr("crm.ex250")} />
                         </label>
-                        <label className="block flex-1 text-sm">কারণ (বাধ্যতামূলক)
-                          <input className="input mt-1 w-full" value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder="ক্রেডিট দেওয়ার কারণ লিখুন" />
+                        <label className="block flex-1 text-sm">{tr("crm.reasonRequiredLabel")}
+                          <input className="input mt-1 w-full" value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder={tr("crm.creditReasonPlaceholder")} />
                         </label>
                         <button type="button" className="btn-primary" disabled={grantBusy || !grantNote.trim() || !grantTaka.trim()} onClick={() => void grantCredit()}>
-                          {grantBusy ? "হচ্ছে…" : "ক্রেডিট দিন"}
+                          {grantBusy ? tr("crm.doingEllipsis") : tr("crm.creditGiveBtn")}
                         </button>
                       </div>
                     </div>
@@ -1383,11 +1400,11 @@ export default function CustomersPage() {
                 )}
               </div>
               <div className="card">
-                <h3 className="mb-2 font-semibold">অর্ডারসমূহ</h3>
-                {detail.orders.length === 0 ? <p className="text-sm text-slate-400">কোনো অর্ডার নেই</p> : detail.orders.map((o) => (
+                <h3 className="mb-2 font-semibold">{tr("crm.ordersTitle")}</h3>
+                {detail.orders.length === 0 ? <p className="text-sm text-slate-400">{tr("crm.noOrders")}</p> : detail.orders.map((o) => (
                   <div key={o.id} className="flex items-center justify-between border-b py-2 text-sm last:border-0">
                     <span>#{o.externalNumber ?? o.id.slice(0, 8)} <span className="badge-slate ml-1">{o.status}</span>{o.isCod ? <span className="badge-amber ml-1">COD</span> : null}</span>
-                    <span className="font-medium">{money(o.totalMinor)}</span>
+                    <span className="font-medium">{moneyL(o.totalMinor)}</span>
                   </div>
                 ))}
                 {detail.shipments.map((s) => (
@@ -1395,18 +1412,18 @@ export default function CustomersPage() {
                 ))}
               </div>
               <div className="card">
-                <h3 className="mb-2 font-semibold">কথোপকথন</h3>
-                {detail.conversations.length === 0 ? <p className="text-sm text-slate-400">কোনো কথোপকথন নেই</p> : detail.conversations.map((c) => (
+                <h3 className="mb-2 font-semibold">{tr("crm.conversationsTitle")}</h3>
+                {detail.conversations.length === 0 ? <p className="text-sm text-slate-400">{tr("crm.noConversations")}</p> : detail.conversations.map((c) => (
                   <a key={c.id} href="/dashboard/inbox" className="block border-b py-2 text-sm last:border-0 hover:bg-slate-50">
                     <span className="badge-indigo">{c.channel}</span> <span className="badge-slate ml-1">{c.status}</span>
                     <span className="ml-2 text-slate-600">{c.lastMessagePreview ?? ""}</span>
-                    {c.unreadCount > 0 ? <span className="badge-red ml-1">{c.unreadCount} অপঠিত</span> : null}
+                    {c.unreadCount > 0 ? <span className="badge-red ml-1">{tr("crm.unreadSuffix", { count: fmtNumber(locale, c.unreadCount) })}</span> : null}
                   </a>
                 ))}
               </div>
             </div>
           ) : (
-            <div className="card"><EmptyState title="কাস্টমার বেছে নিন" description="বাম দিকের তালিকা থেকে একজন কাস্টমারে ক্লিক করলে তার সম্পূর্ণ প্রোফাইল এখানে দেখা যাবে।" /></div>
+            <div className="card"><EmptyState title={tr("crm.pickCustomer")} description={tr("crm.selectCustomerHint")} /></div>
           )}
         </div>
       </div>
@@ -1415,45 +1432,45 @@ export default function CustomersPage() {
           A group's price list holds explicit prices only; the
           bulk %-off helper materializes rows server-side. */}
       <div className="card space-y-3">
-        <h2 className="font-semibold">👥 কাস্টমার গ্রুপ (B2B) ও প্রাইস লিস্ট</h2>
-        <p className="text-xs text-slate-500">পাইকারি/B2B ক্রেতাদের গ্রুপে ভাগ করুন। প্রতিটি গ্রুপের নিজস্ব প্রাইস লিস্ট থাকতে পারে — গ্রুপের সদস্যের চেকআউটে ক্যাটালগ দামের বদলে প্রাইস লিস্টের দামই প্রযোজ্য হবে। গ্রুপ মুছলে সদস্যরা গ্রুপছাড়া হয়ে যান, কাস্টমার মোছা হয় না।</p>
+        <h2 className="font-semibold">{tr("crm.groupsTitle")}</h2>
+        <p className="text-xs text-slate-500">{tr("crm.groupsIntro")} {tr("crm.groupsIntro2")}</p>
         {groupError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{groupError}</p> : null}
-        {groups.length === 0 ? <p className="text-sm text-slate-400">কোনো গ্রুপ নেই — নিচে প্রথমটি বানান।</p> : groups.map((g) => (
+        {groups.length === 0 ? <p className="text-sm text-slate-400">{tr("crm.noGroups")}</p> : groups.map((g) => (
           <div key={g.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
             <span>
               <span className="font-medium">{g.name}</span>
-              <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{g.memberCount} জন সদস্য</span>
+              <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{tr("crm.membersLine", { count: fmtNumber(locale, g.memberCount) })}</span>
               <span className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${g.hasPriceList ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
-                {g.hasPriceList ? "প্রাইস লিস্ট আছে" : "প্রাইস লিস্ট নেই"}
+                {g.hasPriceList ? tr("crm.priceListYes") : tr("crm.priceListNo")}
               </span>
             </span>
             <span className="flex gap-2">
-              <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(g.id); setBulkResult(""); void loadPriceList(g.id); }}>প্রাইস লিস্ট</button>
-              <button className="btn-secondary btn-sm" onClick={() => { setEditingGroupId(g.id); setGroupName(g.name); setGroupError(""); }}>নাম বদলান</button>
-              <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => deleteGroup(g)}>মুছুন</button>
+              <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(g.id); setBulkResult(""); void loadPriceList(g.id); }}>{tr("crm.priceListBtn")}</button>
+              <button className="btn-secondary btn-sm" onClick={() => { setEditingGroupId(g.id); setGroupName(g.name); setGroupError(""); }}>{tr("crm.renameBtn")}</button>
+              <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => deleteGroup(g)}>{tr("crm.audDelete")}</button>
             </span>
           </div>
         ))}
         <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-          <label className="block text-sm">{editingGroupId ? "গ্রুপের নতুন নাম" : "নতুন গ্রুপের নাম"}
-            <input className="input mt-1 w-72" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="যেমন: ঢাকার পাইকারি ক্রেতা" maxLength={200} />
+          <label className="block text-sm">{editingGroupId ? tr("crm.groupNewNameLabel") : tr("crm.newGroupNameLabel")}
+            <input className="input mt-1 w-72" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={tr("crm.exGroupName")} maxLength={200} />
           </label>
           <button className="btn-primary" disabled={groupBusy !== "" || !groupName.trim()} onClick={saveGroup}>
-            {groupBusy === "save" ? "সংরক্ষণ হচ্ছে…" : editingGroupId ? "নাম সংরক্ষণ করুন" : "গ্রুপ তৈরি করুন"}
+            {groupBusy === "save" ? tr("crm.savingEllipsis") : editingGroupId ? tr("crm.saveName") : tr("crm.createGroup")}
           </button>
           {editingGroupId ? (
-            <button className="btn-secondary" onClick={() => { setEditingGroupId(""); setGroupName(""); }}>বাতিল</button>
+            <button className="btn-secondary" onClick={() => { setEditingGroupId(""); setGroupName(""); }}>{tr("crm.cancelBtn")}</button>
           ) : null}
         </div>
 
         {plGroupId ? (
           <div className="space-y-3 rounded-xl bg-slate-50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold">💲 প্রাইস লিস্ট — {groups.find((g) => g.id === plGroupId)?.name ?? ""}</h3>
-              <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(""); setPlItems([]); }}>বন্ধ করুন</button>
+              <h3 className="text-sm font-semibold">{tr("crm.priceListTitlePrefix")} {groups.find((g) => g.id === plGroupId)?.name ?? ""}</h3>
+              <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(""); setPlItems([]); }}>{tr("crm.closeBtn")}</button>
             </div>
-            {plLoading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : plItems.length === 0 ? (
-              <p className="text-sm text-slate-400">এই লিস্টে এখনো কোনো আইটেম নেই — নিচে পণ্য যোগ করুন অথবা বাল্ক ছাড় চালান।</p>
+            {plLoading ? <p className="text-sm text-slate-400">{tr("crm.loadingEllipsis")}</p> : plItems.length === 0 ? (
+              <p className="text-sm text-slate-400">{tr("crm.priceListEmpty")}</p>
             ) : (
               <ResponsiveTable
                 table={
@@ -1461,9 +1478,9 @@ export default function CustomersPage() {
                     <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b text-xs text-slate-500">
-                      <th className="py-1.5 pr-2 font-semibold">পণ্য</th>
-                      <th className="py-1.5 pr-2 font-semibold">ভ্যারিয়েন্ট</th>
-                      <th className="py-1.5 pr-2 font-semibold">গ্রুপ দাম</th>
+                      <th className="py-1.5 pr-2 font-semibold">{tr("crm.colProduct")}</th>
+                      <th className="py-1.5 pr-2 font-semibold">{tr("crm.colVariant")}</th>
+                      <th className="py-1.5 pr-2 font-semibold">{tr("crm.colGroupPrice")}</th>
                       <th className="py-1.5 font-semibold"></th>
                     </tr>
                   </thead>
@@ -1471,10 +1488,10 @@ export default function CustomersPage() {
                     {plItems.map((it) => (
                       <tr key={it.id} className="border-b last:border-0">
                         <td className="py-1.5 pr-2 font-medium">{it.productName ?? it.productId}</td>
-                        <td className="py-1.5 pr-2">{it.variantName ?? "সব ভ্যারিয়েন্ট"}</td>
-                        <td className="py-1.5 pr-2 font-semibold">{money(it.priceMinor)}</td>
+                        <td className="py-1.5 pr-2">{it.variantName ?? tr("crm.allVariants")}</td>
+                        <td className="py-1.5 pr-2 font-semibold">{moneyL(it.priceMinor)}</td>
                         <td className="py-1.5 text-right">
-                          <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
+                          <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>{tr("crm.removeBtn")}</button>
                         </td>
                       </tr>
                     ))}
@@ -1486,49 +1503,49 @@ export default function CustomersPage() {
                   <div key={it.id} className="rounded-lg border bg-white p-3">
                     <div className="flex items-start justify-between gap-2">
                       <span className="font-medium">{it.productName ?? it.productId}</span>
-                      <span className="font-semibold">{money(it.priceMinor)}</span>
+                      <span className="font-semibold">{moneyL(it.priceMinor)}</span>
                     </div>
                     <dl className="mt-2 space-y-1.5 text-sm">
                       <div className="flex gap-2">
-                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">ভ্যারিয়েন্ট</dt>
-                        <dd>{it.variantName ?? "সব ভ্যারিয়েন্ট"}</dd>
+                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{tr("crm.colVariant")}</dt>
+                        <dd>{it.variantName ?? tr("crm.allVariants")}</dd>
                       </div>
                     </dl>
                     <div className="mt-2 text-right">
-                      <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
+                      <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>{tr("crm.removeBtn")}</button>
                     </div>
                   </div>
                 ))}
               />
             )}
             <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-              <label className="block text-sm">পণ্য
+              <label className="block text-sm">{tr("crm.productLabel")}
                 <select className="input mt-1 w-64" value={plProductId} onChange={(e) => void onPlProductChange(e.target.value)}>
-                  <option value="">— পণ্য বেছে নিন —</option>
-                  {orgProducts.map((p) => <option key={p.id} value={p.id}>{p.name} ({money(p.priceMinor)})</option>)}
+                  <option value="">{tr("crm.pickProductOption")}</option>
+                  {orgProducts.map((p) => <option key={p.id} value={p.id}>{p.name} ({moneyL(p.priceMinor)})</option>)}
                 </select>
               </label>
-              <label className="block text-sm">ভ্যারিয়েন্ট (ঐচ্ছিক)
+              <label className="block text-sm">{tr("crm.variantOptionalLabel")}
                 <select className="input mt-1 w-48" value={plVariantId} onChange={(e) => setPlVariantId(e.target.value)} disabled={!plProductId || plVariants.length === 0}>
-                  <option value="">সব ভ্যারিয়েন্ট</option>
+                  <option value="">{tr("crm.allVariants")}</option>
                   {plVariants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                 </select>
               </label>
-              <label className="block text-sm">গ্রুপ দাম (৳)
-                <input className="input mt-1 w-36" inputMode="decimal" placeholder="যেমন: 450" value={plPriceTaka} onChange={(e) => setPlPriceTaka(e.target.value)} />
+              <label className="block text-sm">{tr("crm.groupPriceLabel")}
+                <input className="input mt-1 w-36" inputMode="decimal" placeholder={tr("crm.ex450")} value={plPriceTaka} onChange={(e) => setPlPriceTaka(e.target.value)} />
               </label>
               <button className="btn-primary btn-sm" disabled={groupBusy !== "" || !plProductId || !plPriceTaka.trim()} onClick={addPlItem}>
-                {groupBusy === "pl-add" ? "যোগ হচ্ছে…" : "আইটেম যোগ করুন"}
+                {groupBusy === "pl-add" ? tr("crm.addingEllipsis") : tr("crm.addItemBtn")}
               </button>
             </div>
             <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-              <label className="block text-sm">সব সক্রিয় পণ্যে বাল্ক ছাড় (%)
-                <input className="input mt-1 w-32" type="number" min="1" max="99" placeholder="যেমন: 10" value={bulkPercent} onChange={(e) => setBulkPercent(e.target.value)} />
+              <label className="block text-sm">{tr("crm.bulkDiscountLabel")}
+                <input className="input mt-1 w-32" type="number" min="1" max="99" placeholder={tr("crm.ex10")} value={bulkPercent} onChange={(e) => setBulkPercent(e.target.value)} />
               </label>
               <button className="btn-secondary btn-sm" disabled={groupBusy !== "" || !bulkPercent.trim()} onClick={applyBulkPercent}>
-                {groupBusy === "bulk" ? "প্রয়োগ হচ্ছে…" : "ছাড় প্রয়োগ করুন"}
+                {groupBusy === "bulk" ? tr("crm.applyingEllipsis") : tr("crm.applyDiscountBtn")}
               </button>
-              <span className="text-xs text-slate-500">ছাড়টি প্রতিটি পণ্যের জন্য আলাদা দাম হিসেবে লিস্টে লেখা হবে (পণ্য-স্তরের দাম বদলে যাবে, ভ্যারিয়েন্টের দাম নয়)।</span>
+              <span className="text-xs text-slate-500">{tr("crm.bulkDiscountNote")}</span>
               {bulkResult ? <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{bulkResult}</span> : null}
             </div>
           </div>
@@ -1542,60 +1559,60 @@ export default function CustomersPage() {
           the same PriceList machinery as group lists; at
           checkout a group list wins over a tier list. */}
       <div className="card space-y-3">
-        <h2 className="font-semibold">🏅 মেম্বারশিপ টিয়ার ও টিয়ার প্রাইস লিস্ট</h2>
-        <p className="text-xs text-slate-500">কাস্টমারের সারা জীবনের সম্পন্ন (completed/delivered) খরচ যে টিয়ারের ন্যূনতম খরচে পৌঁছায়, তিনি স্বয়ংক্রিয়ভাবে সেই টিয়ারের সদস্য হন — বাতিল/অপেক্ষমাণ অর্ডার কখনোই গণনায় আসে না। টিয়ার বদলালে সব কাস্টমারের টিয়ার নতুন করে হিসাব হয়। টিয়ারের প্রাইস লিস্ট থাকলে সদস্যের চেকআউটে ক্যাটালগ দামের বদলে সেই দাম প্রযোজ্য হয় (গ্রুপ প্রাইস লিস্ট থাকলে সেটিই অগ্রাধিকার পায়)।</p>
+        <h2 className="font-semibold">{tr("crm.tiersTitle")}</h2>
+        <p className="text-xs text-slate-500">{tr("crm.tiersIntro")}</p>
         {tierError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{tierError}</p> : null}
-        {tiers.length === 0 ? <p className="text-sm text-slate-400">কোনো টিয়ার নেই — নিচে প্রথমটি বানান।</p> : tiers.map((t) => (
+        {tiers.length === 0 ? <p className="text-sm text-slate-400">{tr("crm.noTiers")}</p> : tiers.map((t) => (
           <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
             <span>
               <span className="font-medium">{t.name}</span>
-              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">ন্যূনতম খরচ {money(t.minSpendMinor)}</span>
-              <span className="ml-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{t.memberCount ?? 0} জন সদস্য</span>
+              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">{tr("crm.minSpendPrefix")} {moneyL(t.minSpendMinor)}</span>
+              <span className="ml-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{tr("crm.membersLine", { count: fmtNumber(locale, t.memberCount ?? 0) })}</span>
               <span className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${t.hasPriceList ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
-                {t.hasPriceList ? "প্রাইস লিস্ট আছে" : "প্রাইস লিস্ট নেই"}
+                {t.hasPriceList ? tr("crm.priceListYes") : tr("crm.priceListNo")}
               </span>
             </span>
             <span className="flex gap-2">
-              <button type="button" className="btn-secondary btn-sm" onClick={() => void loadTierPriceList(t.id)}>প্রাইস লিস্ট</button>
-              <button type="button" className="btn-ghost btn-sm text-red-600" disabled={tierBusy === t.id} onClick={() => void deleteTier(t)}>মুছুন</button>
+              <button type="button" className="btn-secondary btn-sm" onClick={() => void loadTierPriceList(t.id)}>{tr("crm.priceListBtn")}</button>
+              <button type="button" className="btn-ghost btn-sm text-red-600" disabled={tierBusy === t.id} onClick={() => void deleteTier(t)}>{tr("crm.audDelete")}</button>
             </span>
           </div>
         ))}
         <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-          <label className="block text-sm">টিয়ারের নাম
-            <input className="input mt-1 w-44" value={tierName} onChange={(e) => setTierName(e.target.value)} placeholder="যেমন: Gold" />
+          <label className="block text-sm">{tr("crm.tierNameLabel")}
+            <input className="input mt-1 w-44" value={tierName} onChange={(e) => setTierName(e.target.value)} placeholder={tr("crm.exGold")} />
           </label>
-          <label className="block text-sm">ন্যূনতম খরচ (টাকা)
-            <input className="input mt-1 w-40" inputMode="decimal" value={tierMinTaka} onChange={(e) => setTierMinTaka(e.target.value)} placeholder="যেমন: 5000" />
+          <label className="block text-sm">{tr("crm.minSpendTakaLabel")}
+            <input className="input mt-1 w-40" inputMode="decimal" value={tierMinTaka} onChange={(e) => setTierMinTaka(e.target.value)} placeholder={tr("crm.exAmount5000")} />
           </label>
-          <label className="block text-sm">ক্রম
+          <label className="block text-sm">{tr("crm.sortOrderLabel")}
             <input className="input mt-1 w-20" type="number" step="1" value={tierSort} onChange={(e) => setTierSort(e.target.value)} />
           </label>
           <button type="button" className="btn-primary" disabled={tierBusy === "create" || !tierName.trim() || !tierMinTaka.trim()} onClick={() => void createTier()}>
-            {tierBusy === "create" ? "তৈরি হচ্ছে…" : "টিয়ার তৈরি করুন"}
+            {tierBusy === "create" ? tr("crm.creatingEllipsis") : tr("crm.createTierBtn")}
           </button>
         </div>
         {tierPlTierId ? (
           <div className="space-y-2 border-t pt-3">
-            <div className="text-sm font-semibold">টিয়ার প্রাইস লিস্ট — {tiers.find((t) => t.id === tierPlTierId)?.name ?? ""}</div>
-            {tierPlItems.length === 0 ? <p className="text-sm text-slate-400">এই লিস্টে কোনো আইটেম নেই — সব পণ্যে ক্যাটালগ দামই চলবে।</p> : tierPlItems.map((it) => (
+            <div className="text-sm font-semibold">{tr("crm.tierPriceListTitle")} {tiers.find((t) => t.id === tierPlTierId)?.name ?? ""}</div>
+            {tierPlItems.length === 0 ? <p className="text-sm text-slate-400">{tr("crm.tierListEmpty")}</p> : tierPlItems.map((it) => (
               <div key={it.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0">
                 <span>{it.productName ?? it.productId}{it.variantName ? ` · ${it.variantName}` : ""}</span>
                 <span className="flex items-center gap-2">
-                  <span className="font-medium">{money(it.priceMinor)}</span>
-                  <button type="button" className="btn-ghost btn-sm text-red-600" disabled={tierBusy === it.id} onClick={() => void removeTierPlItem(it)}>সরান</button>
+                  <span className="font-medium">{moneyL(it.priceMinor)}</span>
+                  <button type="button" className="btn-ghost btn-sm text-red-600" disabled={tierBusy === it.id} onClick={() => void removeTierPlItem(it)}>{tr("crm.removeBtn")}</button>
                 </span>
               </div>
             ))}
             <div className="flex flex-wrap items-end gap-2">
-              <label className="block text-sm">পণ্যের আইডি
+              <label className="block text-sm">{tr("crm.productIdLabel")}
                 <input className="input mt-1 w-64" value={tierPlProductId} onChange={(e) => setTierPlProductId(e.target.value)} placeholder="product id" />
               </label>
-              <label className="block text-sm">দাম (টাকা)
-                <input className="input mt-1 w-36" inputMode="decimal" value={tierPlPriceTaka} onChange={(e) => setTierPlPriceTaka(e.target.value)} placeholder="যেমন: 800" />
+              <label className="block text-sm">{tr("crm.priceTakaLabel")}
+                <input className="input mt-1 w-36" inputMode="decimal" value={tierPlPriceTaka} onChange={(e) => setTierPlPriceTaka(e.target.value)} placeholder={tr("crm.ex800")} />
               </label>
               <button type="button" className="btn-primary btn-sm" disabled={tierBusy === "pl-add" || !tierPlProductId.trim() || !tierPlPriceTaka.trim()} onClick={() => void addTierPlItem()}>
-                {tierBusy === "pl-add" ? "যোগ হচ্ছে…" : "আইটেম যোগ করুন"}
+                {tierBusy === "pl-add" ? tr("crm.addingEllipsis") : tr("crm.addItemBtn")}
               </button>
             </div>
           </div>
@@ -1605,72 +1622,72 @@ export default function CustomersPage() {
       {/* GB6 (GC15): segments manager — definitions with live
           member counts; selecting one above filters the list. */}
       <div className="card space-y-3">
-        <h2 className="font-semibold">🧩 গ্রাহক সেগমেন্ট</h2>
-        <p className="text-xs text-slate-500">শর্ত মিলিয়ে গ্রাহকদের দল বানান। সব শর্ত একসাথে মিলতে হবে; কোনো শর্ত না দিলে সব গ্রাহকই এই সেগমেন্টে পড়বে। সদস্য সংখ্যা প্রতিবার লাইভ হিসাব হয়। শুধু Owner/Admin সেগমেন্ট তৈরি/বদল/মুছতে পারেন।</p>
+        <h2 className="font-semibold">{tr("crm.segmentsTitle")}</h2>
+        <p className="text-xs text-slate-500">{tr("crm.segmentsIntro")}</p>
         {segError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{segError}</p> : null}
-        {segments.length === 0 ? <p className="text-sm text-slate-400">কোনো সেগমেন্ট নেই — নিচে প্রথমটি বানান।</p> : segments.map((s) => (
+        {segments.length === 0 ? <p className="text-sm text-slate-400">{tr("crm.noSegments")}</p> : segments.map((s) => (
           <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
             <span>
               <span className="font-medium">{s.name}</span>
-              <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{s.memberCount} জন সদস্য</span>
+              <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{tr("crm.membersLine", { count: fmtNumber(locale, s.memberCount) })}</span>
               <span className="block text-xs text-slate-500">{segmentCriteriaSummary(s.criteria)}</span>
             </span>
             <span className="flex gap-2">
-              <button className="btn-secondary btn-sm" onClick={() => setSegmentId(s.id)}>তালিকায় দেখুন</button>
-              <button className="btn-secondary btn-sm" onClick={() => editSegment(s)}>সম্পাদনা</button>
-              <button className="btn-secondary btn-sm text-red-600" disabled={segBusy !== ""} onClick={() => deleteSegment(s)}>মুছুন</button>
+              <button className="btn-secondary btn-sm" onClick={() => setSegmentId(s.id)}>{tr("crm.viewInList")}</button>
+              <button className="btn-secondary btn-sm" onClick={() => editSegment(s)}>{tr("crm.editBtn")}</button>
+              <button className="btn-secondary btn-sm text-red-600" disabled={segBusy !== ""} onClick={() => deleteSegment(s)}>{tr("crm.audDelete")}</button>
             </span>
           </div>
         ))}
         <div className="space-y-3 border-t pt-3">
-          <h3 className="text-sm font-semibold">{editingSegmentId ? "সেগমেন্ট সম্পাদনা" : "নতুন সেগমেন্ট"}</h3>
-          <label className="block text-sm">সেগমেন্টের নাম
-            <input className="input mt-1 w-full max-w-md" value={segName} onChange={(e) => setSegName(e.target.value)} placeholder="যেমন: ঢাকার বড় ক্রেতা" maxLength={130} />
+          <h3 className="text-sm font-semibold">{editingSegmentId ? tr("crm.segEditTitle") : tr("crm.segNewTitle")}</h3>
+          <label className="block text-sm">{tr("crm.segNameLabel")}
+            <input className="input mt-1 w-full max-w-md" value={segName} onChange={(e) => setSegName(e.target.value)} placeholder={tr("crm.exSegName")} maxLength={130} />
           </label>
           <div>
-            <div className="mb-1 text-sm font-medium">ট্যাগ — যেকোনো একটি থাকলেই চলবে (tagsAny)</div>
+            <div className="mb-1 text-sm font-medium">{tr("crm.segTagsAnyLabel")}</div>
             <div className="flex flex-wrap gap-1.5">
               {segDraft.tagsAny.map((t) => (
                 <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                   #{t}
-                  <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                  <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={tr("crm.tagRemoveTitle", { tag: t })}
                     onClick={() => setSegDraft({ ...segDraft, tagsAny: segDraft.tagsAny.filter((x) => x !== t) })}>×</button>
                 </span>
               ))}
-              {segDraft.tagsAny.length === 0 ? <span className="text-xs text-slate-500">কোনো ট্যাগ শর্ত নেই</span> : null}
+              {segDraft.tagsAny.length === 0 ? <span className="text-xs text-slate-500">{tr("crm.noTagCondition")}</span> : null}
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <input className="input w-56" placeholder="ট্যাগ লিখুন" aria-label="সেগমেন্টের ট্যাগ লিখুন" value={segTagInput} onChange={(e) => setSegTagInput(e.target.value)}
+              <input className="input w-56" placeholder={tr("crm.tagWritePlaceholder")} aria-label={tr("crm.segTagAria")} value={segTagInput} onChange={(e) => setSegTagInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSegTag(); } }} />
-              <button type="button" className="btn-secondary btn-sm" onClick={addSegTag}>যোগ করুন</button>
+              <button type="button" className="btn-secondary btn-sm" onClick={addSegTag}>{tr("crm.addBtn")}</button>
             </div>
           </div>
           <div className="flex flex-wrap gap-4 text-sm">
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={segDraft.vipOnly} onChange={(e) => setSegDraft({ ...segDraft, vipOnly: e.target.checked })} />
-              শুধু VIP
+              {tr("crm.vipOnlyLabel")}
             </label>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={segDraft.repeatOnly} onChange={(e) => setSegDraft({ ...segDraft, repeatOnly: e.target.checked })} />
-              শুধু পুনরাবৃত্ত (কমপক্ষে ২টি বিক্রি সম্পন্ন অর্ডার)
+              {tr("crm.repeatOnlyLabel")}
             </label>
           </div>
           <div className="flex flex-wrap gap-4">
-            <label className="block text-sm">সর্বনিম্ন মোট কেনাকাটা (৳) — লাইফটাইম মূল্য
-              <input className="input mt-1 w-44" inputMode="decimal" placeholder="যেমন: 10000" value={segDraft.minSpentTaka}
+            <label className="block text-sm">{tr("crm.minLifetimeLabel")}
+              <input className="input mt-1 w-44" inputMode="decimal" placeholder={tr("crm.ex10000")} value={segDraft.minSpentTaka}
                 onChange={(e) => setSegDraft({ ...segDraft, minSpentTaka: e.target.value })} />
             </label>
-            <label className="block text-sm">জেলা
-              <input className="input mt-1 w-44" placeholder="যেমন: খুলনা" value={segDraft.district}
+            <label className="block text-sm">{tr("crm.districtLabel")}
+              <input className="input mt-1 w-44" placeholder={tr("crm.exKhulna")} value={segDraft.district}
                 onChange={(e) => setSegDraft({ ...segDraft, district: e.target.value })} />
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className="btn-primary" disabled={segBusy !== ""} onClick={saveSegment}>
-              {segBusy === "save" ? "সংরক্ষণ হচ্ছে…" : editingSegmentId ? "সেগমেন্ট হালনাগাদ করুন" : "সেগমেন্ট তৈরি করুন"}
+              {segBusy === "save" ? tr("crm.savingEllipsis") : editingSegmentId ? tr("crm.segUpdateBtn") : tr("crm.segCreateBtn")}
             </button>
             {editingSegmentId ? (
-              <button className="btn-secondary" onClick={() => { setEditingSegmentId(""); setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); setSegError(""); }}>বাতিল</button>
+              <button className="btn-secondary" onClick={() => { setEditingSegmentId(""); setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); setSegError(""); }}>{tr("crm.cancelBtn")}</button>
             ) : null}
           </div>
         </div>

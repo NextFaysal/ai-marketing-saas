@@ -16,8 +16,10 @@
 import { useEffect, useRef, useState } from "react";
 import { API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
+import { courierStatusView, courierStepLabels } from "@/lib/courier-status";
 import { CHANNEL_DOT, CHANNEL_META, initialsOf, money } from "@/lib/inbox-format";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtDateTime } from "@repo/contracts";
 
 export const EMOJIS: string[] = [
   "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "🙂", "😉", "😎",
@@ -68,6 +70,7 @@ export function VoiceRecorder({
   onSend: (file: File) => void;
   onError: (message: string) => void;
 }) {
+  const { t, locale } = useLocale();
   const [phase, setPhase] = useState<"idle" | "recording" | "preview">("idle");
   const [seconds, setSeconds] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -94,14 +97,14 @@ export function VoiceRecorder({
 
   async function start() {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      onError("এই ব্রাউজারে ভয়েস রেকর্ডিং সমর্থিত নয়।");
+      onError(t("inbox.voiceUnsupported"));
       return;
     }
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      onError("মাইক্রোফোনের অনুমতি পাওয়া যায়নি — ব্রাউজারের অ্যাড্রেস বারের পাশে মাইক আইকনে ক্লিক করে অনুমতি দিয়ে আবার চেষ্টা করুন।");
+      onError(t("inbox.voiceMicDenied"));
       return;
     }
     streamRef.current = stream;
@@ -153,9 +156,9 @@ export function VoiceRecorder({
     return (
       <span className="inline-flex items-center gap-2">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 ring-1 ring-inset ring-red-200">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" /> {mmss} রেকর্ড হচ্ছে…
+          <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" /> {mmss} {t("inbox.voiceRecording")}
         </span>
-        <button type="button" className="btn-secondary btn-sm" onClick={stop}>⏹ থামান</button>
+        <button type="button" className="btn-secondary btn-sm" onClick={stop}>{t("inbox.voiceStop")}</button>
       </span>
     );
   }
@@ -163,14 +166,14 @@ export function VoiceRecorder({
     return (
       <span className="inline-flex flex-wrap items-center gap-2">
         {previewUrl ? <audio controls src={previewUrl} className="h-9 max-w-56" /> : null}
-        <button type="button" className="btn-primary btn-sm" onClick={send}>🎙️ ভয়েস পাঠান</button>
-        <button type="button" className="btn-secondary btn-sm" onClick={discard}>🗑 বাদ দিন</button>
+        <button type="button" className="btn-primary btn-sm" onClick={send}>{t("inbox.voiceSend")}</button>
+        <button type="button" className="btn-secondary btn-sm" onClick={discard}>{t("inbox.voiceDiscard")}</button>
       </span>
     );
   }
   return (
-    <button type="button" className="btn-secondary btn-sm" disabled={disabled} onClick={() => void start()} title="ভয়েস মেসেজ রেকর্ড করুন">
-      🎙️ ভয়েস
+    <button type="button" className="btn-secondary btn-sm" disabled={disabled} onClick={() => void start()} title={t("inbox.voiceRecordTitle")}>
+      {t("inbox.voiceLabel")}
     </button>
   );
 }
@@ -185,9 +188,10 @@ export function ChannelChip({ channel, lg }: { channel: string; lg?: boolean }) 
 }
 
 export function ConvAvatar({ name, phone, channel }: { name?: string | null; phone?: string | null; channel: string }) {
+  const { locale } = useLocale();
   return (
     <span className="conv-avatar" aria-hidden="true">
-      {initialsOf(name ?? phone)}
+      {initialsOf(name ?? phone, locale)}
       <span className={`conv-dot ${CHANNEL_DOT[channel] ?? "bg-slate-400"}`} />
     </span>
   );
@@ -202,6 +206,7 @@ export function ConvAvatar({ name, phone, channel }: { name?: string | null; pho
  * path, so pre-R2 behaviour is preserved exactly.
  */
 export function MediaView({ convId, message }: { convId: string; message: { id: string; type: string; content?: string | null } }) {
+  const { t, locale } = useLocale();
   const orgId = getOrganizationId();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -232,12 +237,12 @@ export function MediaView({ convId, message }: { convId: string; message: { id: 
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [orgId, convId, message.id]);
 
-  if (failed) return <span className="text-xs opacity-70">[মিডিয়া লোড হয়নি: {message.type}]</span>;
-  if (!url) return <span className="skeleton inline-block h-24 w-44 align-middle" role="status" aria-label="মিডিয়া লোড হচ্ছে" />;
-  if (message.type === "image" || message.type === "sticker") return <img src={url} alt={message.content ?? "ছবি"} className="max-h-56 rounded-lg" />;
+  if (failed) return <span className="text-xs opacity-70">[{t("inbox.mediaNotLoaded")}: {message.type}]</span>;
+  if (!url) return <span className="skeleton inline-block h-24 w-44 align-middle" role="status" aria-label={t("inbox.mediaLoading")} />;
+  if (message.type === "image" || message.type === "sticker") return <img src={url} alt={message.content ?? t("inbox.mediaImageAlt")} className="max-h-56 rounded-lg" />;
   if (message.type === "audio") return <audio controls src={url} className="max-w-[240px]" />;
   if (message.type === "video") return <video controls src={url} className="max-h-56 rounded-lg" />;
-  return <a href={url} target="_blank" rel="noreferrer" className="underline">📎 ফাইল খুলুন ({message.type})</a>;
+  return <a href={url} target="_blank" rel="noreferrer" className="underline">{t("inbox.mediaOpenFile")} ({message.type})</a>;
 }
 
 /** Inbox Next-Gen P2: live courier tracking widget. The status
@@ -252,37 +257,38 @@ export function ShipmentWidget({ shipment, currency, syncing, onSync }: {
   syncing: boolean;
   onSync: () => void;
 }) {
+  const { t, locale } = useLocale();
   const view = courierStatusView(shipment.status);
   return (
     <div className="mt-2 rounded-xl bg-slate-50/70 p-2.5 shadow-sm ring-1 ring-slate-200/70">
       <div className="flex flex-wrap items-center justify-between gap-1">
         <span className="font-semibold">🚚 {shipment.provider}{shipment.trackingCode ? ` · ${shipment.trackingCode}` : ""}</span>
-        <button className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold hover:bg-slate-200 disabled:opacity-50" disabled={syncing} onClick={onSync} title="কুরিয়ারের কাছ থেকে এখনই সর্বশেষ স্ট্যাটাস আনুন">
-          {syncing ? "আপডেট হচ্ছে…" : "🔄 এখনই আপডেট করুন"}
+        <button className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold hover:bg-slate-200 disabled:opacity-50" disabled={syncing} onClick={onSync} title={t("inbox.shipSyncTitle")}>
+          {syncing ? t("inbox.shipSyncing") : t("inbox.shipSyncNow")}
         </button>
       </div>
       {view.kind === "progress" ? (
         <div className="mt-2">
           <div className="flex items-center gap-1">
-            {COURIER_STEP_LABELS.map((label, i) => (
+            {courierStepLabels(locale).map((label, i) => (
               <div key={label} className="flex flex-1 flex-col items-center gap-1">
                 <div className={`h-1.5 w-full rounded-full shadow-sm ${i <= view.step ? "bg-gradient-to-r from-emerald-500 to-teal-400" : "bg-slate-200"}`} />
                 <span className={`text-center text-[9px] leading-tight ${i === view.step ? "font-bold text-emerald-700" : "text-slate-400"}`}>{label}</span>
               </div>
             ))}
           </div>
-          {view.partial ? <div className="mt-1 text-[11px] font-medium text-amber-600">আংশিক ডেলিভার্ড — কিছু পণ্য পৌঁছেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div> : null}
+          {view.partial ? <div className="mt-1 text-[11px] font-medium text-amber-600">{t("inbox.shipPartial", { status: shipment.status })}</div> : null}
         </div>
       ) : view.kind === "returned" ? (
-        <div className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">↩️ পার্সেল রিটার্ন এসেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
+        <div className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">{t("inbox.shipReturned", { status: shipment.status })}</div>
       ) : view.kind === "cancelled" ? (
-        <div className="mt-1.5 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">✖️ শিপমেন্ট বাতিল হয়েছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
+        <div className="mt-1.5 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">{t("inbox.shipCancelled", { status: shipment.status })}</div>
       ) : (
-        <div className="mt-1.5 text-[11px] text-slate-500">কুরিয়ারের স্ট্যাটাস: <b>{shipment.status}</b></div>
+        <div className="mt-1.5 text-[11px] text-slate-500">{t("inbox.shipCourierStatus")}: <b>{shipment.status}</b></div>
       )}
       <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
-        <span>সর্বশেষ যাচাই: {shipment.lastCheckedAt ? new Date(shipment.lastCheckedAt).toLocaleString("bn-BD") : "এখনো যাচাই হয়নি"}</span>
-        {shipment.codAmountMinor && Number(shipment.codAmountMinor) > 0 ? <span>COD: <b className="text-slate-600">{money(shipment.codAmountMinor, currency)}</b></span> : null}
+        <span>{t("inbox.shipLastChecked")}: {shipment.lastCheckedAt ? fmtDateTime(locale, shipment.lastCheckedAt) : t("inbox.shipNotChecked")}</span>
+        {shipment.codAmountMinor && Number(shipment.codAmountMinor) > 0 ? <span>COD: <b className="text-slate-600">{money(shipment.codAmountMinor, currency, locale)}</b></span> : null}
       </div>
     </div>
   );

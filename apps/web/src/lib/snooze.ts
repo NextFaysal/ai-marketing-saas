@@ -1,3 +1,4 @@
+import { inboxBn, inboxEn } from "./i18n/inbox";
 /**
  * CX5: snooze helpers for the inbox action bar.
  *
@@ -15,10 +16,18 @@ export interface SnoozePreset {
 }
 
 export const SNOOZE_PRESETS: SnoozePreset[] = [
-  { label: "১ ঘণ্টা", minutes: 60 },
-  { label: "৪ ঘণ্টা", minutes: 240 },
-  { label: "২৪ ঘণ্টা", minutes: 1440 },
+  { label: inboxBn.snooze1h, minutes: 60 },
+  { label: inboxBn.snooze4h, minutes: 240 },
+  { label: inboxBn.snooze24h, minutes: 1440 },
 ];
+export const snoozePresets = (locale?: string): SnoozePreset[] => {
+  const dd = locale === "en" ? inboxEn : inboxBn;
+  return [
+    { label: dd.snooze1h, minutes: 60 },
+    { label: dd.snooze4h, minutes: 240 },
+    { label: dd.snooze24h, minutes: 1440 },
+  ];
+};
 
 /** API range for the minutes form of a snooze. */
 export const SNOOZE_MIN_MINUTES = 5;

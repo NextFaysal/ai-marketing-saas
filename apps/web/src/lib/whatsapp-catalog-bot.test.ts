@@ -41,7 +41,7 @@ describe("WhatsApp Conversational Catalog & Order Bot Engine", () => {
 
     expect(snippet).toContain("*🛍️ প্রিমিয়াম চামড়ার ওয়ালেট*");
     expect(snippet).toContain("স্মার্ট লেদার বিডি");
-    expect(snippet).toContain("৳1,200");
+    expect(snippet).toContain("৳১,২০০");
     expect(snippet).toContain("25% ছাড়!");
     expect(snippet).toContain("https://myshop.com/l/leather-wallet-deal");
   });
@@ -86,7 +86,7 @@ describe("WhatsApp Conversational Catalog & Order Bot Engine", () => {
     expect(receipt).toContain("আব্দুল করিম");
     expect(receipt).toContain("01999887766");
     expect(receipt).toContain("স্পোর্টস স্নিকার্স");
-    expect(receipt).toContain("৳2,100");
+    expect(receipt).toContain("৳২,১০০");
     expect(receipt).toContain("ক্যাশ অন ডেলিভারি");
   });
 
