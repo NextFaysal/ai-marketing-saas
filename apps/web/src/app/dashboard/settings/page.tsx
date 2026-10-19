@@ -16,9 +16,11 @@ import {
   NOTIFICATION_CATEGORIES, canRevokeOwnSession, isCategoryEnabled, toggleMutedCategory,
   type LoginHistoryRow, type OwnSession,
 } from "@/lib/gb6-team";
-import { BusinessKnowledgeSection } from "./knowledge-section";
-import { AiLearningSection } from "./ai-learning-section";
-import { AiControlCenterSection } from "./ai-control-section";
+import dynamic from "next/dynamic";
+
+const BusinessKnowledgeSection = dynamic(() => import("./knowledge-section").then((m) => m.BusinessKnowledgeSection), { ssr: false });
+const AiLearningSection = dynamic(() => import("./ai-learning-section").then((m) => m.AiLearningSection), { ssr: false });
+const AiControlCenterSection = dynamic(() => import("./ai-control-section").then((m) => m.AiControlCenterSection), { ssr: false });
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
 
