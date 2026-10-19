@@ -1698,9 +1698,28 @@ export class OrdersService {
       },
       orderBy: { placedAt: "desc" },
       take: 200,
-      include: {
-        customer: true,
-        items: true,
+      select: {
+        id: true,
+        externalNumber: true,
+        totalAmountMinor: true,
+        status: true,
+        placedAt: true,
+        createdAt: true,
+        customer: {
+          select: {
+            phone: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+        items: {
+          select: {
+            id: true,
+            name: true,
+            quantity: true,
+            totalMinor: true,
+          },
+        },
       },
     });
 
