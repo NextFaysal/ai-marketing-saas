@@ -8,6 +8,14 @@
  * template. Keeping rendering on the API guarantees the preview
  * is byte-identical to what a send will use.
  */
+import type { UiLocale } from "./i18n/dict";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: block labels resolve through the `shared` namespace;
+ * the BN record below stays the pinned bn source. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+
 export type EmailBlockType = "text" | "image" | "button" | "product" | "coupon" | "divider";
 
 export interface EmailBlock {
@@ -23,14 +31,20 @@ export interface EmailBlock {
   code?: string | null;
 }
 
-export const BLOCK_LABELS_BN: Record<EmailBlockType, string> = {
-  text: "📝 লেখা",
-  image: "🖼️ ছবি",
-  button: "🔘 বাটন",
-  product: "🛍️ পণ্য",
-  coupon: "🎟️ কুপন",
-  divider: "➖ বিভাজক",
-};
+/** Block type labels per locale. */
+export function blockLabelsFor(locale: UiLocale = "bn"): Record<EmailBlockType, string> {
+  const d = SD(locale);
+  return {
+    text: d.ebText,
+    image: d.ebImage,
+    button: d.ebButton,
+    product: d.ebProduct,
+    coupon: d.ebCoupon,
+    divider: d.ebDivider,
+  };
+}
+
+export const BLOCK_LABELS_BN: Record<EmailBlockType, string> = blockLabelsFor("bn");
 
 export function newEmailBlock(type: EmailBlockType): EmailBlock {
   switch (type) {
@@ -65,10 +79,18 @@ export function cleanBlock(b: EmailBlock): EmailBlock {
   return out;
 }
 
-export const BRAND_FONT_OPTIONS: { key: string; labelBn: string }[] = [
-  { key: "hind-siliguri", labelBn: "Hind Siliguri (বাংলা)" },
-  { key: "noto-sans-bengali", labelBn: "Noto Sans Bengali (বাংলা)" },
-  { key: "arial", labelBn: "Arial" },
-  { key: "georgia", labelBn: "Georgia" },
-  { key: "verdana", labelBn: "Verdana" },
+export const BRAND_FONT_OPTIONS: { key: string; labelBn: string; labelEn: string }[] = [
+  { key: "hind-siliguri", labelBn: "Hind Siliguri (বাংলা)", labelEn: "Hind Siliguri (Bengali)" },
+  { key: "noto-sans-bengali", labelBn: "Noto Sans Bengali (বাংলা)", labelEn: "Noto Sans Bengali (Bengali)" },
+  { key: "arial", labelBn: "Arial", labelEn: "Arial" },
+  { key: "georgia", labelBn: "Georgia", labelEn: "Georgia" },
+  { key: "verdana", labelBn: "Verdana", labelEn: "Verdana" },
 ];
+
+/** Font options with a single resolved `label` for the locale. */
+export function brandFontOptionsFor(locale: UiLocale = "bn"): { key: string; label: string }[] {
+  return BRAND_FONT_OPTIONS.map((f) => ({
+    key: f.key,
+    label: locale === "en" ? f.labelEn : f.labelBn,
+  }));
+}

@@ -11,6 +11,16 @@
  * original pages keep sending their own identical shapes.
  */
 
+import type { UiLocale } from "./i18n/dict";
+import { interpolate } from "./i18n/lookup";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: result-line copy resolves through the `shared`
+ * namespace; locale defaults to "bn" so existing callers/tests
+ * stay byte-identical. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+
 export interface WooConnectForm {
   storeId: string;
   consumerKey: string;
@@ -126,15 +136,20 @@ export function buildEmailConnectBody(form: EmailChannelForm) {
 /** Human line for the telegram connect result, mirroring the
  * inbox page: the webhook outcome is reported as the API states
  * it — registered, or NOT registered with its real reason. */
-export function telegramResultText(res: { bot?: string; webhook?: { registered?: boolean; error?: string }; reconnected?: boolean }): string {
-  const head = res.reconnected ? `আবার কানেক্ট হয়েছে (একই বটের রো হালনাগাদ হয়েছে): ${res.bot}` : `কানেক্ট হয়েছে: ${res.bot}`;
-  return `${head} · Webhook: ${res.webhook?.registered ? "নিবন্ধিত ✅" : `হয়নি — ${res.webhook?.error ?? ""}`}`;
+export function telegramResultText(res: { bot?: string; webhook?: { registered?: boolean; error?: string }; reconnected?: boolean }, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
+  const head = interpolate(res.reconnected ? d.cfReconnectedBot : d.cfConnectedBot, { bot: res.bot ?? "" });
+  const tail = res.webhook?.registered
+    ? d.cfWebhookRegistered
+    : interpolate(d.cfWebhookFailed, { error: res.webhook?.error ?? "" });
+  return `${head} · Webhook: ${tail}`;
 }
 
 /** Human line for the email connect result (inbox page wording,
  * plus the CC7 reconnect truth). */
-export function emailResultText(res: { mailbox?: string; reconnected?: boolean }): string {
-  return res.reconnected ? `আবার কানেক্ট হয়েছে (একই মেইলবক্সের রো হালনাগাদ হয়েছে): ${res.mailbox}` : `কানেক্ট হয়েছে: ${res.mailbox}`;
+export function emailResultText(res: { mailbox?: string; reconnected?: boolean }, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
+  return interpolate(res.reconnected ? d.cfReconnectedMailbox : d.cfConnectedMailbox, { mailbox: res.mailbox ?? "" });
 }
 
 // ---------- CC8: senders (MS4 endpoints) + own LLM key ----------

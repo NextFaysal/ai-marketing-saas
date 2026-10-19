@@ -12,6 +12,15 @@
 // is a paisa STRING (rewardMinOrderMinor), like other commerce
 // minor strings in the staff zone.
 
+import type { UiLocale } from "./i18n/dict";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: ledger labels resolve through the `shared`
+ * namespace; locale defaults to "bn" so existing callers stay
+ * byte-identical. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+
 export interface LoyaltySetting {
   enabled: boolean;
   earnPointsPer1000Minor: number;
@@ -80,30 +89,43 @@ export interface OrderLoyalty {
   entries: LoyaltyEntry[];
 }
 
-/** Ledger reason → Bengali label (AB1 spec wording). */
-export const LOYALTY_REASON_LABEL: Record<string, string> = {
-  earn: "পয়েন্ট অর্জন",
-  redeem: "পয়েন্ট খরচ",
-  expire: "মেয়াদ উত্তীর্ণ",
-  adjust: "সমন্বয়",
-  referral_reward: "রেফারেল পুরস্কার",
-};
+/** Ledger reason → label per locale (AB1 spec wording; the bn
+ * record below stays the pinned source). */
+export function loyaltyReasonLabelsFor(locale: UiLocale = "bn"): Record<string, string> {
+  const d = SD(locale);
+  return {
+    earn: d.loyReasonEarn,
+    redeem: d.loyReasonRedeem,
+    expire: d.loyReasonExpire,
+    adjust: d.loyReasonAdjust,
+    referral_reward: d.loyReasonReferral,
+  };
+}
 
-/** Machine note markers the API writes on reversal entries —
- * shown as human labels, never as the raw marker text. */
-export const LOYALTY_NOTE_LABEL: Record<string, string> = {
-  redeem_reversal: "অর্ডার বাতিলে ফেরত",
-  earn_clawback: "রিফান্ডে কর্তন",
-  referral_reward_clawback: "রেফারেল পুরস্কারে কর্তন",
-};
+/** Machine note marker → label per locale. The markers are what
+ * the API writes on reversal entries — shown as human labels,
+ * never as the raw marker text. */
+export function loyaltyNoteLabelsFor(locale: UiLocale = "bn"): Record<string, string> {
+  const d = SD(locale);
+  return {
+    redeem_reversal: d.loyNoteRedeemReversal,
+    earn_clawback: d.loyNoteEarnClawback,
+    referral_reward_clawback: d.loyNoteReferralClawback,
+  };
+}
+
+export const LOYALTY_REASON_LABEL: Record<string, string> = loyaltyReasonLabelsFor("bn");
+
+export const LOYALTY_NOTE_LABEL: Record<string, string> = loyaltyNoteLabelsFor("bn");
 
 /** Display label for one ledger entry: a known note marker wins
  * over the generic reason label (a clawback is an "adjust" row
  * whose marker carries the real meaning). */
-export function loyaltyEntryLabel(entry: Pick<LoyaltyEntry, "reason" | "note">): string {
+export function loyaltyEntryLabel(entry: Pick<LoyaltyEntry, "reason" | "note">, locale: UiLocale = "bn"): string {
+  const noteLabels = loyaltyNoteLabelsFor(locale);
   const note = entry.note?.trim() ?? "";
-  if (note && LOYALTY_NOTE_LABEL[note]) return LOYALTY_NOTE_LABEL[note];
-  return LOYALTY_REASON_LABEL[entry.reason] ?? entry.reason;
+  if (note && noteLabels[note]) return noteLabels[note];
+  return loyaltyReasonLabelsFor(locale)[entry.reason] ?? entry.reason;
 }
 
 /** The staff/free-text note to show under an entry, or null when

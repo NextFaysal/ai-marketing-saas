@@ -1,4 +1,15 @@
 import { NAV_ITEMS } from "./nav";
+import type { UiLocale } from "./i18n/dict";
+import { shellBn, shellEn } from "./i18n/shell";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: shared-lib copy resolves through the `shared`
+ * namespace; every helper keeps locale default "bn" so existing
+ * callers/tests stay byte-identical. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+const SHELL = (locale: UiLocale = "bn"): typeof shellBn =>
+  locale === "en" ? shellEn : shellBn;
 
 /**
  * Global Assistant helpers (pure, unit-tested).
@@ -23,9 +34,12 @@ export function pageContextFor(pathname: string | null | undefined): string | un
 }
 
 /** Human label for the current section, from the nav registry
- *  (longest href prefix wins); falls back to "Dashboard". */
-export function pageLabelFor(pathname: string | null | undefined): string {
-  if (!pathname) return "Dashboard";
+ *  (longest href prefix wins); falls back to "Dashboard". The
+ *  label resolves through the nav item's `labelKey` in the
+ *  ACTIVE locale's shell namespace; on the bn default this is
+ *  exactly the item's derived `label`. */
+export function pageLabelFor(pathname: string | null | undefined, locale: UiLocale = "bn"): string {
+  if (!pathname) return SD(locale).gaPageFallback;
   let best: (typeof NAV_ITEMS)[number] | undefined;
   for (const item of NAV_ITEMS) {
     const href = item.href as string;
@@ -35,64 +49,38 @@ export function pageLabelFor(pathname: string | null | undefined): string {
     const hit = href === "/dashboard" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
     if (hit && (!best || href.length > (best.href as string).length)) best = item;
   }
-  return best?.label ?? "Dashboard";
+  if (!best) return SD(locale).gaPageFallback;
+  const shell = SHELL(locale) as Record<string, string>;
+  return shell[best.labelKey] ?? best.label;
 }
 
-const DEFAULT_SUGGESTIONS = [
-  "গত ৭ দিনে বিক্রি কেমন ছিল?",
-  "আমার সবচেয়ে ভালো ক্যাম্পেইন কোনগুলো?",
-  "কোনো অস্বাভাবিক কিছু ঘটেছে কি?",
+type SuggestionKey = keyof typeof sharedBn;
+
+const DEFAULT_SUGGESTION_KEYS: SuggestionKey[] = [
+  "gaSugSales7d",
+  "gaSugBestCampaigns",
+  "gaSugAnomaly",
 ];
 
-const SECTION_SUGGESTIONS: Record<string, string[]> = {
-  "/dashboard/orders": [
-    "কোন অর্ডারগুলোর ফলো-আপ দরকার?",
-    "গত ৭ দিনে বিক্রি কেমন ছিল?",
-    "কুরিয়ারদের পারফরম্যান্স কেমন?",
-  ],
-  "/dashboard/campaigns": [
-    "আমার সবচেয়ে ভালো ক্যাম্পেইন কোনগুলো?",
-    "কোন পণ্যে সবচেয়ে বেশি লাভ হয়?",
-    "গত ৭ দিনে বিক্রি কেমন ছিল?",
-  ],
-  "/dashboard/campaign-builder": [
-    "আমার সবচেয়ে ভালো ক্যাম্পেইন কোনগুলো?",
-    "কোন পণ্যে সবচেয়ে বেশি লাভ হয়?",
-    "কাস্টমার সেগমেন্টগুলো দেখাও",
-  ],
-  "/dashboard/inbox": [
-    "কোন অর্ডারগুলোর ফলো-আপ দরকার?",
-    "কাস্টমার সেগমেন্টগুলো দেখাও",
-    "কোনো অস্বাভাবিক কিছু ঘটেছে কি?",
-  ],
-  "/dashboard/products": [
-    "স্টকের অবস্থা কেমন?",
-    "কোন পণ্যে সবচেয়ে বেশি লাভ হয়?",
-    "Which products have the best margin?",
-  ],
-  "/dashboard/customers": [
-    "কাস্টমার সেগমেন্টগুলো দেখাও",
-    "কোন অর্ডারগুলোর ফলো-আপ দরকার?",
-    "গত ৭ দিনে বিক্রি কেমন ছিল?",
-  ],
-  "/dashboard/analytics": [
-    "গত ৭ দিনে বিক্রি কেমন ছিল?",
-    "কুরিয়ারদের পারফরম্যান্স কেমন?",
-    "কোনো অস্বাভাবিক কিছু ঘটেছে কি?",
-  ],
-  "/dashboard/profit": [
-    "কোন পণ্যে সবচেয়ে বেশি লাভ হয়?",
-    "আমার সবচেয়ে ভালো ক্যাম্পেইন কোনগুলো?",
-    "Which products have the best margin?",
-  ],
+const SECTION_SUGGESTION_KEYS: Record<string, SuggestionKey[]> = {
+  "/dashboard/orders": ["gaSugOrderFollowUp", "gaSugSales7d", "gaSugCourierPerf"],
+  "/dashboard/campaigns": ["gaSugBestCampaigns", "gaSugProfitProduct", "gaSugSales7d"],
+  "/dashboard/campaign-builder": ["gaSugBestCampaigns", "gaSugProfitProduct", "gaSugSegments"],
+  "/dashboard/inbox": ["gaSugOrderFollowUp", "gaSugSegments", "gaSugAnomaly"],
+  "/dashboard/products": ["gaSugStock", "gaSugProfitProduct", "gaSugBestMargin"],
+  "/dashboard/customers": ["gaSugSegments", "gaSugOrderFollowUp", "gaSugSales7d"],
+  "/dashboard/analytics": ["gaSugSales7d", "gaSugCourierPerf", "gaSugAnomaly"],
+  "/dashboard/profit": ["gaSugProfitProduct", "gaSugBestCampaigns", "gaSugBestMargin"],
 };
 
 /** Starter suggestions for the panel: section-specific when the
  *  section has a curated set, otherwise the proven defaults (the
  *  same texts the AI page offers — every one maps to a real tool). */
-export function suggestionsFor(pathname: string | null | undefined): string[] {
+export function suggestionsFor(pathname: string | null | undefined, locale: UiLocale = "bn"): string[] {
+  const d = SD(locale);
   const ctx = pageContextFor(pathname);
-  return (ctx && SECTION_SUGGESTIONS[ctx]) || DEFAULT_SUGGESTIONS;
+  const keys = (ctx && SECTION_SUGGESTION_KEYS[ctx]) || DEFAULT_SUGGESTION_KEYS;
+  return keys.map((k) => d[k]);
 }
 
 /**

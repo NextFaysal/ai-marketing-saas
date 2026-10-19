@@ -8,6 +8,14 @@
  * render as "—", never a fabricated 0.
  */
 import { minorToTakaString, takaToMinorString } from "./storefront-money";
+import type { UiLocale } from "./i18n/dict";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: status/basis/significance labels resolve through
+ * the `shared` namespace; locale defaults to "bn" so existing
+ * callers/tests stay byte-identical. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
 
 /* ---------------- AX15: review insights ---------------- */
 
@@ -124,15 +132,16 @@ export function campaignCounts(c: PushCampaign): PushCampaignCounts {
   };
 }
 
-export function pushCampaignStatusLabel(status: string): string {
+export function pushCampaignStatusLabel(status: string, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
   switch (status) {
-    case "sent": return "পাঠানো হয়েছে";
-    case "sending": return "পাঠানো হচ্ছে…";
-    case "queued": return "সারিতে আছে";
-    case "draft": return "খসড়া";
-    case "failed": return "ব্যর্থ";
-    case "partial": return "আংশিক পাঠানো হয়েছে";
-    case "test": return "টেস্ট";
+    case "sent": return d.pushSent;
+    case "sending": return d.pushSending;
+    case "queued": return d.pushQueued;
+    case "draft": return d.pushDraft;
+    case "failed": return d.pushFailed;
+    case "partial": return d.pushPartial;
+    case "test": return d.pushTest;
     default: return status;
   }
 }
@@ -203,16 +212,17 @@ export interface CheckoutSequence {
   lastActivityAt?: string | null;
 }
 
-export function sequenceStatusLabel(status: string | null | undefined): string {
+export function sequenceStatusLabel(status: string | null | undefined, locale: UiLocale = "bn"): string {
   if (!status) return "—";
+  const d = SD(locale);
   switch (status) {
-    case "running": case "active": case "in_progress": return "চলমান";
-    case "completed": case "done": case "finished": return "সম্পন্ন";
-    case "failed": case "error": return "ব্যর্থ";
-    case "waiting": case "pending": case "scheduled": return "অপেক্ষমাণ";
-    case "sent": return "পাঠানো হয়েছে";
-    case "skipped": return "বাদ দেওয়া হয়েছে";
-    case "cancelled": case "canceled": case "stopped": return "বন্ধ করা হয়েছে";
+    case "running": case "active": case "in_progress": return d.seqRunning;
+    case "completed": case "done": case "finished": return d.seqCompleted;
+    case "failed": case "error": return d.seqFailed;
+    case "waiting": case "pending": case "scheduled": return d.seqWaiting;
+    case "sent": return d.seqSent;
+    case "skipped": return d.seqSkipped;
+    case "cancelled": case "canceled": case "stopped": return d.seqCancelled;
     default: return status;
   }
 }
@@ -249,8 +259,9 @@ export interface VelocityV2Fields {
   demandBasis: DemandBasis;
 }
 
-export function demandBasisLabel(basis: DemandBasis | string | null | undefined): string {
-  return basis === "trend_seasonal" ? "ট্রেন্ড+সিজনাল" : "গতি-ভিত্তিক";
+export function demandBasisLabel(basis: DemandBasis | string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
+  return basis === "trend_seasonal" ? d.basisTrendSeasonal : d.basisVelocity;
 }
 
 export interface TrendDisplay { text: string; tone: "up" | "down" | "flat" | "none" }
@@ -320,9 +331,10 @@ export type VariantSignificance =
   | { kind: "none"; label: string };
 
 /** vsControl → marker state. Display only — never auto-switch. */
-export function variantSignificance(vs: VariantVsControl | null | undefined): VariantSignificance {
+export function variantSignificance(vs: VariantVsControl | null | undefined, locale: UiLocale = "bn"): VariantSignificance {
   if (!vs) return { kind: "none", label: "" };
-  if (vs.note === "insufficient_data") return { kind: "insufficient", label: "পর্যাপ্ত ডেটা নেই" };
-  if (vs.significant) return { kind: "significant", label: "তাৎপর্যপূর্ণ" };
+  const d = SD(locale);
+  if (vs.note === "insufficient_data") return { kind: "insufficient", label: d.variantInsufficient };
+  if (vs.significant) return { kind: "significant", label: d.variantSignificant };
   return { kind: "none", label: "" };
 }
