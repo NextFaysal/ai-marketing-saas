@@ -12,8 +12,10 @@ import { startHealthServer } from "./health";
 //   scheduled-jobs (M57) — DB ScheduledJobs, executed via
 //     the API's internal callback, retries + DLQ included.
 //   webhook (M63) — inbound provider webhooks, same path.
-// Processors must be idempotent (jobs can be retried).
-const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
+const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+});
 connection.on("error", (err) => console.error("[redis] connection error:", err instanceof Error ? err.message : err));
 
 const apiBase = process.env.API_INTERNAL_URL ?? "http://localhost:4000";
@@ -30,11 +32,18 @@ for (const name of Object.values(QUEUES)) {
   if (name === QUEUES.SCHEDULED_JOBS_DLQ) continue; // record-only channel (rows live in the API's DeadLetterJob table)
   const processor = processors[name];
   const defaultConcurrency = name === QUEUES.WEBHOOK ? 15 : 5;
-  const concurrency = Math.max(1, Number(process.env.WORKER_CONCURRENCY ?? defaultConcurrency));
+  const envConcurrency =
+    name === QUEUES.WEBHOOK
+      ? (process.env.WORKER_WEBHOOK_CONCURRENCY ?? process.env.WORKER_CONCURRENCY)
+      : (process.env.WORKER_JOBS_CONCURRENCY ?? process.env.WORKER_CONCURRENCY);
+  const concurrency = Math.max(1, Number(envConcurrency ?? defaultConcurrency));
   const worker = new Worker(name, processor as any, { connection, concurrency });
   worker.on("failed", (job, err) => console.error(`[${name}] job ${job?.id} failed`, err));
   workers.push(worker);
-  queueEvents.push(new QueueEvents(name, { connection }));
+  // Optional QueueEvents listener only when explicitly requested (avoids blocking Redis stream overhead)
+  if (process.env.WORKER_ENABLE_QUEUE_EVENTS === "true") {
+    queueEvents.push(new QueueEvents(name, { connection: { url: process.env.REDIS_URL ?? "redis://localhost:6379" } }));
+  }
 }
 console.log(`Worker ready. Listening on queues: ${Object.keys(processors).join(", ")}`);
 if (!internalSecret) {
