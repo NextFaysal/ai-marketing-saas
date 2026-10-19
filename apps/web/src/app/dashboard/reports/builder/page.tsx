@@ -2,7 +2,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { EmptyState } from "@repo/ui";
 
 /** Reports Advanced RP2 — custom report builder. The
@@ -22,13 +23,14 @@ const ADS_METRICS = [
   { key: "ctr", label: "CTR %", money: false }, { key: "cpm", label: "CPM", money: true }, { key: "cpa", label: "CPA", money: true },
 ];
 const PRESETS = [
-  { key: "last_7d", label: "শেষ ৭ দিন" }, { key: "last_30d", label: "শেষ ৩০ দিন" },
-  { key: "this_month", label: "এই মাস" }, { key: "last_month", label: "গত মাস" },
+  { key: "last_7d", labelKey: "analytics.builderRangeLast7" }, { key: "last_30d", labelKey: "analytics.builderRangeLast30" },
+  { key: "this_month", labelKey: "analytics.builderRangeThisMonth" }, { key: "last_month", labelKey: "analytics.builderRangeLastMonth" },
 ];
 interface RunResult { dimension: string; metrics: string[]; range: { from: string; to: string }; rows: { key: string; label: string; values: Record<string, string | number | null> }[]; totals: Record<string, string | number | null> }
 interface Saved { id: string; name: string; dimension: string; metrics: string[]; rangePreset: string; recipients: string[] }
 
 export default function ReportBuilderPage() {
+  const { t, locale } = useLocale();
   const [dimension, setDimension] = useState("day");
   const [metrics, setMetrics] = useState<string[]>(["orders", "revenue", "profit"]);
   const [preset, setPreset] = useState("last_30d");
@@ -97,7 +99,7 @@ export default function ReportBuilderPage() {
         body: JSON.stringify({ name: `Report: ${name}`, type: "saved_report_delivery", targetId: id, intervalMinutes }),
       });
       setError("");
-      alert("Schedule তৈরি হয়েছে — Automations অংশে Job-টি দেখা যাবে। ইমেইল যাবে Report-এর Recipient, OWNER/ADMIN ও Billing Contact-দের কাছে।");
+      alert(t("analytics.builderScheduleCreated"));
     } catch (e) { setError(e instanceof Error ? e.message : "Schedule failed"); }
   }
   async function openPrint(id: string) {
@@ -112,15 +114,15 @@ export default function ReportBuilderPage() {
   const fmt = (m: string, v: string | number | null) => {
     if (v === null || v === undefined) return "—";
     const meta = [...DAY_METRICS, ...ADS_METRICS].find((x) => x.key === m);
-    if (meta?.money) { try { return formatMinor(BigInt(String(v))); } catch { return String(v); } }
-    return Number(v).toLocaleString();
+    if (meta?.money) { try { return fmtMoneyMinor(locale, BigInt(String(v))); } catch { return String(v); } }
+    return fmtNumber(locale, Number(v));
   };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="page-title">Custom Report Builder</h1>
-        <p className="text-sm text-slate-500">নিজের পছন্দের Metric আর Dimension দিয়ে রিপোর্ট বানান। Day অনুযায়ী Order-Side হিসাব; Platform/Campaign অনুযায়ী Ad-এর হিসাব — যেই ডেটা যেখানে নেই, তা জোর করে দেখানো হয় না।</p>
+        <p className="text-sm text-slate-500">{t("analytics.builderIntro")}</p>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
@@ -128,14 +130,14 @@ export default function ReportBuilderPage() {
         <div className="flex flex-wrap gap-4">
           <label className="text-sm">Dimension
             <select className="input ml-2" value={dimension} onChange={(e) => changeDimension(e.target.value)}>
-              <option value="day">দিন অনুযায়ী (Day)</option>
-              <option value="platform">Platform অনুযায়ী</option>
-              <option value="campaign">Campaign অনুযায়ী</option>
+              <option value="day">{t("analytics.builderDimDay")}</option>
+              <option value="platform">{t("analytics.builderDimPlatform")}</option>
+              <option value="campaign">{t("analytics.builderDimCampaign")}</option>
             </select>
           </label>
-          <label className="text-sm">সময়সীমা
+          <label className="text-sm">{t("analytics.builderRangeLabel")}
             <select className="input ml-2" value={preset} onChange={(e) => setPreset(e.target.value)}>
-              {PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+              {PRESETS.map((p) => <option key={p.key} value={p.key}>{t(p.labelKey)}</option>)}
             </select>
           </label>
         </div>
@@ -145,20 +147,20 @@ export default function ReportBuilderPage() {
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy || metrics.length === 0} onClick={() => run()}>রিপোর্ট চালান</button>
-          <input className="input" placeholder="নাম দিয়ে সেভ করুন" value={name} onChange={(e) => setName(e.target.value)} />
-          <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy || !name.trim()} onClick={save}>সেভ</button>
+          <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy || metrics.length === 0} onClick={() => run()}>{t("analytics.builderRun")}</button>
+          <input className="input" placeholder={t("analytics.builderSavePlaceholder")} value={name} onChange={(e) => setName(e.target.value)} />
+          <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy || !name.trim()} onClick={save}>{t("analytics.builderSave")}</button>
         </div>
       </div>
 
       {result ? (
         <div className="card p-5">
-          <div className="text-sm text-slate-500">{result.range.from} → {result.range.to} · {result.rows.length} সারি</div>
-          {result.rows.length === 0 ? <EmptyState title="এই সময়ে ডেটা নেই" description="অন্য সময়সীমা চেষ্টা করুন।" /> : (
+          <div className="text-sm text-slate-500">{result.range.from} → {result.range.to} · {t("analytics.builderRowsCount", { count: fmtNumber(locale, result.rows.length) })}</div>
+          {result.rows.length === 0 ? <EmptyState title={t("analytics.builderEmptyTitle")} description={t("analytics.builderEmptyDesc")} /> : (
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">{result.dimension === "day" ? "তারিখ" : result.dimension === "platform" ? "Platform" : "Campaign"}</th>
+                  <th className="py-2 pr-3">{result.dimension === "day" ? t("analytics.builderDateHeader") : result.dimension === "platform" ? "Platform" : "Campaign"}</th>
                   {result.metrics.map((m) => <th key={m} className="py-2 pr-3">{[...DAY_METRICS, ...ADS_METRICS].find((x) => x.key === m)?.label ?? m}</th>)}
                 </tr></thead>
                 <tbody>
@@ -169,7 +171,7 @@ export default function ReportBuilderPage() {
                     </tr>
                   ))}
                   <tr className="border-t bg-slate-50 font-semibold">
-                    <td className="py-2 pr-3">মোট</td>
+                    <td className="py-2 pr-3">{t("analytics.builderTotalRow")}</td>
                     {result.metrics.map((m) => <td key={m} className="py-2 pr-3">{fmt(m, result.totals[m])}</td>)}
                   </tr>
                 </tbody>
@@ -180,23 +182,23 @@ export default function ReportBuilderPage() {
       ) : null}
 
       <div className="card p-5">
-        <div className="font-semibold">সেভ করা রিপোর্ট ({saved.length})</div>
-        {saved.length === 0 ? <p className="mt-1 text-sm text-slate-500">এখনো কোনো রিপোর্ট সেভ করা হয়নি।</p> : (
+        <div className="font-semibold">{t("analytics.builderSavedTitle", { count: fmtNumber(locale, saved.length) })}</div>
+        {saved.length === 0 ? <p className="mt-1 text-sm text-slate-500">{t("analytics.builderSavedEmpty")}</p> : (
           <ul className="mt-2 divide-y">
             {saved.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                 <span><span className="font-medium">{s.name}</span> <span className="text-slate-400">· {s.dimension} · {s.metrics.join(", ")} · {s.rangePreset}</span></span>
                 <span className="flex flex-wrap items-center gap-3">
-                  <button className="font-semibold text-blue-600" onClick={() => run({ dimension: s.dimension, metrics: s.metrics, rangePreset: s.rangePreset })}>চালান</button>
+                  <button className="font-semibold text-blue-600" onClick={() => run({ dimension: s.dimension, metrics: s.metrics, rangePreset: s.rangePreset })}>{t("analytics.builderRunSaved")}</button>
                   <button className="text-slate-600" onClick={() => downloadCsv(s.id, s.name)}>CSV</button>
                   <button className="text-slate-600" onClick={() => openPrint(s.id)}>Print/PDF</button>
                   <select className="input" defaultValue="" onChange={(e) => { if (e.target.value) { schedule(s.id, s.name, Number(e.target.value)); e.target.value = ""; } }}>
-                    <option value="">ইমেইল Schedule…</option>
-                    <option value="1440">প্রতিদিন</option>
-                    <option value="10080">প্রতি সপ্তাহে</option>
-                    <option value="43200">প্রতি ৩০ দিনে</option>
+                    <option value="">{t("analytics.builderSchedulePlaceholder")}</option>
+                    <option value="1440">{t("analytics.builderScheduleDaily")}</option>
+                    <option value="10080">{t("analytics.builderScheduleWeekly")}</option>
+                    <option value="43200">{t("analytics.builderScheduleMonthly")}</option>
                   </select>
-                  <button className="text-red-600" onClick={() => remove(s.id)}>মুছুন</button>
+                  <button className="text-red-600" onClick={() => remove(s.id)}>{t("analytics.builderDelete")}</button>
                 </span>
               </li>
             ))}

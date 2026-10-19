@@ -1,8 +1,9 @@
 "use client";
 import React from "react";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
 import { EmptyState } from "@repo/ui";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface CohortRow {
   cohort: string;
@@ -43,22 +44,23 @@ interface ChurnData {
   customers: ChurnCustomer[];
 }
 
-const BAND_BADGE: Record<ChurnCustomer["band"], { text: string; cls: string }> = {
-  high: { text: "বেশি", cls: "badge-red" },
-  medium: { text: "মাঝারি", cls: "badge-amber" },
-  low: { text: "কম", cls: "badge-green" },
-  unknown: { text: "তথ্য নেই", cls: "badge-slate" },
+const BAND_BADGE: Record<ChurnCustomer["band"], { textKey: string; cls: string }> = {
+  high: { textKey: "analytics.cohRiskHigh", cls: "badge-red" },
+  medium: { textKey: "analytics.cohRiskMedium", cls: "badge-amber" },
+  low: { textKey: "analytics.cohRiskLow", cls: "badge-green" },
+  unknown: { textKey: "analytics.cohRiskUnknown", cls: "badge-slate" },
 };
 
 function fmtPercent(v: number | null | undefined): string {
   return v === null || v === undefined ? "—" : `${v}%`;
 }
 
-function fmtMoneyMinor(v: string | null | undefined): string {
-  return v === null || v === undefined ? "—" : formatMinor(BigInt(v));
+function moneyMinor(locale: "bn" | "en", v: string | null | undefined): string {
+  return v === null || v === undefined ? "—" : fmtMoneyMinor(locale, BigInt(v));
 }
 
 export default function CohortsPage() {
+  const { t, locale } = useLocale();
   const [cohorts, setCohorts] = React.useState<CohortsData | null>(null);
   const [churn, setChurn] = React.useState<ChurnData | null>(null);
   const [error, setError] = React.useState("");
@@ -70,7 +72,7 @@ export default function CohortsPage() {
       const { getOrganizationId } = await import("@/lib/org");
       const orgId = getOrganizationId();
       if (!orgId) {
-        setError("কোনো Organization নির্বাচিত নেই।");
+        setError(t("analytics.reportsNoOrg"));
         setLoading(false);
         return;
       }
@@ -98,18 +100,17 @@ export default function CohortsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="page-title">📊 Cohort ও গ্রাহক ধরে রাখা (Retention)</h1>
+        <h1 className="page-title">{t("analytics.cohTitle")}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          সব সংখ্যা এই দোকানের আসল অর্ডার থেকে হিসাব করা (বাতিল/রিফান্ড/ব্যর্থ অর্ডার বাদ)।
+          {t("analytics.cohIntro")}
         </p>
         {cohorts ? (
           <p className="mt-1 text-xs text-slate-400">
-            Revenue থেকে বাদ দেওয়া অর্ডারের অবস্থা:{" "}
+            {t("analytics.cohExcludedStatuses")}{" "}
             {cohorts.revenueExcludedStatuses.length > 0
               ? cohorts.revenueExcludedStatuses.join(", ")
               : "—"}
-            {" · "}বিবেচিত অর্ডার {cohorts.ordersConsidered}টি · গ্রাহক ছাড়া অর্ডার{" "}
-            {cohorts.ordersWithoutCustomer}টি · মোট গ্রাহক {cohorts.totalCustomers} জন
+            {" · "}{t("analytics.cohOrdersMeta", { considered: fmtNumber(locale, cohorts.ordersConsidered), without: fmtNumber(locale, cohorts.ordersWithoutCustomer), total: fmtNumber(locale, cohorts.totalCustomers) })}
           </p>
         ) : null}
       </div>
@@ -119,14 +120,14 @@ export default function CohortsPage() {
       ) : null}
 
       {loading ? (
-        <p className="text-sm text-slate-500">লোড হচ্ছে...</p>
+        <p className="text-sm text-slate-500">{t("analytics.cohLoading")}</p>
       ) : cohorts ? (
         <>
           {cohorts.hasData === false ? (
             <div className="card p-4">
               <EmptyState
-                title="এখনো পর্যাপ্ত ডেটা নেই — গ্রাহকদের অর্ডার এলেই এখানে Cohort বিশ্লেষণ দেখা যাবে।"
-                description="অর্ডার আসার পর Cohort, Retention ও Historical LTV এখানে স্বয়ংক্রিয়ভাবে তৈরি হবে। কোনো ভুয়া বা শূন্য সংখ্যার টেবিল দেখানো হচ্ছে না।"
+                title={t("analytics.cohEmptyTitle")}
+                description={t("analytics.cohEmptyDesc")}
               />
             </div>
           ) : (
@@ -135,7 +136,7 @@ export default function CohortsPage() {
                 <div>
                   <h2 className="font-semibold">Retention Matrix</h2>
                   <p className="mt-1 text-xs text-slate-400">
-                    মাস ০ = প্রথম কেনার মাস। প্রতিটি সারি একটি Cohort (প্রথম কেনার মাস), প্রতিটি ঘর ওই মাসে আবার কেনা গ্রাহকের শতাংশ।
+                    {t("analytics.cohRetentionNote")}
                   </p>
                 </div>
                 <div className="overflow-hidden card">
@@ -144,10 +145,10 @@ export default function CohortsPage() {
                       <thead className="bg-slate-50 text-slate-500">
                         <tr>
                           <th className="px-4 py-3">Cohort</th>
-                          <th className="px-4 py-3">আকার</th>
-                          <th className="px-4 py-3">মোট Revenue</th>
+                          <th className="px-4 py-3">{t("analytics.cohColSize")}</th>
+                          <th className="px-4 py-3">{t("analytics.cohColRevenue")}</th>
                           {monthIndexes.map((m) => (
-                            <th key={m} className="px-4 py-3">মাস {m}</th>
+                            <th key={m} className="px-4 py-3">{t("analytics.cohColMonth", { month: fmtNumber(locale, m) })}</th>
                           ))}
                         </tr>
                       </thead>
@@ -155,8 +156,8 @@ export default function CohortsPage() {
                         {cohorts.cohorts.map((row) => (
                           <tr key={row.cohort} className="border-t">
                             <td className="px-4 py-3 font-medium">{row.cohort}</td>
-                            <td className="px-4 py-3">{row.size} জন</td>
-                            <td className="px-4 py-3">{formatMinor(BigInt(row.totalRevenueMinor))}</td>
+                            <td className="px-4 py-3">{t("analytics.cohSizePeople", { count: fmtNumber(locale, row.size) })}</td>
+                            <td className="px-4 py-3">{fmtMoneyMinor(locale, BigInt(row.totalRevenueMinor))}</td>
                             {monthIndexes.map((m) => {
                               const v = row.retentionPercent[m] ?? null;
                               return (
@@ -189,7 +190,7 @@ export default function CohortsPage() {
                 <div>
                   <h2 className="font-semibold">Historical LTV</h2>
                   <p className="mt-1 text-xs text-slate-400">
-                    Historical LTV — Cohort-এর প্রতি গ্রাহকের গড় মোট কেনা (ক্রমপুঞ্জিত)।
+                    {t("analytics.cohLtvNote")}
                   </p>
                 </div>
                 <div className="overflow-hidden card">
@@ -198,9 +199,9 @@ export default function CohortsPage() {
                       <thead className="bg-slate-50 text-slate-500">
                         <tr>
                           <th className="px-4 py-3">Cohort</th>
-                          <th className="px-4 py-3">আকার</th>
+                          <th className="px-4 py-3">{t("analytics.cohColSize")}</th>
                           {monthIndexes.map((m) => (
-                            <th key={m} className="px-4 py-3">মাস {m}</th>
+                            <th key={m} className="px-4 py-3">{t("analytics.cohColMonth", { month: fmtNumber(locale, m) })}</th>
                           ))}
                         </tr>
                       </thead>
@@ -208,10 +209,10 @@ export default function CohortsPage() {
                         {cohorts.cohorts.map((row) => (
                           <tr key={row.cohort} className="border-t">
                             <td className="px-4 py-3 font-medium">{row.cohort}</td>
-                            <td className="px-4 py-3">{row.size} জন</td>
+                            <td className="px-4 py-3">{t("analytics.cohSizePeople", { count: fmtNumber(locale, row.size) })}</td>
                             {monthIndexes.map((m) => (
                               <td key={m} className="px-4 py-3">
-                                {fmtMoneyMinor(row.cumulativeLtvMinor[m] ?? null)}
+                                {moneyMinor(locale, row.cumulativeLtvMinor[m] ?? null)}
                               </td>
                             ))}
                           </tr>
@@ -226,7 +227,7 @@ export default function CohortsPage() {
 
           {churn ? (
             <div className="space-y-4">
-              <h2 className="font-semibold">Churn ঝুঁকি</h2>
+              <h2 className="font-semibold">{t("analytics.cohChurnTitle")}</h2>
 
               <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
                 {churn.label}
@@ -234,20 +235,20 @@ export default function CohortsPage() {
               <p className="text-xs text-slate-500">{churn.rule}</p>
               {churn.orgMedianGapDays !== null ? (
                 <p className="text-xs text-slate-400">
-                  দোকানের মধ্যম ব্যবধান: {churn.orgMedianGapDays} দিন
+                  {t("analytics.cohMedianGap", { days: fmtNumber(locale, churn.orgMedianGapDays) })}
                 </p>
               ) : null}
 
               <div className="flex flex-wrap gap-2 text-sm">
-                <span className="badge-red">বেশি ঝুঁকি {churn.summary.high}</span>
-                <span className="badge-amber">মাঝারি {churn.summary.medium}</span>
-                <span className="badge-green">কম {churn.summary.low}</span>
-                <span className="badge-slate">তথ্য নেই {churn.summary.unknown}</span>
+                <span className="badge-red">{t("analytics.cohSummaryHigh", { count: fmtNumber(locale, churn.summary.high) })}</span>
+                <span className="badge-amber">{t("analytics.cohSummaryMedium", { count: fmtNumber(locale, churn.summary.medium) })}</span>
+                <span className="badge-green">{t("analytics.cohSummaryLow", { count: fmtNumber(locale, churn.summary.low) })}</span>
+                <span className="badge-slate">{t("analytics.cohSummaryUnknown", { count: fmtNumber(locale, churn.summary.unknown) })}</span>
               </div>
 
               {churn.customers.length === 0 ? (
                 <div className="card p-4 text-sm text-slate-500">
-                  এখনো কোনো গ্রাহকের Churn ঝুঁকি হিসাব করার মতো ডেটা নেই।
+                  {t("analytics.cohChurnEmpty")}
                 </div>
               ) : (
                 <div className="overflow-hidden card">
@@ -255,12 +256,12 @@ export default function CohortsPage() {
                     <table className="w-full text-left text-sm">
                       <thead className="bg-slate-50 text-slate-500">
                         <tr>
-                          <th className="px-4 py-3">গ্রাহক</th>
-                          <th className="px-4 py-3">অর্ডার সংখ্যা</th>
-                          <th className="px-4 py-3">শেষ অর্ডার</th>
-                          <th className="px-4 py-3">ব্যবধানের রেফারেন্স</th>
-                          <th className="px-4 py-3">অনুপাত</th>
-                          <th className="px-4 py-3">ঝুঁকি</th>
+                          <th className="px-4 py-3">{t("analytics.cohColCustomer")}</th>
+                          <th className="px-4 py-3">{t("analytics.cohColOrders")}</th>
+                          <th className="px-4 py-3">{t("analytics.cohColLastOrder")}</th>
+                          <th className="px-4 py-3">{t("analytics.cohColGapRef")}</th>
+                          <th className="px-4 py-3">{t("analytics.cohColRatio")}</th>
+                          <th className="px-4 py-3">{t("analytics.cohColRisk")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -276,31 +277,27 @@ export default function CohortsPage() {
                                   {c.name}
                                 </Link>
                               </td>
-                              <td className="px-4 py-3">{c.orders}</td>
+                              <td className="px-4 py-3">{fmtNumber(locale, c.orders)}</td>
                               <td className="px-4 py-3">
                                 {c.lastOrderAt
-                                  ? new Date(c.lastOrderAt).toLocaleDateString()
+                                  ? fmtDate(locale, c.lastOrderAt)
                                   : "—"}
                                 {c.daysSinceLastOrder !== null &&
                                 c.daysSinceLastOrder !== undefined
-                                  ? ` · ${c.daysSinceLastOrder} দিন আগে`
+                                  ? t("analytics.cohDaysAgo", { days: fmtNumber(locale, c.daysSinceLastOrder) })
                                   : ""}
                               </td>
                               <td className="px-4 py-3">
                                 {c.referenceGapDays === null ||
                                 c.referenceSource === null
                                   ? "—"
-                                  : `${c.referenceGapDays} দিন · ${
-                                      c.referenceSource === "own"
-                                        ? "নিজের ব্যবধান"
-                                        : "দোকানের গড় ব্যবধান"
-                                    }`}
+                                  : t("analytics.cohGapValue", { days: fmtNumber(locale, c.referenceGapDays), source: c.referenceSource === "own" ? t("analytics.cohGapOwn") : t("analytics.cohGapOrg") })}
                               </td>
                               <td className="px-4 py-3">
                                 {c.ratio === null ? "—" : c.ratio}
                               </td>
                               <td className="px-4 py-3">
-                                <span className={badge.cls}>{badge.text}</span>
+                                <span className={badge.cls}>{t(badge.textKey)}</span>
                               </td>
                             </tr>
                           );
@@ -312,7 +309,7 @@ export default function CohortsPage() {
               )}
 
               <p className="text-xs text-slate-400">
-                এটি শুধু দেখার সংকেত — এই স্কোর দিয়ে কোনো স্বয়ংক্রিয় কাজ হয় না।
+                {t("analytics.cohFootnote")}
               </p>
             </div>
           ) : null}

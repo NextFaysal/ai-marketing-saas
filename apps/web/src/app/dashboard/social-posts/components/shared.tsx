@@ -13,6 +13,8 @@ import type { MonthCell } from "@/lib/social-calendar";
 import type { TimeseriesBar } from "@/lib/social-analytics";
 import type { SocialShareLink, SocialShareLinkCreated, YouTubePlaylistOption } from "@/lib/social-posts-sn";
 import type { CoachResponse, StockConfigStatus, StockSearchItem } from "@/lib/social-stock-coach";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 // ---------------------------------------------------------------------------
 // SP2 contract types (docs/social-posts-package-plan.md, SP1 API contract).
@@ -225,30 +227,40 @@ export interface EvergreenFormState {
   maxCycles: string;
 }
 
-export const ACCOUNT_STATUS_META: Record<string, { label: string; cls: string }> = {
-  connected: { label: "সংযুক্ত", cls: "bg-green-100 text-green-700" },
-  disconnected: { label: "বিচ্ছিন্ন", cls: "bg-slate-200 text-red-600" },
-  error: { label: "ত্রুটি", cls: "bg-red-100 text-red-700" },
+export const ACCOUNT_STATUS_META: Record<string, { labelKey: string; cls: string }> = {
+  connected: { labelKey: "social.acctConnected", cls: "bg-green-100 text-green-700" },
+  disconnected: { labelKey: "social.acctDisconnected", cls: "bg-slate-200 text-red-600" },
+  error: { labelKey: "social.acctError", cls: "bg-red-100 text-red-700" },
 };
 
-export const POST_STATUS_META: Record<string, { label: string; cls: string }> = {
-  draft: { label: "Draft (খসড়া)", cls: "bg-slate-200 text-slate-700" },
-  scheduled: { label: "শিডিউল করা", cls: "bg-sky-100 text-sky-700" },
-  publishing: { label: "পাবলিশ হচ্ছে", cls: "bg-amber-100 text-amber-700" },
-  published: { label: "প্রকাশিত", cls: "bg-green-100 text-green-700" },
-  failed: { label: "ব্যর্থ", cls: "bg-red-100 text-red-700" },
-  cancelled: { label: "বাতিল", cls: "bg-slate-200 text-slate-500" },
-  sent_to_creator: { label: "Creator-এর কাছে পাঠানো হয়েছে", cls: "bg-violet-100 text-violet-700" },
+export const POST_STATUS_META: Record<string, { labelKey: string; cls: string }> = {
+  draft: { labelKey: "social.postDraft", cls: "bg-slate-200 text-slate-700" },
+  scheduled: { labelKey: "social.postScheduled", cls: "bg-sky-100 text-sky-700" },
+  publishing: { labelKey: "social.postPublishing", cls: "bg-amber-100 text-amber-700" },
+  published: { labelKey: "social.postPublished", cls: "bg-green-100 text-green-700" },
+  failed: { labelKey: "social.postFailed", cls: "bg-red-100 text-red-700" },
+  cancelled: { labelKey: "social.postCancelled", cls: "bg-slate-200 text-slate-500" },
+  sent_to_creator: { labelKey: "social.postSentToCreator", cls: "bg-violet-100 text-violet-700" },
 };
 
 // SP7 approval-status badges.
-export const APPROVAL_STATUS_META: Record<SocialApprovalStatus, { label: string; cls: string }> = {
-  pending: { label: "⏳ অনুমোদনের অপেক্ষায়", cls: "bg-amber-100 text-amber-700" },
-  approved: { label: "✅ অনুমোদিত", cls: "bg-green-100 text-green-700" },
-  rejected: { label: "❌ প্রত্যাখ্যাত", cls: "bg-red-100 text-red-700" },
+export const APPROVAL_STATUS_META: Record<SocialApprovalStatus, { labelKey: string; cls: string }> = {
+  pending: { labelKey: "social.apprPending", cls: "bg-amber-100 text-amber-700" },
+  approved: { labelKey: "social.apprApproved", cls: "bg-green-100 text-green-700" },
+  rejected: { labelKey: "social.apprRejected", cls: "bg-red-100 text-red-700" },
   // SU9 two-step: step 1 done, final (Owner) approval still due.
-  manager_approved: { label: "🧭 Manager ধাপে অনুমোদিত — চূড়ান্ত অনুমোদনের অপেক্ষায়", cls: "bg-sky-100 text-sky-700" },
+  manager_approved: { labelKey: "social.apprManagerApproved", cls: "bg-sky-100 text-sky-700" },
 };
+
+/** Localised label for a status-META record (falls back to the raw
+ * status string for unknown values, exactly like the old `.label`). */
+export function metaLabel(
+  meta: { labelKey: string } | undefined,
+  t: (path: string, params?: Record<string, string | number>) => string,
+  fallback: string,
+): string {
+  return meta ? t(meta.labelKey) : fallback;
+}
 
 // ---------------------------------------------------------------------------
 // SD1: the ONE pill shape for the whole page. Labels and colours still
@@ -260,23 +272,27 @@ export const APPROVAL_STATUS_META: Record<SocialApprovalStatus, { label: string;
 const SOC_PILL_BASE = "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold";
 
 export function PostStatusPill({ status }: { status: string }) {
+  const { t } = useLocale();
   const meta = POST_STATUS_META[status];
-  return <span className={`${SOC_PILL_BASE} ${meta?.cls ?? "bg-slate-100 text-slate-600"}`}>{meta?.label ?? status}</span>;
+  return <span className={`${SOC_PILL_BASE} ${meta?.cls ?? "bg-slate-100 text-slate-600"}`}>{metaLabel(meta, t, status)}</span>;
 }
 
 export function ApprovalStatusPill({ status }: { status: SocialApprovalStatus }) {
+  const { t } = useLocale();
   const meta = APPROVAL_STATUS_META[status];
   if (!meta) return null;
-  return <span className={`${SOC_PILL_BASE} ${meta.cls}`}>{meta.label}</span>;
+  return <span className={`${SOC_PILL_BASE} ${meta.cls}`}>{t(meta.labelKey)}</span>;
 }
 
 export function AccountStatusPill({ status }: { status: string }) {
+  const { t } = useLocale();
   const meta = ACCOUNT_STATUS_META[status];
-  return <span className={`${SOC_PILL_BASE} ${meta?.cls ?? "bg-slate-100 text-slate-600"}`}>{meta?.label ?? status}</span>;
+  return <span className={`${SOC_PILL_BASE} ${meta?.cls ?? "bg-slate-100 text-slate-600"}`}>{metaLabel(meta, t, status)}</span>;
 }
 
 export function HealthPill({ health }: { health: string | null | undefined }) {
-  const pill = healthPill(health);
+  const { locale } = useLocale();
+  const pill = healthPill(health, locale);
   return <span className={`${SOC_PILL_BASE} ${pill.cls}`}>{pill.label}</span>;
 }
 
@@ -314,6 +330,7 @@ export function AccountAvatar({ name, pictureUrl, platform, size }: { name: stri
  * this way too.
  */
 export function MediaThumb({ assetId, kind, className }: { assetId: string; kind: "image" | "video"; className?: string }) {
+  const { t } = useLocale();
   const orgId = getOrganizationId();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -335,17 +352,17 @@ export function MediaThumb({ assetId, kind, className }: { assetId: string; kind
   }, [orgId, assetId]);
 
   const cls = className ?? "h-16 w-16 rounded-lg object-cover";
-  if (failed) return <span className={`flex items-center justify-center bg-slate-100 text-xs text-slate-400 ${className ?? "h-16 w-16 rounded-lg"}`}>লোড হয়নি</span>;
-  if (!url) return <span className={`soc-skeleton flex items-center justify-center text-xs text-slate-400 ${className ?? "h-16 w-16 rounded-lg"}`}>লোড হচ্ছে…</span>;
+  if (failed) return <span className={`flex items-center justify-center bg-slate-100 text-xs text-slate-400 ${className ?? "h-16 w-16 rounded-lg"}`}>{t("social.mediaLoadFailed")}</span>;
+  if (!url) return <span className={`soc-skeleton flex items-center justify-center text-xs text-slate-400 ${className ?? "h-16 w-16 rounded-lg"}`}>{t("social.mediaLoading")}</span>;
   if (kind === "video") return <video src={url} className={cls} muted preload="metadata" />;
   return <img src={url} alt="" className={cls} />;
 }
 
-/** PP2: human MB for the upload-cap hint (Bengali digits). */
-export function formatMb(bytes: number): string {
+/** PP2: human MB for the upload-cap hint (locale digits). */
+export function formatMb(bytes: number, locale: UiLocale = "bn"): string {
   const mb = bytes / 1_000_000;
-  const num = Number.isInteger(mb) ? String(mb) : mb.toFixed(1);
-  return `${num.replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)])} MB`;
+  const num = Number.isInteger(mb) ? mb : Math.round(mb * 10) / 10;
+  return `${fmtNumber(locale, num)} MB`;
 }
 
 

@@ -5,6 +5,14 @@
  * stays in page.tsx; this module only shapes data so it can be
  * unit-tested.
  */
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { tr } from "./i18n/lookup";
+import { socialBn, socialEn } from "./i18n/social";
+
+const SOCIAL_DICTS = { bn: socialBn, en: socialEn };
+const L = (locale: UiLocale, key: string, params?: Record<string, string | number>) =>
+  tr(SOCIAL_DICTS, locale, key, params) ?? key;
+
 
 // ---------------------------------------------------------------------------
 // SN5 — stock config + search (GET/PUT/DELETE media/stock/*).
@@ -39,23 +47,29 @@ export interface StockSearchResult {
   items: StockSearchItem[];
 }
 
-/** Video duration as m:ss (Bengali digits), or null. */
-export function formatStockDuration(seconds: number | null | undefined): string | null {
+/** Video duration as m:ss (locale digits), or null. */
+export function formatStockDuration(seconds: number | null | undefined, locale: UiLocale = "bn"): string | null {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return null;
   const total = Math.round(seconds);
   const text = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-  return text.replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]);
+  return text.replace(/\d/g, (d) => (locale === "en" ? d : "০১২৩৪৫৬৭৮৯"[Number(d)]));
 }
 
 // ---------------------------------------------------------------------------
 // SN5 — brand overlay positions (POST media/:id/brand-overlay).
 // ---------------------------------------------------------------------------
 
-export const OVERLAY_POSITIONS: { value: "bottom" | "top" | "corner"; label: string }[] = [
-  { value: "bottom", label: "নিচে brand bar" },
-  { value: "top", label: "উপরে brand bar" },
-  { value: "corner", label: "কোণায় শুধু logo" },
+export const OVERLAY_POSITIONS: { value: "bottom" | "top" | "corner"; label: string; labelEn: string }[] = [
+  { value: "bottom", label: "নিচে brand bar", labelEn: "Brand bar at bottom" },
+  { value: "top", label: "উপরে brand bar", labelEn: "Brand bar at top" },
+  { value: "corner", label: "কোণায় শুধু logo", labelEn: "Logo only in corner" },
 ];
+
+export function overlayPositionLabel(value: string, locale: UiLocale = "bn"): string {
+  const found = OVERLAY_POSITIONS.find((o) => o.value === value);
+  if (!found) return value;
+  return locale === "en" ? found.labelEn : found.label;
+}
 
 // ---------------------------------------------------------------------------
 // SN9 — performance coach (GET insights/coach).
@@ -97,6 +111,6 @@ export interface CoachResponse {
  * named as such; the deterministic text is a summary built from
  * the numbers — never dressed up as AI.
  */
-export function coachSourceLabel(source: string | null | undefined): string {
-  return source === "llm" ? "AI সারসংক্ষেপ (org-এর নিজের LLM দিয়ে)" : "স্বয়ংক্রিয় সারসংক্ষেপ (শুধু সংখ্যা থেকে তৈরি)";
+export function coachSourceLabel(source: string | null | undefined, locale: UiLocale = "bn"): string {
+  return source === "llm" ? L(locale, "coachLlm") : L(locale, "coachAuto");
 }

@@ -79,7 +79,7 @@ import { EmptyState } from "@repo/ui";
 // formatMb now live in components/shared.tsx (imported back here
 // for the page body, and by the panel components directly).
 import {
-  ACCOUNT_STATUS_META, ApprovalStatusPill, MAX_MEDIA, PLATFORM_LABELS, POST_STATUS_META,
+  ACCOUNT_STATUS_META, ApprovalStatusPill, MAX_MEDIA, PLATFORM_LABELS, POST_STATUS_META, metaLabel,
   type AiCopyResponse, type AiCopyVariant, type AiPlatformVariant, type AiProductOption, type AiScriptResult,
   type CarouselOutline,
   type ContentPlan, type DeriveResult, type DeriveWarning, type DiscoveredPage,
@@ -98,8 +98,11 @@ import {
   buildPostsPageQuery, healthPill, mergePostPage, summarizeBulkPostResults, summarizeCsvImport,
   type BulkPostsResponse, type CsvImportResponse,
 } from "@/lib/social-posts-su11";
+import { fmtNumber, intlLocaleOf } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 export default function SocialPostsPage() {
+  const { t, locale } = useLocale();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<Sp7SocialPost[]>([]);
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -354,7 +357,7 @@ export default function SocialPostsPage() {
     if (!postsNextCursor) return;
     setBusy("posts-more");
     try { await loadPostsPage(postsNextCursor, true); }
-    catch (e) { setError(e instanceof Error ? e.message : "আরও পোস্ট লোড করা যায়নি"); }
+    catch (e) { setError(e instanceof Error ? e.message : t("social.pgLoadMoreFailed")); }
     finally { setBusy(""); }
   }, [loadPostsPage, postsNextCursor]);
 
@@ -419,7 +422,7 @@ export default function SocialPostsPage() {
     } catch (e) {
       setYtPlaylists([]);
       setYtPlaylistsAccountId(accountId);
-      setError(e instanceof Error ? e.message : "Playlist লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : t("social.pgPlaylistLoadFailed"));
     } finally { setBusy(""); }
   }
 
@@ -510,10 +513,10 @@ export default function SocialPostsPage() {
     const gbpPickParam = params.get("gbp_pick");
     if (!connected && !oauthError && !pick && !gbpPickParam) return;
     if (oauthError) setError(oauthError);
-    if (connected === "tiktok") setNotice("TikTok অ্যাকাউন্ট যুক্ত হয়েছে।");
-    if (connected === "youtube") setNotice("YouTube Channel যুক্ত হয়েছে।");
-    if (connected === "threads") setNotice("Threads অ্যাকাউন্ট যুক্ত হয়েছে।");
-    if (connected === "google_business_profile") setNotice("Google Business Profile Location যুক্ত হয়েছে।");
+    if (connected === "tiktok") setNotice(t("social.pgTiktokConnected"));
+    if (connected === "youtube") setNotice(t("social.pgYoutubeConnected"));
+    if (connected === "threads") setNotice(t("social.pgThreadsConnected"));
+    if (connected === "google_business_profile") setNotice(t("social.pgGbpConnected"));
     if (pick) {
       // SP9: the callback parked a multi-channel authorization —
       // load the offered channels for the picker (the state id is
@@ -523,7 +526,7 @@ export default function SocialPostsPage() {
       if (orgId) {
         apiFetch<{ channels: { id: string; title: string; pictureUrl: string | null }[] }>(`/organizations/${orgId}/social/accounts/youtube/pick-info?state=${encodeURIComponent(pick)}`)
           .then((res) => setYoutubePick({ state: pick, channels: res.channels ?? [] }))
-          .catch((e) => { setError(e instanceof Error ? e.message : "Channel তালিকা লোড করা যায়নি"); setYoutubePick(null); });
+          .catch((e) => { setError(e instanceof Error ? e.message : t("social.pgChannelListFailed")); setYoutubePick(null); });
       }
     }
     if (gbpPickParam) {
@@ -535,7 +538,7 @@ export default function SocialPostsPage() {
       if (orgId) {
         apiFetch<{ locations: { id: string; title: string; accountLabel: string | null }[] }>(`/organizations/${orgId}/social/accounts/google-business-profile/pick-info?state=${encodeURIComponent(gbpPickParam)}`)
           .then((res) => setGbpPick({ state: gbpPickParam, locations: res.locations ?? [] }))
-          .catch((e) => { setError(e instanceof Error ? e.message : "Location তালিকা লোড করা যায়নি"); setGbpPick(null); });
+          .catch((e) => { setError(e instanceof Error ? e.message : t("social.pgLocationListFailed")); setGbpPick(null); });
       }
     }
     loadAccounts().catch(() => undefined);
@@ -560,7 +563,7 @@ export default function SocialPostsPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setError(t("social.pgNoOrg")); return; }
     try {
       // Org timezone drives every schedule/calendar display (SP5);
       // a failure here just keeps the Asia/Dhaka default.
@@ -616,7 +619,7 @@ export default function SocialPostsPage() {
   async function discoverPages(e: React.FormEvent) {
     e.preventDefault();
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!metaToken.trim()) { setError("আগে Meta Access Token দিন।"); return; }
+    if (!metaToken.trim()) { setError(t("social.pgTokenFirst")); return; }
     setBusy("discover"); setError("");
     try {
       const res = await apiFetch<{ pages: DiscoveredPage[] }>(`/organizations/${orgId}/social/accounts/meta/discover`, {
@@ -624,15 +627,15 @@ export default function SocialPostsPage() {
       });
       setDiscovered(res.pages);
       setPageSelected(Object.fromEntries(res.pages.map((p) => [p.pageId, p.alreadyConnectedPage])));
-      if (res.pages.length === 0) setNotice("এই Token-এর অধীনে কোনো Facebook Page পাওয়া যায়নি।");
-    } catch (e) { setError(e instanceof Error ? e.message : "Page খোঁজা ব্যর্থ হয়েছে"); }
+      if (res.pages.length === 0) setNotice(t("social.pgNoPagesFound"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDiscoverFailed")); }
     finally { setBusy(""); }
   }
 
   async function connectSelectedPages() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const pageIds = Object.entries(pageSelected).filter(([, v]) => v).map(([k]) => k);
-    if (pageIds.length === 0) { setError("অন্তত একটি Page বেছে নিন।"); return; }
+    if (pageIds.length === 0) { setError(t("social.pgPickPage")); return; }
     setBusy("connect"); setError("");
     try {
       const res = await apiFetch<{ accounts: SocialAccount[] }>(`/organizations/${orgId}/social/accounts/meta/connect`, {
@@ -642,21 +645,21 @@ export default function SocialPostsPage() {
       setDiscovered(null);
       setPageSelected({});
       setShowConnect(false);
-      setNotice(`যুক্ত হয়েছে: ${res.accounts.length}টি অ্যাকাউন্ট এখন সংযুক্ত।`);
+      setNotice(t("social.pgConnectedCount", { count: fmtNumber(locale, res.accounts.length) }));
       await loadAccounts();
-    } catch (e) { setError(e instanceof Error ? e.message : "যুক্ত করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgConnectFailed")); }
     finally { setBusy(""); }
   }
 
   async function disconnectAccount(a: SocialAccount) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`“${a.name}” (${PLATFORM_LABELS[a.platform] ?? a.platform}) অ্যাকাউন্টটি বিচ্ছিন্ন করবেন?\n\nএই অ্যাকাউন্টের Draft ও আগের পোস্ট থেকে যাবে, কিন্তু নতুন পোস্টে এই অ্যাকাউন্ট আর বেছে নেওয়া যাবে না।`)) return;
+    if (!window.confirm(t("social.pgDisconnectConfirm", { name: a.name, platform: PLATFORM_LABELS[a.platform] ?? a.platform }))) return;
     setBusy(`disconnect-${a.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/accounts/${a.id}/disconnect`, { method: "POST" });
-      setNotice(`“${a.name}” বিচ্ছিন্ন করা হয়েছে।`);
+      setNotice(t("social.pgDisconnected", { name: a.name }));
       await loadAccounts();
-    } catch (e) { setError(e instanceof Error ? e.message : "বিচ্ছিন্ন করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDisconnectFailed")); }
     finally { setBusy(""); }
   }
 
@@ -674,7 +677,7 @@ export default function SocialPostsPage() {
       const res = await apiFetch<{ url: string }>(`/organizations/${orgId}/social/accounts/${segment}/connect-url`);
       window.location.href = res.url;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Connect শুরু করা যায়নি");
+      setError(e instanceof Error ? e.message : t("social.pgConnectStartFailed"));
       setBusy("");
     }
   }
@@ -685,8 +688,8 @@ export default function SocialPostsPage() {
   // Telegram's own message, shown verbatim through setError.
   async function connectTelegram() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!telegramTokenInput.trim()) { setError("আগে Bot Token দিন — Telegram-এ @BotFather দিয়ে Bot বানালে Token পাওয়া যায়।"); return; }
-    if (!telegramChannelInput.trim()) { setError("Channel-এর Username (@সহ) অথবা numeric Chat ID দিন।"); return; }
+    if (!telegramTokenInput.trim()) { setError(t("social.pgBotTokenFirst")); return; }
+    if (!telegramChannelInput.trim()) { setError(t("social.pgChannelFirst")); return; }
     setBusy("connect-telegram"); setError("");
     try {
       const res = await apiFetch<SocialAccount>(`/organizations/${orgId}/social/accounts/telegram/connect`, {
@@ -696,9 +699,9 @@ export default function SocialPostsPage() {
       setTelegramTokenInput("");
       setTelegramChannelInput("");
       setShowTelegramConnect(false);
-      setNotice(`Telegram Channel যুক্ত হয়েছে: “${res.name}” এখন সংযুক্ত।`);
+      setNotice(t("social.pgTelegramConnected", { name: res.name }));
       await loadAccounts();
-    } catch (e) { setError(e instanceof Error ? e.message : "Telegram যুক্ত করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgTelegramFailed")); }
     finally { setBusy(""); }
   }
 
@@ -712,9 +715,9 @@ export default function SocialPostsPage() {
         body: JSON.stringify({ state: gbpPick.state, locationId }),
       });
       setGbpPick(null);
-      setNotice("Google Business Profile Location যুক্ত হয়েছে।");
+      setNotice(t("social.pgGbpConnected"));
       await loadAccounts();
-    } catch (e) { setError(e instanceof Error ? e.message : "Location যুক্ত করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgLocationConnectFailed")); }
     finally { setBusy(""); }
   }
 
@@ -728,9 +731,9 @@ export default function SocialPostsPage() {
         body: JSON.stringify({ state: youtubePick.state, channelId }),
       });
       setYoutubePick(null);
-      setNotice("YouTube Channel যুক্ত হয়েছে।");
+      setNotice(t("social.pgYoutubeConnected"));
       await loadAccounts();
-    } catch (e) { setError(e instanceof Error ? e.message : "Channel যুক্ত করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgChannelConnectFailed")); }
     finally { setBusy(""); }
   }
 
@@ -777,7 +780,7 @@ export default function SocialPostsPage() {
     setShowAiPanel(next);
     if (next) {
       // Lazily load products + hashtag sets when the panel opens.
-      if (!aiProductsLoaded) loadAiProducts().catch((e) => setError(e instanceof Error ? e.message : "Product লোড ব্যর্থ হয়েছে"));
+      if (!aiProductsLoaded) loadAiProducts().catch((e) => setError(e instanceof Error ? e.message : t("social.pgProductLoadFailed")));
       loadHashtagSets().catch(() => undefined);
       loadHashtagInsights().catch(() => undefined);
       loadContentPlans().catch(() => undefined);
@@ -786,7 +789,7 @@ export default function SocialPostsPage() {
 
   async function generateContentPlan() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!planMonth) { setError("আগে মাস বেছে নিন।"); return; }
+    if (!planMonth) { setError(t("social.pgPickMonth")); return; }
     setBusy("ai-plan"); setError("");
     try {
       const pillars = planPillars.split(",").map((p) => p.trim()).filter(Boolean);
@@ -801,19 +804,19 @@ export default function SocialPostsPage() {
         });
       applyContentPlan(res.plan);
       if (res.droppedItems > 0) {
-        setNotice(`Content Plan তৈরি হয়েছে — তবে ${res.droppedItems.toLocaleString("bn-BD")}টি item যাচাইয়ে বাদ গেছে।`);
+        setNotice(t("social.pgPlanCreatedDropped", { count: fmtNumber(locale, res.droppedItems) }));
       } else {
-        setNotice("মাসের Content Plan তৈরি হয়েছে।");
+        setNotice(t("social.pgPlanCreated"));
       }
-    } catch (e) { setError(e instanceof Error ? e.message : "Content Plan তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgPlanFailed")); }
     finally { setBusy(""); }
   }
 
   async function materializeContentPlan() {
     const orgId = getOrganizationId(); if (!orgId || !contentPlan) return;
     const itemIndexes = contentPlan.items.map((_, i) => i).filter((i) => planSelectedItems[i]);
-    if (itemIndexes.length === 0) { setError("আগে অন্তত একটি Plan item বেছে নিন।"); return; }
-    if (!planAccountId) { setError("আগে Draft-এর জন্য একটি অ্যাকাউন্ট বেছে নিন।"); return; }
+    if (itemIndexes.length === 0) { setError(t("social.pgPickPlanItem")); return; }
+    if (!planAccountId) { setError(t("social.pgPickDraftAccount")); return; }
     setBusy("ai-plan-materialize"); setError("");
     try {
       const res = await apiFetch<{ results: { index: number; status: "created" | "skipped" | "failed"; postId?: string; error?: string }[]; plan: ContentPlan }>(
@@ -825,19 +828,19 @@ export default function SocialPostsPage() {
       const created = res.results.filter((r) => r.status === "created").length;
       const skipped = res.results.filter((r) => r.status === "skipped").length;
       const failed = res.results.filter((r) => r.status === "failed");
-      setNotice(`Draft তৈরি সম্পন্ন: ${created.toLocaleString("bn-BD")}টি তৈরি হয়েছে, ${skipped.toLocaleString("bn-BD")}টি বাদ দেওয়া হয়েছে (skipped), ${failed.length.toLocaleString("bn-BD")}টি ব্যর্থ।`);
+      setNotice(t("social.pgDraftsDone", { created: fmtNumber(locale, created), skipped: fmtNumber(locale, skipped), failed: fmtNumber(locale, failed.length) }));
       if (failed.length > 0) {
-        setError(failed.map((r) => r.error ?? "অজানা ত্রুটি").join(" · "));
+        setError(failed.map((r) => r.error ?? t("social.pgUnknownError")).join(" · "));
       }
       await loadPosts().catch(() => undefined);
       await loadContentPlans().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Draft তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDraftCreateFailed")); }
     finally { setBusy(""); }
   }
 
   async function generateAiScript() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!scriptTopic.trim()) { setError("আগে Script-এর বিষয় (Topic) লিখুন।"); return; }
+    if (!scriptTopic.trim()) { setError(t("social.pgScriptTopicFirst")); return; }
     setBusy("ai-script"); setError("");
     try {
       const res = await apiFetch<AiScriptResult>(`/organizations/${orgId}/social/posts/ai-script`, {
@@ -849,7 +852,7 @@ export default function SocialPostsPage() {
         }),
       });
       setAiScript(res);
-    } catch (e) { setError(e instanceof Error ? e.message : "Script তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgScriptFailed")); }
     finally { setBusy(""); }
   }
 
@@ -857,9 +860,9 @@ export default function SocialPostsPage() {
 
   async function generatePlatformVariants() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!caption.trim()) { setError("আগে মূল ক্যাপশন লিখুন — AI সেটাকেই platform অনুযায়ী সাজাবে।"); return; }
+    if (!caption.trim()) { setError(t("social.pgCaptionFirstVariants")); return; }
     const platforms = [...new Set(composerTargets.map((a) => a.platform))];
-    if (platforms.length === 0) { setError("আগে অন্তত একটি অ্যাকাউন্ট বেছে নিন — কোন কোন platform-এর variant লাগবে তা সেখান থেকেই ঠিক হয়।"); return; }
+    if (platforms.length === 0) { setError(t("social.pgPickAccountVariants")); return; }
     setBusy("ai-variants"); setError("");
     try {
       const res = await apiFetch<{ variants: AiPlatformVariant[]; droppedCount: number }>(
@@ -870,9 +873,9 @@ export default function SocialPostsPage() {
       setAiPlatformVariants(res.variants);
       setAiVariantDropped(res.droppedCount ?? 0);
       setNotice(res.droppedCount > 0
-        ? `Platform variant তৈরি হয়েছে — ${res.droppedCount.toLocaleString("bn-BD")}টি variant যাচাইয়ে বাদ গেছে (মূল লেখায় নেই এমন সংখ্যা ছিল)।`
-        : "Platform variant তৈরি হয়েছে — পছন্দেরটি সংশ্লিষ্ট অ্যাকাউন্টের Variant ঘরে বসান।");
-    } catch (e) { setError(e instanceof Error ? e.message : "Platform variant তৈরি ব্যর্থ হয়েছে"); }
+        ? t("social.pgVariantsCreatedDropped", { count: fmtNumber(locale, res.droppedCount) })
+        : t("social.pgVariantsCreated"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgVariantsFailed")); }
     finally { setBusy(""); }
   }
 
@@ -888,7 +891,7 @@ export default function SocialPostsPage() {
       for (const a of targets) next[a.id] = { ...next[a.id], caption: text };
       return next;
     });
-    setNotice(`${targets.map((a) => a.name).join(", ")} — এই অ্যাকাউন্টের Variant ঘরে AI-এর লেখা বসানো হয়েছে। চাইলে বদলে নিন, তারপর Draft সংরক্ষণ করুন।`);
+    setNotice(t("social.pgVariantApplied", { names: targets.map((a) => a.name).join(", ") }));
   }
 
   /** SN4: translate one composer field's text. The result is only
@@ -896,7 +899,7 @@ export default function SocialPostsPage() {
    * changes when the user taps "বসান" in the panel. */
   async function translateComposerText(key: string, text: string, targetLang: "bn" | "en") {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!text.trim()) { setError("আগে লেখা লিখুন — অনুবাদ করতে লেখা লাগবে।"); return; }
+    if (!text.trim()) { setError(t("social.pgTextFirst")); return; }
     setBusy(`ai-translate-${key}`); setError("");
     try {
       const res = await apiFetch<{ text: string }>(`/organizations/${orgId}/social/posts/ai-translate`, {
@@ -904,7 +907,7 @@ export default function SocialPostsPage() {
         body: JSON.stringify({ text: text.trim(), targetLang }),
       });
       setTranslations((s) => ({ ...s, [key]: { text: res.text, targetLang } }));
-    } catch (e) { setError(e instanceof Error ? e.message : "অনুবাদ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgTranslateFailed")); }
     finally { setBusy(""); }
   }
 
@@ -913,7 +916,7 @@ export default function SocialPostsPage() {
   async function generateRepurposeScript(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const topic = (p.caption ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
-    if (!topic) { setError("এই পোস্টে কোনো ক্যাপশন নেই — Script বানাতে ক্যাপশন লাগবে।"); return; }
+    if (!topic) { setError(t("social.pgNoCaptionScript")); return; }
     setBusy(`repurpose-script-${p.id}`); setError("");
     try {
       const res = await apiFetch<AiScriptResult>(`/organizations/${orgId}/social/posts/ai-script`, {
@@ -921,7 +924,7 @@ export default function SocialPostsPage() {
         body: JSON.stringify({ topic, language: aiLanguage }),
       });
       setRepurposeScriptByPost((s) => ({ ...s, [p.id]: res }));
-    } catch (e) { setError(e instanceof Error ? e.message : "Script তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgScriptFailed")); }
     finally { setBusy(""); }
   }
 
@@ -929,7 +932,7 @@ export default function SocialPostsPage() {
    * (returned only, kept per post). */
   async function generateCarouselOutline(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(p.caption ?? "").trim()) { setError("এই পোস্টে কোনো ক্যাপশন নেই — Carousel outline বানাতে ক্যাপশন লাগবে।"); return; }
+    if (!(p.caption ?? "").trim()) { setError(t("social.pgNoCaptionCarousel")); return; }
     setBusy(`repurpose-outline-${p.id}`); setError("");
     try {
       const res = await apiFetch<CarouselOutline>(`/organizations/${orgId}/social/posts/ai-carousel-outline`, {
@@ -937,7 +940,7 @@ export default function SocialPostsPage() {
         body: JSON.stringify({ caption: p.caption.trim() }),
       });
       setRepurposeOutlineByPost((s) => ({ ...s, [p.id]: res }));
-    } catch (e) { setError(e instanceof Error ? e.message : "Carousel outline তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgCarouselFailed")); }
     finally { setBusy(""); }
   }
 
@@ -960,7 +963,7 @@ export default function SocialPostsPage() {
       setAiHashtags(res.hashtags ?? []);
       setSelectedHashtags([]); // none selected by default
       setAiNotice(res.notice ?? "");
-    } catch (e) { setError(e instanceof Error ? e.message : "AI Caption তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgAiCaptionFailed")); }
     finally { setBusy(""); }
   }
 
@@ -974,8 +977,8 @@ export default function SocialPostsPage() {
 
   async function saveHashtagSet() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!hashtagSetName.trim()) { setError("Set-এর নাম দিন।"); return; }
-    if (selectedHashtags.length === 0) { setError("আগে অন্তত একটি Hashtag বেছে নিন।"); return; }
+    if (!hashtagSetName.trim()) { setError(t("social.pgSetNameFirst")); return; }
+    if (selectedHashtags.length === 0) { setError(t("social.pgPickHashtag")); return; }
     setBusy("ai-save-set"); setError("");
     try {
       await apiFetch<HashtagSet>(`/organizations/${orgId}/social/hashtag-sets`, {
@@ -983,9 +986,9 @@ export default function SocialPostsPage() {
         body: JSON.stringify({ name: hashtagSetName.trim(), tags: selectedHashtags }),
       });
       setHashtagSetName("");
-      setNotice("Hashtag Set সংরক্ষণ হয়েছে।");
+      setNotice(t("social.pgHashtagSetSaved"));
       await loadHashtagSets();
-    } catch (e) { setError(e instanceof Error ? e.message : "Hashtag Set সংরক্ষণ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgHashtagSetFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1005,7 +1008,7 @@ export default function SocialPostsPage() {
     setSelectedMedia((prev) => {
       if (prev.some((m) => m.assetId === item.assetId)) return prev;
       if (prev.length >= MAX_MEDIA) {
-        setError(`সর্বোচ্চ ${MAX_MEDIA}টি মিডিয়া যোগ করা যাবে।`);
+        setError(t("social.pgMaxMedia", { max: fmtNumber(locale, MAX_MEDIA) }));
         return prev;
       }
       return [...prev, item];
@@ -1014,7 +1017,7 @@ export default function SocialPostsPage() {
 
   async function uploadMedia(file: File) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (selectedMedia.length >= MAX_MEDIA) { setError(`সর্বোচ্চ ${MAX_MEDIA}টি মিডিয়া যোগ করা যাবে।`); return; }
+    if (selectedMedia.length >= MAX_MEDIA) { setError(t("social.pgMaxMedia", { max: fmtNumber(locale, MAX_MEDIA) })); return; }
     setBusy("upload"); setError("");
     try {
       // PP2: the file itself is the request body — the API streams
@@ -1029,13 +1032,13 @@ export default function SocialPostsPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(typeof data?.message === "string" ? data.message : "আপলোড ব্যর্থ হয়েছে");
+        throw new Error(typeof data?.message === "string" ? data.message : t("social.pgUploadFailed"));
       }
       const asset = (await res.json()) as MediaAsset;
       attachMedia({ assetId: asset.id, kind: asset.kind, name: asset.name });
       setAssets((prev) => [asset, ...prev.filter((a) => a.id !== asset.id)]);
-      setNotice(`“${asset.name}” আপলোড হয়ে পোস্টে যোগ হয়েছে।`);
-    } catch (e) { setError(e instanceof Error ? e.message : "আপলোড ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgUploaded", { name: asset.name }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgUploadFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1050,8 +1053,8 @@ export default function SocialPostsPage() {
         method: "POST",
       });
       setAssets((prev) => [png, ...prev.filter((a) => a.id !== png.id)]);
-      setNotice(`“${png.name}” তৈরি হয়েছে — এখন এটি Post-এ ব্যবহার করা যাবে।`);
-    } catch (e) { setError(e instanceof Error ? e.message : "PNG সংস্করণ তৈরি ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgPngCreated", { name: png.name }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgPngFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1059,22 +1062,22 @@ export default function SocialPostsPage() {
 
   async function createMediaFolder() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const name = window.prompt("নতুন ফোল্ডারের নাম দিন:");
+    const name = window.prompt(t("social.pgFolderNamePrompt"));
     if (!name || !name.trim()) return;
     setBusy("folder-create"); setError("");
     try {
       await apiFetch<MediaFolder>(`/organizations/${orgId}/social/media/folders`, {
         method: "POST", body: JSON.stringify({ name: name.trim() }),
       });
-      setNotice(`“${name.trim()}” ফোল্ডার তৈরি হয়েছে।`);
+      setNotice(t("social.pgFolderCreated", { name: name.trim() }));
       await loadMediaFolders();
-    } catch (e) { setError(e instanceof Error ? e.message : "ফোল্ডার তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgFolderCreateFailed")); }
     finally { setBusy(""); }
   }
 
   async function deleteMediaFolder(folder: MediaFolder) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`“${folder.name}” ফোল্ডারটি মুছবেন?\n\nএই ফোল্ডারের asset-গুলো মুছে যাবে না — সেগুলো ফোল্ডারহীন হয়ে যাবে।`)) return;
+    if (!window.confirm(t("social.pgFolderDeleteConfirm", { name: folder.name }))) return;
     setBusy(`folder-delete-${folder.id}`); setError("");
     try {
       await apiFetch<{ deleted: boolean }>(`/organizations/${orgId}/social/media/folders/${folder.id}`, { method: "DELETE" });
@@ -1082,9 +1085,9 @@ export default function SocialPostsPage() {
         setMediaFolderFilter("");
         mediaFiltersRef.current = { ...mediaFiltersRef.current, folderId: undefined };
       }
-      setNotice(`“${folder.name}” ফোল্ডার মোছা হয়েছে — এর asset-গুলো এখন ফোল্ডারহীন।`);
+      setNotice(t("social.pgFolderDeleted", { name: folder.name }));
       await Promise.all([loadMediaFolders().catch(() => undefined), loadAssets().catch(() => undefined)]);
-    } catch (e) { setError(e instanceof Error ? e.message : "ফোল্ডার মোছা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgFolderDeleteFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1113,7 +1116,7 @@ export default function SocialPostsPage() {
 
   async function updateAssetTags(asset: MediaAsset) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const input = window.prompt("ট্যাগগুলো কমা দিয়ে লিখুন:", formatMediaTags(asset.tags ?? []));
+    const input = window.prompt(t("social.pgTagsPrompt"), formatMediaTags(asset.tags ?? []));
     if (input === null) return;
     const tags = parseMediaTagsInput(input);
     setBusy(`tags-${asset.id}`); setError("");
@@ -1122,8 +1125,8 @@ export default function SocialPostsPage() {
         method: "PATCH", body: JSON.stringify({ tags }),
       });
       setAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, ...updated } : a)));
-      setNotice(`“${asset.name}”-এর ট্যাগ হালনাগাদ হয়েছে।`);
-    } catch (e) { setError(e instanceof Error ? e.message : "ট্যাগ হালনাগাদ ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgTagsUpdated", { name: asset.name }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgTagsFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1136,7 +1139,7 @@ export default function SocialPostsPage() {
       });
       setAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, ...updated } : a)));
       await loadMediaFolders().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "ফোল্ডার বদল ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgFolderChangeFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1146,7 +1149,7 @@ export default function SocialPostsPage() {
     try {
       const usage = await apiFetch<MediaUsage>(`/organizations/${orgId}/social/media/${asset.id}/usage`);
       setUsageByAsset((prev) => ({ ...prev, [asset.id]: usage }));
-    } catch (e) { setError(e instanceof Error ? e.message : "ব্যবহারের তথ্য লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgUsageLoadFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1159,8 +1162,8 @@ export default function SocialPostsPage() {
         method: "POST", body: JSON.stringify({ aspect }),
       });
       setAssets((prev) => [derived, ...prev.filter((a) => a.id !== derived.id)]);
-      setNotice("নতুন সংস্করণ তৈরি হয়েছে (আসলটি অপরিবর্তিত)");
-    } catch (e) { setError(e instanceof Error ? e.message : "Crop করা ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgNewVersionCreated"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgCropFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1172,8 +1175,8 @@ export default function SocialPostsPage() {
         method: "POST", body: JSON.stringify({ atSeconds: 1 }),
       });
       setAssets((prev) => [cover, ...prev.filter((a) => a.id !== cover.id)]);
-      setNotice(`“${cover.name}” Cover ছবি তৈরি হয়েছে।`);
-    } catch (e) { setError(e instanceof Error ? e.message : "Cover তোলা ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgCoverCreated", { name: cover.name }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgCoverFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1182,7 +1185,7 @@ export default function SocialPostsPage() {
   // and the server's verbatim reason lands in the error banner.
   async function saveStockKey() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!stockKeyInput.trim()) { setError("Pexels API key দিন।"); return; }
+    if (!stockKeyInput.trim()) { setError(t("social.pgPexelsKeyFirst")); return; }
     setBusy("stock-key-save"); setError(""); setNotice("");
     try {
       const status = await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`, {
@@ -1190,8 +1193,8 @@ export default function SocialPostsPage() {
       });
       setStockStatus(status);
       setStockKeyInput("");
-      setNotice("Pexels key যাচাই হয়ে সংরক্ষিত হয়েছে — এখন stock ছবি/ভিডিও খুঁজতে পারবেন।");
-    } catch (e) { setError(e instanceof Error ? e.message : "Pexels key সংরক্ষণ ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgPexelsKeySaved"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgPexelsKeySaveFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1202,8 +1205,8 @@ export default function SocialPostsPage() {
       setStockStatus(await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`, { method: "DELETE" }));
       setStockResults([]);
       setStockSearched(false);
-      setNotice("Pexels key মুছে ফেলা হয়েছে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "Pexels key মোছা ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgPexelsKeyDeleted"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgPexelsKeyDeleteFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1216,7 +1219,7 @@ export default function SocialPostsPage() {
       const res = await apiFetch<StockSearchResult>(`/organizations/${orgId}/social/media/stock/search?${qs.toString()}`);
       setStockResults(res.items ?? []);
       setStockSearched(true);
-    } catch (e) { setError(e instanceof Error ? e.message : "Stock খোঁজা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgStockSearchFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1231,8 +1234,8 @@ export default function SocialPostsPage() {
         method: "POST", body: JSON.stringify({ stockId: item.stockId, kind: item.kind }),
       });
       setAssets((prev) => [asset, ...prev.filter((a) => a.id !== asset.id)]);
-      setNotice(`“${asset.name}” Library-তে যোগ হয়েছে — credit asset-এ সংরক্ষিত আছে।`);
-    } catch (e) { setError(e instanceof Error ? e.message : "Stock import ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgStockImported", { name: asset.name }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgStockImportFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1247,8 +1250,8 @@ export default function SocialPostsPage() {
         method: "POST", body: JSON.stringify({ position }),
       });
       setAssets((prev) => [derived, ...prev.filter((a) => a.id !== derived.id)]);
-      setNotice("Brand overlay-সহ নতুন সংস্করণ তৈরি হয়েছে (আসলটি অপরিবর্তিত)");
-    } catch (e) { setError(e instanceof Error ? e.message : "Brand overlay ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgOverlayCreated"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgOverlayFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1264,21 +1267,21 @@ export default function SocialPostsPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const ids = Array.from(bulkSelected);
     if (ids.length === 0) return;
-    if (action === "delete" && !window.confirm(`${ids.length.toLocaleString("bn-BD")}টি মিডিয়া মুছে ফেলবেন? এটি আর ফিরিয়ে আনা যাবে না।`)) return;
+    if (action === "delete" && !window.confirm(t("social.pgBulkDeleteConfirm", { count: fmtNumber(locale, ids.length) }))) return;
     setBusy(`bulk-${action}`); setError(""); setNotice("");
     try {
       const res = await apiFetch<{ results: MediaBulkResult[] }>(`/organizations/${orgId}/social/media/bulk`, {
         method: "POST",
         body: JSON.stringify(action === "move" ? { ids, action, folderId: bulkFolderId || null } : { ids, action }),
       });
-      setNotice(summarizeBulkResults(res.results));
+      setNotice(summarizeBulkResults(res.results, locale));
       const failed = (res.results ?? []).filter((r) => !r.ok);
       if (failed.length > 0) {
-        setError(failed.map((r) => r.error ?? "অজানা ত্রুটি").join(" · "));
+        setError(failed.map((r) => r.error ?? t("social.pgUnknownError")).join(" · "));
       }
       setBulkSelected(new Set());
       await Promise.all([loadAssets().catch(() => undefined), loadMediaFolders().catch(() => undefined)]);
-    } catch (e) { setError(e instanceof Error ? e.message : "Bulk কাজ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgBulkFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1288,7 +1291,7 @@ export default function SocialPostsPage() {
   // error হুবহু picker-এর ভেতরেই দেখানো হয়।
   async function importProductImage() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!importProductId) { setImportError("আগে একটি Product বেছে নিন।"); return; }
+    if (!importProductId) { setImportError(t("social.pgPickProduct")); return; }
     setBusy("import-media"); setImportError(""); setError("");
     try {
       const asset = await apiFetch<MediaAsset>(`/organizations/${orgId}/social/media/import`, {
@@ -1297,8 +1300,8 @@ export default function SocialPostsPage() {
       });
       setAssets((prev) => [asset, ...prev.filter((a) => a.id !== asset.id)]);
       attachMedia({ assetId: asset.id, kind: asset.kind, name: asset.name });
-      setNotice(`“${asset.name}” import হয়ে Post-এ যোগ হয়েছে।`);
-    } catch (e) { setImportError(e instanceof Error ? e.message : "ছবি import ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgProductImported", { name: asset.name }));
+    } catch (e) { setImportError(e instanceof Error ? e.message : t("social.pgImageImportFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1306,7 +1309,7 @@ export default function SocialPostsPage() {
 
   async function generateAiImage() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!aiImagePrompt.trim()) { setError("ছবির বর্ণনা (Prompt) দিন।"); return; }
+    if (!aiImagePrompt.trim()) { setError(t("social.pgPromptFirst")); return; }
     setBusy("ai-image"); setError("");
     try {
       const asset = await apiFetch<MediaAsset>(`/organizations/${orgId}/social/media/ai-image`, {
@@ -1316,17 +1319,17 @@ export default function SocialPostsPage() {
       await loadAssets().catch(() => undefined);
       if (selectedMedia.length < MAX_MEDIA) {
         attachMedia({ assetId: asset.id, kind: asset.kind, name: asset.name });
-        setNotice("AI ছবি তৈরি হয়েছে এবং Post-এর জন্য বেছে নেওয়া হয়েছে।");
+        setNotice(t("social.pgAiImageCreatedAttached"));
       } else {
-        setNotice("AI ছবি তৈরি হয়েছে — তবে Post-এ ইতিমধ্যে সর্বোচ্চ মিডিয়া যোগ আছে, তাই Library থেকে পরে বেছে নিন।");
+        setNotice(t("social.pgAiImageCreatedFull"));
       }
-    } catch (e) { setError(e instanceof Error ? e.message : "AI ছবি তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgAiImageFailed")); }
     finally { setBusy(""); }
   }
 
   async function createTemplatePoster() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!templateHeadline.trim()) { setError("Poster-এর Headline দিন।"); return; }
+    if (!templateHeadline.trim()) { setError(t("social.pgHeadlineFirst")); return; }
     setBusy("template-image"); setError("");
     try {
       const asset = await apiFetch<MediaAsset>(`/organizations/${orgId}/social/media/template-image`, {
@@ -1343,8 +1346,8 @@ export default function SocialPostsPage() {
       });
       setTemplatePoster(asset);
       await loadAssets().catch(() => undefined);
-      setNotice("Template Poster তৈরি হয়েছে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "Template Poster তৈরি ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgPosterCreated"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgPosterFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1404,7 +1407,7 @@ export default function SocialPostsPage() {
     setCoverAssetId(p.coverAssetId ?? "");
     setIsStory(!!p.isStory);
     setError("");
-    setNotice("Draftটি Composer-এ লোড হয়েছে — বদলে “পরিবর্তন সংরক্ষণ করুন” চাপুন।");
+    setNotice(t("social.pgDraftLoaded"));
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1430,15 +1433,15 @@ export default function SocialPostsPage() {
             ...currentPlatformFields("update", (editingPost?.account?.platform ?? "") === "meta_page"),
           }),
         });
-        setNotice("Draft-এর পরিবর্তন সংরক্ষণ হয়েছে।");
+        setNotice(t("social.pgDraftChangesSaved"));
         resetComposer();
         await loadPosts();
-      } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ হয়েছে"); }
+      } catch (e) { setError(e instanceof Error ? e.message : t("social.pgSaveFailed")); }
       finally { setBusy(""); }
       return;
     }
     const targets = accounts.filter((a) => a.status === "connected" && accountSelected[a.id]);
-    if (targets.length === 0) { setError("অন্তত একটি সংযুক্ত অ্যাকাউন্ট বেছে নিন।"); return; }
+    if (targets.length === 0) { setError(t("social.pgPickConnectedAccount")); return; }
     setBusy("save");
     try {
       if (targets.length === 1) {
@@ -1459,7 +1462,7 @@ export default function SocialPostsPage() {
             ...currentPlatformFields("create", a.platform === "meta_page"),
           }),
         });
-        setNotice("১টি অ্যাকাউন্টের জন্য Draft সংরক্ষণ হয়েছে।");
+        setNotice(t("social.pgDraftSavedOne"));
       } else {
         // SU1: multiple accounts — ONE group call; per-account
         // variant overrides are resolved by the pure helper.
@@ -1492,12 +1495,12 @@ export default function SocialPostsPage() {
           body: JSON.stringify(payloadWithPlatform),
         });
         const count = Array.isArray(res.posts) ? res.posts.length : targets.length;
-        setNotice(`Group তৈরি হয়েছে: ${count.toLocaleString("bn-BD")}টি অ্যাকাউন্টের জন্য Draft সংরক্ষণ হয়েছে।`);
+        setNotice(t("social.pgGroupCreated", { count: fmtNumber(locale, count) }));
       }
       resetComposer();
       await loadPosts();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Draft সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.pgDraftSaveFailed"));
       // A group may partially exist server-side — refresh the list
       // so the user sees exactly what was saved.
       await loadPosts().catch(() => undefined);
@@ -1506,14 +1509,14 @@ export default function SocialPostsPage() {
 
   async function deletePost(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("এই Draftটি মুছে ফেলবেন? এটি আর ফিরিয়ে আনা যাবে না।")) return;
+    if (!window.confirm(t("social.pgDeleteDraftConfirm"))) return;
     setBusy(`delete-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}`, { method: "DELETE" });
       if (editingPostId === p.id) resetComposer();
-      setNotice("Draft মোছা হয়েছে।");
+      setNotice(t("social.pgDraftDeleted"));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছতে ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDeleteFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1525,9 +1528,9 @@ export default function SocialPostsPage() {
     try {
       const created = await apiFetch<Sp7SocialPost>(`/organizations/${orgId}/social/posts/${p.id}/clone`, { method: "POST" });
       setPosts((prev) => [created, ...prev.filter((x) => x.id !== created.id)]);
-      setNotice("পোস্টটির একটি নতুন Draft কপি (Clone) তৈরি হয়েছে।");
+      setNotice(t("social.pgCloned"));
       await loadPosts().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Clone করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgCloneFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1541,10 +1544,10 @@ export default function SocialPostsPage() {
     setBusy(`caption-test-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/caption-test`, { method: "POST", body: JSON.stringify({}) });
-      setNotice("Caption Test জোড়া তৈরি হয়েছে — দ্বিতীয় Draft-এর caption বদলে আলাদা সময়ে শিডিউল করুন।");
+      setNotice(t("social.pgCaptionTestCreated"));
       await loadPosts().catch(() => undefined);
       loadCaptionTests().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Caption Test তৈরি করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgCaptionTestFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1557,9 +1560,9 @@ export default function SocialPostsPage() {
       // that honest message is surfaced verbatim via `error`.
       const updated = await apiFetch<Sp7SocialPost>(`/organizations/${orgId}/social/posts/${p.id}/add-to-queue`, { method: "POST" });
       upsertPost(updated);
-      setNotice(`পোস্টটি Queue-তে যোগ হয়েছে${updated.scheduledAt ? ` — শিডিউল: ${fmtInTz(updated.scheduledAt)} (${orgTz})` : ""}।`);
+      setNotice(t("social.pgQueued", { suffix: updated.scheduledAt ? t("social.pgQueuedSuffix", { when: fmtInTz(updated.scheduledAt), tz: orgTz }) : "" }));
       await loadPosts().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Queue-তে যোগ করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgQueueFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1569,9 +1572,9 @@ export default function SocialPostsPage() {
     try {
       const updated = await apiFetch<Sp7SocialPost>(`/organizations/${orgId}/social/posts/${p.id}/schedule-best-time`, { method: "POST" });
       upsertPost(updated);
-      setNotice(`পোস্টটি সেরা সময়ে শিডিউল হয়েছে${updated.scheduledAt ? ` — ${fmtInTz(updated.scheduledAt)} (${orgTz})` : ""}।`);
+      setNotice(t("social.pgBestTimeScheduled", { suffix: updated.scheduledAt ? t("social.pgBestTimeSuffix", { when: fmtInTz(updated.scheduledAt), tz: orgTz }) : "" }));
       await loadPosts().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "সেরা সময়ে শিডিউল করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgBestTimeFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1600,25 +1603,25 @@ export default function SocialPostsPage() {
       });
       upsertPost(updated);
       setEvergreenForms((s) => { const next = { ...s }; delete next[p.id]; return next; });
-      setNotice(updated.isEvergreen ? "পোস্টটি Evergreen হিসেবে চিহ্নিত হয়েছে।" : "পোস্টটির Evergreen চিহ্ন সরানো হয়েছে।");
+      setNotice(updated.isEvergreen ? t("social.pgEvergreenOn") : t("social.pgEvergreenOff"));
       await loadPosts().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Evergreen সংরক্ষণ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgEvergreenFailed")); }
     finally { setBusy(""); }
   }
 
   async function createPostingSlot() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!slotAccountId) { setError("আগে একটি অ্যাকাউন্ট বেছে নিন।"); return; }
-    if (!slotTime) { setError("সময় দিন।"); return; }
+    if (!slotAccountId) { setError(t("social.pgPickAccount")); return; }
+    if (!slotTime) { setError(t("social.pgTimeFirst")); return; }
     setBusy("slot-create"); setError("");
     try {
       await apiFetch<SocialPostingSlot>(`/organizations/${orgId}/social/posting-slots`, {
         method: "POST",
         body: JSON.stringify({ socialAccountId: slotAccountId, weekday: slotWeekday, time: slotTime, enabled: true }),
       });
-      setNotice("Posting Slot যোগ হয়েছে।");
+      setNotice(t("social.pgSlotAdded"));
       await loadPostingSlots();
-    } catch (e) { setError(e instanceof Error ? e.message : "Slot যোগ করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgSlotAddFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1630,7 +1633,7 @@ export default function SocialPostsPage() {
         method: "PATCH", body: JSON.stringify({ enabled }),
       });
       await loadPostingSlots();
-    } catch (e) { setError(e instanceof Error ? e.message : "Slot হালনাগাদ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgSlotUpdateFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1639,19 +1642,19 @@ export default function SocialPostsPage() {
     setBusy(`slot-${slot.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posting-slots/${slot.id}`, { method: "DELETE" });
-      setNotice("Posting Slot মোছা হয়েছে।");
+      setNotice(t("social.pgSlotDeleted"));
       await loadPostingSlots();
-    } catch (e) { setError(e instanceof Error ? e.message : "Slot মোছা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgSlotDeleteFailed")); }
     finally { setBusy(""); }
   }
 
   // --- SP5 schedule / publish actions ---------------------------------------
 
-  const fmtInTz = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("bn-BD", { timeZone: orgTz }) : "");
+  const fmtInTz = (iso?: string | null) => (iso ? new Intl.DateTimeFormat(intlLocaleOf(locale), { timeZone: orgTz, dateStyle: "medium", timeStyle: "short" }).format(new Date(iso)) : "");
 
   async function doSchedule(p: Sp7SocialPost) {
     const value = scheduleInputs[p.id] || (p.scheduledAt ? utcToLocalInput(p.scheduledAt, orgTz) : "");
-    if (!value) { setError("আগে তারিখ ও সময় বেছে নিন।"); return; }
+    if (!value) { setError(t("social.pgPickDateTime")); return; }
     await doScheduleValue(p, value);
   }
 
@@ -1660,16 +1663,16 @@ export default function SocialPostsPage() {
    * above delegates here too. Same endpoint, same gates. */
   async function doScheduleValue(p: Sp7SocialPost, value: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!value) { setError("আগে তারিখ ও সময় বেছে নিন।"); return; }
+    if (!value) { setError(t("social.pgPickDateTime")); return; }
     setBusy(`schedule-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/schedule`, {
         method: "POST",
         body: JSON.stringify({ scheduledAt: localInputToUtcIso(value, orgTz) }),
       });
-      setNotice("পোস্টটি শিডিউল করা হয়েছে — নির্ধারিত সময়ে প্রকাশ হবে (Social Post Publisher Job চালু থাকলে)।");
+      setNotice(t("social.pgScheduledNotice"));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "শিডিউল করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgScheduleFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1688,9 +1691,9 @@ export default function SocialPostsPage() {
         method: "POST",
         body: JSON.stringify({ scheduledAt: rescheduledIsoKeepingTime(p.scheduledAt, dayKey, orgTz) }),
       });
-      setNotice("পোস্টটির তারিখ বদলে দেওয়া হয়েছে — সময় আগেরটাই আছে।");
+      setNotice(t("social.pgDateMoved"));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "তারিখ বদলানো ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDateMoveFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1699,31 +1702,31 @@ export default function SocialPostsPage() {
     setBusy(`cancel-schedule-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/cancel-schedule`, { method: "POST" });
-      setNotice("শিডিউল বাতিল হয়েছে — পোস্টটি আবার Draft অবস্থায় আছে।");
+      setNotice(t("social.pgScheduleCancelled"));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "শিডিউল বাতিল ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgScheduleCancelFailed")); }
     finally { setBusy(""); }
   }
 
   async function doPublishNow(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("এই পোস্টটি এখনই Facebook/Instagram-এ সবার জন্য প্রকাশিত হবে। নিশ্চিত তো?")) return;
+    if (!window.confirm(t("social.pgPublishConfirm"))) return;
     setBusy(`publish-${p.id}`); setError("");
     try {
       // The response IS the updated post — report its real outcome,
       // never assume success.
       const updated = await apiFetch<Sp7SocialPost>(`/organizations/${orgId}/social/posts/${p.id}/publish-now`, { method: "POST" });
       if (updated.status === "published") {
-        setNotice("পোস্টটি প্রকাশিত হয়েছে।");
+        setNotice(t("social.pgPublished"));
       } else if (updated.status === "failed") {
-        setError(updated.error ?? "পোস্টটি প্রকাশ করা যায়নি।");
+        setError(updated.error ?? t("social.pgPublishNotPossible"));
       } else if (updated.status === "scheduled") {
-        setNotice(`প্রকাশের চেষ্টা ব্যর্থ হয়েছে — পোস্টটি আবার শিডিউল করা হয়েছে${updated.scheduledAt ? `: ${fmtInTz(updated.scheduledAt)}` : ""}। নির্ধারিত সময়ে আবার চেষ্টা করা হবে।`);
+        setNotice(t("social.pgPublishRetryScheduled", { suffix: updated.scheduledAt ? t("social.pgPublishRetrySuffix", { when: fmtInTz(updated.scheduledAt) }) : "" }));
       } else {
-        setNotice(`পোস্টটির বর্তমান অবস্থা: ${POST_STATUS_META[updated.status]?.label ?? updated.status}`);
+        setNotice(t("social.pgCurrentStatus", { status: metaLabel(POST_STATUS_META[updated.status], t, updated.status) }));
       }
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "প্রকাশ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgPublishFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1739,9 +1742,9 @@ export default function SocialPostsPage() {
     try {
       const updated = await apiFetch<Sp7SocialPost>(`/organizations/${orgId}/social/posts/${p.id}/refresh-insights`, { method: "POST" });
       upsertPost(updated);
-      setNotice("Post-এর data হালনাগাদ হয়েছে।");
+      setNotice(t("social.pgDataRefreshed"));
       await loadInsightsSummary().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Data হালনাগাদ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDataRefreshFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1751,13 +1754,13 @@ export default function SocialPostsPage() {
     try {
       const res = await apiFetch<{ total: number; refreshed: number; failed: number; skippedTooNew: number }>(
         `/organizations/${orgId}/social/posts/refresh-insights`, { method: "POST" });
-      setNotice(`Data হালনাগাদ সম্পন্ন: ${res.refreshed.toLocaleString("bn-BD")}টি হালনাগাদ হয়েছে, ${res.failed.toLocaleString("bn-BD")}টি ব্যর্থ, ${res.skippedTooNew.toLocaleString("bn-BD")}টি খুব নতুন বলে বাদ দেওয়া হয়েছে (মোট ${res.total.toLocaleString("bn-BD")}টি)।`);
+      setNotice(t("social.pgRefreshSummary", { refreshed: fmtNumber(locale, res.refreshed), failed: fmtNumber(locale, res.failed), skipped: fmtNumber(locale, res.skippedTooNew), total: fmtNumber(locale, res.total) }));
       await Promise.all([loadPosts(), loadInsightsSummary().catch(() => undefined)]);
       loadAnalyticsTimeseries().catch(() => undefined);
       loadAnalyticsContentTypes().catch(() => undefined);
       loadAnalyticsAccounts().catch(() => undefined);
       loadAnalyticsFollowers().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Data হালনাগাদ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDataRefreshFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1771,7 +1774,7 @@ export default function SocialPostsPage() {
    */
   async function downloadReport(format: "csv" | "pdf") {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!reportMonth) { setError("আগে মাস বেছে নিন।"); return; }
+    if (!reportMonth) { setError(t("social.pgPickMonth")); return; }
     setBusy(`report-${format}`); setError("");
     try {
       const res = await fetch(
@@ -1780,7 +1783,7 @@ export default function SocialPostsPage() {
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? `ডাউনলোড ব্যর্থ (HTTP ${res.status})`);
+        throw new Error(body.message ?? t("social.pgDownloadFailedHttp", { status: res.status }));
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -1789,8 +1792,8 @@ export default function SocialPostsPage() {
       a.download = `social-report-${reportMonth}.${format}`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      setNotice(`✅ ${monthLabelBn(reportMonth)}-এর ${format.toUpperCase()} রিপোর্ট ডাউনলোড হয়েছে`);
-    } catch (e) { setError(e instanceof Error ? e.message : "রিপোর্ট ডাউনলোড ব্যর্থ হয়েছে"); }
+      setNotice(t("social.pgReportDownloaded", { month: monthLabelBn(reportMonth, locale), format: format.toUpperCase() }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgReportFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1798,7 +1801,7 @@ export default function SocialPostsPage() {
   async function derivePost(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const accountIds = accounts.filter((a) => a.id !== p.socialAccountId && deriveSelected[p.id]?.[a.id]).map((a) => a.id);
-    if (accountIds.length === 0) { setError("আগে অন্তত একটি অন্য অ্যাকাউন্ট বেছে নিন।"); return; }
+    if (accountIds.length === 0) { setError(t("social.pgPickOtherAccount")); return; }
     setBusy(`derive-${p.id}`); setError("");
     try {
       const res = await apiFetch<DeriveResult>(`/organizations/${orgId}/social/posts/${p.id}/derive`, {
@@ -1809,14 +1812,14 @@ export default function SocialPostsPage() {
       const createdCount = Array.isArray(res.created) ? res.created.length : 0;
       // Warnings are shown verbatim — in the panel AND in the notice.
       if (warnings.length > 0) {
-        setNotice(`Derive সম্পন্ন: ${createdCount.toLocaleString("bn-BD")}টি নতুন Draft তৈরি হয়েছে। সতর্কতা: ${warnings.map((w) => w.message).join(" · ")}`);
+        setNotice(t("social.pgDeriveDoneWarnings", { count: fmtNumber(locale, createdCount), warnings: warnings.map((w) => w.message).join(" · ") }));
       } else {
-        setNotice(`Derive সম্পন্ন: ${createdCount.toLocaleString("bn-BD")}টি নতুন Draft তৈরি হয়েছে।`);
+        setNotice(t("social.pgDeriveDone", { count: fmtNumber(locale, createdCount) }));
         setDeriveOpenId(null);
         setDeriveSelected((s) => { const next = { ...s }; delete next[p.id]; return next; });
       }
       await loadPosts().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Derive করা ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDeriveFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1828,11 +1831,11 @@ export default function SocialPostsPage() {
         method: "PATCH", body: JSON.stringify({ socialRequireApproval: next }),
       });
       setRequireApproval(!!res.socialRequireApproval);
-      setNotice(next ? "অনুমোদন ব্যবস্থা চালু হয়েছে।" : "অনুমোদন ব্যবস্থা বন্ধ হয়েছে।");
+      setNotice(next ? t("social.pgApprovalOn") : t("social.pgApprovalOff"));
     } catch (e) {
       // e.g. 403 for non-OWNER/ADMIN — surface the API's own message
       // and leave the checkbox at the server's actual value.
-      setError(e instanceof Error ? e.message : "সেটিং সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.pgSettingFailed"));
       await loadSocialSettings().catch(() => undefined);
     } finally { setBusy(""); }
   }
@@ -1846,9 +1849,9 @@ export default function SocialPostsPage() {
         method: "PATCH", body: JSON.stringify({ socialApprovalTwoStep: next }),
       });
       setApprovalTwoStep(!!res.socialApprovalTwoStep);
-      setNotice(next ? "দুই-ধাপের অনুমোদন চালু হয়েছে (Manager → Owner)।" : "দুই-ধাপের অনুমোদন বন্ধ হয়েছে।");
+      setNotice(next ? t("social.pgTwoStepOn") : t("social.pgTwoStepOff"));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সেটিং সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.pgSettingFailed"));
       await loadSocialSettings().catch(() => undefined);
     } finally { setBusy(""); }
   }
@@ -1862,9 +1865,9 @@ export default function SocialPostsPage() {
         method: "PATCH", body: JSON.stringify({ socialRequireClientApproval: next }),
       });
       setRequireClientApproval(!!res.socialRequireClientApproval);
-      setNotice(next ? "ক্লায়েন্ট অনুমোদন বাধ্যতামূলক করা হয়েছে — অনুমোদন ছাড়া publish/schedule আটকাবে।" : "ক্লায়েন্ট অনুমোদনের বাধ্যবাধকতা বন্ধ হয়েছে।");
+      setNotice(next ? t("social.pgClientApprovalOn") : t("social.pgClientApprovalOff"));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সেটিং সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.pgSettingFailed"));
       await loadSocialSettings().catch(() => undefined);
     } finally { setBusy(""); }
   }
@@ -1881,8 +1884,8 @@ export default function SocialPostsPage() {
   async function runPostsBulk(action: "delete_drafts" | "reschedule") {
     const orgId = getOrganizationId(); if (!orgId) return;
     const ids = Array.from(selectedPostIds);
-    if (ids.length === 0) { setError("আগে তালিকা থেকে অন্তত একটি পোস্ট বেছে নিন।"); return; }
-    if (action === "reschedule" && !bulkRescheduleAt) { setError("Reschedule করতে হলে আগে নতুন তারিখ ও সময় দিন।"); return; }
+    if (ids.length === 0) { setError(t("social.pgPickPostFromList")); return; }
+    if (action === "reschedule" && !bulkRescheduleAt) { setError(t("social.pgRescheduleNeedsTime")); return; }
     setBusy(`posts-bulk-${action}`); setError("");
     try {
       const res = await apiFetch<BulkPostsResponse>(`/organizations/${orgId}/social/posts/bulk`, {
@@ -1892,11 +1895,11 @@ export default function SocialPostsPage() {
           ...(action === "reschedule" ? { scheduledAt: localInputToUtcIso(bulkRescheduleAt, orgTz) } : {}),
         }),
       });
-      setNotice(summarizeBulkPostResults(res, action === "delete_drafts" ? "Bulk Draft মোছা" : "Bulk Reschedule"));
+      setNotice(summarizeBulkPostResults(res, action === "delete_drafts" ? t("social.pgBulkDeleteLabel") : t("social.pgBulkRescheduleLabel"), locale));
       setSelectedPostIds(new Set());
       await loadPosts();
       loadFailureGroups().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Bulk কাজ ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgBulkFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1915,13 +1918,13 @@ export default function SocialPostsPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.message ?? `Import ব্যর্থ হয়েছে (${res.status})`);
+        throw new Error(data?.message ?? t("social.pgImportFailedHttp", { status: res.status }));
       }
       const data = (await res.json()) as CsvImportResponse;
       setCsvImportResults(data);
-      setNotice(summarizeCsvImport(data));
+      setNotice(summarizeCsvImport(data, locale));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "CSV Import ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgCsvImportFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1945,9 +1948,9 @@ export default function SocialPostsPage() {
         method: "POST", body: JSON.stringify({}),
       });
       setShareCreatedByPost((s) => ({ ...s, [p.id]: created }));
-      setNotice("ক্লায়েন্ট শেয়ার লিংক তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন।");
+      setNotice(t("social.pgShareLinkCreated"));
       await loadShareLinks(p.id);
-    } catch (e) { setError(e instanceof Error ? e.message : "শেয়ার লিংক তৈরি করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgShareLinkFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1959,8 +1962,8 @@ export default function SocialPostsPage() {
         method: "POST", body: JSON.stringify({}),
       });
       setShareCreatedByPost((s) => ({ ...s, [p.id]: created }));
-      setNotice("গ্রুপের ক্লায়েন্ট শেয়ার লিংক তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন।");
-    } catch (e) { setError(e instanceof Error ? e.message : "গ্রুপ শেয়ার লিংক তৈরি করা যায়নি"); }
+      setNotice(t("social.pgGroupShareLinkCreated"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgGroupShareLinkFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1969,9 +1972,9 @@ export default function SocialPostsPage() {
     setBusy(`share-revoke-${linkId}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/share-links/${linkId}`, { method: "DELETE" });
-      setNotice("শেয়ার লিংক বাতিল করা হয়েছে।");
+      setNotice(t("social.pgShareLinkRevoked"));
       await loadShareLinks(p.id);
-    } catch (e) { setError(e instanceof Error ? e.message : "লিংক বাতিল করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgShareLinkRevokeFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1991,14 +1994,14 @@ export default function SocialPostsPage() {
       setNotesByPost((s) => ({ ...s, [p.id]: notes }));
       setVersionsByPost((s) => ({ ...s, [p.id]: versions }));
       setTimelineByPost((s) => ({ ...s, [p.id]: timeline }));
-    } catch (e) { setError(e instanceof Error ? e.message : "বিস্তারিত লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgDetailLoadFailed")); }
     finally { setBusy(""); }
   }
 
   async function addPostNote(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const body = (noteInputs[p.id] ?? "").trim();
-    if (!body) { setError("নোট খালি রাখা যাবে না — কিছু লিখুন।"); return; }
+    if (!body) { setError(t("social.pgNoteEmpty")); return; }
     setBusy(`note-add-${p.id}`); setError("");
     try {
       const note = await apiFetch<SocialPostNote>(`/organizations/${orgId}/social/posts/${p.id}/notes`, {
@@ -2006,7 +2009,7 @@ export default function SocialPostsPage() {
       });
       setNotesByPost((s) => ({ ...s, [p.id]: [...(s[p.id] ?? []), note] }));
       setNoteInputs((s) => ({ ...s, [p.id]: "" }));
-    } catch (e) { setError(e instanceof Error ? e.message : "নোট যোগ করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgNoteAddFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2016,7 +2019,7 @@ export default function SocialPostsPage() {
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/notes/${note.id}`, { method: "DELETE" });
       setNotesByPost((s) => ({ ...s, [p.id]: (s[p.id] ?? []).filter((n) => n.id !== note.id) }));
-    } catch (e) { setError(e instanceof Error ? e.message : "নোট মোছা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgNoteDeleteFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2026,12 +2029,12 @@ export default function SocialPostsPage() {
     try {
       const updated = await apiFetch<Sp7SocialPost>(`/organizations/${orgId}/social/posts/${p.id}/versions/${version.id}/restore`, { method: "POST" });
       upsertPost(updated);
-      setNotice(`Version ${version.versionNo.toLocaleString("bn-BD")} ফিরিয়ে আনা হয়েছে — পোস্টটি আবার Draft অবস্থায় সম্পাদনা করা যাবে।`);
+      setNotice(t("social.pgVersionRestored", { version: fmtNumber(locale, version.versionNo) }));
       // The restore itself adds a version + timeline entry.
       setVersionsByPost((s) => { const next = { ...s }; delete next[p.id]; return next; });
       setTimelineByPost((s) => { const next = { ...s }; delete next[p.id]; return next; });
       setDetailOpenId(null);
-    } catch (e) { setError(e instanceof Error ? e.message : "Version ফিরিয়ে আনা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgVersionRestoreFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2043,13 +2046,13 @@ export default function SocialPostsPage() {
         method: "POST", body: JSON.stringify({ assignedUserId: assignedUserId || null }),
       });
       upsertPost(updated);
-      setNotice(assignedUserId ? "দায়িত্ব দেওয়া হয়েছে।" : "দায়িত্ব সরানো হয়েছে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "দায়িত্ব দেওয়া যায়নি"); }
+      setNotice(assignedUserId ? t("social.pgAssigned") : t("social.pgUnassigned"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgAssignFailed")); }
     finally { setBusy(""); }
   }
 
   function memberLabel(userId: string | null | undefined): string {
-    if (!userId) return "কেউ নয়";
+    if (!userId) return t("social.pgNobody");
     const m = members.find((x) => x.user.id === userId);
     return m ? (m.user.name || m.user.email) : userId;
   }
@@ -2060,10 +2063,10 @@ export default function SocialPostsPage() {
     setBusy(`health-${a.id}`); setError("");
     try {
       const res = await apiFetch<{ ok: boolean; status: string; error?: string | null }>(`/organizations/${orgId}/social/accounts/${a.id}/check-health`, { method: "POST" });
-      setNotice(res.ok ? `“${a.name}”-এর স্বাস্থ্য ঠিক আছে।` : `“${a.name}”: ${res.error ?? "স্বাস্থ্য যাচাই ব্যর্থ হয়েছে"}`);
+      setNotice(res.ok ? t("social.pgHealthOk", { name: a.name }) : t("social.pgHealthNamed", { name: a.name, error: res.error ?? t("social.pgHealthFailed") }));
       await loadAccountHealth();
       await loadAccounts();
-    } catch (e) { setError(e instanceof Error ? e.message : "স্বাস্থ্য যাচাই ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgHealthFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2074,9 +2077,9 @@ export default function SocialPostsPage() {
     try {
       const updated = await apiFetch<Sp7SocialPost>(`/organizations/${orgId}/social/posts/${postId}/retry`, { method: "POST" });
       upsertPost(updated);
-      setNotice(updated.status === "published" ? "Retry সফল — পোস্টটি প্রকাশিত হয়েছে।" : `Retry সম্পন্ন — পোস্টের অবস্থা এখন: ${updated.status}`);
+      setNotice(updated.status === "published" ? t("social.pgRetryPublished") : t("social.pgRetryDone", { status: updated.status }));
       loadFailureGroups().catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "Retry ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgRetryFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2090,9 +2093,9 @@ export default function SocialPostsPage() {
         method: "PATCH", body: JSON.stringify(buildAutoDraftSettingsPayload(autoDraftForm)),
       });
       setAutoDraftForm(autoDraftFormFromSettings(res));
-      setNotice("🤖 Commerce Auto-Draft সেটিং সংরক্ষণ হয়েছে।");
+      setNotice(t("social.pgAutoDraftSaved"));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Auto-draft সেটিং সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.pgAutoDraftFailed"));
     } finally { setBusy(""); }
   }
 
@@ -2103,7 +2106,7 @@ export default function SocialPostsPage() {
     try {
       const stats = await apiFetch<SocialLinkStats>(`/organizations/${orgId}/social/posts/${p.id}/link-stats`);
       setLinkStatsById((s) => ({ ...s, [p.id]: stats }));
-    } catch (e) { setError(e instanceof Error ? e.message : "Link stats লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgLinkStatsFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2112,9 +2115,9 @@ export default function SocialPostsPage() {
     setBusy(`submit-approval-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/submit-approval`, { method: "POST" });
-      setNotice("পোস্টটি অনুমোদনের জন্য পাঠানো হয়েছে।");
+      setNotice(t("social.pgSubmitted"));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "অনুমোদনের জন্য পাঠানো ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgSubmitFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2123,16 +2126,16 @@ export default function SocialPostsPage() {
     setBusy(`approve-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/approve`, { method: "POST" });
-      setNotice("পোস্টটি অনুমোদিত হয়েছে।");
+      setNotice(t("social.pgApproved"));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "অনুমোদন ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgApproveFailed")); }
     finally { setBusy(""); }
   }
 
   async function rejectPost(p: Sp7SocialPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const note = (rejectNotes[p.id] ?? "").trim();
-    if (!note) { setError("প্রত্যাখ্যান করতে হলে কারণ লেখা আবশ্যক।"); return; }
+    if (!note) { setError(t("social.pgRejectReasonRequired")); return; }
     setBusy(`reject-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/reject`, {
@@ -2140,9 +2143,9 @@ export default function SocialPostsPage() {
       });
       setRejectOpenId(null);
       setRejectNotes((s) => ({ ...s, [p.id]: "" }));
-      setNotice("পোস্টটি প্রত্যাখ্যান করা হয়েছে।");
+      setNotice(t("social.pgRejected"));
       await loadPosts();
-    } catch (e) { setError(e instanceof Error ? e.message : "প্রত্যাখ্যান ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("social.pgRejectFailed")); }
     finally { setBusy(""); }
   }
 
@@ -2155,7 +2158,7 @@ export default function SocialPostsPage() {
       <>
         <ApprovalStatusPill status={p.approvalStatus} />
         {p.approvalStatus === "rejected" && p.reviewNote ? (
-          <span className="text-xs text-red-600">কারণ: {p.reviewNote}</span>
+          <span className="text-xs text-red-600">{t("social.pgReasonPrefix", { note: p.reviewNote })}</span>
         ) : null}
       </>
     );
@@ -2166,7 +2169,7 @@ export default function SocialPostsPage() {
     if (!canSubmitForApproval(p, requireApproval)) return null;
     return (
       <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => submitApproval(p)}>
-        {busy === `submit-approval-${p.id}` ? "পাঠানো হচ্ছে..." : "অনুমোদনের জন্য পাঠান"}
+        {busy === `submit-approval-${p.id}` ? t("social.pgSubmitting") : t("social.pgSubmitForApproval")}
       </button>
     );
   }
@@ -2174,7 +2177,7 @@ export default function SocialPostsPage() {
   /** SU1: first-comment status badge + evergreen badge for a post.
    * SU5: + the Auto-draft badge when a commerce event created it. */
   function renderSuBadges(p: Sp7SocialPost) {
-    const autoDraftBadge = autoDraftBadgeLabel(p.autoDraftKind);
+    const autoDraftBadge = autoDraftBadgeLabel(p.autoDraftKind, locale);
     return (
       <>
         {p.isStory ? (
@@ -2184,20 +2187,20 @@ export default function SocialPostsPage() {
           <span className="rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">🤖 {autoDraftBadge}</span>
         ) : null}
         {p.firstCommentStatus === "pending" ? (
-          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">প্রথম কমেন্ট অপেক্ষমাণ</span>
+          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">{t("social.pgFirstCommentPending")}</span>
         ) : null}
         {p.firstCommentStatus === "posted" ? (
-          <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">প্রথম কমেন্ট হয়েছে</span>
+          <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">{t("social.pgFirstCommentPosted")}</span>
         ) : null}
         {p.firstCommentStatus === "failed" ? (
           <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700" title={p.firstCommentError ?? undefined}>
-            প্রথম কমেন্ট ব্যর্থ{p.firstCommentError ? `: ${p.firstCommentError}` : ""}
+            {t("social.pgFirstCommentFailed", { suffix: p.firstCommentError ? `: ${p.firstCommentError}` : "" })}
           </span>
         ) : null}
         {p.isEvergreen ? (
           <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
             🌿 Evergreen{(p.evergreenCyclesUsed ?? 0) > 0 || p.evergreenMaxCycles != null
-              ? ` · ${(p.evergreenCyclesUsed ?? 0).toLocaleString("bn-BD")}/${p.evergreenMaxCycles != null ? p.evergreenMaxCycles.toLocaleString("bn-BD") : "∞"} চক্র`
+              ? t("social.pgEvergreenCycles", { used: fmtNumber(locale, p.evergreenCyclesUsed ?? 0), max: p.evergreenMaxCycles != null ? fmtNumber(locale, p.evergreenMaxCycles) : "∞" })
               : ""}
           </span>
         ) : null}
@@ -2209,7 +2212,7 @@ export default function SocialPostsPage() {
   function renderCloneButton(p: Sp7SocialPost) {
     return (
       <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => clonePost(p)}>
-        {busy === `clone-${p.id}` ? "Clone হচ্ছে..." : "📋 Clone"}
+        {busy === `clone-${p.id}` ? t("social.pgCloning") : t("social.pgCloneBtn")}
       </button>
     );
   }
@@ -2220,7 +2223,7 @@ export default function SocialPostsPage() {
     return (
       <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""}
         onClick={() => { setDeriveOpenId((cur) => (cur === p.id ? null : p.id)); setError(""); }}>
-        {deriveOpenId === p.id ? "Derive বন্ধ করুন" : "🔀 Derive"}
+        {deriveOpenId === p.id ? t("social.pgDeriveClose") : t("social.pgDeriveBtn")}
       </button>
     );
   }
@@ -2237,11 +2240,11 @@ export default function SocialPostsPage() {
     const warnings = deriveWarnings[p.id] ?? [];
     return (
       <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
-        <div className="text-sm font-medium">🔀 অন্য অ্যাকাউন্টের জন্য Derive করুন</div>
-        <p className="text-xs text-slate-500">এই পোস্টের মিডিয়া দিয়ে বেছে নেওয়া অ্যাকাউন্টগুলোর জন্য নতুন Draft তৈরি হবে। মূল পোস্টটি বদলাবে না।</p>
+        <div className="text-sm font-medium">{t("social.pgDeriveTitle")}</div>
+        <p className="text-xs text-slate-500">{t("social.pgDeriveNote")}</p>
         {others.length === 0 ? (
           <div className="soc-empty-sm">
-            <p className="text-sm text-slate-500">অন্য কোনো অ্যাকাউন্ট নেই — Derive করতে হলে আগে আরেকটি অ্যাকাউন্ট যুক্ত করুন।</p>
+            <p className="text-sm text-slate-500">{t("social.pgDeriveNoAccounts")}</p>
           </div>
         ) : (
           <>
@@ -2257,7 +2260,7 @@ export default function SocialPostsPage() {
               ))}
             </div>
             <button type="button" className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => derivePost(p)}>
-              {busy === `derive-${p.id}` ? "Derive হচ্ছে..." : "Derive করুন"}
+              {busy === `derive-${p.id}` ? t("social.pgDeriving") : t("social.pgDeriveDo")}
             </button>
           </>
         )}
@@ -2287,23 +2290,22 @@ export default function SocialPostsPage() {
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" checked={form.isEvergreen} onChange={(e) => setForm({ isEvergreen: e.target.checked })} />
-            <span>🌿 Evergreen (মেয়াদ শেষে আবার ঘুরিয়ে পোস্ট হবে)</span>
+            <span>{t("social.pgEvergreenLabel")}</span>
           </label>
-          <label className="block text-xs text-slate-500">ন্যূনতম ব্যবধান (দিন)
+          <label className="block text-xs text-slate-500">{t("social.pgMinGapDays")}
             <input type="number" min={1} className="input mt-1 w-28" value={form.minGapDays}
-              onChange={(e) => setForm({ minGapDays: e.target.value })} placeholder="যেমন: ৭" />
+              onChange={(e) => setForm({ minGapDays: e.target.value })} placeholder={t("social.pgExample7")} />
           </label>
-          <label className="block text-xs text-slate-500">সর্বোচ্চ চক্র
+          <label className="block text-xs text-slate-500">{t("social.pgMaxCycles")}
             <input type="number" min={1} className="input mt-1 w-28" value={form.maxCycles}
-              onChange={(e) => setForm({ maxCycles: e.target.value })} placeholder="যেমন: ৩" />
+              onChange={(e) => setForm({ maxCycles: e.target.value })} placeholder={t("social.pgExample3")} />
           </label>
           <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => saveEvergreen(p)}>
-            {busy === `evergreen-${p.id}` ? "সংরক্ষণ হচ্ছে..." : "Evergreen সংরক্ষণ করুন"}
+            {busy === `evergreen-${p.id}` ? t("social.cpSaving") : t("social.pgEvergreenSave")}
           </button>
           {p.isEvergreen ? (
             <span className="pb-1 text-xs text-slate-500">
-              এখন পর্যন্ত {(p.evergreenCyclesUsed ?? 0).toLocaleString("bn-BD")}টি চক্র হয়েছে
-              {p.evergreenMaxCycles != null ? ` (সর্বোচ্চ ${p.evergreenMaxCycles.toLocaleString("bn-BD")}টি)` : ""}
+              {t("social.pgCyclesSoFar", { used: fmtNumber(locale, p.evergreenCyclesUsed ?? 0), suffix: p.evergreenMaxCycles != null ? t("social.pgCyclesMaxSuffix", { max: fmtNumber(locale, p.evergreenMaxCycles) }) : "" })}
             </span>
           ) : null}
         </div>
@@ -2318,7 +2320,7 @@ export default function SocialPostsPage() {
    */
   function renderInsights(p: Sp7SocialPost) {
     if (p.status !== "published") return null;
-    const chips = insightChips(p.insights);
+    const chips = insightChips(p.insights, locale);
     return (
       <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
         {chips.length > 0 ? (
@@ -2326,21 +2328,21 @@ export default function SocialPostsPage() {
             <div className="flex flex-wrap gap-1.5">
               {chips.map((c) => (
                 <span key={c.key} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                  {c.label}: {c.value.toLocaleString("bn-BD")}
+                  {c.label}: {fmtNumber(locale, c.value)}
                 </span>
               ))}
             </div>
             {p.insightsFetchedAt ? (
-              <p className="text-xs text-slate-400">সর্বশেষ হালনাগাদ: {fmtInTz(p.insightsFetchedAt)} ({orgTz})</p>
+              <p className="text-xs text-slate-400">{t("social.pgLastUpdated", { when: fmtInTz(p.insightsFetchedAt), tz: orgTz })}</p>
             ) : null}
           </>
         ) : (
           <div className="soc-empty-sm">
-            <p className="text-sm text-slate-500">এখনো data আসেনি</p>
+            <p className="text-sm text-slate-500">{t("social.pgNoDataYet")}</p>
           </div>
         )}
         <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => refreshPostInsights(p)}>
-          {busy === `insights-${p.id}` ? "হালনাগাদ হচ্ছে..." : "🔄 Data হালনাগাদ করুন"}
+          {busy === `insights-${p.id}` ? t("social.pgRefreshing") : t("social.pgRefreshData")}
         </button>
       </div>
     );
@@ -2358,7 +2360,7 @@ export default function SocialPostsPage() {
   function renderLinkStats(p: Sp7SocialPost) {
     if (!p.linkUrl) return null;
     const platform = p.account?.platform as string | undefined;
-    const nonTrackedNote = nonTrackedPlatformNote(platform);
+    const nonTrackedNote = nonTrackedPlatformNote(platform, locale);
     if (nonTrackedNote) {
       return (
         <div className="mt-3 border-t border-slate-100 pt-3">
@@ -2369,7 +2371,7 @@ export default function SocialPostsPage() {
     if (!p.hasTrackedLink) {
       return (
         <div className="mt-3 border-t border-slate-100 pt-3">
-          <p className="text-xs text-slate-500">🔗 Link: Schedule/Publish হলে tracked link তৈরি হবে</p>
+          <p className="text-xs text-slate-500">{t("social.pgLinkTrackedOnPublish")}</p>
         </div>
       );
     }
@@ -2379,17 +2381,17 @@ export default function SocialPostsPage() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">🔗 Link</span>
           <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => loadLinkStats(p)}>
-            {busy === `link-stats-${p.id}` ? "লোড হচ্ছে..." : stats ? "Stats হালনাগাদ করুন" : "Link stats দেখুন"}
+            {busy === `link-stats-${p.id}` ? t("social.pgLinkStatsLoading") : stats ? t("social.pgStatsRefresh") : t("social.pgLinkStatsView")}
           </button>
         </div>
         {stats ? (
           <div className="space-y-1">
-            <p className="text-sm text-slate-700">{formatClicksLabel(stats.clicks)}</p>
+            <p className="text-sm text-slate-700">{formatClicksLabel(stats.clicks, locale)}</p>
             {stats.lastClickedAt ? (
-              <p className="text-xs text-slate-400">শেষ click: {fmtInTz(stats.lastClickedAt)} ({orgTz})</p>
+              <p className="text-xs text-slate-400">{t("social.pgLastClick", { when: fmtInTz(stats.lastClickedAt), tz: orgTz })}</p>
             ) : null}
-            {formatOrdersRevenueLabel(stats) ? (
-              <p className="text-sm text-slate-700">{formatOrdersRevenueLabel(stats)}</p>
+            {formatOrdersRevenueLabel(stats, locale) ? (
+              <p className="text-sm text-slate-700">{formatOrdersRevenueLabel(stats, locale)}</p>
             ) : null}
           </div>
         ) : null}
@@ -2401,57 +2403,57 @@ export default function SocialPostsPage() {
     if (!iso) return "";
     const now = Date.now();
     const key = orgDayKey(iso, orgTz);
-    if (key === orgDayKey(new Date(now).toISOString(), orgTz)) return "আজ";
-    if (key === orgDayKey(new Date(now + 86_400_000).toISOString(), orgTz)) return "আগামীকাল";
+    if (key === orgDayKey(new Date(now).toISOString(), orgTz)) return t("social.pgRelToday");
+    if (key === orgDayKey(new Date(now + 86_400_000).toISOString(), orgTz)) return t("social.pgRelTomorrow");
     const diffMs = new Date(iso).getTime() - now;
-    if (diffMs < 0) return "সময় পেরিয়ে গেছে";
+    if (diffMs < 0) return t("social.pgRelOverdue");
     const days = Math.round(diffMs / 86_400_000);
-    if (days >= 1) return `${days.toLocaleString("bn-BD")} দিন পরে`;
+    if (days >= 1) return t("social.pgRelDaysLater", { days: fmtNumber(locale, days) });
     const hours = Math.max(1, Math.round(diffMs / 3_600_000));
-    return `${hours.toLocaleString("bn-BD")} ঘণ্টা পরে`;
+    return t("social.pgRelHoursLater", { hours: fmtNumber(locale, hours) });
   }
 
   /** SP5 per-post schedule/publish controls — shared by the list
    * cards, the queue rows and the calendar detail card. */
   function renderPostActions(p: Sp7SocialPost) {
     if (p.status === "publishing") {
-      return <p className="mt-3 border-t border-slate-100 pt-3 text-sm text-amber-700">প্রকাশের কাজ চলছে…</p>;
+      return <p className="mt-3 border-t border-slate-100 pt-3 text-sm text-amber-700">{t("social.pgPublishingNow")}</p>;
     }
     if (p.status !== "draft" && p.status !== "scheduled" && p.status !== "failed") return null;
     const inputValue = scheduleInputs[p.id] ?? (p.scheduledAt ? utcToLocalInput(p.scheduledAt, orgTz) : "");
-    const scheduleLabel = p.status === "scheduled" ? "সময় বদলান" : p.status === "failed" ? "আবার শিডিউল করুন" : "শিডিউল করুন";
+    const scheduleLabel = p.status === "scheduled" ? t("social.pgChangeTime") : p.status === "failed" ? t("social.pgScheduleAgain") : t("social.pgScheduleBtn");
     return (
       <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
         {p.status === "scheduled" && p.scheduledAt ? (
           <p className="text-sm text-slate-600">🕒 {fmtInTz(p.scheduledAt)} ({orgTz})</p>
         ) : null}
         {p.status === "failed" && (p.attempts ?? 0) > 0 ? (
-          <p className="text-xs text-slate-500">এ পর্যন্ত {(p.attempts ?? 0).toLocaleString("bn-BD")} বার চেষ্টা হয়েছে</p>
+          <p className="text-xs text-slate-500">{t("social.pgAttempts", { count: fmtNumber(locale, p.attempts ?? 0) })}</p>
         ) : null}
         <div className="flex flex-wrap items-end gap-2">
-          <label className="block text-xs text-slate-500">তারিখ ও সময় ({orgTz})
+          <label className="block text-xs text-slate-500">{t("social.pgDateTimeTz", { tz: orgTz })}
             <input type="datetime-local" className="input mt-1" value={inputValue}
               onChange={(e) => setScheduleInputs((s) => ({ ...s, [p.id]: e.target.value }))} />
           </label>
           <button type="button" className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => doSchedule(p)}>
-            {busy === `schedule-${p.id}` ? "শিডিউল হচ্ছে..." : scheduleLabel}
+            {busy === `schedule-${p.id}` ? t("social.pgScheduling") : scheduleLabel}
           </button>
           {p.status === "scheduled" ? (
             <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => doCancelSchedule(p)}>
-              {busy === `cancel-schedule-${p.id}` ? "বাতিল হচ্ছে..." : "শিডিউল বাতিল করুন"}
+              {busy === `cancel-schedule-${p.id}` ? t("social.pgCancelling") : t("social.pgCancelSchedule")}
             </button>
           ) : null}
           <button type="button" className="rounded-lg bg-green-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => doPublishNow(p)}>
-            {busy === `publish-${p.id}` ? "প্রকাশ হচ্ছে..." : "এখনই প্রকাশ করুন"}
+            {busy === `publish-${p.id}` ? t("social.pgPublishing") : t("social.pgPublishNow")}
           </button>
           {p.status === "draft" ? (
             <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => addToQueue(p)}>
-              {busy === `queue-${p.id}` ? "Queue-তে যাচ্ছে..." : "Queue-তে যোগ করুন"}
+              {busy === `queue-${p.id}` ? t("social.pgQueueing") : t("social.pgAddToQueue")}
             </button>
           ) : null}
           {p.status === "draft" && insightsSummary?.bestTime ? (
             <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => scheduleBestTime(p)}>
-              {busy === `best-time-${p.id}` ? "শিডিউল হচ্ছে..." : "🏆 সেরা সময়ে Schedule করুন"}
+              {busy === `best-time-${p.id}` ? t("social.pgScheduling") : t("social.pgBestTimeBtn")}
             </button>
           ) : null}
         </div>
@@ -2462,7 +2464,7 @@ export default function SocialPostsPage() {
   const filteredPosts = filterSocialPosts(posts, { query: filterQuery, status: filterStatus, accountId: filterAccountId });
   const calCells = monthCells(calCursor.y, calCursor.m);
   const calBuckets = bucketPostsByDay(posts, orgTz);
-  const calMonthTitle = new Date(Date.UTC(calCursor.y, calCursor.m - 1, 1)).toLocaleDateString("bn-BD", { month: "long", year: "numeric", timeZone: "UTC" });
+  const calMonthTitle = new Intl.DateTimeFormat(intlLocaleOf(locale), { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(calCursor.y, calCursor.m - 1, 1)));
   const selectedPost = selectedPostId ? posts.find((p) => p.id === selectedPostId) ?? null : null;
   const queuePosts = posts.filter((p) => p.status === "scheduled").sort((a, b) => (a.scheduledAt ?? "").localeCompare(b.scheduledAt ?? ""));
   // SU9: with two-step approval on, manager_approved posts also
@@ -2470,7 +2472,7 @@ export default function SocialPostsPage() {
   const pendingApprovalPosts = posts.filter((p) => p.approvalStatus === "pending" || p.approvalStatus === "manager_approved");
   const hasPublishedOrInsights = posts.some((p) => p.status === "published") || (insightsSummary?.postsWithInsights ?? 0) > 0;
   // SU7: Analytics v2 derived view data (pure helpers in lib/social-analytics).
-  const analyticsBars = timeseriesBars(analyticsTimeseries?.series);
+  const analyticsBars = timeseriesBars(analyticsTimeseries?.series, locale);
   const analyticsHasTimeseriesData = analyticsBars.some((b) => b.posts > 0);
   const followerHasGrowth = (analyticsFollowers?.accounts ?? []).some((a) => followerGrowth(a.snapshots) !== null);
   const connectedAccounts = accounts.filter((a) => a.status === "connected");
@@ -2493,10 +2495,10 @@ export default function SocialPostsPage() {
 
   const SU11_TABS = [
     { id: "composer", label: "✍️ Composer" },
-    { id: "posts", label: "🗓️ Posts ও Calendar" },
+    { id: "posts", label: t("social.pgTabPosts") },
     { id: "library", label: "🖼️ Library" },
     { id: "analytics", label: "📈 Analytics" },
-    { id: "settings", label: "⚙️ Settings ও Accounts" },
+    { id: "settings", label: t("social.pgTabSettings") },
   ] as const;
 
   // SD2: header stat chips — every count comes from data this page
@@ -2510,25 +2512,25 @@ export default function SocialPostsPage() {
       {/* SD2: power header — title + live stat chips from loaded data */}
       <div className="soc-header fade-rise">
         <h1 className="page-title">📣 Social Posts</h1>
-        <p className="page-sub mt-1">Facebook Page, Instagram, TikTok ও YouTube-এ পোস্টের Draft তৈরি করুন। একটি Draft একাধিক অ্যাকাউন্টের জন্য একসাথে বানানো যায় — প্রতিটি অ্যাকাউন্টের জন্য আলাদা পোস্ট তৈরি হয়। TikTok/YouTube-এর জন্য ঠিক একটি Video লাগে।</p>
+        <p className="page-sub mt-1">{t("social.pgHeaderSub")}</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <button type="button" className="stat-chip min-h-[40px]" onClick={() => selectTab("settings")}>
-            সংযুক্ত অ্যাকাউন্ট <span className="stat-chip-count">{connectedAccounts.length.toLocaleString("bn-BD")}</span>
+            {t("social.pgChipConnected")} <span className="stat-chip-count">{fmtNumber(locale, connectedAccounts.length)}</span>
           </button>
           <button type="button" className="stat-chip min-h-[40px]" onClick={() => selectTab("posts")}>
-            Queue-তে শিডিউল <span className="stat-chip-count">{queuePosts.length.toLocaleString("bn-BD")}</span>
+            {t("social.pgChipQueue")} <span className="stat-chip-count">{fmtNumber(locale, queuePosts.length)}</span>
           </button>
           <button type="button" className="stat-chip min-h-[40px]" onClick={() => selectTab("posts")}>
-            অনুমোদনের অপেক্ষায় <span className="stat-chip-count">{pendingApprovalPosts.length.toLocaleString("bn-BD")}</span>
+            {t("social.pgChipPending")} <span className="stat-chip-count">{fmtNumber(locale, pendingApprovalPosts.length)}</span>
           </button>
           {failedTotal > 0 ? (
             <button type="button" className="stat-chip stat-chip-danger min-h-[40px]" onClick={() => selectTab("settings")}>
-              ব্যর্থ পোস্ট <span className="stat-chip-count">{failedTotal.toLocaleString("bn-BD")}</span>
+              {t("social.pgChipFailed")} <span className="stat-chip-count">{fmtNumber(locale, failedTotal)}</span>
             </button>
           ) : null}
           {healthErrorCount > 0 ? (
             <button type="button" className="stat-chip stat-chip-danger min-h-[40px]" onClick={() => selectTab("settings")}>
-              ⚠️ অ্যাকাউন্টে সমস্যা আছে <span className="stat-chip-count">{healthErrorCount.toLocaleString("bn-BD")}</span>
+              {t("social.pgChipHealthIssue")} <span className="stat-chip-count">{fmtNumber(locale, healthErrorCount)}</span>
             </button>
           ) : null}
         </div>
@@ -2537,14 +2539,14 @@ export default function SocialPostsPage() {
         <div className="alert alert-red fade-rise" role="alert">
           <span aria-hidden="true">⚠️</span>
           <p className="min-w-0 flex-1">{error}</p>
-          <button type="button" aria-label="বন্ধ করুন" className="shrink-0 rounded-full px-2 py-0.5 font-bold transition hover:bg-red-100" onClick={() => setError("")}>✕</button>
+          <button type="button" aria-label={t("social.pgCloseAria")} className="shrink-0 rounded-full px-2 py-0.5 font-bold transition hover:bg-red-100" onClick={() => setError("")}>✕</button>
         </div>
       ) : null}
       {notice ? (
         <div className="alert alert-green fade-rise" role="status">
           <span aria-hidden="true">✅</span>
           <p className="min-w-0 flex-1">{notice}</p>
-          <button type="button" aria-label="বন্ধ করুন" className="shrink-0 rounded-full px-2 py-0.5 font-bold transition hover:bg-emerald-100" onClick={() => setNotice("")}>✕</button>
+          <button type="button" aria-label={t("social.pgCloseAria")} className="shrink-0 rounded-full px-2 py-0.5 font-bold transition hover:bg-emerald-100" onClick={() => setNotice("")}>✕</button>
         </div>
       ) : null}
 
@@ -2553,11 +2555,11 @@ export default function SocialPostsPage() {
           sticks under the dashboard topbar, scroll-snaps on mobile and
           keeps the URL hash in sync (selectTab). */}
       <div className="soc-tab-rail" role="tablist" aria-label="Social Posts">
-        {SU11_TABS.map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={activeTab === t.id}
-            className={activeTab === t.id ? "soc-tab-btn soc-tab-btn-active" : "soc-tab-btn"}
-            onClick={() => selectTab(t.id)}>
-            {t.label}
+        {SU11_TABS.map((tab) => (
+          <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id}
+            className={activeTab === tab.id ? "soc-tab-btn soc-tab-btn-active" : "soc-tab-btn"}
+            onClick={() => selectTab(tab.id)}>
+            {tab.label}
           </button>
         ))}
       </div>
@@ -2566,7 +2568,7 @@ export default function SocialPostsPage() {
         <ComposerPanel c={ctx} />
         {showLibrary ? (
           <div className="card space-y-3 p-5">
-            <div className="font-semibold">🖼️ মিডিয়া লাইব্রেরি</div>
+            <div className="font-semibold">{t("social.pgMediaLibraryTitle")}</div>
             <LibraryPanel c={ctx} />
           </div>
         ) : null}
@@ -2576,7 +2578,7 @@ export default function SocialPostsPage() {
       </div>
       <div className={activeTab === "library" ? "space-y-8" : "hidden"}>
         <div className="card space-y-3 p-5">
-          <div className="font-semibold">🖼️ মিডিয়া লাইব্রেরি</div>
+          <div className="font-semibold">{t("social.pgMediaLibraryTitle")}</div>
           <LibraryPanel c={ctx} />
         </div>
       </div>

@@ -11,8 +11,11 @@ import {
   createInitialFunnelDraft,
   buildFunnelSections,
   calculateSavingsPercent,
+  funnelPresetForLocale,
   slugifyFunnelTitle,
 } from "@/lib/funnel-builder";
+import { fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface ProductItem {
   id: string;
@@ -35,6 +38,7 @@ interface LandingItem {
 }
 
 export default function FunnelBuilderPage() {
+  const { t, locale } = useLocale();
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [recentLandings, setRecentLandings] = useState<LandingItem[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>("");
@@ -69,14 +73,14 @@ export default function FunnelBuilderPage() {
       if (items.length > 0) {
         const first = items[0];
         setSelectedProductId(first.id);
-        setDraft(createInitialFunnelDraft(first, "flash_sale"));
+        setDraft(createInitialFunnelDraft(first, "flash_sale", locale));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "প্রোডাক্ট লোড ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("ads.funLoadError"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [locale, t]);
 
   useEffect(() => {
     void loadData();
@@ -87,7 +91,7 @@ export default function FunnelBuilderPage() {
     setSelectedProductId(productId);
     const prod = products.find((p) => p.id === productId);
     if (!prod) return;
-    setDraft(createInitialFunnelDraft(prod, draft?.presetId || "flash_sale"));
+    setDraft(createInitialFunnelDraft(prod, draft?.presetId || "flash_sale", locale));
     setSuccessLink(null);
   }
 
@@ -96,7 +100,7 @@ export default function FunnelBuilderPage() {
     if (!draft) return;
     const prod = products.find((p) => p.id === selectedProductId);
     if (!prod) return;
-    setDraft(createInitialFunnelDraft(prod, presetId));
+    setDraft(createInitialFunnelDraft(prod, presetId, locale));
   }
 
   // Publish to backend
@@ -104,7 +108,7 @@ export default function FunnelBuilderPage() {
     if (!draft) return;
     const orgId = getOrganizationId();
     if (!orgId) {
-      setError("সংগঠন শনাক্ত করা যায়নি");
+      setError(t("ads.funOrgError"));
       return;
     }
 
@@ -148,7 +152,7 @@ export default function FunnelBuilderPage() {
         setRecentLandings(updatedLandings.items);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ফানেল পাবলিশ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("ads.funPublishError"));
     } finally {
       setBusy(false);
     }
@@ -181,10 +185,10 @@ export default function FunnelBuilderPage() {
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-500 to-rose-500 text-white shadow-sm font-bold">
               ⚡
             </span>
-            <h1 className="text-2xl font-black text-slate-900">AI সেলস ফানেল ও ল্যান্ডিং পেজ স্টুডিও</h1>
+            <h1 className="text-2xl font-black text-slate-900">{t("ads.funTitle")}</h1>
           </div>
           <p className="mt-1 text-sm text-slate-600">
-            ফেসবুক, টিকটক ও হোয়াটসঅ্যাপ বিজ্ঞাপনের জন্য অপ্টিমাইজড ১-পেজ ক্যাশ অন ডেলিভারি (COD) ফানেল বানান মাত্র ২ মিনিটে।
+            {t("ads.funIntro")}
           </p>
         </div>
 
@@ -193,14 +197,14 @@ export default function FunnelBuilderPage() {
             href="/dashboard/commerce/landings"
             className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition"
           >
-            📊 সকল ল্যান্ডিং পেজ ও ট্র্যাকিং
+            {t("ads.funAllLandings")}
           </Link>
           <button
             onClick={handlePublish}
             disabled={busy || !draft}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:from-emerald-700 hover:to-teal-700 transition disabled:opacity-50"
           >
-            {busy ? "পাবলিশ হচ্ছে..." : "🚀 লাইভ ল্যান্ডিং পেজ পাবলিশ করুন"}
+            {busy ? t("ads.funPublishing") : t("ads.funPublish")}
           </button>
         </div>
       </div>
@@ -215,7 +219,7 @@ export default function FunnelBuilderPage() {
               </span>
               <div>
                 <h3 className="text-sm font-bold text-emerald-950">
-                  অভিনন্দন! আপনার হাই-কনভার্সন সেলস ফানেল লাইভ হয়ে গেছে!
+                  {t("ads.funSuccessTitle")}
                 </h3>
                 <p className="text-xs text-emerald-800 mt-0.5 font-mono break-all">
                   {publicUrl(successLink.slug)}
@@ -228,7 +232,7 @@ export default function FunnelBuilderPage() {
                 onClick={() => copyPublicLink(successLink.slug)}
                 className="rounded-lg bg-white px-3.5 py-1.5 text-xs font-bold text-emerald-800 border border-emerald-300 shadow-xs hover:bg-emerald-100 transition"
               >
-                {copied ? "✓ কপি হয়েছে!" : "📋 লিংক কপি করুন"}
+                {copied ? t("ads.funCopied") : t("ads.funCopyLink")}
               </button>
               <a
                 href={`/l/${successLink.slug}`}
@@ -236,7 +240,7 @@ export default function FunnelBuilderPage() {
                 rel="noreferrer"
                 className="rounded-lg bg-emerald-700 px-4 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-800 transition"
               >
-                🔗 পেজটি ওপেন করুন ↗
+                {t("ads.funOpenPage")}
               </a>
             </div>
           </div>
@@ -254,13 +258,13 @@ export default function FunnelBuilderPage() {
         {/* Product selector card */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
           <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-            ১. প্রডাক্ট নির্বাচন করুন
+            {t("ads.funStep1")}
           </label>
           {loading ? (
             <div className="h-10 rounded-xl bg-slate-100 animate-pulse" />
           ) : products.length === 0 ? (
             <div className="p-3 text-center text-xs text-slate-500">
-              কোনো সক্রিয় প্রডাক্ট পাওয়া যায়নি। আগে প্রডাক্ট যোগ করুন।
+              {t("ads.funNoProducts")}
             </div>
           ) : (
             <select
@@ -303,7 +307,7 @@ export default function FunnelBuilderPage() {
                   )}
                   {savingsPct > 0 && (
                     <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[10px] font-bold text-rose-700">
-                      {savingsPct}% ছাড়
+                      {t("ads.funSavings", { pct: fmtNumber(locale, savingsPct) })}
                     </span>
                   )}
                 </div>
@@ -315,11 +319,11 @@ export default function FunnelBuilderPage() {
         {/* Funnel Preset Cards */}
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
           <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-            ২. হাই-কনভার্সন AI ফানেল মডেল সিলেক্ট করুন
+            {t("ads.funStep2")}
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {(Object.keys(FUNNEL_PRESETS) as FunnelPresetId[]).map((key) => {
-              const preset = FUNNEL_PRESETS[key];
+              const preset = funnelPresetForLocale(FUNNEL_PRESETS[key], locale);
               const isSelected = draft?.presetId === key;
               return (
                 <button
@@ -362,7 +366,7 @@ export default function FunnelBuilderPage() {
                     : "border-transparent text-slate-600 hover:text-slate-900"
                 }`}
               >
-                🎯 অফার ও হুক
+                {t("ads.funTabOffer")}
               </button>
               <button
                 type="button"
@@ -373,7 +377,7 @@ export default function FunnelBuilderPage() {
                     : "border-transparent text-slate-600 hover:text-slate-900"
                 }`}
               >
-                ✨ বেনিফিট ({draft.benefits.length})
+                {t("ads.funTabBenefits", { count: fmtNumber(locale, draft.benefits.length) })}
               </button>
               <button
                 type="button"
@@ -384,7 +388,7 @@ export default function FunnelBuilderPage() {
                     : "border-transparent text-slate-600 hover:text-slate-900"
                 }`}
               >
-                🛡️ BD COD ট্রাস্ট
+                {t("ads.funTabTrust")}
               </button>
               <button
                 type="button"
@@ -395,7 +399,7 @@ export default function FunnelBuilderPage() {
                     : "border-transparent text-slate-600 hover:text-slate-900"
                 }`}
               >
-                ❓ প্রশ্নোত্তর FAQ ({draft.faqs.length})
+                {t("ads.funTabFaq", { count: fmtNumber(locale, draft.faqs.length) })}
               </button>
             </div>
 
@@ -405,7 +409,7 @@ export default function FunnelBuilderPage() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      মূল আকর্ষণীয় হেডলাইন (Headline / Hook)
+                      {t("ads.funHeadlineLabel")}
                     </label>
                     <textarea
                       rows={2}
@@ -414,14 +418,14 @@ export default function FunnelBuilderPage() {
                       className="w-full rounded-xl border border-slate-300 p-2.5 text-xs font-semibold text-slate-900 focus:border-amber-500 focus:outline-hidden"
                     />
                     <p className="mt-1 text-[11px] text-slate-400">
-                      বিজ্ঞাপনে ক্লিক করার পর কাস্টমার প্রথম এই লাইনটি দেখবে।
+                      {t("ads.funHeadlineHelp")}
                     </p>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
-                        URL স্লাগ (Slug)
+                        {t("ads.funSlugLabel")}
                       </label>
                       <div className="flex items-center gap-1">
                         <span className="text-xs text-slate-400 font-mono">/l/</span>
@@ -444,7 +448,7 @@ export default function FunnelBuilderPage() {
 
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
-                        স্টক কাউন্টডাউন সংখ্যা
+                        {t("ads.funStockLabel")}
                       </label>
                       <input
                         type="number"
@@ -459,7 +463,7 @@ export default function FunnelBuilderPage() {
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      মূল অর্ডার বাটন টেক্সট (CTA Button)
+                      {t("ads.funCtaLabel")}
                     </label>
                     <input
                       type="text"
@@ -479,11 +483,11 @@ export default function FunnelBuilderPage() {
                         className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500"
                       />
                       <span className="text-xs font-bold text-amber-950">
-                        চেকআউটে স্পেশাল অফার বাম্প (Order Bump) সক্রিয় রাখুন
+                        {t("ads.funBumpLabel")}
                       </span>
                     </label>
                     <p className="mt-1 text-[11px] text-amber-800 pl-6">
-                      গ্রাহকরা চেকআউটের সময় ১ ক্লিকে অতিরিক্ত কম্বো আইটেম বা কেয়ার প্রোডাক্ট যুক্ত করতে পারবে।
+                      {t("ads.funBumpHelp")}
                     </p>
                   </div>
                 </div>
@@ -494,9 +498,9 @@ export default function FunnelBuilderPage() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold text-slate-700">
-                      প্রোডাক্টের শীর্ষ বৈশিষ্ট্যসমূহ (Benefits Grid)
+                      {t("ads.funBenefitsTitle")}
                     </p>
-                    <span className="text-[11px] text-slate-400">সর্বোচ্চ ৪-৬টি পয়েন্ট সেরা</span>
+                    <span className="text-[11px] text-slate-400">{t("ads.funBenefitsHint")}</span>
                   </div>
 
                   {draft.benefits.map((b, idx) => (
@@ -515,7 +519,7 @@ export default function FunnelBuilderPage() {
                         <input
                           type="text"
                           value={b.title}
-                          placeholder="শিরোনাম"
+                          placeholder={t("ads.funBenefitTitlePh")}
                           onChange={(e) => {
                             const next = [...draft.benefits];
                             next[idx] = { ...next[idx], title: e.target.value };
@@ -527,7 +531,7 @@ export default function FunnelBuilderPage() {
                       <textarea
                         rows={2}
                         value={b.text}
-                        placeholder="বিস্তারিত বর্ণনা"
+                        placeholder={t("ads.funBenefitTextPh")}
                         onChange={(e) => {
                           const next = [...draft.benefits];
                           next[idx] = { ...next[idx], text: e.target.value };
@@ -544,12 +548,12 @@ export default function FunnelBuilderPage() {
               {activeTab === "trust" && (
                 <div className="space-y-4">
                   <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs text-blue-900">
-                    💡 <strong>বাংলাদেশি গ্রাহকের আস্থা বৃদ্ধি:</strong> ৯০%+ বাংলাদেশি ক্রেতা ক্যাশ অন ডেলিভারিতে পার্সেল দেখে নেওয়ার নিশ্চয়তা পেলে অর্ডার কনফার্ম করে।
+                    💡 <strong>{t("ads.funTrustNoteLead")}</strong> {t("ads.funTrustNoteBody")}
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      💵 ক্যাশ অন ডেলিভারি (COD) বার্তা
+                      {t("ads.funCodLabel")}
                     </label>
                     <textarea
                       rows={2}
@@ -566,7 +570,7 @@ export default function FunnelBuilderPage() {
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      🚚 ডেলিভারি প্রতিশ্রুতি বার্তা
+                      {t("ads.funDeliveryLabel")}
                     </label>
                     <textarea
                       rows={2}
@@ -583,7 +587,7 @@ export default function FunnelBuilderPage() {
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      🔄 রিটার্ন ও এক্সচেঞ্জ পলিসি বার্তা
+                      {t("ads.funReturnLabel")}
                     </label>
                     <textarea
                       rows={2}
@@ -605,19 +609,19 @@ export default function FunnelBuilderPage() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold text-slate-700">
-                      গ্রাহকদের বহুল জিজ্ঞাসিত প্রশ্ন (FAQ)
+                      {t("ads.funFaqTitle")}
                     </p>
                     <button
                       type="button"
                       onClick={() =>
                         setDraft({
                           ...draft,
-                          faqs: [...draft.faqs, { q: "নতুন প্রশ্ন?", a: "প্রশ্নের উত্তর এখানে দিন।" }],
+                          faqs: [...draft.faqs, { q: t("ads.funFaqNewQ"), a: t("ads.funFaqNewA") }],
                         })
                       }
                       className="rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-200"
                     >
-                      + নতুন FAQ
+                      {t("ads.funFaqNew")}
                     </button>
                   </div>
 
@@ -627,7 +631,7 @@ export default function FunnelBuilderPage() {
                         <input
                           type="text"
                           value={f.q}
-                          placeholder="প্রশ্ন"
+                          placeholder={t("ads.funFaqQPh")}
                           onChange={(e) => {
                             const next = [...draft.faqs];
                             next[idx] = { ...next[idx], q: e.target.value };
@@ -649,7 +653,7 @@ export default function FunnelBuilderPage() {
                       <textarea
                         rows={2}
                         value={f.a}
-                        placeholder="উত্তর"
+                        placeholder={t("ads.funFaqAPh")}
                         onChange={(e) => {
                           const next = [...draft.faqs];
                           next[idx] = { ...next[idx], a: e.target.value };
@@ -675,7 +679,7 @@ export default function FunnelBuilderPage() {
                   previewDevice === "mobile" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500"
                 }`}
               >
-                📱 স্মার্টফোন ভিউ (BD Traffic)
+                {t("ads.funMobileView")}
               </button>
               <button
                 type="button"
@@ -684,7 +688,7 @@ export default function FunnelBuilderPage() {
                   previewDevice === "desktop" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500"
                 }`}
               >
-                💻 ডেস্কটপ ভিউ
+                {t("ads.funDesktopView")}
               </button>
             </div>
 
@@ -738,7 +742,7 @@ export default function FunnelBuilderPage() {
                   )}
                   {savingsPct > 0 && (
                     <span className="absolute top-2 right-2 rounded-lg bg-rose-600 px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
-                      {savingsPct}% ছাড়
+                      {t("ads.funSavings", { pct: fmtNumber(locale, savingsPct) })}
                     </span>
                   )}
                 </div>
@@ -849,31 +853,31 @@ export default function FunnelBuilderPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-base font-black text-slate-900">চলতি সেলস ফানেলসমূহ</h3>
-            <p className="text-xs text-slate-500">আপনার শপের সক্রিয় ফানেল এবং অর্ডার পারফরম্যান্স</p>
+            <h3 className="text-base font-black text-slate-900">{t("ads.funListTitle")}</h3>
+            <p className="text-xs text-slate-500">{t("ads.funListIntro")}</p>
           </div>
           <Link
             href="/dashboard/commerce/landings"
             className="text-xs font-bold text-amber-600 hover:underline"
           >
-            বিস্তারিত টেবিল ও ভ্যারিয়েন্ট A/B টেস্ট ↗
+            {t("ads.funListLink")}
           </Link>
         </div>
 
         {recentLandings.length === 0 ? (
           <p className="text-xs text-slate-400 py-4 text-center">
-            এখনও কোনো ল্যান্ডিং পেজ তৈরি করা হয়নি। উপরের ফর্মে সিলেক্ট করে পাবলিশ করুন।
+            {t("ads.funListEmpty")}
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold">
                 <tr>
-                  <th className="py-2.5 px-3">শিরোনাম ও পেজ স্লাগ</th>
-                  <th className="py-2.5 px-3">স্ট্যাটাস</th>
-                  <th className="py-2.5 px-3">মোট অর্ডার</th>
-                  <th className="py-2.5 px-3">মোট রেভিনিউ</th>
-                  <th className="py-2.5 px-3 text-right">অ্যাকশন</th>
+                  <th className="py-2.5 px-3">{t("ads.funColTitle")}</th>
+                  <th className="py-2.5 px-3">{t("ads.funColStatus")}</th>
+                  <th className="py-2.5 px-3">{t("ads.funColOrders")}</th>
+                  <th className="py-2.5 px-3">{t("ads.funColRevenue")}</th>
+                  <th className="py-2.5 px-3 text-right">{t("ads.funColAction")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -891,11 +895,11 @@ export default function FunnelBuilderPage() {
                             : "bg-slate-100 text-slate-600"
                         }`}
                       >
-                        {l.status === "published" ? "লাইভ" : l.status}
+                        {l.status === "published" ? t("ads.funLive") : l.status}
                       </span>
                     </td>
                     <td className="py-3 px-3 font-bold text-slate-800">
-                      {l.orderCount ?? 0} টি
+                      {t("ads.funOrderCount", { count: fmtNumber(locale, l.orderCount ?? 0) })}
                     </td>
                     <td className="py-3 px-3 font-bold text-emerald-700">
                       {formatMinorTaka(l.revenueMinor || "0")}
@@ -906,7 +910,7 @@ export default function FunnelBuilderPage() {
                         onClick={() => copyPublicLink(l.slug)}
                         className="rounded bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-200"
                       >
-                        লিংক কপি
+                        {t("ads.funCopy")}
                       </button>
                       <a
                         href={`/l/${l.slug}`}
@@ -914,7 +918,7 @@ export default function FunnelBuilderPage() {
                         rel="noreferrer"
                         className="rounded bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-amber-600"
                       >
-                        ভিজিট ↗
+                        {t("ads.funVisit")}
                       </a>
                     </td>
                   </tr>

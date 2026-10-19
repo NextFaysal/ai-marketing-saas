@@ -7,6 +7,14 @@
  * without a component harness — same pattern as
  * social-composer / social-post-filters.
  */
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { tr } from "./i18n/lookup";
+import { socialBn, socialEn } from "./i18n/social";
+
+const SOCIAL_DICTS = { bn: socialBn, en: socialEn };
+const L = (locale: UiLocale, key: string, params?: Record<string, string | number>) =>
+  tr(SOCIAL_DICTS, locale, key, params) ?? key;
+
 
 /** Bengali digits for a non-negative integer, e.g. 3 → "৩". */
 function bnNum(n: number): string {
@@ -15,12 +23,18 @@ function bnNum(n: number): string {
 
 export type MediaAspect = "1:1" | "4:5" | "9:16" | "16:9";
 
-export const ASPECT_OPTIONS: { value: MediaAspect; label: string }[] = [
-  { value: "1:1", label: "1:1 (বর্গাকার)" },
-  { value: "4:5", label: "4:5 (পোর্ট্রেট)" },
-  { value: "9:16", label: "9:16 (উল্লম্ব / Reel)" },
-  { value: "16:9", label: "16:9 (ওয়াইড)" },
+export const ASPECT_OPTIONS: { value: MediaAspect; label: string; labelEn: string }[] = [
+  { value: "1:1", label: "1:1 (বর্গাকার)", labelEn: "1:1 (square)" },
+  { value: "4:5", label: "4:5 (পোর্ট্রেট)", labelEn: "4:5 (portrait)" },
+  { value: "9:16", label: "9:16 (উল্লম্ব / Reel)", labelEn: "9:16 (vertical / Reel)" },
+  { value: "16:9", label: "16:9 (ওয়াইড)", labelEn: "16:9 (wide)" },
 ];
+
+export function aspectLabel(value: MediaAspect, locale: UiLocale = "bn"): string {
+  const found = ASPECT_OPTIONS.find((o) => o.value === value);
+  if (!found) return value;
+  return locale === "en" ? found.labelEn : found.label;
+}
 
 export const MAX_MEDIA_TAGS = 20;
 
@@ -82,13 +96,13 @@ export interface MediaBulkResult {
  * "৩টি সফল, ১টি ব্যর্থ". A zero side is omitted; an empty
  * result list is stated honestly.
  */
-export function summarizeBulkResults(results: MediaBulkResult[] | null | undefined): string {
+export function summarizeBulkResults(results: MediaBulkResult[] | null | undefined, locale: UiLocale = "bn"): string {
   const list = results ?? [];
-  if (list.length === 0) return "কোনো ফলাফল পাওয়া যায়নি";
+  if (list.length === 0) return L(locale, "noResults");
   const ok = list.filter((r) => r.ok).length;
   const failed = list.length - ok;
   const parts: string[] = [];
-  if (ok > 0) parts.push(`${bnNum(ok)}টি সফল`);
-  if (failed > 0) parts.push(`${bnNum(failed)}টি ব্যর্থ`);
+  if (ok > 0) parts.push(L(locale, "bulkOkPart", { count: fmtNumber(locale, ok) }));
+  if (failed > 0) parts.push(L(locale, "bulkFailedPart", { count: fmtNumber(locale, failed) }));
   return parts.join(", ");
 }

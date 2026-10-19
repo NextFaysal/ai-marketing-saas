@@ -1,3 +1,4 @@
+import { adsBn, adsEn } from "./i18n/ads";
 export interface AbVariantSummary {
   planId: string;
   name: string;
@@ -51,14 +52,17 @@ export function findAbWinner(
 }
 
 /**
- * Translates verdict string to Bengali human-readable label.
+ * Translates verdict string to a human-readable label in the active
+ * locale (MB2 ML6: copy lives in the `ads` namespace; locale defaults
+ * to "bn" so existing callers keep today's copy).
  */
-export function getVerdictLabel(verdict: string): { label: string; badgeCls: string } {
+export function getVerdictLabel(verdict: string, locale: "bn" | "en" = "bn"): { label: string; badgeCls: string } {
+  const d = locale === "en" ? adsEn : adsBn;
   if (verdict === "winner_by_first_party_cpa") {
-    return { label: "আসল অর্ডারের ভিত্তিতে বিজয়ী", badgeCls: "bg-emerald-100 text-emerald-800" };
+    return { label: d.abVerdictFirstParty, badgeCls: "bg-emerald-100 text-emerald-800" };
   }
   if (verdict === "winner_by_platform_cpa") {
-    return { label: "মেটা প্ল্যাটফর্ম CPA ভিত্তিতে বিজয়ী", badgeCls: "bg-blue-100 text-blue-800" };
+    return { label: d.abVerdictPlatform, badgeCls: "bg-blue-100 text-blue-800" };
   }
-  return { label: "পর্যাপ্ত ডেটা সংগ্রহ চলছে (ন্যূনতম ৳১০০ খরচ প্রয়োজন)", badgeCls: "bg-slate-100 text-slate-700" };
+  return { label: d.abVerdictCollecting, badgeCls: "bg-slate-100 text-slate-700" };
 }

@@ -4,9 +4,9 @@ import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { asList } from "@/lib/as-list";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtDateTime, fmtMoney, fmtMoneyMinor, fmtNumber, intlLocaleOf } from "@repo/contracts";
 import { mentionSegments } from "@/lib/campaign-cn10";
-import { fmtMoneyBn, fmtNumBn } from "@/lib/money-bn";
+import { useLocale } from "@/lib/i18n/provider";
 import { chipForStep, chipSymbol, createSaverRegistry, markDirty, markFailed, markSaved, readinessCounts, runStepSavers, saveStateLabel, startSaving, stepIndexForKey, type SaveState } from "@/lib/campaign-step-shell";
 
 interface AdAccount { id: string; name: string; platform: string; sourceType: string; externalId?: string | null; platformStatusBucket?: string | null; integrationId?: string | null }
@@ -17,13 +17,14 @@ interface AdItem { id: string; name: string; primaryText: string; headline?: str
 // mock frame around the ad's REAL content — not a Meta
 // render.
 function AdPreview({ ad, pageName }: { ad: AdItem; pageName: string }) {
+  const { t } = useLocale();
   const domain = (() => { try { return new URL(ad.linkUrl).hostname; } catch { return ad.linkUrl; } })();
   // CN5: placement-specific media wins in its frame when set.
   const feedUrl = ad.placementAssets?.feedImageUrl ?? ad.imageUrl;
   const verticalUrl = ad.placementAssets?.verticalImageUrl ?? ad.imageUrl;
   const mediaFor = (url?: string | null) => url
     ? <img src={url} alt="" className="h-full w-full object-cover" />
-    : <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-200 to-slate-300 text-xs text-slate-500">{ad.format === "video" ? "🎬 ভিডিও" : ad.format === "carousel" ? "🎠 Carousel" : "🖼️ ছবি নেই / লাইব্রেরি Asset"}</div>;
+    : <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-200 to-slate-300 text-xs text-slate-500">{ad.format === "video" ? t("campaignBuilder.previewVideo") : ad.format === "carousel" ? "🎠 Carousel" : t("campaignBuilder.previewNoImage")}</div>;
   const media = mediaFor(feedUrl);
   const mediaTall = mediaFor(verticalUrl);
   const wide = (
@@ -48,7 +49,7 @@ function AdPreview({ ad, pageName }: { ad: AdItem; pageName: string }) {
   );
   return (
     <div className="mt-2 rounded-lg border border-dashed bg-slate-100 p-3">
-      <div className="mb-2 text-xs font-semibold text-slate-500">👁 Placement Preview — আসল লেখা/ছবি দিয়ে সাজানো Mock Frame (Meta এর আসল Render নয়)</div>
+      <div className="mb-2 text-xs font-semibold text-slate-500">{t("campaignBuilder.previewTitle")}</div>
       <div className="flex flex-wrap items-start gap-3">
         <div>{wide}<div className="mt-1 text-center text-[11px] text-slate-400">Feed{ad.placementAssets?.feedImageUrl ? " · Placement Asset (CN5)" : ""}</div></div>
         <div>{tall("Reels")}<div className="mt-1 text-center text-[11px] text-slate-400">Reels (9:16){ad.placementAssets?.verticalImageUrl ? " · Placement Asset (CN5)" : ""}</div></div>
@@ -102,6 +103,7 @@ const POSITION_OPTS = [{ v: "feed", l: "Feed" }, { v: "reels", l: "Reels" }, { v
 const DEVICE_OPTS = [{ v: "mobile", l: "Mobile" }, { v: "desktop", l: "Desktop" }];
 
 function PlacementChecks({ values, onChange }: { values: { platforms: string[]; positions: string[]; devices: string[] }; onChange: (next: { platforms: string[]; positions: string[]; devices: string[] }) => void }) {
+  const { t } = useLocale();
   const toggle = (key: "platforms" | "positions" | "devices", v: string) => {
     const arr = values[key].includes(v) ? values[key].filter((x) => x !== v) : [...values[key], v];
     onChange({ ...values, [key]: arr });
@@ -120,7 +122,7 @@ function PlacementChecks({ values, onChange }: { values: { platforms: string[]; 
   );
   return (
     <div className="space-y-2 rounded-lg bg-slate-50 p-3 lg:col-span-3">
-      <div className="text-sm font-semibold">📍 Placement <span className="font-normal text-slate-500">— কিছুই না বাছলে Meta এর Default Placement চলবে (Advantage Placements)</span></div>
+      <div className="text-sm font-semibold">{t("campaignBuilder.placementTitle")}<span className="font-normal text-slate-500">{t("campaignBuilder.placementNote")}</span></div>
       <div className="grid gap-2 sm:grid-cols-3">
         {group("Platform", "platforms", PLATFORM_OPTS)}
         {group("Position", "positions", POSITION_OPTS)}
@@ -133,9 +135,9 @@ interface PublishLog { id: string; step: string; status: string; externalId?: st
 interface Plan {
   adAccountId: string; id: string; name: string; objective: string; status: string; advantagePlus?: boolean; advantageState?: string | null; advantageStateCheckedAt?: string | null; budgetMode?: string; campaignDailyBudgetMinor?: string | null; campaignLifetimeBudgetMinor?: string | null; dailyBudgetCapMinor?: string | null; metaStatus?: string | null; metaEffectiveStatus?: string | null; lastStatusSyncAt?: string | null; healthIssues?: { level: string; name: string; status: string }[]; externalCampaignId?: string | null; approvedById?: string | null; firstApproverId?: string | null; firstApprovedAt?: string | null; approvalState?: { twoStep: boolean; step: number; awaitingSecond: boolean } | null; rejectionReason?: string | null; abGroupId?: string | null; publishAt?: string | null; pauseAt?: string | null; resumeAt?: string | null; pauseExecutedAt?: string | null; resumeExecutedAt?: string | null; seriesId?: string | null; seriesInstanceDate?: string | null; adSets: AdSet[]; publishLogs: PublishLog[] }
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: "Draft", pending_approval: "অনুমোদনের অপেক্ষায়", approved: "অনুমোদিত", rejected: "প্রত্যাখ্যাত",
-  publishing: "প্রকাশ হচ্ছে", published: "প্রকাশিত (Meta তে)", publish_failed: "প্রকাশ ব্যর্থ",
+const STATUS_KEY: Record<string, string> = {
+  draft: "", pending_approval: "campaignBuilder.statusPending", approved: "campaignBuilder.statusApproved", rejected: "campaignBuilder.statusRejected",
+  publishing: "campaignBuilder.statusPublishing", published: "campaignBuilder.statusPublished", publish_failed: "campaignBuilder.statusPublishFailed",
 };
 
 // Campaign Builder Frontier NB7 (CN15/CN16): Meta Experiment
@@ -144,7 +146,7 @@ const STATUS_LABEL: Record<string, string> = {
 interface ExperimentRow { id: string; name?: string | null; groupId?: string | null; planAId: string; planBId: string; splitA: number; metricEvent?: string | null; startTime?: string | null; endTime?: string | null; metaBusinessId?: string | null; metaStudyId?: string | null; lastReadback?: unknown; lastReadbackAt?: string | null; significanceNote?: string | null }
 interface ExpReadback { experiment?: ExperimentRow; metaVerbatim: { study?: any; cells?: any[] } | null; localNumbers: { planA: any; planB: any; note?: string } | null }
 interface SeriesRow { id: string; name: string; cadence: string; interval?: number | null; anchorDate?: string | null; dates?: string[] | null; leadDays?: number | null; nextIndex?: number | null; status: string; sourcePlanId: string; sourcePlanName?: string | null; sourcePlanStatus?: string | null; pendingPlan: { id: string; name: string; status: string } | null; nextInstanceDate?: string | null; generationHeld?: boolean }
-const SERIES_CADENCE_LABEL: Record<string, string> = { weekly: "সাপ্তাহিক", monthly: "মাসিক", dates: "তারিখের তালিকা" };
+const SERIES_CADENCE_KEY: Record<string, string> = { weekly: "ads.cgCadenceWeekly", monthly: "ads.cgCadenceMonthly", dates: "ads.cgCadenceDates" };
 // Meta study times arrive as unix SECONDS (numbers or numeric
 // strings); date-shaped strings pass through as dates.
 /** CA13: client mirror of the server naming renderer,
@@ -177,19 +179,27 @@ function renderNamingPreview(template: string): string {
   }
   return out.replace(/^[\s\-_./|]+/, "").replace(/[\s\-_./|]+$/, "").trim().slice(0, 200);
 }
-const fmtStudyTime = (v: unknown): string => {
+const fmtStudyTime = (v: unknown, locale: "bn" | "en" = "bn"): string => {
   if (v == null || v === "") return "—";
   const n = Number(v);
-  if (Number.isFinite(n) && n > 0 && /^\d+$/.test(String(v).trim())) return new Date(n * 1000).toLocaleString("bn-BD");
+  if (Number.isFinite(n) && n > 0 && /^\d+$/.test(String(v).trim())) return fmtDateTime(locale, n * 1000);
   const d = new Date(String(v));
-  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString("bn-BD");
+  return Number.isNaN(d.getTime()) ? String(v) : fmtDateTime(locale, d);
 };
-const fmtTotalsSpend = (t: any): string => {
-  try { return t?.spendMinor != null ? fmtMoneyBn(t.spendMinor) : "—"; } catch { return String(t?.spendMinor ?? "—"); }
+const fmtTotalsSpend = (tot: any, locale: "bn" | "en" = "bn"): string => {
+  try { return tot?.spendMinor != null ? fmtMoneyMinor(locale, BigInt(String(tot.spendMinor))) : "—"; } catch { return String(tot?.spendMinor ?? "—"); }
 };
 
 export default function CampaignBuilderPage() {
+  const { t, locale } = useLocale();
   const params = useSearchParams();
+  // ML6: locale-aware replacements for the bn-only money-bn
+  // helpers (the lib stays untouched — other pages use it).
+  const fmtMoneyBn = (minor: string | bigint | number | null | undefined): string =>
+    minor === null || minor === undefined || minor === "" ? "—" : fmtMoneyMinor(locale, typeof minor === "bigint" ? minor : BigInt(String(minor).trim()));
+  const fmtNumBn = (n: number | null | undefined): string =>
+    n === null || n === undefined || !Number.isFinite(n) ? "—" : fmtNumber(locale, n);
+  const statusLabel = (status: string): string => (STATUS_KEY[status] ? t(STATUS_KEY[status]) : status === "draft" ? "Draft" : status);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [accounts, setAccounts] = useState<AdAccount[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -232,8 +242,8 @@ export default function CampaignBuilderPage() {
   function perfOf(id: string, source: "creative" | "media" = "creative") { return assetPerf[`${source}:${id}`]; }
   function assetOptLabel(x: { id: string; name: string }, source: "creative" | "media" = "creative") {
     const p = perfOf(x.id, source);
-    if (!p || !p.rated) return `${x.name} · তথ্য নেই`;
-    return `${x.name} · 🏆 আগে ভালো চলেছে (CTR ${p.ctrPct}%${p.cpaMinor != null ? ` · CPA ৳${Math.round(p.cpaMinor / 100)}` : ""})`;
+    if (!p || !p.rated) return `${x.name}${t("campaignBuilder.assetNoInfo")}`;
+    return `${x.name}${t("campaignBuilder.assetBest", { ctr: p.ctrPct ?? "", cpa: p.cpaMinor != null ? t("campaignBuilder.assetBestCpa", { amount: fmtMoney(locale, Math.round(p.cpaMinor / 100)) }) : "" })}`;
   }
   function sortPicker<T extends { id: string }>(list: T[], source: "creative" | "media" = "creative"): T[] {
     if (pickerSort === "newest") return list;
@@ -463,7 +473,7 @@ export default function CampaignBuilderPage() {
   async function createPlan(e: React.FormEvent) {
     e.preventDefault(); if (!orgId) return;
     const created = await wrap("create", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans`, { method: "POST", body: JSON.stringify({ name: createForm.name, objective: createForm.objective, adAccountId: createForm.adAccountId, budgetMode: createForm.budgetMode, campaignDailyBudget: createForm.campaignDailyBudget || undefined, campaignLifetimeBudget: createForm.campaignLifetimeBudget || undefined, useNamingTemplate: createForm.useNamingTemplate || undefined }) }));
-    if (created) { setPlan(created); setNotice("Plan তৈরি হয়েছে (Draft)। এবার Ad Set ও Ad যোগ করুন।"); }
+    if (created) { setPlan(created); setNotice(t("campaignBuilder.planCreated")); }
   }
 
   async function addAdSet(e: React.FormEvent) {
@@ -510,7 +520,7 @@ export default function CampaignBuilderPage() {
   async function addAd(adSetId: string) {
     if (!orgId || !plan) return;
     const f = adForms[adSetId];
-    if (!f?.name || !f?.primaryText || !f?.linkUrl) { setError("Ad এর নাম, Primary Text ও Link লাগবে"); return; }
+    if (!f?.name || !f?.primaryText || !f?.linkUrl) { setError(t("campaignBuilder.errAdRequired")); return; }
     const carouselCards = f.format === "carousel"
       ? f.carouselText.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
           const [title, linkUrl, imageUrl] = l.split("|").map((x) => x?.trim());
@@ -554,9 +564,9 @@ export default function CampaignBuilderPage() {
   async function generateCopy(adSetId: string) {
     if (!orgId || !plan) return;
     const productId = copySelection[adSetId];
-    if (!productId) { setError("AI Copy এর জন্য একটি প্রোডাক্ট বেছে নিন"); return; }
+    if (!productId) { setError(t("campaignBuilder.errChooseProductCopy")); return; }
     const res = await wrap(`copy-${adSetId}`, () => apiFetch<{ created: unknown[]; provider: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/generate-copy`, { method: "POST", body: JSON.stringify({ adSetId, productId }) }));
-    if (res) { setNotice(`AI Copy তৈরি হয়েছে (${res.provider === "dev-template" ? "Dev Template" : res.provider})। Draft Ad হিসেবে যোগ হয়েছে, চাইলে মুছে নিজের লেখা দিন।`); await loadPlan(plan.id); }
+    if (res) { setNotice(t("campaignBuilder.copyCreated", { provider: res.provider === "dev-template" ? "Dev Template" : res.provider })); await loadPlan(plan.id); }
   }
 
   // CA1: generate an ad image with the org's AI image provider.
@@ -565,12 +575,12 @@ export default function CampaignBuilderPage() {
   async function generateImage(adSetId: string) {
     if (!orgId || !plan) return;
     const prompt = (imagePrompts[adSetId] ?? "").trim();
-    if (!prompt) { setError("AI ছবির জন্য একটি বর্ণনা (Prompt) লিখুন"); return; }
+    if (!prompt) { setError(t("campaignBuilder.errImagePrompt")); return; }
     const res = await wrap(`image-${adSetId}`, () => apiFetch<{ asset: { id: string; name: string; status: string }; provider: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/generate-image`, { method: "POST", body: JSON.stringify({ prompt, productId: copySelection[adSetId] || undefined }) }));
     if (res) {
       setNotice(res.asset.status === "ready"
-        ? `AI ছবি তৈরি হয়েছে (${res.provider}) — Creative Library-তে যোগ হয়েছে। Ad-এর ছবি হিসেবে Picker থেকে বেছে নিন।`
-        : `AI ছবি তৈরি হয়েছে, কিন্তু Meta-তে Ingest সম্পূর্ণ হয়নি (Status: ${res.asset.status}) — Creative Library-তে বিস্তারিত দেখুন।`);
+        ? t("campaignBuilder.imageCreatedReady", { provider: res.provider })
+        : t("campaignBuilder.imageCreatedIngest", { status: res.asset.status }));
       const r = await apiFetch(`/organizations/${orgId}/creatives`).catch(() => null);
       if (r) setAssets(asList(r));
     }
@@ -582,10 +592,10 @@ export default function CampaignBuilderPage() {
   async function generateVideo(adSetId: string) {
     if (!orgId || !plan) return;
     const productId = copySelection[adSetId];
-    if (!productId) { setError("AI ভিডিওর জন্য একটি প্রোডাক্ট বেছে নিন"); return; }
+    if (!productId) { setError(t("campaignBuilder.errChooseProductVideo")); return; }
     const res = await wrap(`video-${adSetId}`, () => apiFetch<{ assets: { id: string; name: string; status: string }[]; scriptSource: string; framesUsed: number }>(`/organizations/${orgId}/campaign-plans/${plan.id}/generate-video`, { method: "POST", body: JSON.stringify({ productId }) }));
     if (res) {
-      setNotice(`AI ভিডিও তৈরি হয়েছে — ${res.assets.length}টি Aspect (1:1, 4:5, 9:16), ${res.framesUsed}টি প্রোডাক্ট ছবি দিয়ে${res.scriptSource === "template" ? " · Script: Template (আসল প্রোডাক্ট তথ্য দিয়ে তৈরি)" : ""}। Creative Library-তে যোগ হয়েছে; Meta-তে Processing শেষ হলে Ready হবে।`);
+      setNotice(t("campaignBuilder.videoCreated", { count: fmtNumber(locale, res.assets.length), frames: fmtNumber(locale, res.framesUsed), script: res.scriptSource === "template" ? t("campaignBuilder.videoScriptTemplate") : "" }));
       const r = await apiFetch(`/organizations/${orgId}/creatives`).catch(() => null);
       if (r) setAssets(asList(r));
     }
@@ -596,13 +606,13 @@ export default function CampaignBuilderPage() {
     const res = await wrap(key, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/${name}`, { method: "POST", body: body ? JSON.stringify(body) : undefined }));
     if (res) {
       setPlan(res);
-      if ((res as Plan).approvalState?.awaitingSecond) setNotice("প্রথম অনুমোদন সম্পন্ন — দ্বিতীয় অনুমোদন বাকি (অন্য একজন Approver লাগবে)।");
+      if ((res as Plan).approvalState?.awaitingSecond) setNotice(t("campaignBuilder.noticeFirstApproval"));
       apiFetch<NonNullable<typeof lastActivity>>(`/organizations/${orgId}/campaign-plans/${plan.id}/last-activity`).then(setLastActivity).catch(() => undefined);
     }
   }
 
   async function rejectPlan() {
-    const reason = window.prompt("প্রত্যাখ্যানের কারণ লিখুন:");
+    const reason = window.prompt(t("campaignBuilder.promptRejectReason"));
     if (reason) await action("reject", "reject", { reason });
   }
 
@@ -625,14 +635,14 @@ export default function CampaignBuilderPage() {
 
   async function createExperiment() {
     if (!orgId || !plan) return;
-    if (!expForm.planBId) { setError("Variant B বেছে নিন — আগে A/B Variant তৈরি করুন"); return; }
+    if (!expForm.planBId) { setError(t("campaignBuilder.errChooseVariantB")); return; }
     const created = await wrap("exp-create", () => apiFetch<ExperimentRow>(`/organizations/${orgId}/campaign-plans/experiments`, {
       method: "POST",
       body: JSON.stringify({ planAId: plan.id, planBId: expForm.planBId, splitA: Number(expForm.splitA), metricEvent: expForm.metricEvent || undefined, durationDays: Number(expForm.durationDays) }),
     }));
     if (created) {
       setExperiments((s) => [created, ...(s ?? [])]);
-      setNotice(`Meta Experiment তৈরি হয়েছে (Study ID ${created.metaStudyId ?? "—"}) — Campaign দুটি আগের মতোই PAUSED/Published অবস্থায় আছে, Experiment কিছু Publish করে না।`);
+      setNotice(t("campaignBuilder.expCreated", { id: created.metaStudyId ?? "—" }));
     }
   }
 
@@ -672,7 +682,7 @@ export default function CampaignBuilderPage() {
     if (created) {
       setSeriesList((s) => [created, ...(s ?? [])]);
       setSeriesForm({ name: "", cadence: "weekly", interval: 1, anchor: "", datesText: "", leadDays: 3 });
-      setNotice(`Series তৈরি হয়েছে: "${created.name}" — Instance গুলো Draft হিসেবে তৈরি হবে, প্রতিটি আলাদাভাবে Approval Flow দিয়ে যাবে।`);
+      setNotice(t("campaignBuilder.seriesCreated", { name: created.name }));
     }
   }
 
@@ -695,12 +705,12 @@ export default function CampaignBuilderPage() {
       const arr = Array.isArray(c?.campaigns) ? c.campaigns : [];
       return arr.map((x: any) => (typeof x === "string" ? x : x?.id ?? "")).filter(Boolean).join(", ");
     };
-    const totalsCol = (label: string, t: any) => (
+    const totalsCol = (label: string, tot: any) => (
       <div className="rounded bg-white/70 p-2">
         <p className="font-semibold">{label}</p>
-        {!t ? <p className="text-slate-400">Local Totals নেই (Sync হওয়া ডেটা নেই)।</p> : (<>
-          <p>খরচ: <b>{fmtTotalsSpend(t)}</b> · Conversions: <b>{t.conversions ?? "—"}</b></p>
-          <p>Impressions: <b>{t.impressions?.toLocaleString?.() ?? t.impressions ?? "—"}</b> · Clicks: <b>{t.clicks?.toLocaleString?.() ?? t.clicks ?? "—"}</b></p>
+        {!tot ? <p className="text-slate-400">{t("campaignBuilder.expNoLocalTotals")}</p> : (<>
+          <p>{t("campaignBuilder.expSpend")}<b>{fmtTotalsSpend(tot, locale)}</b> · Conversions: <b>{tot.conversions ?? "—"}</b></p>
+          <p>Impressions: <b>{tot.impressions != null ? fmtNumber(locale, tot.impressions) : "—"}</b> · Clicks: <b>{tot.clicks != null ? fmtNumber(locale, tot.clicks) : "—"}</b></p>
         </>)}
       </div>
     );
@@ -708,23 +718,23 @@ export default function CampaignBuilderPage() {
       <div className="space-y-2">
         {study ? (
           <div className="space-y-0.5 rounded bg-white p-2 text-xs text-slate-700">
-            <p className="font-semibold">Meta-র নিজের তথ্য (Verbatim)</p>
-            <p>নাম: {study.name ?? "—"} · ধরন: {study.type ?? "—"}</p>
-            <p>শুরু: {fmtStudyTime(study.start_time)} · শেষ: {fmtStudyTime(study.end_time)} · ফলাফল প্রথম পাওয়া যাবে: {fmtStudyTime(study.results_first_available_date)}</p>
+            <p className="font-semibold">{t("campaignBuilder.expMetaVerbatim")}</p>
+            <p>{t("campaignBuilder.expNameType", { name: study.name ?? "—", type: study.type ?? "—" })}</p>
+            <p>{t("campaignBuilder.expTimes", { start: fmtStudyTime(study.start_time, locale), end: fmtStudyTime(study.end_time, locale), first: fmtStudyTime(study.results_first_available_date, locale) })}</p>
             {cells.length ? (
               <div className="pt-1">
-                <p className="font-semibold">Cells — Meta-র নিজের তথ্য (Verbatim)</p>
+                <p className="font-semibold">{t("campaignBuilder.expCellsVerbatim")}</p>
                 {cells.map((c, i) => (
                   <p key={c?.id ?? i}>{c?.name ?? `Cell ${i + 1}`} · Treatment: {c?.treatment_percentage ?? "—"}%{cellCampaigns(c) ? ` · Campaign: ${cellCampaigns(c)}` : ""}</p>
                 ))}
               </div>
             ) : null}
             <details className="pt-1">
-              <summary className="cursor-pointer font-medium">Meta Study-র সম্পূর্ণ Raw Response (JSON)</summary>
+              <summary className="cursor-pointer font-medium">{t("campaignBuilder.expRawJson")}</summary>
               <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-slate-50 p-2">{JSON.stringify(study, null, 1)}</pre>
             </details>
           </div>
-        ) : <p className="text-xs text-slate-500">Meta-র Verbatim Read-back এখনো পাওয়া যায়নি।</p>}
+        ) : <p className="text-xs text-slate-500">{t("campaignBuilder.expNoReadback")}</p>}
         {rb.localNumbers ? (
           <div className="space-y-1">
             <div className="grid gap-2 sm:grid-cols-2 text-xs text-slate-700">
@@ -761,7 +771,7 @@ export default function CampaignBuilderPage() {
     if (res) setReadiness(res);
     return res;
   };
-  const noteSaved = () => { setSaveState((prev) => markSaved(prev, new Date())); setPendingStep(null); };
+  const noteSaved = () => { setSaveState((prev) => markSaved(prev, new Date(), locale)); setPendingStep(null); };
 
   // DX2 savers: each performs EXACTLY the apiFetch call its
   // section's existing save button performs (same endpoint, same
@@ -798,7 +808,7 @@ export default function CampaignBuilderPage() {
     const d = g(`es-budget-${adSet.id}`); const l = g(`es-life-${adSet.id}`);
     if (d || l) { body.dailyBudget = d || undefined; body.lifetimeBudget = l || undefined; }
     const res = await wrap(`es-${adSet.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}`, { method: "PATCH", body: JSON.stringify(body) }));
-    if (res) { setEditSetId(null); setNotice("Ad Set আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
+    if (res) { setEditSetId(null); setNotice(t("campaignBuilder.adSetUpdated")); noteSaved(); await loadPlan(plan.id); }
     return res != null;
   };
   const runAdEditSave = async (ad: AdItem): Promise<boolean> => {
@@ -820,7 +830,7 @@ export default function CampaignBuilderPage() {
         placementAssets: placements, creativeEnhancements,
       }),
     }));
-    if (res) { setEditAdId(null); setNotice("Ad আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
+    if (res) { setEditAdId(null); setNotice(t("campaignBuilder.adUpdated")); noteSaved(); await loadPlan(plan.id); }
     return res != null;
   };
   const runXdSave = async (d: XDraft): Promise<boolean> => {
@@ -845,8 +855,8 @@ export default function CampaignBuilderPage() {
     };
     const res = await wrap(`xd-save-${d.id}`, () => apiFetch<{ problems: string[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}`, { method: "PATCH", body: JSON.stringify({ fields }) }));
     if (res) {
-      if (res.problems.length) setXdResult((st) => ({ ...st, [d.id]: `⚠ সেভ হয়েছে, কিন্তু ঘাটতি: ${res.problems.join(" · ")}` }));
-      else { setNotice("Draft সেভ হয়েছে — সব Field ঠিক আছে।"); noteSaved(); setXdEditId(null); setXdForm(null); }
+      if (res.problems.length) setXdResult((st) => ({ ...st, [d.id]: t("campaignBuilder.xdSavedProblems", { problems: res.problems.join(" · ") }) }));
+      else { setNotice(t("campaignBuilder.xdSavedOk")); noteSaved(); setXdEditId(null); setXdForm(null); }
       const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
       if (list) setXdrafts(list);
     }
@@ -854,18 +864,18 @@ export default function CampaignBuilderPage() {
   };
   // OU4: real provider status for a cross-platform draft.
   type XdSync = { available: boolean; reason?: string; providerStatus?: string; providerStatusRaw?: string; platformStatus?: string; statusLabel?: string; name?: string; status: string; externalCampaignId?: string | null; syncedAt?: string; checkedAt?: string };
-  const xdProviderLabel = (s?: string) => (s === "active" ? "সক্রিয়" : s === "paused" ? "বিরতি" : s === "removed" ? "সরানো হয়েছে" : (s ?? "—"));
+  const xdProviderLabel = (s?: string) => (s === "active" ? t("campaignBuilder.xdProviderActive") : s === "paused" ? t("campaignBuilder.xdProviderPaused") : s === "removed" ? t("campaignBuilder.xdProviderRemoved") : (s ?? "—"));
   const runXdSync = async (d: XDraft): Promise<XdSync | null> => {
     if (!orgId || !plan) return null;
     const res = await wrap(`xd-sync-${d.id}`, () => apiFetch<XdSync>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/sync-status`, { method: "POST", body: JSON.stringify({}) }));
-    if (res) setXdResult((s) => ({ ...s, [d.id]: res.available ? `✓ Provider Status: ${xdProviderLabel(res.providerStatus ?? res.platformStatus)} (${res.providerStatusRaw ?? res.platformStatus ?? ""})${res.name ? ` · ${res.name}` : ""}\nস্থানীয় Draft Status: ${res.status}${(res.syncedAt ?? res.checkedAt) ? ` · Synced: ${res.syncedAt ?? res.checkedAt}` : ""}` : `⛔ Status পড়া যায়নি: ${res.reason ?? "কারণ জানা যায়নি"}\nস্থানীয় Draft Status: ${res.status}` }));
+    if (res) setXdResult((s) => ({ ...s, [d.id]: res.available ? t("campaignBuilder.xdSyncOk", { label: xdProviderLabel(res.providerStatus ?? res.platformStatus), raw: res.providerStatusRaw ?? res.platformStatus ?? "", name: res.name ? t("campaignBuilder.xdSyncName", { name: res.name }) : "", status: res.status, synced: (res.syncedAt ?? res.checkedAt) ? t("campaignBuilder.xdSyncSynced", { at: res.syncedAt ?? res.checkedAt ?? "" }) : "" }) : t("campaignBuilder.xdSyncFail", { reason: res.reason ?? t("campaignBuilder.xdReasonUnknown"), status: res.status }) }));
     return res;
   };
   const runXdLifecycle = async (d: XDraft, action: "pause" | "resume") => {
     if (!orgId || !plan) return;
     const res = await wrap(`xd-life-${action}-${d.id}`, () => apiFetch<{ providerStatus: string; providerStatusRaw?: string; providerStatusSource: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/lifecycle`, { method: "POST", body: JSON.stringify({ action }) }));
     if (res) {
-      setXdResult((s) => ({ ...s, [d.id]: `✓ ${action === "pause" ? "Pause" : "Resume"} প্ল্যাটফর্ম নিশ্চিত করেছে — Provider Status: ${xdProviderLabel(res.providerStatus)}${res.providerStatusRaw ? ` (${res.providerStatusRaw})` : ""} · উৎস: ${res.providerStatusSource === "fresh_sync" ? "নতুন করে পড়া" : "নিশ্চিত Target অনুযায়ী"}` }));
+      setXdResult((s) => ({ ...s, [d.id]: t("campaignBuilder.xdLifecycleOk", { action: action === "pause" ? "Pause" : "Resume", label: xdProviderLabel(res.providerStatus), raw: res.providerStatusRaw ? t("campaignBuilder.xdLifecycleRaw", { raw: res.providerStatusRaw }) : "", source: res.providerStatusSource === "fresh_sync" ? t("campaignBuilder.xdSourceFresh") : t("campaignBuilder.xdSourceTarget") }) }));
       const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
       if (list) setXdrafts(list);
       await runXdSync(d);
@@ -877,22 +887,22 @@ export default function CampaignBuilderPage() {
     const d = (document.getElementById("plan-cdaily") as HTMLInputElement)?.value ?? "";
     const l = (document.getElementById("plan-clife") as HTMLInputElement)?.value ?? "";
     const res = await wrap("bmode", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ budgetMode: mode, campaignDailyBudget: d, campaignLifetimeBudget: l }) }));
-    if (res) { setPlan(res); setNotice("Budget Mode/Campaign Budget সেভ হয়েছে — Publish এর সময় এই কাঠামোই যাবে।"); noteSaved(); }
+    if (res) { setPlan(res); setNotice(t("campaignBuilder.budgetModeSaved")); noteSaved(); }
     return res != null;
   };
   const runCapSave = async (): Promise<boolean> => {
     if (!orgId || !plan) return false;
     const v = (document.getElementById("plan-cap") as HTMLInputElement)?.value ?? "";
     const res = await wrap("cap", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ dailyBudgetCap: v }) }));
-    if (res) { setPlan(res); setNotice(v ? "দৈনিক Budget Cap সেট হয়েছে — Submit/Publish এ যাচাই হবে।" : "Budget Cap সরানো হয়েছে।"); noteSaved(); }
+    if (res) { setPlan(res); setNotice(v ? t("campaignBuilder.capSet") : t("campaignBuilder.capRemoved")); noteSaved(); }
     return res != null;
   };
   const runScheduleSave = async (adSet: AdSet): Promise<boolean> => {
     if (!orgId || !plan) return false;
     const st = domVal(`sched-start-${adSet.id}`); const en = domVal(`sched-end-${adSet.id}`);
-    if (!st && !en) { setError("শুরু বা শেষের সময় দিন"); return false; }
+    if (!st && !en) { setError(t("campaignBuilder.errScheduleTime")); return false; }
     const res = await wrap(`sched-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/schedule`, { method: "POST", body: JSON.stringify({ startTime: st ? new Date(st).toISOString() : undefined, endTime: en ? new Date(en).toISOString() : undefined }) }));
-    if (res) { setPlan(res); setNotice("সময়সূচি Meta তে আপডেট হয়েছে।"); noteSaved(); }
+    if (res) { setPlan(res); setNotice(t("campaignBuilder.scheduleUpdated")); noteSaved(); }
     return res != null;
   };
   const runDaypartSave = async (adSet: AdSet): Promise<boolean> => {
@@ -900,15 +910,15 @@ export default function CampaignBuilderPage() {
     const raw = (document.getElementById(`daypart-${adSet.id}`) as HTMLTextAreaElement)?.value ?? "";
     const windows = raw.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const [day, startHour, endHour] = l.split(",").map((x) => Number(x.trim())); return { day, startHour, endHour }; });
     const res = await wrap(`dp-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/daypart`, { method: "POST", body: JSON.stringify({ windows, tz: "Asia/Dhaka" }) }));
-    if (res) { setPlan(res); setNotice("Dayparting সেভ হয়েছে। Dayparting Job (Automations পেজে তৈরি করুন) সময়মতো Ad Set চালু/বন্ধ করবে।"); noteSaved(); }
+    if (res) { setPlan(res); setNotice(t("campaignBuilder.daypartSaved")); noteSaved(); }
     return res != null;
   };
   const runPublishedBudgetSave = async (adSet: AdSet): Promise<boolean> => {
     if (!orgId || !plan) return false;
     const v = (document.getElementById(`budget-${adSet.id}`) as HTMLInputElement)?.value;
-    if (!v) { setError("নতুন বাজেট লিখুন"); return false; }
+    if (!v) { setError(t("campaignBuilder.errNewBudget")); return false; }
     const res = await wrap(`budget-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/budget`, { method: "POST", body: JSON.stringify({ dailyBudget: v }) }));
-    if (res) { setPlan(res); setNotice("Meta তে বাজেট আপডেট হয়েছে (Meta নিশ্চিত করেছে)।"); noteSaved(); }
+    if (res) { setPlan(res); setNotice(t("campaignBuilder.budgetUpdatedMeta")); noteSaved(); }
     return res != null;
   };
 
@@ -1001,7 +1011,7 @@ export default function CampaignBuilderPage() {
         setPendingStep(target === activeStep ? null : target);
         return false;
       }
-      setSaveState((prev) => markSaved(prev, new Date()));
+      setSaveState((prev) => markSaved(prev, new Date(), locale));
       setPendingStep(null);
       await fetchReadiness();
     }
@@ -1015,9 +1025,9 @@ export default function CampaignBuilderPage() {
   };
   const renderSaveIndicator = () => (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2 text-sm leading-[1.7]" role="status">
-      <span className={saveState.kind === "failed" ? "font-semibold text-red-700" : saveState.kind === "saved" ? "font-semibold text-emerald-700" : "text-slate-600"}>{saveStateLabel(saveState)}</span>
+      <span className={saveState.kind === "failed" ? "font-semibold text-red-700" : saveState.kind === "saved" ? "font-semibold text-emerald-700" : "text-slate-600"}>{saveStateLabel(saveState, locale)}</span>
       {saveState.kind === "failed" ? (
-        <button type="button" className="btn-secondary btn-sm min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void retrySave(); }}>আবার চেষ্টা করুন</button>
+        <button type="button" className="btn-secondary btn-sm min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void retrySave(); }}>{t("campaignBuilder.retryBtn")}</button>
       ) : null}
     </div>
   );
@@ -1039,7 +1049,7 @@ export default function CampaignBuilderPage() {
     void goStep(next).then((ok) => { if (ok) focusStepButton(next); });
   };
   const stepRail = (
-    <nav className="cbx-step-rail xl:flex-col xl:items-stretch" aria-label="Campaign Builder ধাপ" onKeyDown={onStepRailKeyDown}>
+    <nav className="cbx-step-rail xl:flex-col xl:items-stretch" aria-label={t("campaignBuilder.railAria")} onKeyDown={onStepRailKeyDown}>
       {CBX_STEPS.map((st, i) => {
         const chip = chipForStep(readiness?.checks ?? null, i);
         return (
@@ -1052,8 +1062,8 @@ export default function CampaignBuilderPage() {
   );
   const stepNavButtons = (
     <div className="flex items-center justify-between gap-2 pt-2">
-      <span>{activeStep > 0 ? <button type="button" className="btn-secondary min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void goStep(activeStep - 1).then((ok) => { if (ok) focusStepPanel(activeStep - 1); }); }}>← আগের ধাপ</button> : null}</span>
-      <span>{activeStep < CBX_STEPS.length - 1 ? <button type="button" className="btn-primary min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void goStep(activeStep + 1).then((ok) => { if (ok) focusStepPanel(activeStep + 1); }); }}>পরের ধাপ →</button> : null}</span>
+      <span>{activeStep > 0 ? <button type="button" className="btn-secondary min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void goStep(activeStep - 1).then((ok) => { if (ok) focusStepPanel(activeStep - 1); }); }}>{t("campaignBuilder.prevStep")}</button> : null}</span>
+      <span>{activeStep < CBX_STEPS.length - 1 ? <button type="button" className="btn-primary min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void goStep(activeStep + 1).then((ok) => { if (ok) focusStepPanel(activeStep + 1); }); }}>{t("campaignBuilder.nextStep")}</button> : null}</span>
     </div>
   );
 
@@ -1071,7 +1081,7 @@ export default function CampaignBuilderPage() {
           <div className="cbx-skel" style={{ height: 120 }} />
           <div className="cbx-skel" style={{ height: 220 }} />
         </div>
-        <p className="sr-only">Plan লোড হচ্ছে…</p>
+        <p className="sr-only">{t("campaignBuilder.planLoading")}</p>
       </div>
     );
   }
@@ -1082,13 +1092,13 @@ export default function CampaignBuilderPage() {
         {stepRail}
         <div id="cbx-step-objective">
           <h1 className="page-title">Campaign Builder</h1>
-          <p className="text-sm text-slate-500">নতুন Plan তৈরি করুন। এটি শুধুই Draft, Meta তে কিছু যাবে না অনুমোদন ও Publish ছাড়া।</p>
+          <p className="text-sm text-slate-500">{t("campaignBuilder.createIntro")}</p>
         </div>
         {error ? <div role="alert" className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm"><span>⛔</span><span>{error}</span></div> : null}
         <form id="cbx-create-form" onSubmit={createPlan} className="space-y-3 card p-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="block text-sm">Plan এর নাম<input className={inputCls} value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} required={!createForm.useNamingTemplate} placeholder="Eid Sale 2026" />
-              <span className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><input type="checkbox" checked={createForm.useNamingTemplate} onChange={(e) => setCreateForm({ ...createForm, useNamingTemplate: e.target.checked })} /> 🏷️ Naming Template দিয়ে নাম দিন (CA13) — চালু থাকলে টাইপ করা নামের বদলে Template-এর নাম বসবে; নাম খালি রাখলেও Template থেকে নাম তৈরি হবে</span></label>
+            <label className="block text-sm">{t("campaignBuilder.planNameLabel")}<input className={inputCls} value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} required={!createForm.useNamingTemplate} placeholder="Eid Sale 2026" />
+              <span className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><input type="checkbox" checked={createForm.useNamingTemplate} onChange={(e) => setCreateForm({ ...createForm, useNamingTemplate: e.target.checked })} />{t("campaignBuilder.namingTemplateHint")}</span></label>
             <label className="block text-sm">Objective
               <select className={inputCls} value={createForm.objective} onChange={(e) => setCreateForm({ ...createForm, objective: e.target.value })}>
                 <option value="OUTCOME_SALES">Sales</option><option value="OUTCOME_TRAFFIC">Traffic</option>
@@ -1098,41 +1108,41 @@ export default function CampaignBuilderPage() {
             </label>
             <label className="block text-sm">Meta Ad Account
               <select className={inputCls} value={createForm.adAccountId} onChange={(e) => setCreateForm({ ...createForm, adAccountId: e.target.value })} required>
-                <option value="">বেছে নিন</option>
-                {accounts.filter((a) => a.platform === "meta").map((a) => <option key={a.id} value={a.id}>{a.name} ({a.sourceType === "api" ? "API connected" : "CSV/manual - publish হবে না"}) · Status: {a.platformStatusBucket ?? "unknown"}</option>)}
+                <option value="">{t("campaignBuilder.choosePlaceholder")}</option>
+                {accounts.filter((a) => a.platform === "meta").map((a) => <option key={a.id} value={a.id}>{a.name} ({a.sourceType === "api" ? "API connected" : t("campaignBuilder.createAccountCsvNote")}){t("campaignBuilder.accountStatusSuffix", { status: a.platformStatusBucket ?? "unknown" })}</option>)}
               </select>
             </label>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="block text-sm">Budget Mode (CN2)
+            <label className="block text-sm">{t("campaignBuilder.budgetModeLabel")}
               <select className={inputCls} value={createForm.budgetMode} onChange={(e) => setCreateForm({ ...createForm, budgetMode: e.target.value })}>
-                <option value="abo">ABO — বাজেট Ad Set এ</option>
-                <option value="cbo">CBO — বাজেট Campaign এ</option>
+                <option value="abo">{t("campaignBuilder.aboOption")}</option>
+                <option value="cbo">{t("campaignBuilder.cboOption")}</option>
               </select>
             </label>
             {createForm.budgetMode === "cbo" ? <>
-              <label className="block text-sm">Campaign দৈনিক বাজেট (টাকা)<input className={inputCls} value={createForm.campaignDailyBudget} onChange={(e) => setCreateForm({ ...createForm, campaignDailyBudget: e.target.value })} placeholder="2000" /></label>
-              <label className="block text-sm">Campaign Lifetime বাজেট (টাকা)<input className={inputCls} value={createForm.campaignLifetimeBudget} onChange={(e) => setCreateForm({ ...createForm, campaignLifetimeBudget: e.target.value })} placeholder="ঐচ্ছিক" /></label>
-            </> : <p className="col-span-2 self-end text-xs text-slate-400">CBO বেছে নিলে বাজেট Campaign পর্যায়ে যাবে — Ad Set গুলোতে আলাদা বাজেট লাগবে না। ABO তে প্রতিটি Ad Set নিজের বাজেট বহন করে (আগের আচরণ)।</p>}
+              <label className="block text-sm">{t("campaignBuilder.campaignDailyLabel")}<input className={inputCls} value={createForm.campaignDailyBudget} onChange={(e) => setCreateForm({ ...createForm, campaignDailyBudget: e.target.value })} placeholder="2000" /></label>
+              <label className="block text-sm">{t("campaignBuilder.campaignLifetimeLabel")}<input className={inputCls} value={createForm.campaignLifetimeBudget} onChange={(e) => setCreateForm({ ...createForm, campaignLifetimeBudget: e.target.value })} placeholder={t("campaignBuilder.optionalPlaceholder")} /></label>
+            </> : <p className="col-span-2 self-end text-xs text-slate-400">{t("campaignBuilder.aboNote")}</p>}
           </div>
-          <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>Draft Plan তৈরি করুন</button>
-          <p className="text-xs text-slate-400">Publish করতে হলে Ad Account টি Meta API দিয়ে কানেক্ট করা থাকতে হবে (Advertising Accounts পেজ)। CSV/Manual অ্যাকাউন্টে Publish হবে না, সার্ভারই আটকে দেবে।</p>
+          <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{t("campaignBuilder.createPlanBtn")}</button>
+          <p className="text-xs text-slate-400">{t("campaignBuilder.publishNeedsApi")}</p>
         </form>
 
         {blueprints.length > 0 ? (
           <div className="card space-y-3 p-5">
-            <div className="font-semibold">⚡ Blueprint দিয়ে শুরু করুন</div>
-            <p className="text-xs text-slate-400">তৈরি কাঠামো থেকে Draft তৈরি হয় — বাজেটসহ সব মান পরে বদলাতে পারবেন। বাজেটগুলো শুরুর মান মাত্র, কোনো পারফরম্যান্স ডেটার ভিত্তিতে সাজেস্ট করা নয়।</p>
+            <div className="font-semibold">{t("campaignBuilder.blueprintTitle")}</div>
+            <p className="text-xs text-slate-400">{t("campaignBuilder.blueprintIntro")}</p>
             <div className="grid gap-2 sm:grid-cols-2">
               <select className="input" value={bpForm.blueprintId || bpForm.blueprintKey} onChange={(e) => {
                 const row = blueprints.find((x) => (x.id ?? x.key) === e.target.value);
                 setBpForm({ ...bpForm, blueprintKey: row?.key ?? "", blueprintId: row?.id ?? "" });
               }}>
-                <option value="">Blueprint বেছে নিন</option>
-                {blueprints.map((bp) => <option key={bp.id ?? bp.key} value={bp.id ?? bp.key}>{bp.name}{bp.scope === "org" ? " · নিজের কপি" : " · Platform"}</option>)}
+                <option value="">{t("campaignBuilder.blueprintChoose")}</option>
+                {blueprints.map((bp) => <option key={bp.id ?? bp.key} value={bp.id ?? bp.key}>{bp.name}{bp.scope === "org" ? t("campaignBuilder.blueprintOwnCopy") : " · Platform"}</option>)}
               </select>
               <select className="input" value={bpForm.productId} onChange={(e) => setBpForm({ ...bpForm, productId: e.target.value })}>
-                <option value="">প্রোডাক্ট (ঐচ্ছিক — কপিতে আসল নাম/দাম বসবে)</option>
+                <option value="">{t("campaignBuilder.blueprintProductOption")}</option>
                 {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
@@ -1140,17 +1150,17 @@ export default function CampaignBuilderPage() {
             <div className="flex flex-wrap gap-2">
               <button className="btn-secondary btn-sm" disabled={busy !== "" || !bpForm.blueprintKey || !createForm.adAccountId} onClick={async () => {
                 const res = await wrap("bp", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/blueprints/instantiate`, { method: "POST", body: JSON.stringify({ blueprintKey: bpForm.blueprintKey, blueprintId: bpForm.blueprintId || undefined, adAccountId: createForm.adAccountId, productId: bpForm.productId || undefined }) }));
-                if (res) { setPlan(res); setNotice("Blueprint থেকে Draft তৈরি হয়েছে। Page ID ও Pixel ID Ad Set এ বসিয়ে সম্পূর্ণ করুন।"); }
-              }}>{busy === "bp" ? "তৈরি হচ্ছে..." : "Blueprint থেকে Draft বানান"}</button>
+                if (res) { setPlan(res); setNotice(t("campaignBuilder.blueprintDraftCreated")); }
+              }}>{busy === "bp" ? t("campaignBuilder.creating") : t("campaignBuilder.blueprintMakeDraft")}</button>
               {(() => { const sel = blueprints.find((x) => (x.id ?? x.key) === (bpForm.blueprintId || bpForm.blueprintKey)); return sel && sel.scope !== "org" ? (
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const res = await wrap("bpclone", () => apiFetch(`/organizations/${orgId}/campaign-plans/blueprints/clone`, { method: "POST", body: JSON.stringify({ key: sel.key }) }));
                   if (res) {
                     const r = await apiFetch(`/organizations/${orgId}/campaign-plans/blueprints/list`).catch(() => null);
                     if (r) setBlueprints(asList(r));
-                    setNotice("নিজের কপি তৈরি হয়েছে — এখন থেকে এই Blueprint-এর কপিটাই ব্যবহৃত হবে (Platform মূলটি অপরিবর্তিত)।");
+                    setNotice(t("campaignBuilder.blueprintCloned"));
                   }
-                }}>📋 নিজের কপি বানান (CA26)</button>
+                }}>{t("campaignBuilder.blueprintCloneBtn")}</button>
               ) : sel?.scope === "org" ? (
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   if (!sel.id) return;
@@ -1159,56 +1169,56 @@ export default function CampaignBuilderPage() {
                     const r = await apiFetch(`/organizations/${orgId}/campaign-plans/blueprints/list`).catch(() => null);
                     if (r) setBlueprints(asList(r));
                     setBpForm({ ...bpForm, blueprintKey: "", blueprintId: "" });
-                    setNotice("নিজের কপি মোছা হয়েছে — আবার Platform মূলটি ব্যবহৃত হবে।");
+                    setNotice(t("campaignBuilder.blueprintCopyDeleted"));
                   }
-                }}>🗑 নিজের কপি মুছুন</button>
+                }}>{t("campaignBuilder.blueprintDeleteBtn")}</button>
               ) : null; })()}
             </div>
-            <p className="text-xs text-slate-400">Blueprint এখন Database-এর Data (CA26) — Platform দল Admin Panel থেকে বদলাতে পারে; আপনার কপি থাকলে সেটাই প্রাধান্য পায়।</p>
-            {!createForm.adAccountId ? <p className="text-xs text-amber-600">আগে উপরে Meta Ad Account বেছে নিন।</p> : null}
+            <p className="text-xs text-slate-400">{t("campaignBuilder.blueprintDbNote")}</p>
+            {!createForm.adAccountId ? <p className="text-xs text-amber-600">{t("campaignBuilder.chooseAccountFirst")}</p> : null}
           </div>
         ) : null}
 
         <div className="card space-y-3 border-violet-200 p-5">
           <div className="font-semibold">🤖 AI Plan Suggestion <span className="text-xs font-normal text-slate-500">(Campaign Builder CB3)</span></div>
-          <p className="text-xs text-slate-500">প্রোডাক্টের আসল দাম, ক্যাটাগরি ও Business Profile থেকে খসড়া তৈরি হবে — বাজেটের ভাগ (৬০/৪০) সার্ভার হিসাব করে, AI শুধু লেখা সাজায়। এটি একটি Draft মাত্র: যাচাই ও সম্পাদনা ছাড়া কিছুই Submit/Publish হবে না। Organization Settings এ Website URL থাকা লাগবে।</p>
+          <p className="text-xs text-slate-500">{t("campaignBuilder.aiSuggestIntro")}</p>
           <div className="grid gap-2 sm:grid-cols-3">
             <select className="input" id="ai-product">
-              <option value="">প্রোডাক্ট (ঐচ্ছিক)</option>
+              <option value="">{t("campaignBuilder.aiProductOption")}</option>
               {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <input className="input" id="ai-budget" placeholder="মোট দৈনিক বাজেট (টাকা) — যেমন 2000" />
-            <input className="input" id="ai-goal" placeholder="লক্ষ্য — যেমন: বিক্রি বাড়ানো / লিড আনা" />
+            <input className="input" id="ai-budget" placeholder={t("campaignBuilder.aiBudgetPlaceholder")} />
+            <input className="input" id="ai-goal" placeholder={t("campaignBuilder.aiGoalPlaceholder")} />
           </div>
           <button className="btn-primary btn-sm" disabled={busy !== "" || !createForm.adAccountId} onClick={async () => {
             const g = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLSelectElement)?.value ?? "";
             const budget = g("ai-budget");
-            if (!budget) { setError("মোট দৈনিক বাজেট লিখুন"); return; }
+            if (!budget) { setError(t("campaignBuilder.errTotalBudget")); return; }
             const res = await wrap("aisuggest", () => apiFetch<{ plan: Plan; facts: { note: string } }>(`/organizations/${orgId}/campaign-plans/suggest`, {
               method: "POST",
               body: JSON.stringify({ adAccountId: createForm.adAccountId, productId: g("ai-product") || undefined, goal: g("ai-goal") || undefined, totalDailyBudget: budget }),
             }));
-            if (res) { setPlan(res.plan); setNotice(`AI খসড়া তৈরি হয়েছে। ${res.facts.note}`); }
-          }}>{busy === "aisuggest" ? "খসড়া তৈরি হচ্ছে..." : "🤖 AI খসড়া বানান"}</button>
-          {!createForm.adAccountId ? <p className="text-xs text-amber-600">আগে উপরে Meta Ad Account বেছে নিন।</p> : null}
+            if (res) { setPlan(res.plan); setNotice(t("campaignBuilder.aiDraftCreated", { note: res.facts.note })); }
+          }}>{busy === "aisuggest" ? t("campaignBuilder.aiDraftCreating") : t("campaignBuilder.aiDraftBtn")}</button>
+          {!createForm.adAccountId ? <p className="text-xs text-amber-600">{t("campaignBuilder.chooseAccountFirst")}</p> : null}
         </div>
 
         {templates.length > 0 ? (
           <div className="card space-y-2 p-5">
-            <div className="font-semibold">⭐ আমার টেমপ্লেট</div>
-            {templates.map((t) => (
-              <div key={t.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                <span>{t.name} <span className="text-xs text-slate-400">· {t.objective}</span></span>
+            <div className="font-semibold">{t("campaignBuilder.myTemplates")}</div>
+            {templates.map((tpl) => (
+              <div key={tpl.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span>{tpl.name} <span className="text-xs text-slate-400">· {tpl.objective}</span></span>
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
-                  const res = await wrap(`tpl-${t.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${t.id}/duplicate`, { method: "POST", body: JSON.stringify({}) }));
-                  if (res) { setPlan(res); setNotice("টেমপ্লেট থেকে নতুন Draft তৈরি হয়েছে।"); }
-                }}>ব্যবহার করুন</button>
+                  const res = await wrap(`tpl-${tpl.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${tpl.id}/duplicate`, { method: "POST", body: JSON.stringify({}) }));
+                  if (res) { setPlan(res); setNotice(t("campaignBuilder.templateDraftCreated")); }
+                }}>{t("campaignBuilder.useBtn")}</button>
               </div>
             ))}
           </div>
         ) : null}
         <div className="cbx-mobile-bar">
-          <button type="submit" form="cbx-create-form" className="btn-primary flex-1" disabled={busy !== ""}>Draft Plan তৈরি করুন</button>
+          <button type="submit" form="cbx-create-form" className="btn-primary flex-1" disabled={busy !== ""}>{t("campaignBuilder.createPlanBtn")}</button>
         </div>
       </div>
     );
@@ -1226,58 +1236,58 @@ export default function CampaignBuilderPage() {
         <div>
           <div className={activeStep !== 0 ? "hidden" : ""}>
           <h1 className="page-title">{plan.name}</h1>
-          {(plan as any).seriesId ? <p className="mt-1 inline-block rounded bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">🔁 Series Instance — {(plan as any).seriesInstanceDate ? new Date((plan as any).seriesInstanceDate).toLocaleString("bn-BD") : ""}</p> : null}
-          <p className="text-sm text-slate-500">{plan.objective} · অবস্থা: <span className="font-semibold">{STATUS_LABEL[plan.status] ?? plan.status}</span> <span className={`cbx-pill cbx-pill-${plan.status}`}>{STATUS_LABEL[plan.status] ?? plan.status}</span>
-            {plan.status === "published" ? <> · Meta অবস্থা: <span className="font-semibold">{plan.metaStatus}</span> · Campaign ID: {plan.externalCampaignId}</> : null}
+          {(plan as any).seriesId ? <p className="mt-1 inline-block rounded bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">{t("campaignBuilder.seriesInstanceBadge", { date: (plan as any).seriesInstanceDate ? fmtDateTime(locale, (plan as any).seriesInstanceDate) : "" })}</p> : null}
+          <p className="text-sm text-slate-500">{plan.objective} · {t("campaignBuilder.statusLabel")}<span className="font-semibold">{statusLabel(plan.status)}</span> <span className={`cbx-pill cbx-pill-${plan.status}`}>{statusLabel(plan.status)}</span>
+            {plan.status === "published" ? <>{t("campaignBuilder.metaStatusLabel")}<span className="font-semibold">{plan.metaStatus}</span>{t("campaignBuilder.campaignIdLabel")}{plan.externalCampaignId}</> : null}
           </p>
           <p className="mt-1 text-sm text-slate-600">
-            💰 মোট দৈনিক বাজেট: <span className="font-semibold">{fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.dailyBudgetMinor ?? "0"), 0n))}</span>
-            {" · "}Lifetime মোট: {fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.lifetimeBudgetMinor ?? "0"), 0n))}
-            {(plan as any).dailyBudgetCapMinor ? <> · 🧢 দৈনিক Cap: {fmtMoneyBn((plan as any).dailyBudgetCapMinor)}</> : null}
+            {t("campaignBuilder.totalDailyBudget")}<span className="font-semibold">{fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.dailyBudgetMinor ?? "0"), 0n))}</span>
+            {" · "}{t("campaignBuilder.lifetimeTotal")}{fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.lifetimeBudgetMinor ?? "0"), 0n))}
+            {(plan as any).dailyBudgetCapMinor ? <>{t("campaignBuilder.dailyCapPart", { amount: fmtMoneyBn((plan as any).dailyBudgetCapMinor) })}</> : null}
           </p>
           <p className="mt-1 text-sm text-slate-600">
-            🧮 Budget Mode (CN2): <span className="font-semibold">{plan.advantagePlus ? "CBO — Advantage+ (Campaign পর্যায়ে)" : plan.budgetMode === "cbo" ? "CBO — বাজেট Campaign পর্যায়ে" : "ABO — বাজেট Ad Set পর্যায়ে"}</span>
-            {plan.budgetMode === "cbo" || plan.advantagePlus ? <> · Campaign দৈনিক: {plan.campaignDailyBudgetMinor ? fmtMoneyBn(plan.campaignDailyBudgetMinor) : "—"} · Lifetime: {plan.campaignLifetimeBudgetMinor ? fmtMoneyBn(plan.campaignLifetimeBudgetMinor) : "—"}</> : null}
+            {t("campaignBuilder.budgetModeLine")}<span className="font-semibold">{plan.advantagePlus ? t("campaignBuilder.budgetModeAdvantage") : plan.budgetMode === "cbo" ? t("campaignBuilder.budgetModeCbo") : t("campaignBuilder.budgetModeAbo")}</span>
+            {plan.budgetMode === "cbo" || plan.advantagePlus ? <>{t("campaignBuilder.campaignDailyPart", { daily: plan.campaignDailyBudgetMinor ? fmtMoneyBn(plan.campaignDailyBudgetMinor) : "—", lifetime: plan.campaignLifetimeBudgetMinor ? fmtMoneyBn(plan.campaignLifetimeBudgetMinor) : "—" })}</> : null}
           </p>
-          {lastActivity?.available ? <p className="mt-1 text-sm text-slate-600">🕘 সর্বশেষ কার্যকলাপ: {lastActivity.actorName ?? "—"}{lastActivity.action ? ` · ${lastActivity.action}` : ""}{lastActivity.at ? ` · ${new Date(lastActivity.at).toLocaleString("bn-BD")}` : ""} <span className="text-xs text-slate-400">(সর্বশেষ রেকর্ড করা কার্যকলাপ — কে এখন অনলাইনে আছেন তা নয়)</span></p> : null}
-          {plan.status === "pending_approval" && plan.firstApproverId ? <p className="mt-1 rounded-lg bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800">প্রথম অনুমোদন সম্পন্ন — দ্বিতীয় অনুমোদন বাকি{plan.firstApprovedAt ? ` (প্রথম অনুমোদন: ${new Date(plan.firstApprovedAt).toLocaleString("bn-BD")})` : ""}</p> : null}
-          {plan.publishAt ? <p className="mt-1 rounded-lg bg-sky-50 px-3 py-1.5 text-sm text-sky-800">🚀 Launch নির্ধারিত: {new Date(plan.publishAt).toLocaleString("bn-BD")} — সময় হলে Publish হবে (PAUSED অবস্থায়)।</p> : null}
-          {plan.pauseAt ? <p className="mt-1 rounded-lg bg-amber-50 px-3 py-1.5 text-sm text-amber-800">⏰ Pause Window: {new Date(plan.pauseAt).toLocaleString("bn-BD")} এ Pause হবে{plan.pauseExecutedAt ? " (কার্যকর হয়েছে)" : ""}{plan.resumeAt ? ` · ${new Date(plan.resumeAt).toLocaleString("bn-BD")} এ আবার Active${plan.resumeExecutedAt ? " (কার্যকর হয়েছে)" : ""}` : ""} — Automations পেজে "Plan Schedule Sweep" Job চালু থাকলেই কার্যকর হয়।</p> : null}
+          {lastActivity?.available ? <p className="mt-1 text-sm text-slate-600">{t("campaignBuilder.lastActivity", { actor: lastActivity.actorName ?? "—", action: lastActivity.action ? ` · ${lastActivity.action}` : "", at: lastActivity.at ? ` · ${fmtDateTime(locale, lastActivity.at)}` : "" })}<span className="text-xs text-slate-400">{t("campaignBuilder.lastActivityNote")}</span></p> : null}
+          {plan.status === "pending_approval" && plan.firstApproverId ? <p className="mt-1 rounded-lg bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800">{t("campaignBuilder.firstApprovalDone", { at: plan.firstApprovedAt ? t("campaignBuilder.firstApprovalAt", { date: fmtDateTime(locale, plan.firstApprovedAt) }) : "" })}</p> : null}
+          {plan.publishAt ? <p className="mt-1 rounded-lg bg-sky-50 px-3 py-1.5 text-sm text-sky-800">{t("campaignBuilder.launchScheduled", { date: fmtDateTime(locale, plan.publishAt) })}</p> : null}
+          {plan.pauseAt ? <p className="mt-1 rounded-lg bg-amber-50 px-3 py-1.5 text-sm text-amber-800">{t("campaignBuilder.pauseWindowLine", { pauseAt: fmtDateTime(locale, plan.pauseAt), pauseDone: plan.pauseExecutedAt ? t("campaignBuilder.executedSuffix") : "", resume: plan.resumeAt ? t("campaignBuilder.resumePart", { date: fmtDateTime(locale, plan.resumeAt), done: plan.resumeExecutedAt ? t("campaignBuilder.executedSuffix") : "" }) : "" })}</p> : null}
           </div>
           {/* CA12: pause-window editor (published plans) */}
           {scheduleOpen && plan.status === "published" ? (
             <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-              <p className="font-semibold">⏰ নির্ধারিত Pause / Resume <span className="text-xs font-normal text-slate-500">(CA12 — সময় অঞ্চল: {schedule?.timezone ?? "Asia/Dhaka"}; ইনপুট আপনার ব্রাউজারের স্থানীয় সময়ে নেওয়া হয়, সংরক্ষণ UTC-তে)</span></p>
-              <p className="mt-0.5 text-xs text-slate-600">কার্যকর হওয়ার শর্ত: Automations পেজে এই Organization-এর জন্য "Plan Schedule Sweep" Job চালু থাকতে হবে (ডিফল্টে বন্ধ)। প্রতিটি Window ঠিক একবারই কার্যকর হয় — ব্যর্থ হলে Audit-তে কারণ থাকে, নিজে থেকে আবার চেষ্টা হয় না।</p>
+              <p className="font-semibold">{t("campaignBuilder.scheduleTitle")}<span className="text-xs font-normal text-slate-500">{t("campaignBuilder.scheduleTzNote", { tz: schedule?.timezone ?? "Asia/Dhaka" })}</span></p>
+              <p className="mt-0.5 text-xs text-slate-600">{t("campaignBuilder.scheduleCondition")}</p>
               <div className="mt-2 flex flex-wrap items-end gap-2">
-                <label className="block text-xs font-semibold text-slate-700">Pause-এর সময়
+                <label className="block text-xs font-semibold text-slate-700">{t("campaignBuilder.pauseTimeLabel")}
                   <input type="datetime-local" className="input mt-1 w-56" id="sched-pause-at" defaultValue={schedule?.pauseAt ? new Date(new Date(schedule.pauseAt).getTime() - new Date(schedule.pauseAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ""} />
                 </label>
-                <label className="block text-xs font-semibold text-slate-700">Resume-এর সময় (ঐচ্ছিক)
+                <label className="block text-xs font-semibold text-slate-700">{t("campaignBuilder.resumeTimeLabel")}
                   <input type="datetime-local" className="input mt-1 w-56" id="sched-resume-at" defaultValue={schedule?.resumeAt ? new Date(new Date(schedule.resumeAt).getTime() - new Date(schedule.resumeAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ""} />
                 </label>
                 <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const pv = (document.getElementById("sched-pause-at") as HTMLInputElement)?.value ?? "";
                   const rv = (document.getElementById("sched-resume-at") as HTMLInputElement)?.value ?? "";
-                  if (!pv && !rv) { setError("অন্তত Pause-এর সময় বসান — অথবা Window সরাতে নিচের বোতাম ব্যবহার করুন"); return; }
+                  if (!pv && !rv) { setError(t("campaignBuilder.errPauseTime")); return; }
                   const res = await wrap("sched-set", () => apiFetch<NonNullable<typeof schedule>>(`/organizations/${orgId}/campaign-plans/${plan.id}/schedule`, { method: "POST", body: JSON.stringify({ pauseAt: pv ? new Date(pv).toISOString() : null, resumeAt: rv ? new Date(rv).toISOString() : null }) }));
-                  if (res) { setSchedule(res); setNotice("Pause Window বসানো হয়েছে — Job চালু থাকলে সময়মতো কার্যকর হবে।"); await loadPlan(plan.id); }
-                }}>Window সেভ করুন</button>
+                  if (res) { setSchedule(res); setNotice(t("campaignBuilder.windowSaved")); await loadPlan(plan.id); }
+                }}>{t("campaignBuilder.windowSaveBtn")}</button>
                 {schedule?.pauseAt || schedule?.resumeAt ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const res = await wrap("sched-clear", () => apiFetch<NonNullable<typeof schedule>>(`/organizations/${orgId}/campaign-plans/${plan.id}/schedule`, { method: "POST", body: JSON.stringify({ pauseAt: null, resumeAt: null }) }));
-                  if (res) { setSchedule(res); setNotice("Pause Window সরানো হয়েছে।"); await loadPlan(plan.id); }
-                }}>Window সরান</button> : null}
+                  if (res) { setSchedule(res); setNotice(t("campaignBuilder.windowRemoved")); await loadPlan(plan.id); }
+                }}>{t("campaignBuilder.windowRemoveBtn")}</button> : null}
               </div>
-              {schedule?.pauseExecutedAt ? <p className="mt-1 text-xs text-slate-600">Pause কার্যকর হয়েছে: {new Date(schedule.pauseExecutedAt).toLocaleString("bn-BD", { timeZone: schedule.timezone })}</p> : null}
-              {schedule?.resumeExecutedAt ? <p className="mt-1 text-xs text-slate-600">Resume কার্যকর হয়েছে: {new Date(schedule.resumeExecutedAt).toLocaleString("bn-BD", { timeZone: schedule.timezone })}</p> : null}
+              {schedule?.pauseExecutedAt ? <p className="mt-1 text-xs text-slate-600">{t("campaignBuilder.pauseExecuted", { date: new Intl.DateTimeFormat(intlLocaleOf(locale), { timeZone: schedule.timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(schedule.pauseExecutedAt)) })}</p> : null}
+              {schedule?.resumeExecutedAt ? <p className="mt-1 text-xs text-slate-600">{t("campaignBuilder.resumeExecuted", { date: new Intl.DateTimeFormat(intlLocaleOf(locale), { timeZone: schedule.timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(schedule.resumeExecutedAt)) })}</p> : null}
             </div>
           ) : null}
           {/* CA13: naming-template rename dialog — preview diff,
               then a confirmed apply (local records only). */}
           {namingOpen ? (
             <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm">
-              <p className="font-semibold">🏷️ নামে Template প্রয়োগ <span className="text-xs font-normal text-slate-500">(CA13)</span></p>
-              {!namingPreview ? <p className="mt-1 text-xs text-slate-600">Preview লোড হচ্ছে… (Template বসানো না থাকলে Server কারণ জানিয়ে দেবে।)</p> : (
+              <p className="font-semibold">{t("campaignBuilder.namingTitle")}<span className="text-xs font-normal text-slate-500">(CA13)</span></p>
+              {!namingPreview ? <p className="mt-1 text-xs text-slate-600">{t("campaignBuilder.namingLoading")}</p> : (
                 <>
                   <p className="mt-0.5 text-xs text-slate-600">Template: <code className="rounded bg-white px-1">{namingPreview.template}</code> — {namingPreview.note}</p>
                   <div className="mt-2 space-y-1">
@@ -1286,24 +1296,24 @@ export default function CampaignBuilderPage() {
                         <span className="rounded bg-slate-100 px-1.5 py-0.5 font-semibold">{it.level === "plan" ? "Plan" : it.level === "ad_set" ? "Ad Set" : "Ad"}</span>
                         <span className="text-slate-500 line-through">{it.currentName}</span>
                         <span>→</span>
-                        {it.newName ? <span className={it.changed ? "font-semibold text-violet-800" : "text-slate-600"}>{it.newName}</span> : <span className="text-amber-700">নতুন নাম তৈরি হয়নি (Template-এর সব মান অনুপস্থিত) — অপরিবর্তিত থাকবে</span>}
-                        {it.newName && !it.changed ? <span className="text-slate-400">(আগের মতোই)</span> : null}
+                        {it.newName ? <span className={it.changed ? "font-semibold text-violet-800" : "text-slate-600"}>{it.newName}</span> : <span className="text-amber-700">{t("campaignBuilder.namingNoName")}</span>}
+                        {it.newName && !it.changed ? <span className="text-slate-400">{t("campaignBuilder.namingSame")}</span> : null}
                       </p>
                     ))}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button className="btn-primary btn-sm" disabled={busy !== "" || !namingPreview.items.some((i) => i.changed)} onClick={async () => {
                       const items = namingPreview.items.filter((i) => i.changed && i.newName).map((i) => ({ level: i.level, id: i.id, newName: i.newName as string }));
-                      if (!window.confirm(`${items.length}টি নাম বদলাবে (শুধু এই App-এর রেকর্ডে — Meta-তে থাকা নাম বদলাবে না)। নিশ্চিত?`)) return;
+                      if (!window.confirm(t("campaignBuilder.namingConfirm", { count: fmtNumber(locale, items.length) }))) return;
                       const res = await wrap("naming-apply", () => apiFetch<{ appliedCount: number; failedCount: number; results: { level: string; id: string; ok: boolean; error?: string }[]; note: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/naming/apply`, { method: "POST", body: JSON.stringify({ items }) }));
                       if (res) {
-                        setNamingResult(`প্রয়োগ হয়েছে ${res.appliedCount}টি${res.failedCount ? ` · ব্যর্থ ${res.failedCount}টি (${res.results.filter((r) => !r.ok).map((r) => r.error).join(", ")})` : ""} — ${res.note}`);
+                        setNamingResult(t("campaignBuilder.namingResult", { applied: fmtNumber(locale, res.appliedCount), failed: res.failedCount ? t("campaignBuilder.namingFailedPart", { count: fmtNumber(locale, res.failedCount), errors: res.results.filter((r) => !r.ok).map((r) => r.error).join(", ") }) : "", note: res.note }));
                         await loadPlan(plan.id);
                         const fresh = await apiFetch<NonNullable<typeof namingPreview>>(`/organizations/${orgId}/campaign-plans/${plan.id}/naming/preview`, { method: "POST", body: JSON.stringify({}) }).catch(() => null);
                         if (fresh) setNamingPreview(fresh);
                       }
-                    }}>নিশ্চিত করে নাম বদলান</button>
-                    <button className="btn-secondary btn-sm" onClick={() => setNamingOpen(false)}>বন্ধ করুন</button>
+                    }}>{t("campaignBuilder.namingApplyBtn")}</button>
+                    <button className="btn-secondary btn-sm" onClick={() => setNamingOpen(false)}>{t("campaignBuilder.closeBtn")}</button>
                   </div>
                   {namingResult ? <p className="mt-1 text-xs font-semibold text-violet-900">{namingResult}</p> : null}
                 </>
@@ -1317,79 +1327,79 @@ export default function CampaignBuilderPage() {
               ad sets keep their own Destination select in their
               edit form. */}
           <div className={`mt-3 space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm ${activeStep !== 0 ? "hidden" : ""}`}>
-            <p className="font-semibold leading-[1.7]">🧭 কোথায় পাঠাবেন (Destination) <span className="text-xs font-normal text-slate-500">— নতুন Ad Set এর জন্য; Objective এর সঙ্গেই এই সিদ্ধান্ত</span></p>
+            <p className="font-semibold leading-[1.7]">{t("campaignBuilder.destinationTitle")}<span className="text-xs font-normal text-slate-500">{t("campaignBuilder.destinationNote")}</span></p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <label className="block text-sm">Destination (CN13 — Click-to-WhatsApp)
+              <label className="block text-sm">{t("campaignBuilder.destinationLabel")}
                 <select className="input mt-1" value={adSetForm.destinationType} onChange={(e) => setAdSetForm({ ...adSetForm, destinationType: e.target.value, whatsappIntegrationId: "" })}>
-                  <option value="">Website (সাধারণ)</option>
-                  <option value="WHATSAPP">WhatsApp — Click-to-WhatsApp Ad</option>
+                  <option value="">{t("campaignBuilder.websiteOption")}</option>
+                  <option value="WHATSAPP">{t("campaignBuilder.whatsappOption")}</option>
                 </select>
               </label>
               {adSetForm.destinationType === "WHATSAPP" ? (
-                <label className="block text-sm">WhatsApp Connection (শুধু Connected টাই চলবে)
+                <label className="block text-sm">{t("campaignBuilder.waConnectionLabel")}
                   <select className="input mt-1" value={adSetForm.whatsappIntegrationId} onChange={(e) => setAdSetForm({ ...adSetForm, whatsappIntegrationId: e.target.value })}>
-                    <option value="">Connection বেছে নিন</option>
+                    <option value="">{t("campaignBuilder.connectionChoose")}</option>
                     {(waDestinations?.destinations ?? []).map((d) => (
                       <option key={d.integrationId} value={d.integrationId} disabled={!d.connected}>
-                        {d.phoneNumberId ?? "Phone Number ID নেই"} · WABA {d.wabaId ?? "—"}{d.isDefault ? " · Default" : ""}{d.connected ? "" : ` · ${d.status} (ব্যবহারযোগ্য নয়)`}
+                        {d.phoneNumberId ?? t("campaignBuilder.noPhoneId")} · WABA {d.wabaId ?? "—"}{d.isDefault ? " · Default" : ""}{d.connected ? "" : t("campaignBuilder.notUsable", { status: d.status })}
                       </option>
                     ))}
                   </select>
                   {(waDestinations?.destinations ?? []).filter((d) => d.connected).length === 0 ? (
-                    <span className="mt-1 block text-xs font-medium text-red-600">⛔ কোনো Connected WhatsApp Connection নেই — আগে Connect Center থেকে WhatsApp Connect করুন। নম্বর হাতে লিখে দেওয়া যায় না; সেভের সময় নম্বরটি Meta থেকে পড়ে যাচাই করা হয়।</span>
+                    <span className="mt-1 block text-xs font-medium text-red-600">{t("campaignBuilder.waNoneConnected")}</span>
                   ) : (
-                    <span className="mt-1 block text-xs text-slate-500">সেভের সময় এই Connection এর নম্বর Meta থেকে পড়া হবে — এখানে কোনো নম্বর লেখা যায় না। Goal হিসেবে সাধারণত CONVERSATIONS নিন; Readiness এ Connection এর অবস্থা Error আকারে দেখা যাবে।</span>
+                    <span className="mt-1 block text-xs text-slate-500">{t("campaignBuilder.waNumberNote")}</span>
                   )}
                 </label>
               ) : null}
             </div>
-            <p className="text-xs leading-[1.7] text-slate-500">এই বাছাইটি Audience ধাপের "নতুন Ad Set" ফর্মের Destination — দুটো একই State; যেকোনো এক জায়গায় বদলালেই অন্যটিতে দেখা যাবে।</p>
+            <p className="text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.destinationSharedNote")}</p>
           </div>
           <div className={activeStep !== 4 ? "hidden" : ""}>
-          {(perf || pacing || breakdowns) ? <p className="mt-4 text-sm font-bold text-slate-700">১ · সারাংশ — কী অবস্থা (আগে সংখ্যা)</p> : null}
+          {(perf || pacing || breakdowns) ? <p className="mt-4 text-sm font-bold text-slate-700">{t("campaignBuilder.rvSummaryHeading")}</p> : null}
           {perf ? (
             <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm">
-              <p className="font-semibold">📊 এই Plan এর পারফরম্যান্স (আসল সিঙ্ক হওয়া ডেটা)</p>
-              {!perf.totals ? <p className="text-xs text-slate-500">কোনো Metric ডেটা নেই।</p> : (
+              <p className="font-semibold">{t("campaignBuilder.rvPerfTitle")}</p>
+              {!perf.totals ? <p className="text-xs text-slate-500">{t("campaignBuilder.rvNoMetric")}</p> : (
                 <>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                    <span>খরচ: <b>{fmtMoneyBn(perf.totals.spendMinor)}</b></span>
+                    <span>{t("campaignBuilder.rvSpendLabel")}<b>{fmtMoneyBn(perf.totals.spendMinor)}</b></span>
                     <span>Impressions: <b>{fmtNumBn(perf.totals.impressions)}</b></span>
                     <span>Clicks: <b>{fmtNumBn(perf.totals.clicks)}</b></span>
                     <span>CTR: <b>{perf.totals.ctrPercent ?? "—"}%</b></span>
                     <span>Conversions: <b>{perf.totals.conversions}</b></span>
                     <span>CPA: <b>{perf.totals.cpaMinor ? fmtMoneyBn(perf.totals.cpaMinor) : "—"}</b></span>
-                    <span>নিজস্ব অর্ডার: <b>{perf.totals.firstPartyOrders}</b> · Revenue: <b>{fmtMoneyBn(perf.totals.firstPartyRevenueMinor)}</b></span>
+                    <span>{t("campaignBuilder.rvOwnOrders")}<b>{fmtNumBn(perf.totals.firstPartyOrders)}</b> · Revenue: <b>{fmtMoneyBn(perf.totals.firstPartyRevenueMinor)}</b></span>
                     <span>ROAS: <b>{perf.totals.roas ?? "—"}</b></span>
                   </div>
                   {perf.perAdSet.filter((s) => s.spendMinor !== "0").map((s) => (
-                    <div key={s.adSetId} className="text-xs text-slate-600">{s.name}: খরচ {fmtMoneyBn(s.spendMinor)} · {fmtNumBn(s.impressions)} imp · {s.conversions} conv</div>
+                    <div key={s.adSetId} className="text-xs text-slate-600">{t("campaignBuilder.rvPerAdSet", { name: s.name, spend: fmtMoneyBn(s.spendMinor), impressions: fmtNumBn(s.impressions), conversions: fmtNumBn(s.conversions) })}</div>
                   ))}
                 </>
               )}
               {perf.attribution ? (
                 <p className="mt-2 border-t border-sky-200 pt-2 text-xs text-slate-600">
-                  🎯 Attribution Window — নিজস্ব (First-party): <b>{perf.attribution.firstParty.windowDays != null ? `${fmtNumBn(perf.attribution.firstParty.windowDays)} দিন` : "সেট করা নেই"}</b> (Organization Setting থেকে)
-                  {" · "}Meta: <b>সেট করা নেই</b> · Google: <b>সেট করা নেই</b> · TikTok: <b>সেট করা নেই</b>
-                  <span className="text-slate-400"> — Platform-গুলোর Window এই System-এ সংরক্ষিত নেই, তাই অনুমান করে দেখানো হয় না; প্রতিটি Platform-এর নিজের Settings-এ যা আছে তা-ই কার্যকর।</span>
+                  {t("campaignBuilder.rvAttribution")}<b>{perf.attribution.firstParty.windowDays != null ? t("campaignBuilder.rvWindowSet", { days: fmtNumBn(perf.attribution.firstParty.windowDays) }) : t("campaignBuilder.rvNotSet")}</b>{t("campaignBuilder.rvFromOrgSetting")}
+                  {" · "}{t("campaignBuilder.rvMetaGoogleTikTok", { notSet: t("campaignBuilder.rvNotSet") })}
+                  <span className="text-slate-400">{t("campaignBuilder.rvAttributionNote")}</span>
                 </p>
               ) : null}
             </div>
           ) : null}
           {plan.externalCampaignId ? (
             <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm">
-              <p className="font-semibold">↩️ COD Return-Adjusted ROAS (CA21) — Raw পাশাপাশি Adjusted</p>
+              <p className="font-semibold">{t("campaignBuilder.rvAdjTitle")}</p>
               {!adjRoas ? (
                 <button className="mt-1 rounded border bg-white px-2 py-1 text-xs font-semibold" disabled={busy !== ""} onClick={async () => {
                   const res = await wrap("adjroas", () => apiFetch<NonNullable<typeof adjRoas>>(`/organizations/${orgId}/campaign-plans/${plan.id}/adjusted-roas`));
                   if (res) setAdjRoas(res);
-                }}>Adjusted ROAS হিসাব করুন</button>
+                }}>{t("campaignBuilder.rvAdjBtn")}</button>
               ) : !adjRoas.available ? <p className="mt-1 rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ {adjRoas.reason}</p> : (
                 <div className="mt-1 grid gap-1 text-xs leading-[1.7] text-slate-700">
-                  <p>মেলা COD অর্ডার: <b>{fmtNumBn(adjRoas.codMatchedOrders ?? 0)}</b> · Delivered: <b>{fmtNumBn(adjRoas.deliveredOrders ?? 0)}</b> · Returned: <b>{fmtNumBn(adjRoas.returnedOrders ?? 0)}</b> (ফেরতের মূল্য {fmtMoneyBn(adjRoas.returnedValueMinor ?? "0")}) · খরচ: <b>{fmtMoneyBn(adjRoas.spendMinor ?? "0")}</b></p>
-                  <p>Raw ROAS (একই Order Set, Return বাদ না দিয়ে): <b>{adjRoas.rawRoas ?? "—"}</b> · <span className="font-semibold text-rose-700">Adjusted ROAS (Return/Refund বাদ দিয়ে): {adjRoas.adjustedRoas ?? "—"}</span></p>
-                  <p>Gross আয়: {fmtMoneyBn(adjRoas.grossRevenueMinor ?? "0")} − Refund {fmtMoneyBn(adjRoas.refundedMinor ?? "0")} = Adjusted আয়: <b>{fmtMoneyBn(adjRoas.adjustedRevenueMinor ?? "0")}</b></p>
-                  {adjRoas.existingFirstParty ? <p className="text-slate-500">বিদ্যমান First-party হিসাব (Attribution Credit): Revenue {fmtMoneyBn(adjRoas.existingFirstParty.revenueMinor)} · ROAS {adjRoas.existingFirstParty.roas ?? "—"} — {adjRoas.existingFirstParty.note}</p> : null}
+                  <p>{t("campaignBuilder.rvAdjLine1", { matched: fmtNumBn(adjRoas.codMatchedOrders ?? 0), delivered: fmtNumBn(adjRoas.deliveredOrders ?? 0), returned: fmtNumBn(adjRoas.returnedOrders ?? 0), returnedValue: fmtMoneyBn(adjRoas.returnedValueMinor ?? "0"), spend: fmtMoneyBn(adjRoas.spendMinor ?? "0") })}</p>
+                  <p>{t("campaignBuilder.rvAdjLine2a")}<b>{adjRoas.rawRoas ?? "—"}</b> · <span className="font-semibold text-rose-700">{t("campaignBuilder.rvAdjLine2b")}{adjRoas.adjustedRoas ?? "—"}</span></p>
+                  <p>{t("campaignBuilder.rvAdjLine3", { gross: fmtMoneyBn(adjRoas.grossRevenueMinor ?? "0"), refunded: fmtMoneyBn(adjRoas.refundedMinor ?? "0") })}<b>{fmtMoneyBn(adjRoas.adjustedRevenueMinor ?? "0")}</b></p>
+                  {adjRoas.existingFirstParty ? <p className="text-slate-500">{t("campaignBuilder.rvAdjExisting", { revenue: fmtMoneyBn(adjRoas.existingFirstParty.revenueMinor), roas: adjRoas.existingFirstParty.roas ?? "—", note: adjRoas.existingFirstParty.note })}</p> : null}
                   {adjRoas.zeroSpendNote ? <p className="text-amber-700">{adjRoas.zeroSpendNote}</p> : null}
                 </div>
               )}
@@ -1398,23 +1408,23 @@ export default function CampaignBuilderPage() {
           ) : null}
           {pacing ? (
             <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
-              <p className="font-semibold">⏱ Pacing (CN2) — খরচের গতি</p>
-              {pacing.status === "no_data" ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ কোনো Metric Row নেই — Sync হওয়া ডেটা ছাড়া Pacing হিসাব হয় না।</p> : (
+              <p className="font-semibold">{t("campaignBuilder.rvPacingTitle")}</p>
+              {pacing.status === "no_data" ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.rvPacingNoData")}</p> : (
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  <span>এ পর্যন্ত খরচ: <b>{fmtMoneyBn(pacing.spentMinor)}</b></span>
-                  <span>আজ পর্যন্ত প্রত্যাশিত: <b>{pacing.expectedMinor != null ? fmtMoneyBn(pacing.expectedMinor) : "—"}</b></span>
-                  <span>পার্থক্য: <b>{pacing.varianceMinor != null ? fmtMoneyBn(pacing.varianceMinor) : "—"}</b></span>
-                  <span>দিন: <b>{pacing.daysElapsed ?? "—"}{pacing.daysTotal ? ` / ${pacing.daysTotal}` : ""}</b></span>
+                  <span>{t("campaignBuilder.rvSpentToDate")}<b>{fmtMoneyBn(pacing.spentMinor)}</b></span>
+                  <span>{t("campaignBuilder.rvExpectedToDate")}<b>{pacing.expectedMinor != null ? fmtMoneyBn(pacing.expectedMinor) : "—"}</b></span>
+                  <span>{t("campaignBuilder.rvVarianceLabel")}<b>{pacing.varianceMinor != null ? fmtMoneyBn(pacing.varianceMinor) : "—"}</b></span>
+                  <span>{t("campaignBuilder.rvDaysLabel")}<b>{pacing.daysElapsed ?? "—"}{pacing.daysTotal ? ` / ${pacing.daysTotal}` : ""}</b></span>
                   <span>Mode: <b>{pacing.budgetMode ?? "—"}</b></span>
                 </div>
               )}
-              <p className="mt-1 text-xs text-slate-400">DailyAdMetric এর আসল Campaign-level Row থেকে হিসাব করা — এটি Forecast বা Meta এর সংখ্যা নয়।</p>
+              <p className="mt-1 text-xs text-slate-400">{t("campaignBuilder.rvPacingNote")}</p>
               {pacing.runway ? (
                 <div className="mt-2 rounded-lg bg-white/60 p-2 text-xs leading-[1.7]">
-                  <p className="font-semibold">🛣 Runway (CA18) — এই গতিতে আর কত দিন চলবে</p>
+                  <p className="font-semibold">{t("campaignBuilder.rvRunwayTitle")}</p>
                   {pacing.runway.available ? (
-                    <p>বাকি Budget: <b>{fmtMoneyBn(pacing.runway.remainingMinor ?? "0")}</b> · গড় দৈনিক খরচ (শেষ ৭ দিনে {pacing.runway.metricDays ?? "—"} দিনের Row): <b>{fmtMoneyBn(pacing.runway.burnMinorPerDay ?? "0")}</b> · আনুমানিক আর চলবে: <b>{pacing.runway.runwayDays ?? "—"} দিন</b> · Budget ফুরানোর আনুমানিক তারিখ: <b>{pacing.runway.projectedExhaustionDate ? pacing.runway.projectedExhaustionDate.slice(0, 10) : "—"}</b></p>
-                  ) : <p className="text-slate-500">তথ্য নেই — {pacing.runway.reason ?? ""}</p>}
+                    <p>{t("campaignBuilder.rvRunwayLine", { remaining: fmtMoneyBn(pacing.runway.remainingMinor ?? "0"), days: pacing.runway.metricDays ?? "—", burn: fmtMoneyBn(pacing.runway.burnMinorPerDay ?? "0"), runwayDays: pacing.runway.runwayDays ?? "—", date: pacing.runway.projectedExhaustionDate ? pacing.runway.projectedExhaustionDate.slice(0, 10) : "—" })}</p>
+                  ) : <p className="text-slate-500">{t("campaignBuilder.rvNoInfo", { reason: pacing.runway.reason ?? "" })}</p>}
                   <p className="text-slate-400">{pacing.runway.label}</p>
                 </div>
               ) : null}
@@ -1423,23 +1433,23 @@ export default function CampaignBuilderPage() {
                   {pacingAlerts.active.map((a) => (
                     <p key={a.id} className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs leading-[1.7] text-amber-800">⚠️ {a.message}</p>
                   ))}
-                  <p className="text-xs text-slate-400">সতর্কতার নিয়ম: Budget শেষ তারিখের অন্তত {pacingAlerts.thresholds.exhaustionMarginDays} দিন আগে ফুরানোর Projection, অথবা প্রত্যাশিতের চেয়ে {pacingAlerts.thresholds.overspendPercent}%+ বেশি খরচ। সতর্কতা শুধু জানায় — Campaign নিজে থেকে Pause হয় না, Budget বদলায় না। (Pacing Alert Sweep Job চালু থাকলেই সতর্কতা তৈরি হয়।)</p>
+                  <p className="text-xs text-slate-400">{t("campaignBuilder.rvAlertRule", { margin: fmtNumBn(pacingAlerts.thresholds.exhaustionMarginDays), pct: fmtNumBn(pacingAlerts.thresholds.overspendPercent) })}</p>
                 </div>
               ) : null}
             </div>
           ) : null}
           {breakdowns ? (
             <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm">
-              <p className="font-semibold">📈 Breakdown (CN7) — Ads Sync-এর সংরক্ষিত Row থেকে</p>
-              {!breakdowns.published ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ Plan টি এখনো Publish হয়নি।</p> : (
+              <p className="font-semibold">{t("campaignBuilder.rvBreakdownTitle")}</p>
+              {!breakdowns.published ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.rvNotPublished")}</p> : (
                 <div className="mt-1 grid gap-2 md:grid-cols-2">
-                  {([["age", "বয়স"], ["gender", "লিঙ্গ"], ["placement", "Placement"], ["device", "Device"]] as const).map(([dim, label]) => {
+                  {([["age", "rvDimAge"], ["gender", "rvDimGender"], ["placement", "Placement"], ["device", "Device"]] as const).map(([dim, label]) => {
                     const d = breakdowns.dimensions[dim];
                     return (
                       <div key={dim} className="rounded-lg bg-white/60 p-2">
-                        <p className="text-xs font-semibold">{label}</p>
-                        {!d || !d.hasData ? <p className="text-xs text-slate-400">কোনো ডেটা নেই — Breakdown Sync হলে এখানে আসবে।</p> : d.rows.slice(0, 6).map((r) => (
-                          <div key={r.key} className="text-xs text-slate-600">{r.key}: খরচ {fmtMoneyBn(r.spendMinor)} · {fmtNumBn(r.impressions)} imp · {fmtNumBn(r.clicks)} clicks · {r.conversions} conv · CPA {r.cpaMinor ? fmtMoneyBn(r.cpaMinor) : "—"}</div>
+                        <p className="text-xs font-semibold">{label.startsWith("rv") ? t(`campaignBuilder.${label}`) : label}</p>
+                        {!d || !d.hasData ? <p className="text-xs text-slate-400">{t("campaignBuilder.rvBreakdownNoData")}</p> : d.rows.slice(0, 6).map((r) => (
+                          <div key={r.key} className="text-xs text-slate-600">{t("campaignBuilder.rvBreakdownRow", { key: r.key, spend: fmtMoneyBn(r.spendMinor), impressions: fmtNumBn(r.impressions), clicks: fmtNumBn(r.clicks), conversions: fmtNumBn(r.conversions), cpa: r.cpaMinor ? fmtMoneyBn(r.cpaMinor) : "—" })}</div>
                         ))}
                       </div>
                     );
@@ -1450,33 +1460,33 @@ export default function CampaignBuilderPage() {
           ) : null}
           {regionPerf ? (
             <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">
-              <p className="font-semibold">🗺️ Region পারফরম্যান্স (CA9) — সংরক্ষিত Breakdown Row থেকে</p>
+              <p className="font-semibold">{t("campaignBuilder.rvRegionTitle")}</p>
               {!regionPerf.available ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ {regionPerf.reason}</p> : (
                 <>
-                  <p className="text-xs text-slate-500">{regionPerf.note} · কমপক্ষে {fmtNumBn(regionPerf.minRows)}টি Row আছে এমন Region-ই দেখানো হচ্ছে{regionPerf.rowsBelowThreshold ? ` · ${fmtNumBn(regionPerf.rowsBelowThreshold)}টি Row থ্রেশহোল্ডের নিচে বাদ পড়েছে` : ""}</p>
+                  <p className="text-xs text-slate-500">{regionPerf.note}{t("campaignBuilder.rvRegionNote", { min: fmtNumBn(regionPerf.minRows), below: regionPerf.rowsBelowThreshold ? t("campaignBuilder.rvRegionBelow", { count: fmtNumBn(regionPerf.rowsBelowThreshold) }) : "" })}</p>
                   <div className="mt-1 grid gap-1">
                     {regionPerf.regions.map((r) => (
                       <div key={r.region} className="flex flex-wrap items-center justify-between gap-2 rounded bg-white/60 px-2 py-1 text-xs text-slate-700">
                         <span>{r.region}{r.divisionLabel ? ` (${r.divisionLabel})` : ""}</span>
-                        <span>খরচ {fmtMoneyBn(r.spendMinor)} · {fmtNumBn(r.conversions)} conv · CPA {r.cpa != null ? `৳${fmtNumBn(Math.round(r.cpa))}` : "—"} · {fmtNumBn(r.rows)}টি Row</span>
+                        <span>{t("campaignBuilder.rvRegionRow", { spend: fmtMoneyBn(r.spendMinor), conversions: fmtNumBn(r.conversions), cpa: r.cpa != null ? fmtMoneyBn(BigInt(Math.round(r.cpa)) * 100n) : "—", rows: fmtNumBn(r.rows) })}</span>
                       </div>
                     ))}
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-slate-600">কোন Ad Set-এর সেটিংস কপি হবে:</span>
+                    <span className="text-xs text-slate-600">{t("campaignBuilder.rvRegionSrcLabel")}</span>
                     <select className="input w-56" id="region-src-set">
                       {plan.adSets.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                     <button className="rounded border bg-white px-2 py-1 text-xs font-semibold" disabled={busy !== ""} onClick={async () => {
                       const src = (document.getElementById("region-src-set") as HTMLSelectElement)?.value ?? "";
-                      if (!src) { setError("Source Ad Set বেছে নিন"); return; }
+                      if (!src) { setError(t("campaignBuilder.rvErrSourceAdSet")); return; }
                       const res = await wrap("region-draft", () => apiFetch<{ adSet: { id: string; name: string }; regions: { key: string; name: string }[]; notCarried: string[]; note: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/region-ad-set`, { method: "POST", body: JSON.stringify({ sourceAdSetId: src, topN: 3 }) }));
                       if (res) {
-                        setRegionDraftNote(`খসড়া Ad Set তৈরি হয়েছে: "${res.adSet.name}" — Region: ${res.regions.map((r) => r.name).join(", ")}${res.notCarried.length ? ` · যোগ হয়নি: ${res.notCarried.join("; ")}` : ""} · ${res.note}`);
+                        setRegionDraftNote(t("campaignBuilder.rvRegionDraftCreated", { name: res.adSet.name, regions: res.regions.map((r) => r.name).join(", "), notCarried: res.notCarried.length ? t("campaignBuilder.rvRegionNotCarried", { items: res.notCarried.join("; ") }) : "", note: res.note }));
                         await loadPlan(plan.id);
                       }
-                    }}>শীর্ষ region দিয়ে ad set</button>
-                    <span className="text-xs text-slate-500">কনভার্সনে শীর্ষ ৩ Region (কমপক্ষে ২টি Row থাকা Region-গুলোর মধ্যে) — শুধু খসড়া তৈরি হবে, Publish হবে না</span>
+                    }}>{t("campaignBuilder.rvRegionDraftBtn")}</button>
+                    <span className="text-xs text-slate-500">{t("campaignBuilder.rvRegionDraftNote")}</span>
                   </div>
                   {regionDraftNote ? <p className="mt-1 text-xs text-emerald-800">{regionDraftNote}</p> : null}
                 </>
@@ -1485,36 +1495,36 @@ export default function CampaignBuilderPage() {
           ) : null}
           {plan.externalCampaignId ? (
             <div className="mt-2 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm">
-              <p className="font-semibold">🧭 Geo Holdout (CA19) — Test বনাম Holdout Region (পর্যবেক্ষণমূলক)</p>
-              <p className="mt-1 text-xs leading-[1.7] text-slate-500">Meta Ad Study-তে Geo Split করা যায় না (অফিসিয়াল ডকুমেন্টেশন অনুযায়ী Study-র Cell শুধু Audience-কে Random ভাগ করে) — তাই এখানে কোনো Experiment তৈরি হয় না। এটি একটি Definition + সংরক্ষিত Breakdown Row-এর পর্যবেক্ষণমূলক তুলনা; Definition নিজে Delivery বদলায় না — Holdout Region-এ বিজ্ঞাপন বন্ধ রাখতে Targeting থেকে ওই Region বাদ দিতে হবে।</p>
+              <p className="font-semibold">{t("campaignBuilder.rvHoldoutTitle")}</p>
+              <p className="mt-1 text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.rvHoldoutIntro")}</p>
               {!geoHoldout ? (
                 <button className="mt-2 rounded border bg-white px-2 py-1 text-xs font-semibold" disabled={busy !== ""} onClick={async () => {
                   const res = await wrap("holdout-load", () => apiFetch<GeoHoldoutData>(`/organizations/${orgId}/campaign-plans/${plan.id}/geo-holdout`));
                   if (res) setGeoHoldout(res);
-                }}>Holdout Definition ও Measurement দেখুন</button>
+                }}>{t("campaignBuilder.rvHoldoutLoadBtn")}</button>
               ) : !geoHoldout.holdout ? (
                 <div className="mt-2 grid gap-2">
                   <p className="text-xs text-slate-500">{geoHoldout.reason}</p>
-                  <label className="text-xs">Test Region (কমা দিয়ে) <input className="input mt-1 w-full" placeholder="যেমন: Dhaka, Khulna" value={holdoutForm.test} onChange={(e) => setHoldoutForm({ ...holdoutForm, test: e.target.value })} /></label>
-                  <label className="text-xs">Holdout Region (কমা দিয়ে) <input className="input mt-1 w-full" placeholder="যেমন: Sylhet, Rangpur" value={holdoutForm.holdout} onChange={(e) => setHoldoutForm({ ...holdoutForm, holdout: e.target.value })} /></label>
+                  <label className="text-xs">{t("campaignBuilder.rvHoldoutTestLabel")}<input className="input mt-1 w-full" placeholder={t("campaignBuilder.rvHoldoutTestPlaceholder")} value={holdoutForm.test} onChange={(e) => setHoldoutForm({ ...holdoutForm, test: e.target.value })} /></label>
+                  <label className="text-xs">{t("campaignBuilder.rvHoldoutHoldoutLabel")}<input className="input mt-1 w-full" placeholder={t("campaignBuilder.rvHoldoutHoldoutPlaceholder")} value={holdoutForm.holdout} onChange={(e) => setHoldoutForm({ ...holdoutForm, holdout: e.target.value })} /></label>
                   <div className="flex flex-wrap gap-2">
-                    <label className="text-xs">শুরু <input type="date" className="input mt-1" value={holdoutForm.start} onChange={(e) => setHoldoutForm({ ...holdoutForm, start: e.target.value })} /></label>
-                    <label className="text-xs">শেষ <input type="date" className="input mt-1" value={holdoutForm.end} onChange={(e) => setHoldoutForm({ ...holdoutForm, end: e.target.value })} /></label>
+                    <label className="text-xs">{t("campaignBuilder.rvHoldoutStart")}<input type="date" className="input mt-1" value={holdoutForm.start} onChange={(e) => setHoldoutForm({ ...holdoutForm, start: e.target.value })} /></label>
+                    <label className="text-xs">{t("campaignBuilder.rvHoldoutEnd")}<input type="date" className="input mt-1" value={holdoutForm.end} onChange={(e) => setHoldoutForm({ ...holdoutForm, end: e.target.value })} /></label>
                   </div>
                   <button className="w-fit rounded border bg-white px-2 py-1 text-xs font-semibold" disabled={busy !== ""} onClick={async () => {
-                    if (!holdoutForm.test.trim() || !holdoutForm.holdout.trim() || !holdoutForm.start || !holdoutForm.end) { setError("Test Region, Holdout Region, শুরু ও শেষ তারিখ — সবগুলো লাগবে"); return; }
+                    if (!holdoutForm.test.trim() || !holdoutForm.holdout.trim() || !holdoutForm.start || !holdoutForm.end) { setError(t("campaignBuilder.rvErrHoldoutRequired")); return; }
                     const res = await wrap("holdout-create", () => apiFetch<GeoHoldoutData>(`/organizations/${orgId}/campaign-plans/${plan.id}/geo-holdout`, { method: "POST", body: JSON.stringify({ testRegions: holdoutForm.test, holdoutRegions: holdoutForm.holdout, startsAt: new Date(`${holdoutForm.start}T00:00:00`).toISOString(), endsAt: new Date(`${holdoutForm.end}T23:59:59`).toISOString() }) }));
-                    if (res) { setGeoHoldout(res); setNotice("Geo Holdout Definition সংরক্ষিত হয়েছে — এটি Delivery বদলায় না, শুধু Measurement-এর জন্য।"); }
-                  }}>Definition সংরক্ষণ করুন</button>
+                    if (res) { setGeoHoldout(res); setNotice(t("campaignBuilder.rvHoldoutSaved")); }
+                  }}>{t("campaignBuilder.rvHoldoutSaveBtn")}</button>
                 </div>
               ) : (
                 <div className="mt-2 grid gap-1 text-xs leading-[1.7] text-slate-700">
-                  <p>Test: <b>{geoHoldout.holdout.testRegions.join(", ")}</b> · Holdout: <b>{geoHoldout.holdout.holdoutRegions.join(", ")}</b> · Window: {geoHoldout.holdout.startsAt?.slice(0, 10)} → {geoHoldout.holdout.endsAt?.slice(0, 10)} · অবস্থা: {geoHoldout.holdout.status === "active" ? "সক্রিয়" : "শেষ"}</p>
+                  <p>{t("campaignBuilder.rvHoldoutSummary", { test: geoHoldout.holdout.testRegions.join(", "), holdout: geoHoldout.holdout.holdoutRegions.join(", "), start: geoHoldout.holdout.startsAt?.slice(0, 10) ?? "", end: geoHoldout.holdout.endsAt?.slice(0, 10) ?? "", status: geoHoldout.holdout.status === "active" ? t("campaignBuilder.rvHoldoutActive") : t("campaignBuilder.rvHoldoutEnded") })}</p>
                   {geoHoldout.measurement && !geoHoldout.measurement.available ? <p className="text-slate-500">ℹ️ {geoHoldout.measurement.reason}</p> : geoHoldout.measurement?.groups ? (
                     <>
                       {(["test", "holdout", "other"] as const).map((k) => {
                         const g = geoHoldout.measurement!.groups![k];
-                        return <p key={k}>{k === "test" ? "Test দল" : k === "holdout" ? "Holdout দল" : "অন্যান্য Region (কোনো দলেই নেই)"}: খরচ <b>{fmtMoneyBn(g.spendMinor)}</b> · {fmtNumBn(g.conversions)} conv · CPA {g.cpa != null ? `৳${fmtNumBn(Math.round(g.cpa))}` : "—"} · প্রতি ৳১,০০০-এ conv {g.conversionsPer1000Spend ?? "—"}</p>;
+                        return <p key={k}>{t("campaignBuilder.rvHoldoutGroupLine", { group: k === "test" ? t("campaignBuilder.rvGroupTest") : k === "holdout" ? t("campaignBuilder.rvGroupHoldout") : t("campaignBuilder.rvGroupOther"), spend: fmtMoneyBn(g.spendMinor), conversions: fmtNumBn(g.conversions), cpa: g.cpa != null ? fmtMoneyBn(BigInt(Math.round(g.cpa)) * 100n) : "—", per1000: g.conversionsPer1000Spend ?? "—" })}</p>;
                       })}
                       {geoHoldout.measurement.observedDifferencePer1000 != null ? <p>{geoHoldout.measurement.observedDifferenceLabel}: <b>{geoHoldout.measurement.observedDifferencePer1000}</b></p> : null}
                       {geoHoldout.measurement.holdoutSpendNote ? <p className={geoHoldout.measurement.holdoutSpendDetected ? "font-semibold text-amber-700" : "text-slate-500"}>{geoHoldout.measurement.holdoutSpendNote}</p> : null}
@@ -1525,7 +1535,7 @@ export default function CampaignBuilderPage() {
                     <button className="w-fit rounded border bg-white px-2 py-1 text-xs font-semibold" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap("holdout-end", () => apiFetch<GeoHoldoutData>(`/organizations/${orgId}/campaign-plans/${plan.id}/geo-holdout/${geoHoldout.holdout!.id}/end`, { method: "POST", body: JSON.stringify({}) }));
                       if (res) setGeoHoldout(res);
-                    }}>Definition শেষ করুন</button>
+                    }}>{t("campaignBuilder.rvHoldoutEndBtn")}</button>
                   ) : null}
                 </div>
               )}
@@ -1533,66 +1543,66 @@ export default function CampaignBuilderPage() {
           ) : null}
           {recs ? (
             <>
-              <p className="mt-4 text-sm font-bold text-slate-700">২ · মরা ও জেতা (CN7-এর হিসাবে)</p>
+              <p className="mt-4 text-sm font-bold text-slate-700">{t("campaignBuilder.rvDeadWinnersHeading")}</p>
               <div className="mt-2 rounded-xl border border-slate-200 bg-white p-3 text-sm">
                 {recs.recommendations.filter((r) => r.type === "dead_ad_set").map((r, i) => (
-                  <div key={`dw-d${i}`} className="text-xs leading-[1.7] text-slate-700">🪦 <b>{r.name}</b> — মরা: খরচ {fmtMoneyBn(r.evidence.spendMinor)} · {fmtNumBn(r.evidence.impressions)} Impression · Conversion 0</div>
+                  <div key={`dw-d${i}`} className="text-xs leading-[1.7] text-slate-700">🪦 <b>{r.name}</b>{t("campaignBuilder.rvDeadLine", { spend: fmtMoneyBn(r.evidence.spendMinor), impressions: fmtNumBn(r.evidence.impressions) })}</div>
                 ))}
                 {recs.recommendations.filter((r) => r.type === "budget_shift").map((r, i) => (
-                  <div key={`dw-w${i}`} className="text-xs leading-[1.7] text-slate-700">🏆 <b>{r.evidence.winnerName}</b> — জেতা: CPA {r.evidence.winnerCpaMinor ? fmtMoneyBn(r.evidence.winnerCpaMinor) : "—"} · {fmtNumBn(r.evidence.winnerConversions)} Conversion (Donor: {r.evidence.donorName})</div>
+                  <div key={`dw-w${i}`} className="text-xs leading-[1.7] text-slate-700">🏆 <b>{r.evidence.winnerName}</b>{t("campaignBuilder.rvWinnerLine", { cpa: r.evidence.winnerCpaMinor ? fmtMoneyBn(r.evidence.winnerCpaMinor) : "—", conversions: fmtNumBn(r.evidence.winnerConversions), donor: r.evidence.donorName })}</div>
                 ))}
-                {recs.recommendations.filter((r) => r.type === "dead_ad_set" || r.type === "budget_shift").length === 0 ? <p className="text-xs text-slate-500">মরা বা জেতা — CN7-এর হিসাবে এখন কিছু চিহ্নিত হয়নি।</p> : null}
+                {recs.recommendations.filter((r) => r.type === "dead_ad_set" || r.type === "budget_shift").length === 0 ? <p className="text-xs text-slate-500">{t("campaignBuilder.rvDeadWinnersNone")}</p> : null}
               </div>
             </>
           ) : null}
-          {creativeInsights ? <p className="mt-4 text-sm font-bold text-slate-700">৩ · Fatigue (CN7)</p> : null}
+          {creativeInsights ? <p className="mt-4 text-sm font-bold text-slate-700">{t("campaignBuilder.rvFatigueHeading")}</p> : null}
           {creativeInsights ? (
             <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm">
-              <p className="font-semibold">🎨 Creative Insights (CN7) — Leaderboard + Fatigue</p>
+              <p className="font-semibold">{t("campaignBuilder.rvInsightsTitle")}</p>
               <p className="text-xs text-slate-500">{creativeInsights.rule}</p>
-              {creativeInsights.ads.length === 0 ? <p className="text-xs text-slate-500">Publish হওয়া কোনো Ad নেই।</p> : creativeInsights.ads.map((a) => (
+              {creativeInsights.ads.length === 0 ? <p className="text-xs text-slate-500">{t("campaignBuilder.rvNoPublishedAds")}</p> : creativeInsights.ads.map((a) => (
                 <div key={a.adId} className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-700">
                   <span className="font-medium">{a.name}</span>
-                  {!a.hasData ? <span className="text-slate-400">সিঙ্ক হওয়া ডেটা নেই</span> : (<>
-                    <span>খরচ {fmtMoneyBn(a.spendMinor)}</span><span>CTR {a.ctrPercent ?? "—"}%</span>
+                  {!a.hasData ? <span className="text-slate-400">{t("campaignBuilder.rvInsightsNoData")}</span> : (<>
+                    <span>{t("campaignBuilder.rvInsightsSpend")}{fmtMoneyBn(a.spendMinor)}</span><span>CTR {a.ctrPercent ?? "—"}%</span>
                     <span>Frequency {a.frequency ?? "—"}</span><span>CPA {a.cpaMinor ? fmtMoneyBn(a.cpaMinor) : "—"}</span>
-                    {a.fatigued ? <span className="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">😫 Fatigued — CTR ↓{a.ctrDropPercent}%</span> : null}
+                    {a.fatigued ? <span className="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">{t("campaignBuilder.rvInsightsFatigued", { pct: a.ctrDropPercent ?? "" })}</span> : null}
                   </>)}
                 </div>
               ))}
             </div>
           ) : null}
-          {recs ? <p className="mt-4 text-sm font-bold text-slate-700">৪ · প্রস্তাব (CN7) — প্রমাণ আগে, Action পরে</p> : null}
+          {recs ? <p className="mt-4 text-sm font-bold text-slate-700">{t("campaignBuilder.rvProposalsHeading")}</p> : null}
           {recs ? (
             <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-              <p className="font-semibold">💡 সুপারিশ (CN7) — Deterministic Heuristic, আসল ডেটা থেকে</p>
-              <p className="text-xs text-slate-500">Dead Ad Set ধরা হয় খরচ ≥ {fmtMoneyBn(recs.thresholds.deadAdSetSpendMinor)} ও Conversion 0 হলে; Budget Shift প্রস্তাব {recs.thresholds.budgetShiftPercent}%। কোনো সুপারিশ নিজে থেকে কিছু বদলায় না।</p>
-              {recs.recommendations.length === 0 ? <p className="mt-1 text-xs text-emerald-700">এখনকার ডেটায় কোনো সুপারিশ নেই।</p> : recs.recommendations.map((r, i) => (
+              <p className="font-semibold">{t("campaignBuilder.rvRecsTitle")}</p>
+              <p className="text-xs text-slate-500">{t("campaignBuilder.rvRecsRule", { threshold: fmtMoneyBn(recs.thresholds.deadAdSetSpendMinor), pct: fmtNumBn(recs.thresholds.budgetShiftPercent) })}</p>
+              {recs.recommendations.length === 0 ? <p className="mt-1 text-xs text-emerald-700">{t("campaignBuilder.rvRecsNone")}</p> : recs.recommendations.map((r, i) => (
                 <div key={i} className="mt-2 rounded-lg bg-white/70 p-2 text-xs text-slate-700">
                   {r.type === "fatigued_creative" ? (<>
-                    <p>😫 <b>{r.name}</b> — Creative ক্লান্ত: Frequency {r.evidence.frequency}, CTR কমেছে {r.evidence.ctrDropPercent}%, খরচ {fmtMoneyBn(r.evidence.spendMinor)}।</p>
+                    <p>😫 <b>{r.name}</b>{t("campaignBuilder.rvRecFatiguedLine", { frequency: r.evidence.frequency, drop: r.evidence.ctrDropPercent, spend: fmtMoneyBn(r.evidence.spendMinor) })}</p>
                     <button className="btn-secondary btn-sm mt-1" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`rec-fresh-${r.adId}`, () => apiFetch<{ draftId: string; note: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/recommendations/apply`, { method: "POST", body: JSON.stringify({ kind: "create_fresh_draft", adId: r.adId }) }));
                       if (res) setNotice(res.note);
-                    }}>📝 Fresh Creative Draft তৈরি করুন</button>
+                    }}>{t("campaignBuilder.rvRecFreshBtn")}</button>
                   </>) : r.type === "dead_ad_set" ? (<>
-                    <p>🪦 <b>{r.name}</b> — খরচ {fmtMoneyBn(r.evidence.spendMinor)}, {fmtNumBn(r.evidence.impressions)} Impression, কিন্তু Conversion 0।</p>
+                    <p>🪦 <b>{r.name}</b>{t("campaignBuilder.rvRecDeadLine", { spend: fmtMoneyBn(r.evidence.spendMinor), impressions: fmtNumBn(r.evidence.impressions) })}</p>
                     <button className="btn-warning btn-sm mt-1" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`rec-pause-${r.adSetId}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${r.adSetId}/status`, { method: "POST", body: JSON.stringify({ target: "PAUSED" }) }));
-                      if (res) { setNotice("Meta নিশ্চিত করেছে — Ad Set টি Pause হয়েছে।"); await loadPlan(plan.id); }
-                    }}>⏸ এই Ad Set Pause করুন (Meta-তে)</button>
+                      if (res) { setNotice(t("campaignBuilder.rvRecMetaPaused")); await loadPlan(plan.id); }
+                    }}>{t("campaignBuilder.rvRecPauseBtn")}</button>
                   </>) : r.type === "budget_shift" ? (<>
-                    <p>💸 <b>Budget Shift প্রস্তাব:</b> "{r.evidence.donorName}" (CPA {r.evidence.donorCpaMinor ? fmtMoneyBn(r.evidence.donorCpaMinor) : "—"}, {r.evidence.donorConversions} conv) থেকে "{r.evidence.winnerName}" (CPA {fmtMoneyBn(r.evidence.winnerCpaMinor)}, {r.evidence.winnerConversions} conv)-এ দৈনিক {fmtMoneyBn(r.proposal.shiftMinor)} সরান — Donor {fmtMoneyBn(r.proposal.fromDailyAfterMinor)}, Winner {fmtMoneyBn(r.proposal.toDailyAfterMinor)} হবে।</p>
-                    <p className="mt-0.5 text-slate-500">এটি শুধু প্রস্তাব — নিচের বোতামে নিশ্চিত করলে Live Budget Edit পথে Meta-তে প্রয়োগ হবে। এর মধ্যে সংখ্যা বদলে গেলে সার্ভার refuse করে নতুন প্রস্তাব দেখাবে।</p>
+                    <p>{t("campaignBuilder.rvRecShiftLine", { donor: r.evidence.donorName, donorCpa: r.evidence.donorCpaMinor ? fmtMoneyBn(r.evidence.donorCpaMinor) : "—", donorConv: fmtNumBn(r.evidence.donorConversions), winner: r.evidence.winnerName, winnerCpa: fmtMoneyBn(r.evidence.winnerCpaMinor), winnerConv: fmtNumBn(r.evidence.winnerConversions), shift: fmtMoneyBn(r.proposal.shiftMinor), donorAfter: fmtMoneyBn(r.proposal.fromDailyAfterMinor), winnerAfter: fmtMoneyBn(r.proposal.toDailyAfterMinor) })}</p>
+                    <p className="mt-0.5 text-slate-500">{t("campaignBuilder.rvRecShiftNote")}</p>
                     <button className="btn-primary btn-sm mt-1" disabled={busy !== ""} onClick={async () => {
-                      if (!confirm(`Budget Shift প্রয়োগ করবেন? "${r.evidence.donorName}" থেকে দৈনিক ${fmtMoneyBn(r.proposal.shiftMinor)} কমে "${r.evidence.winnerName}"-এ যোগ হবে — Meta-তে সত্যিই বদলাবে।`)) return;
+                      if (!confirm(t("campaignBuilder.rvRecShiftConfirm", { donor: r.evidence.donorName, winner: r.evidence.winnerName, shift: fmtMoneyBn(r.proposal.shiftMinor) }))) return;
                       const res = await wrap("rec-shift", () => apiFetch<{ applied: boolean; verified: boolean; note: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/recommendations/apply`, { method: "POST", body: JSON.stringify({ kind: "budget_shift", proposal: r.proposal }) }));
                       // সংখ্যা বদলে গেলে (stale) সার্ভার refuse করে — তালিকা
                       // refresh করলে নতুন প্রস্তাবটি দেখা যাবে।
                       const fresh = await apiFetch<NonNullable<typeof recs>>(`/organizations/${orgId}/campaign-plans/${plan.id}/recommendations`).catch(() => null);
                       if (fresh) setRecs(fresh);
                       if (res) { setNotice(res.note); await loadPlan(plan.id); }
-                    }}>💸 এই Shift প্রয়োগ করুন (Meta-তে)</button>
+                    }}>{t("campaignBuilder.rvRecShiftBtn")}</button>
                   </>) : null}
                 </div>
               ))}
@@ -1600,115 +1610,115 @@ export default function CampaignBuilderPage() {
           ) : null}
           {plan.status === "published" ? (
           <div className="mt-2 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm">
-            <p className="font-semibold">🔗 Client Report Link <span className="text-xs font-normal text-slate-400">(CN18 — এই Plan-এর Totals + Breakdowns + Pacing; অভ্যন্তরীণ মন্তব্য/অনুমোদনের তথ্য যায় না)</span></p>
+            <p className="font-semibold">{t("campaignBuilder.rvShareTitle")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.rvShareNote")}</span></p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-600">রিপোর্টের সময়সীমা</span>
+              <span className="text-xs font-semibold text-slate-600">{t("campaignBuilder.rvShareRange")}</span>
               <select className="input w-36" id="share-days">
-                <option value="7">শেষ ৭ দিন</option>
-                <option value="30">শেষ ৩০ দিন</option>
-                <option value="90">শেষ ৯০ দিন</option>
+                <option value="7">{t("campaignBuilder.rvShareLast7")}</option>
+                <option value="30">{t("campaignBuilder.rvShareLast30")}</option>
+                <option value="90">{t("campaignBuilder.rvShareLast90")}</option>
               </select>
-              <span className="text-xs font-semibold text-slate-600">লিংকের মেয়াদ</span>
+              <span className="text-xs font-semibold text-slate-600">{t("campaignBuilder.rvShareExpiry")}</span>
               <select className="input w-44" id="share-exp">
-                <option value="7">Link-এর মেয়াদ ৭ দিন</option>
-                <option value="30">Link-এর মেয়াদ ৩০ দিন</option>
-                <option value="90">Link-এর মেয়াদ ৯০ দিন</option>
+                <option value="7">{t("campaignBuilder.rvShareExp7")}</option>
+                <option value="30">{t("campaignBuilder.rvShareExp30")}</option>
+                <option value="90">{t("campaignBuilder.rvShareExp90")}</option>
               </select>
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const days = Number((document.getElementById("share-days") as HTMLSelectElement)?.value ?? 30);
                 const expiresInDays = Number((document.getElementById("share-exp") as HTMLSelectElement)?.value ?? 30);
                 const res = await wrap("share-create", () => apiFetch<{ token: string }>(`/organizations/${orgId}/report-shares`, { method: "POST", body: JSON.stringify({ title: `Campaign Report — ${plan.name}`, kind: "campaign", planId: plan.id, days, expiresInDays }) }));
-                if (res?.token) { setShareLink(`${window.location.origin}/r/${res.token}`); setNotice("Client Report Link তৈরি হয়েছে — মেয়াদ শেষ হলে বা Reports পেজ থেকে বাতিল করলে Link আর কাজ করবে না।"); }
-              }}>Link তৈরি করুন</button>
+                if (res?.token) { setShareLink(`${window.location.origin}/r/${res.token}`); setNotice(t("campaignBuilder.rvShareCreated")); }
+              }}>{t("campaignBuilder.rvShareCreateBtn")}</button>
             </div>
             {shareLink ? <p className="mt-2 break-all text-xs text-violet-800">{shareLink}</p> : null}
           </div>
           ) : null}
           {waConvs ? (
             <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">
-              <p className="font-semibold">💬 WhatsApp কথোপকথন (CN13) — মোট শুরু হওয়া কথোপকথন: <b>{waConvs.available ? waConvs.totalConversations ?? 0 : "—"}</b></p>
-              {!waConvs.available ? <p className="rounded-lg border border-amber-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">⚠ পাওয়া যাচ্ছে না: {waConvs.reason ?? ""}</p> : waConvs.perAd.length === 0 ? <p className="text-xs text-slate-500">Publish হওয়া কোনো Ad এখনো নেই — কথোপকথন গোনা হবে Publish এর পর, WhatsApp Webhook এ আসা কথোপকথন থেকে।</p> : waConvs.perAd.map((a) => (
-                <div key={a.adId} className="text-xs text-slate-600">{a.name} ({a.adSetName}): <b>{a.conversationsStarted}</b>টি কথোপকথন শুরু</div>
+              <p className="font-semibold">{t("campaignBuilder.rvWaTitle")}<b>{waConvs.available ? fmtNumBn(waConvs.totalConversations ?? 0) : "—"}</b></p>
+              {!waConvs.available ? <p className="rounded-lg border border-amber-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.rvWaUnavailable", { reason: waConvs.reason ?? "" })}</p> : waConvs.perAd.length === 0 ? <p className="text-xs text-slate-500">{t("campaignBuilder.rvWaNoneYet")}</p> : waConvs.perAd.map((a) => (
+                <div key={a.adId} className="text-xs text-slate-600">{a.name} ({a.adSetName}): {t("campaignBuilder.rvWaPerAd", { count: fmtNumBn(a.conversationsStarted) })}</div>
               ))}
               <p className="mt-1 text-xs text-slate-400">{waConvs.label}</p>
             </div>
           ) : null}
           {guardrails ? (
             <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
-              <p className="font-semibold">🛡 Automation Guardrails (CN7)</p>
-              <p className="text-xs text-slate-500">Rule Engine অপরিবর্তিত — Attach মানে Rule টি শুধু এই Plan-এর জন্য নির্দিষ্ট হলো; Detach মানে তা আবার সব Published Plan-এর জন্য প্রযোজ্য।</p>
-              {guardrails.linked.length === 0 ? <p className="mt-1 text-xs text-slate-500">এই Plan-এ নির্দিষ্ট কোনো Rule নেই।</p> : guardrails.linked.map((r) => (
+              <p className="font-semibold">{t("campaignBuilder.rvGuardrailsTitle")}</p>
+              <p className="text-xs text-slate-500">{t("campaignBuilder.rvGuardrailsIntro")}</p>
+              {guardrails.linked.length === 0 ? <p className="mt-1 text-xs text-slate-500">{t("campaignBuilder.rvGuardrailsNoneLinked")}</p> : guardrails.linked.map((r) => (
                 <div key={r.id} className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-700">
-                  <span className="font-medium">{r.name}</span><span>{r.metric} {r.comparator} {r.threshold} ({r.windowDays} দিন) → {r.action}</span>
-                  <span>{r.enabled ? "চালু" : "বন্ধ"}</span>
-                  <span>শেষ Trigger: {r.lastTriggeredAt ? new Date(r.lastTriggeredAt).toLocaleString("bn-BD") : "কখনো নয়"}{r.lastRun ? ` · ${r.lastRun.status}${r.lastRun.detail ? `: ${r.lastRun.detail}` : ""}` : ""}</span>
+                  <span className="font-medium">{r.name}</span><span>{r.metric} {r.comparator} {r.threshold} ({fmtNumBn(r.windowDays)}{t("campaignBuilder.rvGuardrailDays")}) → {r.action}</span>
+                  <span>{r.enabled ? t("campaignBuilder.rvGuardrailOn") : t("campaignBuilder.rvGuardrailOff")}</span>
+                  <span>{t("campaignBuilder.rvGuardrailLastTrigger")}{r.lastTriggeredAt ? fmtDateTime(locale, r.lastTriggeredAt) : t("campaignBuilder.rvGuardrailNever")}{r.lastRun ? ` · ${r.lastRun.status}${r.lastRun.detail ? `: ${r.lastRun.detail}` : ""}` : ""}</span>
                   <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const res = await wrap(`gr-detach-${r.id}`, () => apiFetch<NonNullable<typeof guardrails>>(`/organizations/${orgId}/campaign-plans/${plan.id}/guardrails/detach`, { method: "POST", body: JSON.stringify({ ruleId: r.id }) }));
                     if (res) setGuardrails(res);
-                  }}>Detach (সব Plan-এর জন্য)</button>
+                  }}>{t("campaignBuilder.rvGuardrailDetachBtn")}</button>
                 </div>
               ))}
-              {guardrails.orgWide.length ? <p className="mt-2 text-xs font-semibold text-slate-600">Org-wide Rule (এই Plan-কেও কভার করে):</p> : null}
+              {guardrails.orgWide.length ? <p className="mt-2 text-xs font-semibold text-slate-600">{t("campaignBuilder.rvGuardrailsOrgWide")}</p> : null}
               {guardrails.orgWide.map((r) => (
                 <div key={r.id} className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-700">
-                  <span className="font-medium">{r.name}</span><span>{r.metric} {r.comparator} {r.threshold} → {r.action}</span><span>{r.enabled ? "চালু" : "বন্ধ"}</span>
+                  <span className="font-medium">{r.name}</span><span>{r.metric} {r.comparator} {r.threshold} → {r.action}</span><span>{r.enabled ? t("campaignBuilder.rvGuardrailOn") : t("campaignBuilder.rvGuardrailOff")}</span>
                   <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const res = await wrap(`gr-attach-${r.id}`, () => apiFetch<NonNullable<typeof guardrails>>(`/organizations/${orgId}/campaign-plans/${plan.id}/guardrails/attach`, { method: "POST", body: JSON.stringify({ ruleId: r.id }) }));
                     if (res) setGuardrails(res);
-                  }}>শুধু এই Plan-এ Attach করুন</button>
+                  }}>{t("campaignBuilder.rvGuardrailAttachBtn")}</button>
                 </div>
               ))}
             </div>
           ) : null}
           {creativeHealth ? (
             <div className="mt-2 space-y-1 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm">
-              <p className="font-semibold">🎨 Creative Health ({creativeHealth.adsChecked}টি Ad)</p>
-              {creativeHealth.findings.length === 0 ? <p className="text-xs text-emerald-700">কোনো সতর্কতা নেই।</p> : creativeHealth.findings.map((f, i) => (
+              <p className="font-semibold">{t("campaignBuilder.rvCreativeHealthTitle", { count: fmtNumBn(creativeHealth.adsChecked) })}</p>
+              {creativeHealth.findings.length === 0 ? <p className="text-xs text-emerald-700">{t("campaignBuilder.rvCreativeHealthNone")}</p> : creativeHealth.findings.map((f, i) => (
                 <div key={i} className="text-xs"><span className={f.level === "error" ? "font-semibold text-red-700" : f.level === "not_checked" ? "font-semibold text-slate-500" : "font-semibold text-amber-700"}>{f.level === "error" ? "⛔" : f.level === "not_checked" ? "🔍" : "⚠"} {f.adName}:</span> <span className="text-slate-600">{f.message}</span></div>
               ))}
-              <p className="text-xs text-slate-400">এসব Heuristic পরামর্শ — Meta এর রায় নয়।</p>
+              <p className="text-xs text-slate-400">{t("campaignBuilder.rvCreativeHealthNote")}</p>
             </div>
           ) : null}
-          {plan.rejectionReason ? <p className="text-sm text-red-600">প্রত্যাখ্যানের কারণ: {plan.rejectionReason}</p> : null}
+          {plan.rejectionReason ? <p className="text-sm text-red-600">{t("campaignBuilder.rvRejectionReason")}{plan.rejectionReason}</p> : null}
           {plan.status === "published" ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              {plan.metaEffectiveStatus ? <span className={plan.metaEffectiveStatus === "ACTIVE" ? "badge badge-green" : plan.metaEffectiveStatus === "PAUSED" ? "badge badge-slate" : "badge badge-red"}>Meta কার্যকর অবস্থা: {plan.metaEffectiveStatus}</span> : null}
+              {plan.metaEffectiveStatus ? <span className={plan.metaEffectiveStatus === "ACTIVE" ? "badge badge-green" : plan.metaEffectiveStatus === "PAUSED" ? "badge badge-slate" : "badge badge-red"}>{t("campaignBuilder.rvMetaEffective", { status: plan.metaEffectiveStatus })}</span> : null}
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const res = await wrap("statussync", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/status-sync`, { method: "POST" }));
-                if (res) { setPlan(res); setNotice(res.healthIssues?.length ? `Meta অবস্থা আনা হয়েছে — ${res.healthIssues.length}টি সমস্যা পাওয়া গেছে।` : "Meta অবস্থা আনা হয়েছে — কোনো সমস্যা নেই।"); }
-              }}>🔄 Meta অবস্থা যাচাই{plan.lastStatusSyncAt ? ` (সর্বশেষ ${new Date(plan.lastStatusSyncAt).toLocaleString("bn-BD")})` : ""}</button>
+                if (res) { setPlan(res); setNotice(res.healthIssues?.length ? t("campaignBuilder.rvStatusSyncIssues", { count: fmtNumBn(res.healthIssues.length) }) : t("campaignBuilder.rvStatusSyncOk")); }
+              }}>{t("campaignBuilder.rvStatusSyncBtn")}{plan.lastStatusSyncAt ? t("campaignBuilder.rvStatusSyncLast", { date: fmtDateTime(locale, plan.lastStatusSyncAt) }) : ""}</button>
             </div>
           ) : null}
           {preflight && preflight.findings.length > 0 ? (
             <div className="mt-2 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-              <p className="font-semibold">🛡 Policy Pre-flight ফলাফল ({preflight.checkedAds}টি বিজ্ঞাপন যাচাই হয়েছে)</p>
+              <p className="font-semibold">{t("campaignBuilder.rvPreflightTitle", { count: fmtNumBn(preflight.checkedAds) })}</p>
               {preflight.findings.map((f, i) => (
                 <div key={i} className="rounded-lg bg-white p-2">
                   <span className={f.severity === "high" ? "badge badge-red" : f.severity === "medium" ? "badge badge-amber" : "badge badge-green"}>{f.severity}</span>{" "}
                   <b>{f.adName}</b> ({f.field}): “{f.snippet}”<br />
                   <span className="text-slate-600">{f.explanation}</span><br />
-                  <span className="text-green-700">পরামর্শ: {f.suggestion}</span>
+                  <span className="text-green-700">{t("campaignBuilder.rvPreflightAdvice")}{f.suggestion}</span>
                 </div>
               ))}
-              <p className="text-xs text-slate-500">Pre-flight পাস করা মানে Meta অনুমোদনের নিশ্চয়তা নয় — এটি প্রতিরোধযোগ্য Reject এর কারণ সরায়।</p>
+              <p className="text-xs text-slate-500">{t("campaignBuilder.rvPreflightNote")}</p>
             </div>
           ) : null}
           {preflight?.platformChecks && preflight.platformChecks.length > 0 ? (
             <div className="mt-2 space-y-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm">
-              <p className="font-semibold">📡 Platform যাচাই (CA24 — Meta থেকে সরাসরি পড়া, সংরক্ষিত অবস্থা নয়)</p>
+              <p className="font-semibold">{t("campaignBuilder.rvPlatformTitle")}</p>
               {preflight.platformChecks.map((c, i) => (
                 <div key={i} className="rounded-lg bg-white p-2">
-                  <span className={c.status === "ok" ? "badge badge-green" : c.status === "error" ? "badge badge-red" : c.status === "warn" ? "badge badge-amber" : "badge badge-slate"}>{c.status === "not_checked" ? "যাচাই হয়নি" : c.status}</span>{" "}
+                  <span className={c.status === "ok" ? "badge badge-green" : c.status === "error" ? "badge badge-red" : c.status === "warn" ? "badge badge-amber" : "badge badge-slate"}>{c.status === "not_checked" ? t("campaignBuilder.rvPlatformNotChecked") : c.status}</span>{" "}
                   <b>{c.label}</b>{c.subject ? <> — {c.subject}</> : null}<br />
                   <span className="text-slate-600">{c.detail}</span>
                 </div>
               ))}
-              <p className="text-xs text-slate-500">"যাচাই হয়নি (not_checked)" মানে অবস্থা অজানা — তা কখনো "ঠিক আছে" নয়।</p>
+              <p className="text-xs text-slate-500">{t("campaignBuilder.rvPlatformNote")}</p>
             </div>
           ) : null}
           {plan.healthIssues && plan.healthIssues.length > 0 ? (
             <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-              <p className="font-semibold">⚠️ Meta তে সমস্যা:</p>
+              <p className="font-semibold">{t("campaignBuilder.rvMetaIssuesTitle")}</p>
               <ul className="mt-1 list-inside list-disc">{plan.healthIssues.map((h, i) => <li key={i}>{h.level}: {h.name} — {h.status}</li>)}</ul>
             </div>
           ) : null}
@@ -1717,82 +1727,82 @@ export default function CampaignBuilderPage() {
         <div id="cbx-step-budget" tabIndex={-1} className={`r2-step-enter flex flex-wrap gap-2 ${activeStep !== 2 && activeStep !== 4 ? "hidden" : ""}`}>
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("dup", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/duplicate`, { method: "POST", body: JSON.stringify({}) }));
-            if (res) { setPlan(res); setNotice("Plan এর কপি তৈরি হয়েছে (নতুন Draft, কোনো Meta ID নেই)।"); }
-          }}>📋 কপি করুন</button>
+            if (res) { setPlan(res); setNotice(t("campaignBuilder.abDupNotice")); }
+          }}>{t("campaignBuilder.abDuplicateBtn")}</button>
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("pf", () => apiFetch<{ checkedAds: number; findings: { adName: string; field: string; severity: string; snippet: string; explanation: string; suggestion: string }[]; summary: { high: number; medium: number; low: number }; platformChecks?: { key: string; subject: string; status: string; label: string; detail: string }[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/preflight`, { method: "POST" }));
             if (res) {
               setPreflight(res);
               const platformError = res.platformChecks?.find((c) => c.status === "error");
-              setNotice(platformError ? `⚠️ Platform যাচাইয়ে গুরুতর সমস্যা: ${platformError.detail}` : res.findings.length === 0 ? `Policy যাচাই শেষ — ${res.checkedAds}টি বিজ্ঞাপনে কোনো সমস্যা পাওয়া যায়নি। Platform যাচাই নিচে।` : `Policy যাচাই: উচ্চ ${res.summary.high}, মাঝারি ${res.summary.medium}, নিম্ন ${res.summary.low} — নিচে বিস্তারিত।`);
+              setNotice(platformError ? t("campaignBuilder.abPlatformError", { detail: platformError.detail }) : res.findings.length === 0 ? t("campaignBuilder.abPolicyClean", { count: fmtNumBn(res.checkedAds) }) : t("campaignBuilder.abPolicySummary", { high: fmtNumBn(res.summary.high), medium: fmtNumBn(res.summary.medium), low: fmtNumBn(res.summary.low) }));
             }
-          }}>🛡 Policy যাচাই</button>
+          }}>{t("campaignBuilder.abPolicyBtn")}</button>
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("ready", () => apiFetch<NonNullable<typeof readiness>>(`/organizations/${orgId}/campaign-plans/${plan.id}/readiness`, { method: "POST", body: JSON.stringify({}) }));
-            if (res) { setReadiness(res); setNotice(res.ready ? "Readiness যাচাই: সব ঠিক আছে।" : "Readiness যাচাই: সমস্যা পাওয়া গেছে — উপরে দেখুন।"); }
-          }}>✓ Readiness যাচাই</button>
+            if (res) { setReadiness(res); setNotice(res.ready ? t("campaignBuilder.abReadinessOk") : t("campaignBuilder.abReadinessIssues")); }
+          }}>{t("campaignBuilder.abReadinessBtn")}</button>
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("chealth", () => apiFetch<NonNullable<typeof creativeHealth>>(`/organizations/${orgId}/campaign-plans/${plan.id}/creative-health`, { method: "POST", body: JSON.stringify({}) }));
-            if (res) { setCreativeHealth(res); setNotice(res.findings.length === 0 ? `Creative Health: ${res.adsChecked}টি Ad এ কোনো সতর্কতা নেই।` : `Creative Health: ${res.findings.length}টি সতর্কতা — নিচে দেখুন।`); }
-          }}>🎨 Creative Health</button>
+            if (res) { setCreativeHealth(res); setNotice(res.findings.length === 0 ? t("campaignBuilder.abCreativeHealthClean", { count: fmtNumBn(res.adsChecked) }) : t("campaignBuilder.abCreativeHealthWarnings", { count: fmtNumBn(res.findings.length) })); }
+          }}>{t("campaignBuilder.abCreativeHealthBtn")}</button>
           {editable ? (
             <span className="flex items-center gap-1">
               <select className="input w-32" id="plan-bmode" defaultValue={plan.budgetMode ?? "abo"}>
                 <option value="abo">ABO</option><option value="cbo">CBO</option>
               </select>
-              <input className="input w-28" placeholder="Campaign দৈনিক (টাকা)" id="plan-cdaily" defaultValue={plan.campaignDailyBudgetMinor ? String(Number(plan.campaignDailyBudgetMinor) / 100) : ""} />
-              <input className="input w-28" placeholder="Campaign Lifetime" id="plan-clife" defaultValue={plan.campaignLifetimeBudgetMinor ? String(Number(plan.campaignLifetimeBudgetMinor) / 100) : ""} />
+              <input className="input w-28" placeholder={t("campaignBuilder.abCampaignDailyPlaceholder")} id="plan-cdaily" defaultValue={plan.campaignDailyBudgetMinor ? String(Number(plan.campaignDailyBudgetMinor) / 100) : ""} />
+              <input className="input w-28" placeholder={t("campaignBuilder.abCampaignLifetimePlaceholder")} id="plan-clife" defaultValue={plan.campaignLifetimeBudgetMinor ? String(Number(plan.campaignLifetimeBudgetMinor) / 100) : ""} />
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const mode = (document.getElementById("plan-bmode") as HTMLSelectElement)?.value ?? "abo";
                 const d = (document.getElementById("plan-cdaily") as HTMLInputElement)?.value ?? "";
                 const l = (document.getElementById("plan-clife") as HTMLInputElement)?.value ?? "";
                 const res = await wrap("bmode", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ budgetMode: mode, campaignDailyBudget: d, campaignLifetimeBudget: l }) }));
-                if (res) { setPlan(res); setNotice("Budget Mode/Campaign Budget সেভ হয়েছে — Publish এর সময় এই কাঠামোই যাবে।"); noteSaved(); }
-              }}>🧮 Budget Mode</button>
+                if (res) { setPlan(res); setNotice(t("campaignBuilder.budgetModeSaved")); noteSaved(); }
+              }}>{t("campaignBuilder.abBudgetModeBtn")}</button>
             </span>
           ) : null}
           {editable ? (
             <span className="flex items-center gap-1">
-              <input className="input w-28" placeholder="দৈনিক Cap (টাকা)" id="plan-cap" defaultValue={(plan as any).dailyBudgetCapMinor ? String(Number((plan as any).dailyBudgetCapMinor) / 100) : ""} />
+              <input className="input w-28" placeholder={t("campaignBuilder.abDailyCapPlaceholder")} id="plan-cap" defaultValue={(plan as any).dailyBudgetCapMinor ? String(Number((plan as any).dailyBudgetCapMinor) / 100) : ""} />
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const v = (document.getElementById("plan-cap") as HTMLInputElement)?.value ?? "";
                 const res = await wrap("cap", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ dailyBudgetCap: v }) }));
-                if (res) { setPlan(res); setNotice(v ? "দৈনিক Budget Cap সেট হয়েছে — Submit/Publish এ যাচাই হবে।" : "Budget Cap সরানো হয়েছে।"); noteSaved(); }
-              }}>🧢 Cap</button>
+                if (res) { setPlan(res); setNotice(v ? t("campaignBuilder.capSet") : t("campaignBuilder.capRemoved")); noteSaved(); }
+              }}>{t("campaignBuilder.abCapBtn")}</button>
             </span>
           ) : null}
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("ab", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ab-variant`, { method: "POST", body: JSON.stringify({}) }));
-            if (res) { setPlan(res); setNotice("A/B Variant তৈরি হয়েছে (নতুন Draft)। দুটি Plan Publish করে সমান বাজেটে চালান — ফলাফল Analytics পেজে।"); }
-          }}>🧪 A/B Variant তৈরি</button>
+            if (res) { setPlan(res); setNotice(t("campaignBuilder.abVariantNotice")); }
+          }}>{t("campaignBuilder.abVariantBtn")}</button>
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("tpl", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/duplicate`, { method: "POST", body: JSON.stringify({ asTemplate: true }) }));
-            if (res) setNotice(`"${res.name}" টেমপ্লেট হিসেবে সেভ হয়েছে।`);
-          }}>⭐ টেমপ্লেট হিসেবে সেভ</button>
+            if (res) setNotice(t("campaignBuilder.abTemplateSaved", { name: res.name }));
+          }}>{t("campaignBuilder.abTemplateBtn")}</button>
           {!plan.externalCampaignId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("adv", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/advantage-plus`, { method: "POST", body: JSON.stringify({ enabled: !plan.advantagePlus }) }));
-            if (res) { setPlan(res); setNotice(res.advantagePlus ? "Advantage+ চালু হয়েছে — এটি এখন আসল Advantage+ পথ (CA23): Publish-এ Campaign পর্যায়ে Budget + Bid Strategy যাবে, সব Placement খোলা থাকবে, আর Publish-এর পর Meta-র advantage_state_info পড়ে আসল অবস্থা দেখানো হবে।" : "Advantage+ বন্ধ করা হয়েছে — বাজেট Ad Set পর্যায়ে থাকবে।"); }
-          }}>{plan.advantagePlus ? "🤖 Advantage+ চালু আছে (বন্ধ করুন)" : "🤖 Advantage+ চালু করুন"}</button> : null}
-          {plan.advantagePlus ? <p className="w-full text-xs text-slate-600">🤖 <b>আসল Advantage+ (CA23):</b> বাজেট বণ্টন, Audience সম্প্রসারণ ও সব Placement Meta-র AI ঠিক করে। বিনিময়ে যা ছাড়তে হয়: Ad Set-ভিত্তিক আলাদা বাজেট ও নিজে Placement বাছাই/বাদ দেওয়া — Ad Set-এ Placement Restriction থাকলে Submit/Publish আটকাবে (নাম ধরে বলা হবে)। {plan.advantageState ? <>Meta-র Read-back অনুযায়ী বর্তমান অবস্থা: <b>{plan.advantageState}</b>{plan.advantageState === "DISABLED" ? " — Campaign চলছে কিন্তু Meta এটিকে Advantage+ হিসেবে নিশ্চিত করেনি; Readiness-এ বিস্তারিত আছে।" : " — Meta নিশ্চিত করেছে এটি Advantage+ Campaign।"}</> : "Publish-এর পর Meta-র advantage_state_info পড়ে এখানে আসল অবস্থা দেখানো হবে — শুধু Toggle দেখে Advantage+ ধরে নেওয়া হবে না।"}</p> : null}
-          {editable ? <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("submit", "submit")}>অনুমোদনের জন্য পাঠান</button> : null}
+            if (res) { setPlan(res); setNotice(res.advantagePlus ? t("campaignBuilder.abAdvOn") : t("campaignBuilder.abAdvOff")); }
+          }}>{plan.advantagePlus ? t("campaignBuilder.abAdvBtnOn") : t("campaignBuilder.abAdvBtnOff")}</button> : null}
+          {plan.advantagePlus ? <p className="w-full text-xs text-slate-600">🤖 <b>{t("campaignBuilder.abAdvNoteTitle")}</b>{t("campaignBuilder.abAdvNoteBody")}{plan.advantageState ? <>{t("campaignBuilder.abAdvStatePrefix")}<b>{plan.advantageState}</b>{plan.advantageState === "DISABLED" ? t("campaignBuilder.abAdvStateDisabled") : t("campaignBuilder.abAdvStateConfirmed")}</> : t("campaignBuilder.abAdvStatePending")}</p> : null}
+          {editable ? <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("submit", "submit")}>{t("campaignBuilder.abSubmitBtn")}</button> : null}
           {plan.status === "pending_approval" ? <>
-            <button className="btn-success btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("approve", "approve")}>Approve করুন (Owner/Admin)</button>
-            <button className="rounded-lg border px-3 py-2 text-sm font-semibold text-red-600" onClick={rejectPlan}>Reject</button>
+            <button className="btn-success btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("approve", "approve")}>{t("campaignBuilder.abApproveBtn")}</button>
+            <button className="rounded-lg border px-3 py-2 text-sm font-semibold text-red-600" onClick={rejectPlan}>{t("campaignBuilder.abRejectBtn")}</button>
           </> : null}
-          {(plan.status === "approved" || plan.status === "publish_failed") ? <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("publish", "publish")}>{busy === "publish" ? "Publish হচ্ছে..." : plan.status === "publish_failed" ? "আবার Publish চেষ্টা (Resume)" : "Meta তে Publish করুন (PAUSED)"}</button> : null}
+          {(plan.status === "approved" || plan.status === "publish_failed") ? <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("publish", "publish")}>{busy === "publish" ? t("campaignBuilder.abPublishing") : plan.status === "publish_failed" ? t("campaignBuilder.abPublishResume") : t("campaignBuilder.abPublishBtn")}</button> : null}
           {plan.status === "approved" ? (
             <span className="flex items-center gap-1">
               <input type="datetime-local" className="input w-52" id="launch-at" defaultValue={plan.publishAt ? String(plan.publishAt).slice(0, 16) : ""} />
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const v = (document.getElementById("launch-at") as HTMLInputElement)?.value;
-                if (!v) { setError("Launch এর সময় বেছে নিন"); return; }
+                if (!v) { setError(t("campaignBuilder.abErrLaunchTime")); return; }
                 const res = await wrap("launch", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/schedule-launch`, { method: "POST", body: JSON.stringify({ publishAt: new Date(v).toISOString() }) }));
-                if (res) { setPlan(res); setNotice("Launch নির্ধারিত হয়েছে — সময় হলে স্বয়ংক্রিয়ভাবে Publish হবে (PAUSED)।"); }
-              }}>🚀 Launch নির্ধারণ</button>
+                if (res) { setPlan(res); setNotice(t("campaignBuilder.abLaunchScheduled")); }
+              }}>{t("campaignBuilder.abLaunchBtn")}</button>
               {plan.publishAt ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const res = await wrap("launch-cancel", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/schedule-launch`, { method: "POST", body: JSON.stringify({ publishAt: null }) }));
-                if (res) { setPlan(res); setNotice("Launch এর সূচি বাতিল হয়েছে।"); }
-              }}>বাতিল</button> : null}
+                if (res) { setPlan(res); setNotice(t("campaignBuilder.abLaunchCancelled")); }
+              }}>{t("campaignBuilder.abCancelBtn")}</button> : null}
             </span>
           ) : null}
           {plan.status === "published" ? (
@@ -1803,7 +1813,7 @@ export default function CampaignBuilderPage() {
                   if (res) setSchedule(res);
                 }
                 setScheduleOpen((o) => !o);
-              }}>⏰ Pause Window {plan.pauseAt ? "(বসানো আছে)" : ""}</button>
+              }}>{t("campaignBuilder.abPauseWindowBtn")}{plan.pauseAt ? t("campaignBuilder.abPauseWindowSet") : ""}</button>
             </span>
           ) : null}
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
@@ -1813,27 +1823,27 @@ export default function CampaignBuilderPage() {
               if (res) setNamingPreview(res);
             }
             setNamingOpen((o) => !o);
-          }}>🏷️ নাম Template অনুযায়ী</button>
-          <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={openSeries}>🔁 Series</button>
+          }}>{t("campaignBuilder.abNamingBtn")}</button>
+          <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={openSeries}>{t("campaignBuilder.abSeriesBtn")}</button>
           {plan.abGroupId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("promote", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/promote-winner`, { method: "POST", body: JSON.stringify({}) }));
-            if (res) { setPlan(res); setNotice("বিজয়ী Variant থেকে নতুন Draft তৈরি হয়েছে। Loser টি Pause করা হয়নি — চাইলে আলাদাভাবে করুন।"); }
-          }}>🏆 Winner থেকে Draft</button> : null}
+            if (res) { setPlan(res); setNotice(t("campaignBuilder.abWinnerNotice")); }
+          }}>{t("campaignBuilder.abWinnerBtn")}</button> : null}
           {plan.externalCampaignId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("perf", () => apiFetch<NonNullable<typeof perf>>(`/organizations/${orgId}/campaign-plans/${plan.id}/performance`));
             if (res) setPerf(res);
-          }}>📊 পারফরম্যান্স</button> : null}
+          }}>{t("campaignBuilder.abPerfBtn")}</button> : null}
           {plan.externalCampaignId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("waconv", () => apiFetch<NonNullable<typeof waConvs>>(`/organizations/${orgId}/campaign-plans/${plan.id}/whatsapp-conversations`));
             if (res) setWaConvs(res);
-          }}>💬 WhatsApp কথোপকথন (CN13)</button> : null}
-          {plan.abGroupId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={openExperiments}>🧪 Meta Experiment</button> : null}
+          }}>{t("campaignBuilder.abWaBtn")}</button> : null}
+          {plan.abGroupId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={openExperiments}>{t("campaignBuilder.abExperimentBtn")}</button> : null}
           {plan.externalCampaignId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("pacing", () => apiFetch<NonNullable<typeof pacing>>(`/organizations/${orgId}/campaign-plans/${plan.id}/pacing`));
             if (res) setPacing(res);
             const al = await apiFetch<NonNullable<typeof pacingAlerts>>(`/organizations/${orgId}/campaign-plans/${plan.id}/pacing-alerts`).catch(() => null);
             if (al) setPacingAlerts(al);
-          }}>⏱ Pacing</button> : null}
+          }}>{t("campaignBuilder.abPacingBtn")}</button> : null}
           {plan.externalCampaignId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const b = await wrap("bdowns", () => apiFetch<NonNullable<typeof breakdowns>>(`/organizations/${orgId}/campaign-plans/${plan.id}/performance-breakdowns`));
             if (b) setBreakdowns(b);
@@ -1841,50 +1851,50 @@ export default function CampaignBuilderPage() {
             if (c) setCreativeInsights(c);
             const rp = await wrap("regionperf", () => apiFetch<RegionPerf>(`/organizations/${orgId}/campaign-plans/${plan.id}/region-performance`));
             if (rp) setRegionPerf(rp);
-          }}>📈 Breakdown + Creative (CN7)</button> : null}
+          }}>{t("campaignBuilder.abBreakdownBtn")}</button> : null}
           {plan.externalCampaignId ? <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("recs", () => apiFetch<NonNullable<typeof recs>>(`/organizations/${orgId}/campaign-plans/${plan.id}/recommendations`));
             if (res) setRecs(res);
-          }}>💡 সুপারিশ (CN7)</button> : null}
+          }}>{t("campaignBuilder.abRecsBtn")}</button> : null}
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("guardrails", () => apiFetch<NonNullable<typeof guardrails>>(`/organizations/${orgId}/campaign-plans/${plan.id}/guardrails`));
             if (res) setGuardrails(res);
             const acc = await apiFetch<typeof accountsHealth>(`/organizations/${orgId}/campaign-plans/accounts/health`).catch(() => null);
             if (acc) setAccountsHealth(acc);
-          }}>🛡 Guardrails (CN7)</button>
-          {plan.status === "published" && plan.metaStatus !== "ACTIVE" ? <button className="btn-success btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("activate", "activate")}>সক্রিয় করুন (খরচ শুরু হবে)</button> : null}
-          {plan.status === "published" && plan.metaStatus === "ACTIVE" ? <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("pause", "pause")}>Pause করুন</button> : null}
+          }}>{t("campaignBuilder.abGuardrailsBtn")}</button>
+          {plan.status === "published" && plan.metaStatus !== "ACTIVE" ? <button className="btn-success btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("activate", "activate")}>{t("campaignBuilder.abActivateBtn")}</button> : null}
+          {plan.status === "published" && plan.metaStatus === "ACTIVE" ? <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => action("pause", "pause")}>{t("campaignBuilder.abPauseBtn")}</button> : null}
         </div>
       </div>
       {experiments ? (
         <div className={`space-y-3 rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-3 text-sm ${activeStep !== 4 ? "hidden" : ""}`}>
-          <p className="font-semibold">🧪 Meta Experiment (CN15) — Meta Ad Study (SPLIT_TEST)</p>
-          <p className="text-xs text-slate-500">দুটি Published Variant Campaign এর উপর Meta নিজে Study চালায় — Experiment তৈরি করলে Campaign দুটির অবস্থা বদলায় না, কিছু Publish হয় না। Significance/Winner এই Platform হিসাব করে না; Meta-র Read-back হুবহু দেখানো হয়।</p>
+          <p className="font-semibold">{t("campaignBuilder.xpExpTitle")}</p>
+          <p className="text-xs text-slate-500">{t("campaignBuilder.xpExpIntro")}</p>
           <div className="space-y-2 rounded-lg bg-white/60 p-3">
-            <div className="text-xs font-semibold text-slate-600">নতুন Experiment তৈরি করুন</div>
-            {expSiblings.length === 0 ? <p className="text-xs font-medium text-amber-700">আগে A/B Variant তৈরি করুন — এই Plan এর A/B Group এ অন্য কোনো Variant পাওয়া যায়নি।</p> : (
+            <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xpExpCreateTitle")}</div>
+            {expSiblings.length === 0 ? <p className="text-xs font-medium text-amber-700">{t("campaignBuilder.xpExpNeedVariant")}</p> : (
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                <label className="block text-xs">Variant B (অন্য Plan)
+                <label className="block text-xs">{t("campaignBuilder.xpExpVariantB")}
                   <select className="input mt-1" value={expForm.planBId} onChange={(e) => setExpForm({ ...expForm, planBId: e.target.value })}>
-                    <option value="">Variant বেছে নিন</option>
+                    <option value="">{t("campaignBuilder.xpExpVariantChoose")}</option>
                     {expSiblings.map((v) => <option key={v.planId} value={v.planId}>{v.name}{v.variant ? ` (Variant ${v.variant})` : ""} · {v.status ?? ""}</option>)}
                   </select>
                 </label>
-                <label className="block text-xs">Split — A এর শতাংশ (১০–৯০)<input type="number" min={10} max={90} className="input mt-1" value={expForm.splitA} onChange={(e) => setExpForm({ ...expForm, splitA: Number(e.target.value) })} /></label>
-                <label className="block text-xs">Metric Event<input className="input mt-1" value={expForm.metricEvent} onChange={(e) => setExpForm({ ...expForm, metricEvent: e.target.value })} placeholder="PURCHASE" /></label>
-                <label className="block text-xs">মেয়াদ (দিন, ১–৩০)<input type="number" min={1} max={30} className="input mt-1" value={expForm.durationDays} onChange={(e) => setExpForm({ ...expForm, durationDays: Number(e.target.value) })} /></label>
+                <label className="block text-xs">{t("campaignBuilder.xpExpSplit")}<input type="number" min={10} max={90} className="input mt-1" value={expForm.splitA} onChange={(e) => setExpForm({ ...expForm, splitA: Number(e.target.value) })} /></label>
+                <label className="block text-xs">{t("campaignBuilder.xpExpMetric")}<input className="input mt-1" value={expForm.metricEvent} onChange={(e) => setExpForm({ ...expForm, metricEvent: e.target.value })} placeholder="PURCHASE" /></label>
+                <label className="block text-xs">{t("campaignBuilder.xpExpDuration")}<input type="number" min={1} max={30} className="input mt-1" value={expForm.durationDays} onChange={(e) => setExpForm({ ...expForm, durationDays: Number(e.target.value) })} /></label>
               </div>
             )}
-            <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== "" || expSiblings.length === 0 || !expForm.planBId} onClick={createExperiment}>{busy === "exp-create" ? "তৈরি হচ্ছে..." : "🧪 Experiment তৈরি করুন (Meta তে)"}</button>
+            <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== "" || expSiblings.length === 0 || !expForm.planBId} onClick={createExperiment}>{busy === "exp-create" ? t("campaignBuilder.xpExpCreating") : t("campaignBuilder.xpExpCreateBtn")}</button>
           </div>
-          {experiments.length === 0 ? <p className="text-xs text-slate-500">এই Plan এর কোনো Experiment এখনো নেই।</p> : experiments.map((exp) => (
+          {experiments.length === 0 ? <p className="text-xs text-slate-500">{t("campaignBuilder.xpExpNone")}</p> : experiments.map((exp) => (
             <div key={exp.id} className="space-y-2 rounded-lg bg-white/70 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium">{exp.name ?? "Meta Experiment"}</span>
-                <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => refreshExperiment(exp)}>🔄 Meta Read-back</button>
+                <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => refreshExperiment(exp)}>{t("campaignBuilder.xpExpReadbackBtn")}</button>
               </div>
               <div className="text-xs text-slate-600">Meta Study ID: <span className="font-mono">{exp.metaStudyId ?? "—"}</span> · Split: A {exp.splitA}% / B {100 - Number(exp.splitA)}% · Metric: {exp.metricEvent ?? "—"}</div>
-              <div className="text-xs text-slate-600">সময়: {exp.startTime ? new Date(exp.startTime).toLocaleString("bn-BD") : "—"} → {exp.endTime ? new Date(exp.endTime).toLocaleString("bn-BD") : "—"} · সর্বশেষ Read-back: {exp.lastReadbackAt ? new Date(exp.lastReadbackAt).toLocaleString("bn-BD") : "এখনো হয়নি"}</div>
+              <div className="text-xs text-slate-600">{t("campaignBuilder.xpExpTime", { start: exp.startTime ? fmtDateTime(locale, exp.startTime) : "—", end: exp.endTime ? fmtDateTime(locale, exp.endTime) : "—", last: exp.lastReadbackAt ? fmtDateTime(locale, exp.lastReadbackAt) : t("campaignBuilder.xpExpNever") })}</div>
               {exp.significanceNote ? <p className="text-xs text-slate-500">{exp.significanceNote}</p> : null}
               {renderExpReadback(exp)}
             </div>
@@ -1893,36 +1903,36 @@ export default function CampaignBuilderPage() {
       ) : null}
       {seriesList ? (
         <div className={`space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm ${activeStep !== 4 ? "hidden" : ""}`}>
-          <p className="font-semibold">🔁 Recurring Series (CN16) — এই Plan থেকে নিয়মিত Instance</p>
-          <p className="text-xs text-slate-500">Series শুধু Draft Instance তৈরি করে — প্রতিটি Instance আলাদাভাবে Approval Flow দিয়ে যাবে; Series নিজে কিছু Publish করে না। আগের Instance Draft-এ থাকলে পরেরটি তৈরি আটকে থাকে (একটির বেশি Pending Draft জমে না)।</p>
+          <p className="font-semibold">{t("campaignBuilder.srTitle")}</p>
+          <p className="text-xs text-slate-500">{t("campaignBuilder.srIntro")}</p>
           <div className="space-y-2 rounded-lg bg-white/60 p-3">
-            <div className="text-xs font-semibold text-slate-600">নতুন Series তৈরি করুন</div>
+            <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.srCreateTitle")}</div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="block text-xs">নাম (ঐচ্ছিক)<input className="input mt-1" value={seriesForm.name} onChange={(e) => setSeriesForm({ ...seriesForm, name: e.target.value })} placeholder="যেমন: সাপ্তাহিক অফার" /></label>
+              <label className="block text-xs">{t("campaignBuilder.srNameLabel")}<input className="input mt-1" value={seriesForm.name} onChange={(e) => setSeriesForm({ ...seriesForm, name: e.target.value })} placeholder={t("campaignBuilder.srNamePlaceholder")} /></label>
               <label className="block text-xs">Cadence
                 <select className="input mt-1" value={seriesForm.cadence} onChange={(e) => setSeriesForm({ ...seriesForm, cadence: e.target.value })}>
-                  <option value="weekly">সাপ্তাহিক</option><option value="monthly">মাসিক</option><option value="dates">তারিখের তালিকা</option>
+                  <option value="weekly">{t("campaignBuilder.srWeekly")}</option><option value="monthly">{t("campaignBuilder.srMonthly")}</option><option value="dates">{t("campaignBuilder.srDates")}</option>
                 </select>
               </label>
-              {seriesForm.cadence !== "dates" ? <label className="block text-xs">Interval (প্রতি কত {seriesForm.cadence === "weekly" ? "সপ্তাহ" : "মাস"})<input type="number" min={1} max={12} className="input mt-1" value={seriesForm.interval} onChange={(e) => setSeriesForm({ ...seriesForm, interval: Number(e.target.value) })} /></label> : null}
-              {seriesForm.cadence !== "dates" ? <label className="block text-xs">প্রথম Instance এর তারিখ (Anchor)<input type="datetime-local" className="input mt-1" value={seriesForm.anchor} onChange={(e) => setSeriesForm({ ...seriesForm, anchor: e.target.value })} /></label> : null}
-              <label className="block text-xs">আগে থেকে তৈরি (Lead Days)<input type="number" min={0} max={30} className="input mt-1" value={seriesForm.leadDays} onChange={(e) => setSeriesForm({ ...seriesForm, leadDays: Number(e.target.value) })} /></label>
+              {seriesForm.cadence !== "dates" ? <label className="block text-xs">{seriesForm.cadence === "weekly" ? t("campaignBuilder.srIntervalWeekly") : t("campaignBuilder.srIntervalMonthly")}<input type="number" min={1} max={12} className="input mt-1" value={seriesForm.interval} onChange={(e) => setSeriesForm({ ...seriesForm, interval: Number(e.target.value) })} /></label> : null}
+              {seriesForm.cadence !== "dates" ? <label className="block text-xs">{t("campaignBuilder.srAnchorLabel")}<input type="datetime-local" className="input mt-1" value={seriesForm.anchor} onChange={(e) => setSeriesForm({ ...seriesForm, anchor: e.target.value })} /></label> : null}
+              <label className="block text-xs">{t("campaignBuilder.srLeadDays")}<input type="number" min={0} max={30} className="input mt-1" value={seriesForm.leadDays} onChange={(e) => setSeriesForm({ ...seriesForm, leadDays: Number(e.target.value) })} /></label>
             </div>
-            {seriesForm.cadence === "dates" ? <label className="block text-xs">তারিখের তালিকা — প্রতি লাইনে একটি তারিখ/সময়<textarea className="input mt-1" rows={3} value={seriesForm.datesText} onChange={(e) => setSeriesForm({ ...seriesForm, datesText: e.target.value })} placeholder={"2026-11-01T10:00\n2026-11-15T10:00"} /></label> : null}
-            <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={createSeries}>{busy === "series-create" ? "তৈরি হচ্ছে..." : "🔁 Series তৈরি করুন"}</button>
+            {seriesForm.cadence === "dates" ? <label className="block text-xs">{t("campaignBuilder.srDatesLabel")}<textarea className="input mt-1" rows={3} value={seriesForm.datesText} onChange={(e) => setSeriesForm({ ...seriesForm, datesText: e.target.value })} placeholder={"2026-11-01T10:00\n2026-11-15T10:00"} /></label> : null}
+            <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={createSeries}>{busy === "series-create" ? t("campaignBuilder.srCreating") : t("campaignBuilder.srCreateBtn")}</button>
           </div>
-          {seriesList.length === 0 ? <p className="text-xs text-slate-500">এই Plan থেকে এখনো কোনো Series তৈরি হয়নি।</p> : seriesList.map((s) => (
+          {seriesList.length === 0 ? <p className="text-xs text-slate-500">{t("campaignBuilder.srNone")}</p> : seriesList.map((s) => (
             <div key={s.id} className="space-y-1 rounded-lg bg-white/70 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium">{s.name} <span className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${s.status === "active" ? "bg-green-100 text-green-700" : s.status === "paused" ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>{s.status === "active" ? "সক্রিয়" : s.status === "paused" ? "বিরতি" : "শেষ"}</span></span>
+                <span className="font-medium">{s.name} <span className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${s.status === "active" ? "bg-green-100 text-green-700" : s.status === "paused" ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>{s.status === "active" ? t("campaignBuilder.srStatusActive") : s.status === "paused" ? t("campaignBuilder.srStatusPaused") : t("campaignBuilder.srStatusEnded")}</span></span>
                 <span className="flex gap-1">
-                  {s.status === "active" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => doSeriesAction(s.id, "pause")}>⏸ Pause</button> : null}
-                  {s.status === "paused" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => doSeriesAction(s.id, "resume")}>▶ Resume</button> : null}
-                  {s.status !== "ended" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => doSeriesAction(s.id, "end")}>⏹ End</button> : null}
+                  {s.status === "active" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => doSeriesAction(s.id, "pause")}>{t("campaignBuilder.srPauseBtn")}</button> : null}
+                  {s.status === "paused" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => doSeriesAction(s.id, "resume")}>{t("campaignBuilder.srResumeBtn")}</button> : null}
+                  {s.status !== "ended" ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => doSeriesAction(s.id, "end")}>{t("campaignBuilder.srEndBtn")}</button> : null}
                 </span>
               </div>
-              <div className="text-xs text-slate-600">Cadence: {SERIES_CADENCE_LABEL[s.cadence] ?? s.cadence}{s.cadence !== "dates" && s.interval ? ` (প্রতি ${s.interval})` : ""} · পরের Instance: {s.nextInstanceDate ? new Date(s.nextInstanceDate).toLocaleString("bn-BD") : "—"}{s.pendingPlan ? ` · Pending Instance: ${s.pendingPlan.name} (${s.pendingPlan.status})` : ""}</div>
-              {s.generationHeld ? <p className="text-xs font-medium text-amber-700">আগের Instance Draft-এ আছে — সেটি Approval Flow-তে গেলেই পরেরটি তৈরি হবে</p> : null}
+              <div className="text-xs text-slate-600">{t("campaignBuilder.srCadenceLine", { cadence: SERIES_CADENCE_KEY[s.cadence] ? t(SERIES_CADENCE_KEY[s.cadence]) : s.cadence, interval: s.cadence !== "dates" && s.interval ? t("campaignBuilder.srIntervalPart", { interval: fmtNumBn(s.interval) }) : "", next: s.nextInstanceDate ? fmtDateTime(locale, s.nextInstanceDate) : "—", pending: s.pendingPlan ? t("campaignBuilder.srPendingPart", { name: s.pendingPlan.name, status: s.pendingPlan.status }) : "" })}</div>
+              {s.generationHeld ? <p className="text-xs font-medium text-amber-700">{t("campaignBuilder.srHeld")}</p> : null}
             </div>
           ))}
         </div>
@@ -1934,7 +1944,7 @@ export default function CampaignBuilderPage() {
             <span>✓</span>
             <span>{notice}</span>
           </div>
-          <button type="button" onClick={() => setNotice("")} className="text-xs text-emerald-600 hover:text-emerald-800">✕ বন্ধ</button>
+          <button type="button" onClick={() => setNotice("")} className="text-xs text-emerald-600 hover:text-emerald-800">{t("campaignBuilder.ntCloseBtn")}</button>
         </div>
       ) : null}
 
@@ -1955,36 +1965,36 @@ export default function CampaignBuilderPage() {
                     const r = await apiFetch<ProductSetRec[]>(`/organizations/${orgId}/catalogs/${adSet.catalogRecordId}/product-sets`).catch(() => null);
                     if (r) setEditSets(r);
                   }
-                }}>✎ সম্পাদনা</button>
+                }}>{t("campaignBuilder.asEditBtn")}</button>
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const res = await wrap(`dupset-${adSet.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/duplicate`, { method: "POST", body: JSON.stringify({}) }));
-                  if (res) { setNotice("Ad Set কপি হয়েছে (Ad সহ)।"); await loadPlan(plan.id); }
-                }}>⧉ কপি</button>
+                  if (res) { setNotice(t("campaignBuilder.asDupNotice")); await loadPlan(plan.id); }
+                }}>{t("campaignBuilder.asCopyBtn")}</button>
               </span>
             ) : null}
             {plan.status === "published" && adSet.externalAdSetId ? (
               <span className={`flex items-center gap-1 ${activeStep !== 2 ? "hidden" : ""}`}>
-                <input className="input w-28" placeholder="নতুন দৈনিক বাজেট" id={`budget-${adSet.id}`} />
+                <input className="input w-28" placeholder={t("campaignBuilder.asNewBudgetPlaceholder")} id={`budget-${adSet.id}`} />
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const v = (document.getElementById(`budget-${adSet.id}`) as HTMLInputElement)?.value;
-                  if (!v) { setError("নতুন বাজেট লিখুন"); return; }
+                  if (!v) { setError(t("campaignBuilder.asErrBudget")); return; }
                   const res = await wrap(`budget-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/budget`, { method: "POST", body: JSON.stringify({ dailyBudget: v }) }));
-                  if (res) { setPlan(res); setNotice("Meta তে বাজেট আপডেট হয়েছে (Meta নিশ্চিত করেছে)।"); noteSaved(); }
-                }}>💰 বাজেট আপডেট</button>
+                  if (res) { setPlan(res); setNotice(t("campaignBuilder.budgetUpdatedMeta")); noteSaved(); }
+                }}>{t("campaignBuilder.asBudgetUpdateBtn")}</button>
               </span>
             ) : null}
             <div className="text-xs text-slate-400">
-              {adSet.dailyBudgetMinor ? `দৈনিক বাজেট ${fmtMoneyBn(adSet.dailyBudgetMinor)}` : ""} · {adSet.optimizationGoal} · দেশ: {(adSet.targeting.countries ?? []).join(", ")}
-              {adSet.targeting.cities?.length ? ` · শহর: ${adSet.targeting.cities.map((c) => c.key).join(", ")}` : ""}
+              {adSet.dailyBudgetMinor ? t("campaignBuilder.asDailyBudgetPart", { amount: fmtMoneyBn(adSet.dailyBudgetMinor) }) : ""} · {adSet.optimizationGoal} · {t("campaignBuilder.asCountryPart", { countries: (adSet.targeting.countries ?? []).join(", ") })}
+              {adSet.targeting.cities?.length ? t("campaignBuilder.asCitiesPart", { cities: adSet.targeting.cities.map((c) => c.key).join(", ") }) : ""}
               {adSet.targeting.locales?.length ? ` · Locale: ${adSet.targeting.locales.join(",")}` : ""}
               {adSet.bidStrategy ? ` · 🎯 ${adSet.bidStrategy}${adSet.bidAmountMinor ? ` ${fmtMoneyBn(adSet.bidAmountMinor)}` : ""}${adSet.costGoalMinor ? ` ${fmtMoneyBn(adSet.costGoalMinor)}` : ""}${adSet.roasAverageFloor ? ` ROAS ≥ ${adSet.roasAverageFloor / 10000}` : ""}` : ""}
               {adSet.conversionEvent ? ` · 🎯 Event: ${adSet.conversionEvent}` : ""}
               {adSet.__productSet ? ` · 🛍️ Catalog: ${adSet.__catalog?.name ?? ""} / ${adSet.__productSet.name}` : ""}
-              {adSet.__leadForm ? ` · 📋 Form: ${adSet.__leadForm.name} (${adSet.__leadForm.status === "created" ? "Meta তে তৈরি" : "লোকাল"})` : ""}
-              {adSet.destinationType === "WHATSAPP" ? ` · 💬 WhatsApp (CTWA): ${adSet.whatsappPhoneNumber ?? "Page-Linked নম্বর (Meta থেকে সংখ্যা পড়া যায়নি)"}` : ""}
+              {adSet.__leadForm ? ` · 📋 Form: ${adSet.__leadForm.name} (${adSet.__leadForm.status === "created" ? t("campaignBuilder.asFormCreated") : t("campaignBuilder.asFormLocal")})` : ""}
+              {adSet.destinationType === "WHATSAPP" ? ` · 💬 WhatsApp (CTWA): ${adSet.whatsappPhoneNumber ?? t("campaignBuilder.asWaNumberFallback")}` : ""}
               {adSet.externalAdSetId ? ` · Meta ID: ${adSet.externalAdSetId}` : ""}
-              {adSet.effectiveStatus ? ` · কার্যকর: ${adSet.effectiveStatus}` : ""}
-              {adSet.startTime || adSet.endTime ? ` · 🗓 ${adSet.startTime ? new Date(adSet.startTime).toLocaleString("bn-BD") : "…"} → ${adSet.endTime ? new Date(adSet.endTime).toLocaleString("bn-BD") : "…"}` : ""}
+              {adSet.effectiveStatus ? t("campaignBuilder.asEffectivePart", { status: adSet.effectiveStatus }) : ""}
+              {adSet.startTime || adSet.endTime ? ` · 🗓 ${adSet.startTime ? fmtDateTime(locale, adSet.startTime) : "…"} → ${adSet.endTime ? fmtDateTime(locale, adSet.endTime) : "…"}` : ""}
             </div>
             {plan.status === "published" && adSet.externalAdSetId ? (
               <span className={`flex items-center gap-1 ${activeStep !== 1 ? "hidden" : ""}`}>
@@ -1993,104 +2003,104 @@ export default function CampaignBuilderPage() {
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const st = (document.getElementById(`sched-start-${adSet.id}`) as HTMLInputElement)?.value;
                   const en = (document.getElementById(`sched-end-${adSet.id}`) as HTMLInputElement)?.value;
-                  if (!st && !en) { setError("শুরু বা শেষের সময় দিন"); return; }
+                  if (!st && !en) { setError(t("campaignBuilder.asErrSchedule")); return; }
                   const res = await wrap(`sched-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/schedule`, { method: "POST", body: JSON.stringify({ startTime: st ? new Date(st).toISOString() : undefined, endTime: en ? new Date(en).toISOString() : undefined }) }));
-                  if (res) { setPlan(res); setNotice("সময়সূচি Meta তে আপডেট হয়েছে।"); noteSaved(); }
-                }}>🗓 সময়সূচি</button>
+                  if (res) { setPlan(res); setNotice(t("campaignBuilder.scheduleUpdated")); noteSaved(); }
+                }}>{t("campaignBuilder.asScheduleBtn")}</button>
               </span>
             ) : null}
             {plan.status === "published" && adSet.externalAdSetId ? (
               <span className={`flex items-center gap-1 ${activeStep !== 1 ? "hidden" : ""}`}>
-                <textarea className="input w-64" rows={1} id={`daypart-${adSet.id}`} placeholder="Dayparting: দিন,শুরু,শেষ — যেমন 5,9,23 (শুক্র ৯টা-২৩টা)" defaultValue={Array.isArray((adSet as any).daypart) ? (adSet as any).daypart.map((w: any) => `${w.day},${w.startHour},${w.endHour}`).join("\n") : ""} />
+                <textarea className="input w-64" rows={1} id={`daypart-${adSet.id}`} placeholder={t("campaignBuilder.asDaypartPlaceholder")} defaultValue={Array.isArray((adSet as any).daypart) ? (adSet as any).daypart.map((w: any) => `${w.day},${w.startHour},${w.endHour}`).join("\n") : ""} />
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const raw = (document.getElementById(`daypart-${adSet.id}`) as HTMLTextAreaElement)?.value ?? "";
                   const windows = raw.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const [day, startHour, endHour] = l.split(",").map((x) => Number(x.trim())); return { day, startHour, endHour }; });
                   const res = await wrap(`dp-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/daypart`, { method: "POST", body: JSON.stringify({ windows, tz: "Asia/Dhaka" }) }));
-                  if (res) { setPlan(res); setNotice("Dayparting সেভ হয়েছে। Dayparting Job (Automations পেজে তৈরি করুন) সময়মতো Ad Set চালু/বন্ধ করবে।"); noteSaved(); }
-                }}>🌗 Dayparting</button>
+                  if (res) { setPlan(res); setNotice(t("campaignBuilder.daypartSaved")); noteSaved(); }
+                }}>{t("campaignBuilder.asDaypartBtn")}</button>
               </span>
             ) : null}
           </div>
           {(adSet as any).funnelLayer ? <div><span className="rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700">🧭 {(adSet as any).funnelLayer} Layer</span></div> : null}
-          {(adSet as any).funnelIncomplete ? <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">⚠️ অসম্পূর্ণ Layer: {(adSet as any).funnelIncomplete}</p> : null}
+          {(adSet as any).funnelIncomplete ? <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">{t("campaignBuilder.asIncompleteLayer", { detail: (adSet as any).funnelIncomplete })}</p> : null}
           {editable && editSetId === adSet.id ? (
             <div className={`space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3 ${activeStep !== 1 && activeStep !== 2 ? "hidden" : ""}`}>
-              <div className="text-sm font-semibold">Ad Set সম্পাদনা</div>
+              <div className="text-sm font-semibold">{t("campaignBuilder.asEditTitle")}</div>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                <label className="block text-sm">নাম<input className="input" id={`es-name-${adSet.id}`} defaultValue={adSet.name} /></label>
-                <label className="block text-sm">দৈনিক বাজেট (টাকা)<input className="input" id={`es-budget-${adSet.id}`} defaultValue={adSet.dailyBudgetMinor ? String(Number(adSet.dailyBudgetMinor) / 100) : ""} placeholder="দৈনিক হলে দিন" /></label>
-                <label className="block text-sm">Lifetime বাজেট (টাকা)<input className="input" id={`es-life-${adSet.id}`} defaultValue={adSet.lifetimeBudgetMinor ? String(Number(adSet.lifetimeBudgetMinor) / 100) : ""} placeholder="Lifetime হলে দিন" /></label>
-                <label className="block text-sm">দেশ (কমা দিয়ে)<input className="input" id={`es-countries-${adSet.id}`} defaultValue={(adSet.targeting.countries ?? []).join(",")} /></label>
-                <label className="block text-sm">Interests (কমা; নাম|ID চলবে)<input className="input" id={`es-interests-${adSet.id}`} defaultValue={(adSet.targeting.interests ?? []).map(entryToken).join(", ")} /></label>
-                <label className="block text-sm">Platforms (কমা: facebook,instagram)<input className="input" id={`es-platforms-${adSet.id}`} defaultValue={(adSet.targeting.platforms ?? []).join(",")} placeholder="খালি = Meta Default" /></label>
-                <label className="block text-sm">Positions (feed,reels,story,search)<input className="input" id={`es-positions-${adSet.id}`} defaultValue={(adSet.targeting.positions ?? []).join(",")} placeholder="খালি = Meta Default" /></label>
-                <label className="block text-sm">Devices (mobile,desktop)<input className="input" id={`es-devices-${adSet.id}`} defaultValue={(adSet.targeting.devices ?? []).join(",")} placeholder="খালি = সব" /></label>
-                <label className="block text-sm">শহর Key (কমা; key:km)<input className="input" id={`es-cities-${adSet.id}`} defaultValue={(adSet.targeting.cities ?? []).map((c) => (c.radius ? `${c.key}:${c.radius}` : c.key)).join(",")} /></label>
-                <label className="block text-sm">Postcodes (Zip Key)<input className="input" id={`es-postcodes-${adSet.id}`} defaultValue={(adSet.targeting.postcodes ?? []).join(",")} /></label>
-                <label className="block text-sm">Location Types<input className="input" id={`es-loctypes-${adSet.id}`} defaultValue={(adSet.targeting.locationTypes ?? []).join(",")} placeholder="home,recent" /></label>
-                <label className="block text-sm">Locale IDs<input className="input" id={`es-locales-${adSet.id}`} defaultValue={(adSet.targeting.locales ?? []).join(",")} /></label>
-                <label className="block text-sm">Behaviors (নাম|ID)<input className="input" id={`es-behaviors-${adSet.id}`} defaultValue={(adSet.targeting.behaviors ?? []).map(entryToken).join(", ")} /></label>
-                <label className="block text-sm">Narrowing Interests (AND)<input className="input" id={`es-narrow-${adSet.id}`} defaultValue={(adSet.targeting.narrowInterests ?? []).map(entryToken).join(", ")} /></label>
-                <label className="block text-sm">Life Events (নাম|ID)<input className="input" id={`es-life-${adSet.id}`} defaultValue={(adSet.targeting.demographics?.lifeEvents ?? []).map(entryToken).join(", ")} /></label>
-                <label className="block text-sm">Work Positions (নাম|ID)<input className="input" id={`es-work-${adSet.id}`} defaultValue={(adSet.targeting.demographics?.workPositions ?? []).map(entryToken).join(", ")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asNameLabel")}<input className="input" id={`es-name-${adSet.id}`} defaultValue={adSet.name} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asDailyBudgetLabel")}<input className="input" id={`es-budget-${adSet.id}`} defaultValue={adSet.dailyBudgetMinor ? String(Number(adSet.dailyBudgetMinor) / 100) : ""} placeholder={t("campaignBuilder.asDailyBudgetPlaceholder")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asLifetimeLabel")}<input className="input" id={`es-life-${adSet.id}`} defaultValue={adSet.lifetimeBudgetMinor ? String(Number(adSet.lifetimeBudgetMinor) / 100) : ""} placeholder={t("campaignBuilder.asLifetimePlaceholder")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asCountriesLabel")}<input className="input" id={`es-countries-${adSet.id}`} defaultValue={(adSet.targeting.countries ?? []).join(",")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asInterestsLabel")}<input className="input" id={`es-interests-${adSet.id}`} defaultValue={(adSet.targeting.interests ?? []).map(entryToken).join(", ")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asPlatformsLabel")}<input className="input" id={`es-platforms-${adSet.id}`} defaultValue={(adSet.targeting.platforms ?? []).join(",")} placeholder={t("campaignBuilder.asMetaDefaultPlaceholder")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asPositionsLabel")}<input className="input" id={`es-positions-${adSet.id}`} defaultValue={(adSet.targeting.positions ?? []).join(",")} placeholder={t("campaignBuilder.asMetaDefaultPlaceholder")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asDevicesLabel")}<input className="input" id={`es-devices-${adSet.id}`} defaultValue={(adSet.targeting.devices ?? []).join(",")} placeholder={t("campaignBuilder.asAllPlaceholder")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asCitiesLabel")}<input className="input" id={`es-cities-${adSet.id}`} defaultValue={(adSet.targeting.cities ?? []).map((c) => (c.radius ? `${c.key}:${c.radius}` : c.key)).join(",")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asPostcodesLabel")}<input className="input" id={`es-postcodes-${adSet.id}`} defaultValue={(adSet.targeting.postcodes ?? []).join(",")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asLocationTypesLabel")}<input className="input" id={`es-loctypes-${adSet.id}`} defaultValue={(adSet.targeting.locationTypes ?? []).join(",")} placeholder="home,recent" /></label>
+                <label className="block text-sm">{t("campaignBuilder.asLocaleIdsLabel")}<input className="input" id={`es-locales-${adSet.id}`} defaultValue={(adSet.targeting.locales ?? []).join(",")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asBehaviorsLabel")}<input className="input" id={`es-behaviors-${adSet.id}`} defaultValue={(adSet.targeting.behaviors ?? []).map(entryToken).join(", ")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asNarrowLabel")}<input className="input" id={`es-narrow-${adSet.id}`} defaultValue={(adSet.targeting.narrowInterests ?? []).map(entryToken).join(", ")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asLifeEventsLabel")}<input className="input" id={`es-life-${adSet.id}`} defaultValue={(adSet.targeting.demographics?.lifeEvents ?? []).map(entryToken).join(", ")} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asWorkLabel")}<input className="input" id={`es-work-${adSet.id}`} defaultValue={(adSet.targeting.demographics?.workPositions ?? []).map(entryToken).join(", ")} /></label>
                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" id={`es-expansion-${adSet.id}`} defaultChecked={adSet.targeting.targetingExpansion === true} /> Targeting Expansion</label>
                 <label className="block text-sm">Bid Strategy
                   <select className="input" id={`es-bidstrategy-${adSet.id}`} defaultValue={adSet.bidStrategy ?? ""}>
                     <option value="">Lowest Cost</option><option value="bid_cap">Bid Cap</option><option value="cost_cap">Cost Per Result Goal</option><option value="roas_goal">ROAS Goal</option>
                   </select>
                 </label>
-                <label className="block text-sm">Bid Amount (Bid Cap হলে)<input className="input" id={`es-bidamount-${adSet.id}`} defaultValue={adSet.bidAmountMinor ? String(Number(adSet.bidAmountMinor) / 100) : ""} /></label>
-                <label className="block text-sm">Cost Goal (Cost Cap হলে)<input className="input" id={`es-costgoal-${adSet.id}`} defaultValue={adSet.costGoalMinor ? String(Number(adSet.costGoalMinor) / 100) : ""} /></label>
-                <label className="block text-sm">ROAS Goal (যেমন 2.0)<input className="input" id={`es-roasgoal-${adSet.id}`} defaultValue={adSet.roasAverageFloor ? String(adSet.roasAverageFloor / 10000) : ""} /></label>
-                <label className="block text-sm">Conversion Event (CN3)
+                <label className="block text-sm">{t("campaignBuilder.asBidAmountLabel")}<input className="input" id={`es-bidamount-${adSet.id}`} defaultValue={adSet.bidAmountMinor ? String(Number(adSet.bidAmountMinor) / 100) : ""} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asCostGoalLabel")}<input className="input" id={`es-costgoal-${adSet.id}`} defaultValue={adSet.costGoalMinor ? String(Number(adSet.costGoalMinor) / 100) : ""} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asRoasGoalLabel")}<input className="input" id={`es-roasgoal-${adSet.id}`} defaultValue={adSet.roasAverageFloor ? String(adSet.roasAverageFloor / 10000) : ""} /></label>
+                <label className="block text-sm">{t("campaignBuilder.asConversionEventLabel")}
                   <select className="input" id={`es-event-${adSet.id}`} defaultValue={adSet.conversionEvent ?? ""}>
                     <option value="">PURCHASE (Default)</option>
                     {[...new Set([...SALES_EVENTS, ...LEAD_EVENTS])].map((ev) => <option key={ev} value={ev}>{ev}</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">ক্যাটালগ (CN3)
+                <label className="block text-sm">{t("campaignBuilder.asCatalogLabel")}
                   <select className="input" id={`es-catalog-${adSet.id}`} defaultValue={adSet.catalogRecordId ?? ""} onChange={async (e) => {
                     const cat = e.target.value;
                     if (!cat) { setEditSets([]); return; }
                     const r = await apiFetch<ProductSetRec[]>(`/organizations/${orgId}/catalogs/${cat}/product-sets`).catch(() => null);
                     if (r) setEditSets(r);
                   }}>
-                    <option value="">ক্যাটালগ নয়</option>
+                    <option value="">{t("campaignBuilder.asCatalogNone")}</option>
                     {catalogs.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.platform})</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">Product Set
+                <label className="block text-sm">{t("campaignBuilder.asProductSetLabel")}
                   <select className="input" id={`es-pset-${adSet.id}`} defaultValue={adSet.productSetId ?? ""}>
-                    <option value="">Product Set বেছে নিন</option>
-                    {editSets.length === 0 && adSet.__productSet ? <option value={adSet.__productSet.id}>{adSet.__productSet.name} (বর্তমান)</option> : null}
-                    {editSets.map((s) => <option key={s.id} value={s.id} disabled={s.status !== "created"}>{s.name} · {s.itemCount} আইটেম{s.status === "created" ? "" : ` (${s.status})`}</option>)}
+                    <option value="">{t("campaignBuilder.asProductSetChoose")}</option>
+                    {editSets.length === 0 && adSet.__productSet ? <option value={adSet.__productSet.id}>{t("campaignBuilder.asProductSetCurrent", { name: adSet.__productSet.name })}</option> : null}
+                    {editSets.map((s) => <option key={s.id} value={s.id} disabled={s.status !== "created"}>{s.name} · {fmtNumBn(s.itemCount)}{t("campaignBuilder.asItemsSuffix")}{s.status === "created" ? "" : ` (${s.status})`}</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">Lead Form (CN4)
+                <label className="block text-sm">{t("campaignBuilder.asLeadFormLabel")}
                   <select className="input" id={`es-leadform-${adSet.id}`} defaultValue={adSet.leadFormId ?? ""}>
-                    <option value="">ফর্ম নেই</option>
-                    {leadForms.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.status === "created" ? "Meta তে তৈরি" : "লোকাল"})</option>)}
+                    <option value="">{t("campaignBuilder.asLeadFormNone")}</option>
+                    {leadForms.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.status === "created" ? t("campaignBuilder.asFormCreated") : t("campaignBuilder.asFormLocal")})</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">Destination (CN13 — CTWA)
+                <label className="block text-sm">{t("campaignBuilder.asDestinationLabel")}
                   <select className="input" id={`es-dest-${adSet.id}`} defaultValue={adSet.destinationType ?? ""}>
-                    <option value="">Website (সাধারণ)</option>
-                    <option value="WHATSAPP">WhatsApp — Click-to-WhatsApp</option>
+                    <option value="">{t("campaignBuilder.asWebsiteOption")}</option>
+                    <option value="WHATSAPP">{t("campaignBuilder.asWaOption")}</option>
                   </select>
                 </label>
-                <label className="block text-sm">WhatsApp Connection (Connected টাই চলবে; নম্বর Meta থেকে পড়া হয়)
+                <label className="block text-sm">{t("campaignBuilder.asWaConnectionLabel")}
                   <select className="input" id={`es-wa-${adSet.id}`} defaultValue={adSet.whatsappIntegrationId ?? ""}>
-                    <option value="">Connection বেছে নিন</option>
+                    <option value="">{t("campaignBuilder.asConnectionChoose")}</option>
                     {(waDestinations?.destinations ?? []).map((d) => (
                       <option key={d.integrationId} value={d.integrationId} disabled={!d.connected && d.integrationId !== adSet.whatsappIntegrationId}>
-                        {d.phoneNumberId ?? "Phone Number ID নেই"} · WABA {d.wabaId ?? "—"}{d.connected ? "" : ` · ${d.status}`}
+                        {d.phoneNumberId ?? t("campaignBuilder.asNoPhoneId")} · WABA {d.wabaId ?? "—"}{d.connected ? "" : ` · ${d.status}`}
                       </option>
                     ))}
                   </select>
-                  {adSet.destinationType === "WHATSAPP" && adSet.whatsappPhoneNumber ? <span className="mt-0.5 block text-xs text-slate-500">বর্তমান নম্বর (Meta থেকে পড়া): {adSet.whatsappPhoneNumber}</span> : null}
+                  {adSet.destinationType === "WHATSAPP" && adSet.whatsappPhoneNumber ? <span className="mt-0.5 block text-xs text-slate-500">{t("campaignBuilder.asWaCurrentNumber", { number: adSet.whatsappPhoneNumber })}</span> : null}
                 </label>
               </div>
-              <p className="text-xs text-slate-500">বাজেট: দৈনিক বা Lifetime — যেকোনো একটি দিন; দুটোই বদলালে জোড়া হিসেবে Replace হবে।</p>
+              <p className="text-xs text-slate-500">{t("campaignBuilder.asBudgetNote")}</p>
               <div className="flex gap-2">
                 <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const g = (id: string) => (document.getElementById(id) as HTMLInputElement)?.value ?? "";
@@ -2121,9 +2131,9 @@ export default function CampaignBuilderPage() {
                   const d = g(`es-budget-${adSet.id}`); const l = g(`es-life-${adSet.id}`);
                   if (d || l) { body.dailyBudget = d || undefined; body.lifetimeBudget = l || undefined; }
                   const res = await wrap(`es-${adSet.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}`, { method: "PATCH", body: JSON.stringify(body) }));
-                  if (res) { setEditSetId(null); setNotice("Ad Set আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
-                }}>সংরক্ষণ</button>
-                <button className="btn-secondary btn-sm" onClick={() => setEditSetId(null)}>বাতিল</button>
+                  if (res) { setEditSetId(null); setNotice(t("campaignBuilder.asUpdatedNotice")); noteSaved(); await loadPlan(plan.id); }
+                }}>{t("campaignBuilder.asSaveBtn")}</button>
+                <button className="btn-secondary btn-sm" onClick={() => setEditSetId(null)}>{t("campaignBuilder.asCancelBtn")}</button>
               </div>
             </div>
           ) : null}
@@ -2134,104 +2144,104 @@ export default function CampaignBuilderPage() {
                 <p className="mt-0.5 whitespace-pre-wrap">{ad.primaryText}</p>
                 {ad.headline ? <div className="text-slate-500">Headline: {ad.headline}</div> : null}
                 <a className="text-xs text-blue-600" href={ad.linkUrl} target="_blank" rel="noreferrer">{ad.linkUrl}</a>
-                {ad.textOptions && (ad.textOptions.primaryTexts.length > 1 || ad.textOptions.headlines.length > 1 || ad.textOptions.descriptions.length > 0) ? <div className="mt-0.5 text-xs text-indigo-600">✍️ Creative v2: {ad.textOptions.primaryTexts.length}টি Text · {ad.textOptions.headlines.length}টি Headline · {ad.textOptions.descriptions.length}টি Description অপশন</div> : null}
-                {ad.textOptions?.locales && Object.keys(ad.textOptions.locales).length ? <div className="mt-0.5 text-xs text-teal-700">🌐 অনুবাদ আছে: {Object.keys(ad.textOptions.locales).map((l) => (l === "en" ? "English" : "বাংলা")).join(", ")} (Locale Variant — সংখ্যা Source-এর সঙ্গে লক করা)</div> : null}
+                {ad.textOptions && (ad.textOptions.primaryTexts.length > 1 || ad.textOptions.headlines.length > 1 || ad.textOptions.descriptions.length > 0) ? <div className="mt-0.5 text-xs text-indigo-600">{t("campaignBuilder.adTextOptionsLine", { texts: fmtNumBn(ad.textOptions.primaryTexts.length), headlines: fmtNumBn(ad.textOptions.headlines.length), descriptions: fmtNumBn(ad.textOptions.descriptions.length) })}</div> : null}
+                {ad.textOptions?.locales && Object.keys(ad.textOptions.locales).length ? <div className="mt-0.5 text-xs text-teal-700">{t("campaignBuilder.adLocalesLine", { locales: Object.keys(ad.textOptions.locales).map((l) => (l === "en" ? "English" : t("campaignBuilder.adLangBn"))).join(", ") })}</div> : null}
                 {ad.placementAssets?.placements?.feed || ad.placementAssets?.placements?.vertical ? <div className="text-xs text-indigo-600">🖼️ Placement Asset: {ad.placementAssets.placements.feed ? "Feed Override" : ""}{ad.placementAssets.placements.feed && ad.placementAssets.placements.vertical ? " · " : ""}{ad.placementAssets.placements.vertical ? "Stories/Reels Override" : ""}</div> : null}
                 {ad.creativeEnhancements && Object.entries(ad.creativeEnhancements).some(([, v]) => v) ? <div className="text-xs text-indigo-600">✨ Enhancements ON: {Object.entries(ad.creativeEnhancements).filter(([, v]) => v).map(([k]) => k).join(", ")}</div> : null}
-                {ad.whatsappWelcome?.greetingText || ad.whatsappWelcome?.prefillMessage || ad.whatsappWelcome?.iceBreakers?.length ? <div className="text-xs text-emerald-700">💬 WhatsApp Welcome: {ad.whatsappWelcome?.greetingText ? `“${ad.whatsappWelcome.greetingText}”` : ""}{ad.whatsappWelcome?.iceBreakers?.length ? ` · Ice Breaker ${ad.whatsappWelcome.iceBreakers.length}টি` : ad.whatsappWelcome?.prefillMessage ? ` · Prefill: “${ad.whatsappWelcome.prefillMessage}”` : ""}</div> : null}
+                {ad.whatsappWelcome?.greetingText || ad.whatsappWelcome?.prefillMessage || ad.whatsappWelcome?.iceBreakers?.length ? <div className="text-xs text-emerald-700">{t("campaignBuilder.adWaWelcome")}{ad.whatsappWelcome?.greetingText ? `“${ad.whatsappWelcome.greetingText}”` : ""}{ad.whatsappWelcome?.iceBreakers?.length ? t("campaignBuilder.adIceBreakerPart", { count: fmtNumBn(ad.whatsappWelcome.iceBreakers.length) }) : ad.whatsappWelcome?.prefillMessage ? t("campaignBuilder.adPrefillPart", { text: ad.whatsappWelcome.prefillMessage }) : ""}</div> : null}
                 <div className="mt-1">
                   <button className="rounded border bg-white px-2 py-0.5 text-xs" onClick={() => setPreviewAdId(previewAdId === ad.id ? null : ad.id)}>👁 Preview</button>
                 </div>
                 {previewAdId === ad.id ? <AdPreview ad={ad} pageName={plan.name} /> : null}
                 {editable ? (
                   <div className="mt-1 flex gap-1">
-                    <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={() => setEditAdId(editAdId === ad.id ? null : ad.id)}>✎ সম্পাদনা</button>
+                    <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={() => setEditAdId(editAdId === ad.id ? null : ad.id)}>{t("campaignBuilder.adEditBtn")}</button>
                     <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`dupad-${ad.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/duplicate`, { method: "POST", body: JSON.stringify({}) }));
-                      if (res) { setNotice("Ad কপি হয়েছে।"); await loadPlan(plan.id); }
-                    }}>⧉ কপি</button>
+                      if (res) { setNotice(t("campaignBuilder.adDupNotice")); await loadPlan(plan.id); }
+                    }}>{t("campaignBuilder.adCopyBtn")}</button>
                     <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                       if (adVersionsOpen === ad.id) { setAdVersionsOpen(null); return; }
                       const res = await wrap(`vers-${ad.id}`, () => apiFetch<{ versions: { id: string; version: number; source: string; createdAt: string }[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/versions`));
                       if (res) { setAdVersionList(res.versions ?? []); setAdVersionsOpen(ad.id); setAdDiff(null); }
-                    }}>🕘 সংস্করণ (CA27)</button>
+                    }}>{t("campaignBuilder.adVersionsBtn")}</button>
                     <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`carousel-${ad.id}`, () => apiFetch<any>(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/assemble-carousel`, { method: "POST", body: JSON.stringify({}) }));
                       if (res) {
-                        if (res.applied) { setNotice(`Catalog থেকে ${res.cards.length}টি কার্ড সাজানো হয়েছে (আসল Product ডেটা দিয়ে)।`); await loadPlan(plan.id); }
+                        if (res.applied) { setNotice(t("campaignBuilder.adCarouselApplied", { count: fmtNumBn(res.cards.length) })); await loadPlan(plan.id); }
                         else { setCarouselPreview({ adId: ad.id, cards: res.previewCards ?? [] }); setNotice(res.reason); }
                       }
-                    }}>🎠 Catalog কার্ড</button>
+                    }}>{t("campaignBuilder.adCarouselBtn")}</button>
                     <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`landing-${ad.id}`, () => apiFetch<any>(`/organizations/${orgId}/campaign-plans/${plan.id}/landing`, { method: "POST", body: JSON.stringify({ adId: ad.id }) }));
                       if (res) {
                         setLandingOffer({ adId: ad.id, landing: res.landing, url: res.url ?? null, path: res.path, note: res.note, existing: (res.existingForProduct ?? []).map((l: any) => ({ id: l.id, slug: l.slug, status: l.status, url: l.url ?? null, path: l.path })) });
                         setNotice(res.note);
                       }
-                    }}>🌐 Landing তৈরি (CA28)</button>
+                    }}>{t("campaignBuilder.adLandingBtn")}</button>
                     <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`loc-${ad.id}-en`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/localize`, { method: "POST", body: JSON.stringify({ targetLocale: "en" }) }));
-                      if (res) { setNotice("English অনুবাদ সেভ হয়েছে — Text Options-এ Locale Variant হিসেবে আছে (সংখ্যা/দাম Source-এর সঙ্গে লক করা)।"); await loadPlan(plan.id); }
-                    }}>🌐 EN অনুবাদ</button>
+                      if (res) { setNotice(t("campaignBuilder.adLocEnNotice")); await loadPlan(plan.id); }
+                    }}>{t("campaignBuilder.adLocEnBtn")}</button>
                     <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`loc-${ad.id}-bn`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/localize`, { method: "POST", body: JSON.stringify({ targetLocale: "bn" }) }));
-                      if (res) { setNotice("বাংলা অনুবাদ সেভ হয়েছে — Text Options-এ Locale Variant হিসেবে আছে (সংখ্যা/দাম Source-এর সঙ্গে লক করা)।"); await loadPlan(plan.id); }
-                    }}>🌐 বাংলা অনুবাদ</button>
-                    <button className="rounded border bg-white px-2 py-0.5 text-xs" onClick={() => setVariantAdId(variantAdId === ad.id ? null : ad.id)}>🏗 Variant (Library/Studio Asset)</button>
+                      if (res) { setNotice(t("campaignBuilder.adLocBnNotice")); await loadPlan(plan.id); }
+                    }}>{t("campaignBuilder.adLocBnBtn")}</button>
+                    <button className="rounded border bg-white px-2 py-0.5 text-xs" onClick={() => setVariantAdId(variantAdId === ad.id ? null : ad.id)}>{t("campaignBuilder.adVariantBtn")}</button>
                   </div>
                 ) : null}
                 {editable && variantAdId === ad.id ? (
                   <div className="mt-2 space-y-2 rounded-lg border border-teal-200 bg-white p-3">
-                    <div className="text-xs font-semibold text-teal-700">এই Ad এর Variant — Creative Library বা Creative Studio/Social Asset থেকে (লেখা ও Enhancement কপি হবে; Placement Override হবে না)</div>
+                    <div className="text-xs font-semibold text-teal-700">{t("campaignBuilder.adVariantTitle")}</div>
                     <div className="flex flex-wrap gap-2">
                       <select className="input flex-1" id={`va-lib-${ad.id}`}>
-                        <option value="">Creative Library Asset বেছে নিন</option>
+                        <option value="">{t("campaignBuilder.adVariantLibChoose")}</option>
                         {sortPicker(assets.filter((x) => x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)} ({x.kind})</option>)}
                       </select>
                       <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                         const assetId = (document.getElementById(`va-lib-${ad.id}`) as HTMLSelectElement)?.value ?? "";
-                        if (!assetId) { setError("Library Asset বেছে নিন"); return; }
+                        if (!assetId) { setError(t("campaignBuilder.adErrLibAsset")); return; }
                         const res = await wrap(`variant-${ad.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/variant`, { method: "POST", body: JSON.stringify({ creativeAssetId: assetId }) }));
-                        if (res) { setVariantAdId(null); setNotice("Variant Ad তৈরি হয়েছে।"); await loadPlan(plan.id); }
-                      }}>Variant তৈরি করুন</button>
+                        if (res) { setVariantAdId(null); setNotice(t("campaignBuilder.adVariantCreated")); await loadPlan(plan.id); }
+                      }}>{t("campaignBuilder.adVariantCreateBtn")}</button>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <select className="input flex-1" id={`va-media-${ad.id}`}>
-                        <option value="">Creative Studio / Social Media Asset (শুধু ছবি)</option>
+                        <option value="">{t("campaignBuilder.adVariantMediaChoose")}</option>
                         {sortPicker(mediaAssets.filter((m) => m.kind === "image"), "media").map((m) => <option key={m.id} value={m.id}>{assetOptLabel(m, "media")}</option>)}
                       </select>
                       <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                         const assetId = (document.getElementById(`va-media-${ad.id}`) as HTMLSelectElement)?.value ?? "";
-                        if (!assetId) { setError("Media Asset বেছে নিন"); return; }
+                        if (!assetId) { setError(t("campaignBuilder.adErrMediaAsset")); return; }
                         const res = await wrap(`variant-${ad.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/variant`, { method: "POST", body: JSON.stringify({ mediaAssetId: assetId }) }));
-                        if (res) { setVariantAdId(null); setNotice("Variant Ad তৈরি হয়েছে।"); await loadPlan(plan.id); }
-                      }}>Variant তৈরি করুন</button>
+                        if (res) { setVariantAdId(null); setNotice(t("campaignBuilder.adVariantCreated")); await loadPlan(plan.id); }
+                      }}>{t("campaignBuilder.adVariantCreateBtn")}</button>
                     </div>
-                    <p className="text-[11px] text-slate-500">ভিডিও Media Asset থেকে Variant হয় না — Meta ভিডিও Ad এর জন্য Meta-side Video ID লাগে; Creative Library তে Upload করা ভিডিও ব্যবহার করুন।</p>
+                    <p className="text-[11px] text-slate-500">{t("campaignBuilder.adVariantVideoNote")}</p>
                   </div>
                 ) : null}
                 {editable && adVersionsOpen === ad.id ? (
                   <div className="mt-2 space-y-2 rounded-lg border border-violet-200 bg-white p-3">
-                    <div className="text-xs font-semibold text-violet-700">🕘 Ad-এর সংস্করণ ইতিহাস (CA27) — প্রতিটি সংস্করণ বদলের আগের রূপ; Restore করলে বর্তমান রূপও নতুন সংস্করণ হিসেবে থেকে যায়</div>
-                    {adVersionList.length === 0 ? <p className="text-xs text-slate-500">এখনো কোনো সংস্করণ নেই — Ad টি সম্পাদনা করলেই আগের রূপ সংরক্ষিত হবে।</p> : adVersionList.map((v) => (
+                    <div className="text-xs font-semibold text-violet-700">{t("campaignBuilder.adVersionsTitle")}</div>
+                    {adVersionList.length === 0 ? <p className="text-xs text-slate-500">{t("campaignBuilder.adVersionsNone")}</p> : adVersionList.map((v) => (
                       <div key={v.id} className="flex flex-wrap items-center gap-2 rounded bg-violet-50 p-2 text-xs">
-                        <b>সংস্করণ {v.version}</b>
-                        <span className="text-slate-500">{v.source === "restore" ? "Restore-এর আগের রূপ" : "সম্পাদনার আগের রূপ"} · {new Date(v.createdAt).toLocaleString("bn-BD")}</span>
+                        <b>{t("campaignBuilder.adVersionLabel", { version: fmtNumBn(v.version) })}</b>
+                        <span className="text-slate-500">{v.source === "restore" ? t("campaignBuilder.adVersionRestoreSource") : t("campaignBuilder.adVersionEditSource")} · {fmtDateTime(locale, v.createdAt)}</span>
                         <button className="rounded border bg-white px-2 py-0.5" disabled={busy !== ""} onClick={async () => {
                           const res = await wrap(`diff-${v.id}`, () => apiFetch<{ changes: { field: string; versionValue: unknown; currentValue: unknown }[]; identical: boolean }>(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/versions/${v.id}/diff`));
                           if (res) setAdDiff({ adId: ad.id, version: v.version, changes: res.changes, identical: res.identical });
-                        }}>পার্থক্য দেখুন</button>
+                        }}>{t("campaignBuilder.adDiffBtn")}</button>
                         <button className="rounded border bg-white px-2 py-0.5" disabled={busy !== ""} onClick={async () => {
-                          if (!window.confirm(`সংস্করণ ${v.version}-এর রূপে ফিরে যাবেন? বর্তমান রূপটি নতুন সংস্করণ হিসেবে থেকে যাবে — কিছুই হারাবে না।`)) return;
+                          if (!window.confirm(t("campaignBuilder.adRestoreConfirm", { version: fmtNumBn(v.version) }))) return;
                           const res = await wrap(`restore-${v.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/versions/${v.id}/restore`, { method: "POST", body: JSON.stringify({}) }));
-                          if (res) { setNotice(`সংস্করণ ${v.version} Restore হয়েছে।`); setAdVersionsOpen(null); await loadPlan(plan.id); }
+                          if (res) { setNotice(t("campaignBuilder.adRestoredNotice", { version: fmtNumBn(v.version) })); setAdVersionsOpen(null); await loadPlan(plan.id); }
                         }}>Restore</button>
                       </div>
                     ))}
                     {adDiff && adDiff.adId === ad.id ? (
                       <div className="rounded bg-slate-50 p-2 text-xs">
-                        <b>সংস্করণ {adDiff.version} বনাম বর্তমান:</b>
-                        {adDiff.identical ? <p className="text-slate-500">কোনো পার্থক্য নেই — বর্তমান রূপ হুবহু একই।</p> : adDiff.changes.map((c, i) => (
+                        <b>{t("campaignBuilder.adDiffTitle", { version: fmtNumBn(adDiff.version) })}</b>
+                        {adDiff.identical ? <p className="text-slate-500">{t("campaignBuilder.adDiffNone")}</p> : adDiff.changes.map((c, i) => (
                           <div key={i} className="mt-1"><span className="font-mono">{c.field}</span>: <span className="text-red-700 line-through">{typeof c.versionValue === "string" ? c.versionValue.slice(0, 80) : JSON.stringify(c.versionValue)?.slice(0, 80) ?? "—"}</span> → <span className="text-green-700">{typeof c.currentValue === "string" ? c.currentValue.slice(0, 80) : JSON.stringify(c.currentValue)?.slice(0, 80) ?? "—"}</span></div>
                         ))}
                       </div>
@@ -2240,63 +2250,63 @@ export default function CampaignBuilderPage() {
                 ) : null}
                 {editable && carouselPreview && carouselPreview.adId === ad.id ? (
                   <div className="mt-2 space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
-                    <div className="font-semibold text-amber-800">🎠 Catalog কার্ডের Preview — হাতে বসানো কার্ড আছে বলে এখনো বসানো হয়নি</div>
+                    <div className="font-semibold text-amber-800">{t("campaignBuilder.adCarouselPreviewTitle")}</div>
                     <ul className="list-inside list-disc">{carouselPreview.cards.map((c, i) => <li key={i}>{c.title}</li>)}</ul>
                     <div className="flex gap-2">
                       <button className="rounded border bg-white px-2 py-0.5" disabled={busy !== ""} onClick={async () => {
                         const res = await wrap(`carousel-replace-${ad.id}`, () => apiFetch<any>(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/assemble-carousel`, { method: "POST", body: JSON.stringify({ replace: true }) }));
-                        if (res?.applied) { setCarouselPreview(null); setNotice("Catalog কার্ড বসানো হয়েছে — আগের হাতে-বসানো কার্ড Ad Version হিসেবে আছে (Restore করা যাবে)।"); await loadPlan(plan.id); }
-                      }}>তবুও বসান (Replace)</button>
-                      <button className="rounded border bg-white px-2 py-0.5" onClick={() => setCarouselPreview(null)}>বন্ধ করুন</button>
+                        if (res?.applied) { setCarouselPreview(null); setNotice(t("campaignBuilder.adCarouselReplaced")); await loadPlan(plan.id); }
+                      }}>{t("campaignBuilder.adCarouselReplaceBtn")}</button>
+                      <button className="rounded border bg-white px-2 py-0.5" onClick={() => setCarouselPreview(null)}>{t("campaignBuilder.adCloseBtn")}</button>
                     </div>
                   </div>
                 ) : null}
                 {editable && landingOffer && landingOffer.adId === ad.id ? (
                   <div className="mt-2 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs">
-                    <div className="font-semibold text-emerald-800">🌐 Landing Page — {landingOffer.path} <span className="badge badge-slate">{landingOffer.landing.status}</span></div>
+                    <div className="font-semibold text-emerald-800">{t("campaignBuilder.adLandingTitle", { path: landingOffer.path })}<span className="badge badge-slate">{landingOffer.landing.status}</span></div>
                     <p className="text-slate-600">{landingOffer.note}</p>
                     {landingOffer.landing.status === "published" ? (
                       <button className="rounded border bg-white px-2 py-0.5" disabled={busy !== ""} onClick={async () => {
-                        if (!window.confirm(`এই Ad-এর Link বদলে Landing-এর URL (${landingOffer.url ?? landingOffer.path}) বসাবেন? আগের Link টি Ad Version হিসেবে থেকে যাবে।`)) return;
+                        if (!window.confirm(t("campaignBuilder.adLandingApplyConfirm", { url: landingOffer.url ?? landingOffer.path }))) return;
                         const res = await wrap(`landing-apply-${ad.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/apply-landing`, { method: "POST", body: JSON.stringify({ landingId: landingOffer.landing.id }) }));
-                        if (res) { setLandingOffer(null); setNotice("Landing-এর URL Ad-এর Link-এ বসানো হয়েছে।"); await loadPlan(plan.id); }
-                      }}>Ad-এর Link-এ বসান (নিশ্চিত করুন)</button>
-                    ) : <p className="text-amber-700">Draft Landing Ad-এ বসানো যায় না — Landings পেজ থেকে Publish করুন, তারপর আবার চেষ্টা করুন।</p>}
+                        if (res) { setLandingOffer(null); setNotice(t("campaignBuilder.adLandingApplied")); await loadPlan(plan.id); }
+                      }}>{t("campaignBuilder.adLandingApplyBtn")}</button>
+                    ) : <p className="text-amber-700">{t("campaignBuilder.adLandingDraftNote")}</p>}
                     {landingOffer.existing.filter((l) => l.status === "published").map((l) => (
                       <div key={l.id} className="flex flex-wrap items-center gap-2">
-                        <span>আগের Landing: {l.path}</span>
+                        <span>{t("campaignBuilder.adLandingPrev", { path: l.path })}</span>
                         <button className="rounded border bg-white px-2 py-0.5" disabled={busy !== ""} onClick={async () => {
-                          if (!window.confirm(`এই Ad-এর Link বদলে আগের Landing (${l.url ?? l.path}) বসাবেন?`)) return;
+                          if (!window.confirm(t("campaignBuilder.adLandingPrevConfirm", { url: l.url ?? l.path }))) return;
                           const res = await wrap(`landing-apply-old-${ad.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}/apply-landing`, { method: "POST", body: JSON.stringify({ landingId: l.id }) }));
-                          if (res) { setLandingOffer(null); setNotice("আগের Landing-এর URL Ad-এর Link-এ বসানো হয়েছে।"); await loadPlan(plan.id); }
-                        }}>এটি বসান</button>
+                          if (res) { setLandingOffer(null); setNotice(t("campaignBuilder.adLandingPrevApplied")); await loadPlan(plan.id); }
+                        }}>{t("campaignBuilder.adLandingPrevBtn")}</button>
                       </div>
                     ))}
-                    <button className="rounded border bg-white px-2 py-0.5" onClick={() => setLandingOffer(null)}>বন্ধ করুন</button>
+                    <button className="rounded border bg-white px-2 py-0.5" onClick={() => setLandingOffer(null)}>{t("campaignBuilder.adCloseBtn")}</button>
                   </div>
                 ) : null}
                 {editable && editAdId === ad.id ? (
                   <div className="mt-2 space-y-2 rounded-lg border border-indigo-200 bg-white p-3">
-                    <input className="input" id={`ea-name-${ad.id}`} defaultValue={ad.name} placeholder="Ad এর নাম" />
+                    <input className="input" id={`ea-name-${ad.id}`} defaultValue={ad.name} placeholder={t("campaignBuilder.adNamePlaceholder")} />
                     <textarea className="input" rows={3} id={`ea-text-${ad.id}`} defaultValue={ad.primaryText} placeholder="Primary Text" />
                     <input className="input" id={`ea-headline-${ad.id}`} defaultValue={ad.headline ?? ""} placeholder="Headline" />
                     <input className="input" id={`ea-link-${ad.id}`} defaultValue={ad.linkUrl} placeholder="Link URL" />
                     <div className="space-y-2 rounded-lg bg-indigo-50 p-2">
-                      <div className="text-xs font-semibold text-indigo-700">Creative v2 (CN5) — অপশনগুলো প্রতি লাইনে একটি; প্রথম লাইনটাই মূল লেখা</div>
-                      <textarea className="input" rows={3} id={`ea-primaries-${ad.id}`} defaultValue={(ad.textOptions?.primaryTexts ?? [ad.primaryText]).join("\n")} placeholder="Primary Text অপশনসমূহ (সর্বোচ্চ ৫)" />
-                      <textarea className="input" rows={2} id={`ea-headlines-${ad.id}`} defaultValue={(ad.textOptions?.headlines ?? (ad.headline ? [ad.headline] : [])).join("\n")} placeholder="Headline অপশনসমূহ (সর্বোচ্চ ৫)" />
-                      <textarea className="input" rows={2} id={`ea-descs-${ad.id}`} defaultValue={(ad.textOptions?.descriptions ?? (ad.description ? [ad.description] : [])).join("\n")} placeholder="Description অপশনসমূহ (সর্বোচ্চ ২)" />
+                      <div className="text-xs font-semibold text-indigo-700">{t("campaignBuilder.adV2Title")}</div>
+                      <textarea className="input" rows={3} id={`ea-primaries-${ad.id}`} defaultValue={(ad.textOptions?.primaryTexts ?? [ad.primaryText]).join("\n")} placeholder={t("campaignBuilder.adPrimariesPlaceholder")} />
+                      <textarea className="input" rows={2} id={`ea-headlines-${ad.id}`} defaultValue={(ad.textOptions?.headlines ?? (ad.headline ? [ad.headline] : [])).join("\n")} placeholder={t("campaignBuilder.adHeadlinesPlaceholder")} />
+                      <textarea className="input" rows={2} id={`ea-descs-${ad.id}`} defaultValue={(ad.textOptions?.descriptions ?? (ad.description ? [ad.description] : [])).join("\n")} placeholder={t("campaignBuilder.adDescsPlaceholder")} />
                       <div className="flex flex-wrap gap-2">
                         <select className="input flex-1" id={`ea-feed-${ad.id}`} defaultValue={ad.placementAssets?.placements?.feed?.imageAssetId ?? ""}>
-                          <option value="">Feed Placement ছবি (Override নেই)</option>
+                          <option value="">{t("campaignBuilder.adFeedNone")}</option>
                           {sortPicker(assets.filter((x) => x.kind === "image" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                         </select>
                         <select className="input flex-1" id={`ea-vertical-${ad.id}`} defaultValue={ad.placementAssets?.placements?.vertical?.imageAssetId ?? ""}>
-                          <option value="">Stories/Reels ছবি (Override নেই)</option>
+                          <option value="">{t("campaignBuilder.adVerticalNone")}</option>
                           {sortPicker(assets.filter((x) => x.kind === "image" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                         </select>
                         <select className="input flex-1" id={`ea-verticalvideo-${ad.id}`} defaultValue={ad.placementAssets?.placements?.vertical?.videoAssetId ?? ""}>
-                          <option value="">Stories/Reels ভিডিও (Override নেই)</option>
+                          <option value="">{t("campaignBuilder.adVerticalVideoNone")}</option>
                           {sortPicker(assets.filter((x) => x.kind === "video" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                         </select>
                       </div>
@@ -2325,30 +2335,30 @@ export default function CampaignBuilderPage() {
                             placementAssets: placements, creativeEnhancements,
                           }),
                         }));
-                        if (res) { setEditAdId(null); setNotice("Ad আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
-                      }}>সংরক্ষণ</button>
-                      <button className="btn-secondary btn-sm" onClick={() => setEditAdId(null)}>বাতিল</button>
+                        if (res) { setEditAdId(null); setNotice(t("campaignBuilder.adUpdated")); noteSaved(); await loadPlan(plan.id); }
+                      }}>{t("campaignBuilder.adSaveBtn")}</button>
+                      <button className="btn-secondary btn-sm" onClick={() => setEditAdId(null)}>{t("campaignBuilder.adCancelBtn")}</button>
                     </div>
                   </div>
                 ) : null}
               </div>
             ))}
-            {adSet.ads.length === 0 ? <p className="text-sm text-slate-400">কোনো Ad নেই</p> : null}
+            {adSet.ads.length === 0 ? <p className="text-sm text-slate-400">{t("campaignBuilder.adNone")}</p> : null}
           </div>
           <div className={`space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 ${activeStep !== 1 ? "hidden" : ""}`}>
-            <div className="text-sm font-semibold">🎯 Audience Studio <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN6 — বিদ্যমান Audiences সিস্টেম দিয়েই)</span></div>
-            {!studio ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ Studio তথ্য লোড হয়নি।</p> : studio.available === false ? <p className="rounded-lg border border-amber-200 bg-white/60 p-2 text-xs leading-[1.7] text-amber-700">⚠ পাওয়া যাচ্ছে না: {studio.reason}</p> : (
+            <div className="text-sm font-semibold">{t("campaignBuilder.stTitle")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.stTitleNote")}</span></div>
+            {!studio ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.stNotLoaded")}</p> : studio.available === false ? <p className="rounded-lg border border-amber-200 bg-white/60 p-2 text-xs leading-[1.7] text-amber-700">{t("campaignBuilder.stUnavailable", { reason: studio.reason ?? "" })}</p> : (
               <>
                 {(adSet.targeting.exclusionPresets ?? []).length > 0 ? (
-                  <div className="text-xs text-slate-600">🚫 সক্রিয় Exclusion Preset: {(adSet.targeting.exclusionPresets ?? []).map((p) => <span key={p.key} className="mr-1 rounded bg-white px-1.5 py-0.5 font-medium">{p.label}</span>)}</div>
+                  <div className="text-xs text-slate-600">{t("campaignBuilder.stActivePresets")}{(adSet.targeting.exclusionPresets ?? []).map((p) => <span key={p.key} className="mr-1 rounded bg-white px-1.5 py-0.5 font-medium">{p.label}</span>)}</div>
                 ) : null}
                 {editable ? (
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-600">Exclusion Preset:</span>
+                    <span className="text-xs font-semibold text-slate-600">{t("campaignBuilder.stPresetLabel")}</span>
                     {studio.presets.map((p) => (
                       <button key={p.key} className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                         const res = await wrap(`preset-${adSet.id}-${p.key}`, () => apiFetch<{ status: string; reason?: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/audiences/exclusion-preset`, { method: "POST", body: JSON.stringify({ preset: p.key }) }));
-                        if (res) { if (res.status === "applied") setNotice(`Preset প্রয়োগ হয়েছে: ${p.label}`); else setError(`Preset প্রয়োগ হয়নি: ${res.reason ?? "পাওয়া যাচ্ছে না"}`); await loadPlan(plan.id); }
+                        if (res) { if (res.status === "applied") setNotice(t("campaignBuilder.stPresetApplied", { label: p.label })); else setError(t("campaignBuilder.stPresetFailed", { reason: res.reason ?? t("campaignBuilder.stPresetUnavailableFallback") })); await loadPlan(plan.id); }
                       }}>{p.label}</button>
                     ))}
                   </div>
@@ -2356,27 +2366,27 @@ export default function CampaignBuilderPage() {
                 <div className="grid gap-1">
                   {studio.sources.map((s) => (
                     <div key={s.key} className="flex flex-wrap items-center justify-between gap-2 rounded bg-white px-2 py-1 text-xs">
-                      <span>{s.label} — {s.available ? `${fmtNumBn(s.contactCount ?? 0)}টি Contact` : <span className="text-amber-700">পাওয়া যাচ্ছে না: {s.reason}</span>}</span>
+                      <span>{s.label} — {s.available ? `${fmtNumBn(s.contactCount ?? 0)}${t("campaignBuilder.stContactsSuffix")}` : <span className="text-amber-700">{t("campaignBuilder.stUnavailable", { reason: s.reason ?? "" })}</span>}</span>
                       {editable && s.available ? (
                         <button className="rounded border px-2 py-0.5 font-semibold" disabled={busy !== ""} onClick={async () => {
                           const source = s.key.startsWith("recent_purchasers") ? "recent_purchasers" : s.key.startsWith("rfm_") ? "rfm_segment" : s.key;
                           const res = await wrap(`studio-${adSet.id}-${s.key}`, () => apiFetch<{ attached: boolean }>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/audiences/create`, { method: "POST", body: JSON.stringify({ source, segment: s.segment ?? undefined, name: s.label, attach: true }) }));
-                          if (res) { setNotice(res.attached ? `Audience তৈরি হয়ে এই Ad Set এ যোগ হয়েছে: ${s.label}` : `Audience তৈরি হয়েছে, কিন্তু Meta ID ছাড়া যোগ করা যায়নি: ${s.label}`); await loadPlan(plan.id); }
-                        }}>তৈরি করুন + যোগ করুন</button>
+                          if (res) { setNotice(res.attached ? t("campaignBuilder.stAttachedNotice", { label: s.label }) : t("campaignBuilder.stCreatedNotAttached", { label: s.label })); await loadPlan(plan.id); }
+                        }}>{t("campaignBuilder.stCreateAttachBtn")}</button>
                       ) : null}
                     </div>
                   ))}
                 </div>
                 {studio.records.length ? (
                   <div className="grid gap-1">
-                    <div className="text-xs font-semibold text-slate-600">Audience পারফরম্যান্স (শেষ ৯০ দিন — সংরক্ষিত Rollup থেকে; যেই Ad Set-এর Audience অস্পষ্ট, তার ব্যয় এখানে ধরা হয়নি):</div>
+                    <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.stPerfTitle")}</div>
                     {studio.records.map((a) => (
                       <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-white px-2 py-1 text-xs">
-                        <span>{a.name} ({a.kind}){a.approximateCount != null ? ` — আনুমানিক ${fmtNumBn(a.approximateCount)} জন` : ""}</span>
+                        <span>{a.name} ({a.kind}){a.approximateCount != null ? t("campaignBuilder.stApproxPart", { count: fmtNumBn(a.approximateCount) }) : ""}</span>
                         {a.performance ? (
-                          <span className="text-slate-600">ব্যয় ৳{fmtNumBn(Math.round(a.performance.spend))} · {fmtNumBn(a.performance.conversions)}টি কনভার্সন · CPA {a.performance.cpa != null ? `৳${fmtNumBn(Math.round(a.performance.cpa))}` : "—"} · {fmtNumBn(a.performance.adSetsCounted)}টি Ad Set</span>
+                          <span className="text-slate-600">{t("campaignBuilder.stPerfLine", { spend: fmtMoney(locale, a.performance.spend), conversions: fmtNumBn(a.performance.conversions), cpa: a.performance.cpa != null ? fmtMoney(locale, a.performance.cpa) : "—", adSets: fmtNumBn(a.performance.adSetsCounted) })}</span>
                         ) : (
-                          <span className="text-slate-400">পারফরম্যান্স: তথ্য নেই</span>
+                          <span className="text-slate-400">{t("campaignBuilder.stPerfNone")}</span>
                         )}
                       </div>
                     ))}
@@ -2384,12 +2394,12 @@ export default function CampaignBuilderPage() {
                 ) : null}
                 {editable ? (
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-600">Lookalike:</span>
+                    <span className="text-xs font-semibold text-slate-600">{t("campaignBuilder.stLookalikeLabel")}</span>
                     <select className="input w-56" id={`lk-src-${adSet.id}`}>
-                      <option value="">Source Audience বেছে নিন</option>
+                      <option value="">{t("campaignBuilder.stSourceChoose")}</option>
                       {studio.records.filter((a) => a.externalAudienceId).map((a) => <option key={a.id} value={a.id}>{a.name} ({a.kind})</option>)}
                     </select>
-                    <input className="input w-20" id={`lk-country-${adSet.id}`} defaultValue="BD" placeholder="দেশ (BD)" />
+                    <input className="input w-20" id={`lk-country-${adSet.id}`} defaultValue="BD" placeholder={t("campaignBuilder.stCountryPlaceholder")} />
                     <select className="input w-28" id={`lk-ratio-${adSet.id}`} defaultValue="0.01">
                       <option value="0.01">1%</option><option value="0.03">3%</option><option value="0.05">5%</option><option value="0.1">10%</option>
                     </select>
@@ -2398,24 +2408,24 @@ export default function CampaignBuilderPage() {
                       const country = (document.getElementById(`lk-country-${adSet.id}`) as HTMLInputElement)?.value.trim().toUpperCase() ?? "";
                       const ratio = Number((document.getElementById(`lk-ratio-${adSet.id}`) as HTMLSelectElement)?.value ?? "0.01");
                       const srcName = studio.records.find((a) => a.id === src)?.name ?? "Audience";
-                      if (!src) { setError("Lookalike এর Source Audience বেছে নিন"); return; }
+                      if (!src) { setError(t("campaignBuilder.stErrLookalikeSource")); return; }
                       const res = await wrap(`lk-${adSet.id}`, () => apiFetch<{ attached: boolean }>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/audiences/lookalike`, { method: "POST", body: JSON.stringify({ sourceAudienceRecordId: src, name: `${srcName} — Lookalike ${country} ${Math.round(ratio * 100)}%`, country, ratio, attach: true }) }));
-                      if (res) { setNotice(res.attached ? "Lookalike তৈরি হয়ে যোগ হয়েছে।" : "Lookalike তৈরি হয়েছে, কিন্তু Meta ID ছাড়া যোগ করা যায়নি।"); await loadPlan(plan.id); }
-                    }}>Lookalike তৈরি + যোগ</button>
+                      if (res) { setNotice(res.attached ? t("campaignBuilder.stLookalikeAttached") : t("campaignBuilder.stLookalikeNotAttached")); await loadPlan(plan.id); }
+                    }}>{t("campaignBuilder.stLookalikeBtn")}</button>
                   </div>
                 ) : null}
                 <div>
                   <button className="rounded border bg-white px-2 py-0.5 text-xs" disabled={busy !== ""} onClick={async () => {
                     const res = await wrap(`ins-${adSet.id}`, () => apiFetch<AudienceInsights>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/audience-insights`));
                     if (res) setInsights((s) => ({ ...s, [adSet.id]: res }));
-                  }}>📊 Audience Size ও Overlap দেখুন</button>
+                  }}>{t("campaignBuilder.stInsightsBtn")}</button>
                   {insights[adSet.id] ? (
                     <div className="mt-1 space-y-0.5 text-xs text-slate-600">
-                      {insights[adSet.id].included.map((a) => <div key={a.externalAudienceId}>অন্তর্ভুক্ত: {a.name ?? a.externalAudienceId} — Size: {a.size != null ? fmtNumBn(a.size) : "অজানা (Unknown)"}{a.sizeSource ? ` (${a.sizeSource})` : ""}</div>)}
-                      {insights[adSet.id].excluded.map((a) => <div key={a.externalAudienceId}>বাদ দেওয়া: {a.name ?? a.externalAudienceId} — Size: {a.size != null ? fmtNumBn(a.size) : "অজানা (Unknown)"}</div>)}
+                      {insights[adSet.id].included.map((a) => <div key={a.externalAudienceId}>{t("campaignBuilder.stIncluded")}{a.name ?? a.externalAudienceId}{t("campaignBuilder.stSizePart")}{a.size != null ? fmtNumBn(a.size) : t("campaignBuilder.stUnknown")}{a.sizeSource ? ` (${a.sizeSource})` : ""}</div>)}
+                      {insights[adSet.id].excluded.map((a) => <div key={a.externalAudienceId}>{t("campaignBuilder.stExcluded")}{a.name ?? a.externalAudienceId}{t("campaignBuilder.stSizePart")}{a.size != null ? fmtNumBn(a.size) : t("campaignBuilder.stUnknown")}</div>)}
                       {insights[adSet.id].warnings.map((w) => <div key={w.code + w.message} className="text-amber-700">⚠️ {w.message}</div>)}
-                      <div>Overlap: {insights[adSet.id].overlap.status === "not_applicable" ? "প্রযোজ্য নয়" : "হিসাব করা যায় না"} — {insights[adSet.id].overlap.reason}</div>
-                      <div>Delivery Estimate: {insights[adSet.id].estimate.available ? `${fmtNumBn(insights[adSet.id].estimate.lowerBound ?? 0)}–${fmtNumBn(insights[adSet.id].estimate.upperBound ?? 0)} জন/দিন` : `পাওয়া যাচ্ছে না (${insights[adSet.id].estimate.reason ?? "—"})`}</div>
+                      <div>{t("campaignBuilder.stOverlapLabel")}{insights[adSet.id].overlap.status === "not_applicable" ? t("campaignBuilder.stOverlapNa") : t("campaignBuilder.stOverlapCant")} — {insights[adSet.id].overlap.reason}</div>
+                      <div>{t("campaignBuilder.stEstimateLabel")}{insights[adSet.id].estimate.available ? t("campaignBuilder.stEstimateRange", { lower: fmtNumBn(insights[adSet.id].estimate.lowerBound ?? 0), upper: fmtNumBn(insights[adSet.id].estimate.upperBound ?? 0) }) : t("campaignBuilder.stEstimateUnavailable", { reason: insights[adSet.id].estimate.reason ?? "—" })}</div>
                     </div>
                   ) : null}
                 </div>
@@ -2425,10 +2435,10 @@ export default function CampaignBuilderPage() {
           {editable ? (
             <div className={`grid gap-3 border-t pt-3 lg:grid-cols-2 ${activeStep !== 3 ? "hidden" : ""}`}>
               <div className="space-y-2">
-                <div className="text-sm font-semibold">হাতে Ad যোগ করুন</div>
-                <input className="input" placeholder="Ad এর নাম" value={adForms[adSet.id]?.name ?? ""} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), name: e.target.value } }))} />
+                <div className="text-sm font-semibold">{t("campaignBuilder.naTitle")}</div>
+                <input className="input" placeholder={t("campaignBuilder.naNamePlaceholder")} value={adForms[adSet.id]?.name ?? ""} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), name: e.target.value } }))} />
                 <textarea className="input" rows={3} placeholder="Primary Text" value={adForms[adSet.id]?.primaryText ?? ""} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), primaryText: e.target.value } }))} />
-                <input className="input" placeholder="Headline (ঐচ্ছিক)" value={adForms[adSet.id]?.headline ?? ""} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), headline: e.target.value } }))} />
+                <input className="input" placeholder={t("campaignBuilder.naHeadlinePlaceholder")} value={adForms[adSet.id]?.headline ?? ""} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), headline: e.target.value } }))} />
                 <input className="input" placeholder="Link URL (https://...)" value={adForms[adSet.id]?.linkUrl ?? ""} onChange={(e) => setAdField(adSet.id, "linkUrl", e.target.value)} />
                 <div className="flex flex-wrap gap-2">
                   <select className="input w-36" value={adForms[adSet.id]?.format ?? "link"} onChange={(e) => setAdField(adSet.id, "format", e.target.value)}>
@@ -2436,45 +2446,45 @@ export default function CampaignBuilderPage() {
                     <option value="video">🎬 Video Ad</option>
                     <option value="carousel">🎠 Carousel</option>
                   </select>
-                  <select className="input w-44" value={pickerSort} onChange={(e) => setPickerSort(e.target.value as "newest" | "best")} title="Asset Picker সাজানো (CA25) — পারফরম্যান্স শুধু আসল Ad-level ডেটা থেকে; Rating পেতে ≥1,000 Impression ও ≥৳100 খরচ লাগে">
-                    <option value="newest">🗂 Asset: নতুন আগে</option>
-                    <option value="best">🏆 Asset: পারফরম্যান্স অনুযায়ী</option>
+                  <select className="input w-44" value={pickerSort} onChange={(e) => setPickerSort(e.target.value as "newest" | "best")} title={t("campaignBuilder.naPickerTitle")}>
+                    <option value="newest">{t("campaignBuilder.naPickerNewest")}</option>
+                    <option value="best">{t("campaignBuilder.naPickerBest")}</option>
                   </select>
                   {(adForms[adSet.id]?.format ?? "link") === "link" ? (
                     <select className="input flex-1" value={adForms[adSet.id]?.imageAssetId ?? ""} onChange={(e) => setAdField(adSet.id, "imageAssetId", e.target.value)}>
-                      <option value="">লাইব্রেরির ছবি (ঐচ্ছিক)</option>
+                      <option value="">{t("campaignBuilder.naLibraryImage")}</option>
                       {sortPicker(assets.filter((x) => x.kind === "image" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                     </select>
                   ) : null}
                   {(adForms[adSet.id]?.format ?? "link") === "video" ? (
                     <select className="input flex-1" value={adForms[adSet.id]?.videoAssetId ?? ""} onChange={(e) => setAdField(adSet.id, "videoAssetId", e.target.value)}>
-                      <option value="">লাইব্রেরির ভিডিও বেছে নিন</option>
+                      <option value="">{t("campaignBuilder.naLibraryVideo")}</option>
                       {sortPicker(assets.filter((x) => x.kind === "video" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                     </select>
                   ) : null}
                 </div>
                 {(adForms[adSet.id]?.format ?? "link") === "carousel" ? (
-                  <textarea className="input font-mono text-xs" rows={4} placeholder="প্রতি লাইনে একটি কার্ড: শিরোনাম | লিংক | ছবির URL (ঐচ্ছিক)" value={adForms[adSet.id]?.carouselText ?? ""} onChange={(e) => setAdField(adSet.id, "carouselText", e.target.value)} />
+                  <textarea className="input font-mono text-xs" rows={4} placeholder={t("campaignBuilder.naCarouselPlaceholder")} value={adForms[adSet.id]?.carouselText ?? ""} onChange={(e) => setAdField(adSet.id, "carouselText", e.target.value)} />
                 ) : null}
                 {(adForms[adSet.id]?.format ?? "link") === "link" ? (
-                  <input className="input" placeholder="অথবা ছবির URL সরাসরি" value={adForms[adSet.id]?.imageUrl ?? ""} onChange={(e) => setAdField(adSet.id, "imageUrl", e.target.value)} />
+                  <input className="input" placeholder={t("campaignBuilder.naImageUrlPlaceholder")} value={adForms[adSet.id]?.imageUrl ?? ""} onChange={(e) => setAdField(adSet.id, "imageUrl", e.target.value)} />
                 ) : null}
                 <div className="space-y-2 rounded-lg bg-indigo-50 p-2">
-                  <div className="text-xs font-semibold text-indigo-700">Creative v2 (CN5) — একাধিক লেখা, Placement Asset, Enhancements</div>
-                  <textarea className="input" rows={2} placeholder="অতিরিক্ত Primary Text অপশন — প্রতি লাইনে একটি (সর্বোচ্চ মোট ৫টি; প্রথমটি উপরের Primary Text)" value={adForms[adSet.id]?.extraTexts ?? ""} onChange={(e) => setAdField(adSet.id, "extraTexts", e.target.value)} />
-                  <textarea className="input" rows={2} placeholder="অতিরিক্ত Headline অপশন — প্রতি লাইনে একটি (সর্বোচ্চ মোট ৫টি)" value={adForms[adSet.id]?.extraHeadlines ?? ""} onChange={(e) => setAdField(adSet.id, "extraHeadlines", e.target.value)} />
-                  <textarea className="input" rows={2} placeholder="Description অপশন — প্রতি লাইনে একটি (সর্বোচ্চ ২টি)" value={adForms[adSet.id]?.descriptions ?? ""} onChange={(e) => setAdField(adSet.id, "descriptions", e.target.value)} />
+                  <div className="text-xs font-semibold text-indigo-700">{t("campaignBuilder.naV2Title")}</div>
+                  <textarea className="input" rows={2} placeholder={t("campaignBuilder.naExtraTextsPlaceholder")} value={adForms[adSet.id]?.extraTexts ?? ""} onChange={(e) => setAdField(adSet.id, "extraTexts", e.target.value)} />
+                  <textarea className="input" rows={2} placeholder={t("campaignBuilder.naExtraHeadlinesPlaceholder")} value={adForms[adSet.id]?.extraHeadlines ?? ""} onChange={(e) => setAdField(adSet.id, "extraHeadlines", e.target.value)} />
+                  <textarea className="input" rows={2} placeholder={t("campaignBuilder.naDescsPlaceholder")} value={adForms[adSet.id]?.descriptions ?? ""} onChange={(e) => setAdField(adSet.id, "descriptions", e.target.value)} />
                   <div className="flex flex-wrap gap-2">
                     <select className="input flex-1" value={adForms[adSet.id]?.feedAssetId ?? ""} onChange={(e) => setAdField(adSet.id, "feedAssetId", e.target.value)}>
-                      <option value="">Feed Placement ছবি (ঐচ্ছিক Override)</option>
+                      <option value="">{t("campaignBuilder.naFeedOverride")}</option>
                       {sortPicker(assets.filter((x) => x.kind === "image" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                     </select>
                     <select className="input flex-1" value={adForms[adSet.id]?.verticalAssetId ?? ""} onChange={(e) => setAdField(adSet.id, "verticalAssetId", e.target.value)}>
-                      <option value="">Stories/Reels ছবি (ঐচ্ছিক Override)</option>
+                      <option value="">{t("campaignBuilder.naVerticalOverride")}</option>
                       {sortPicker(assets.filter((x) => x.kind === "image" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                     </select>
                     <select className="input flex-1" value={adForms[adSet.id]?.verticalVideoAssetId ?? ""} onChange={(e) => setAdField(adSet.id, "verticalVideoAssetId", e.target.value)}>
-                      <option value="">Stories/Reels ভিডিও (ঐচ্ছিক Override)</option>
+                      <option value="">{t("campaignBuilder.naVerticalVideoOverride")}</option>
                       {sortPicker(assets.filter((x) => x.kind === "video" && x.status === "ready" && x.adAccountId === plan.adAccountId)).map((x) => <option key={x.id} value={x.id}>{assetOptLabel(x)}</option>)}
                     </select>
                   </div>
@@ -2483,38 +2493,38 @@ export default function CampaignBuilderPage() {
                       <label key={enh.key} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={!!adForms[adSet.id]?.enhancements?.[enh.key]} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), enhancements: { ...(s[adSet.id]?.enhancements ?? {}), [enh.key]: e.target.checked } } }))} /> {enh.label}</label>
                     ))}
                   </div>
-                  <p className="text-[11px] leading-[1.7] text-slate-500">Publish এ Link/Video Ad এ অপশনগুলো Meta এর Asset Feed দিয়ে যায়; Carousel/Catalog/Lead Ad এ শুধু প্রথম অপশন যায় (Readiness এ সতর্কবার্তা থাকে)।</p>
+                  <p className="text-[11px] leading-[1.7] text-slate-500">{t("campaignBuilder.naV2Note")}</p>
                 </div>
                 {adSet.destinationType === "WHATSAPP" ? (
                   <div className="space-y-2 rounded-lg bg-emerald-50 p-2">
-                    <div className="text-xs font-semibold text-emerald-700">💬 WhatsApp Welcome (CN13 — CTWA) — ক্রেতা Ad এ ক্লিক করলে চ্যাটে যা দেখবেন</div>
-                    <input className="input" placeholder="স্বাগত বার্তা (Greeting) — যেমন: স্বাগতম! কীভাবে সাহায্য করতে পারি?" value={adForms[adSet.id]?.waGreeting ?? ""} onChange={(e) => setAdField(adSet.id, "waGreeting", e.target.value)} />
-                    <input className="input" placeholder="আগে থেকে লেখা বার্তা (Prefill) — যেমন: আমি এই পণ্যটি অর্ডার করতে চাই" value={adForms[adSet.id]?.waPrefill ?? ""} onChange={(e) => setAdField(adSet.id, "waPrefill", e.target.value)} />
-                    <textarea className="input" rows={2} placeholder="Ice Breaker প্রশ্ন — প্রতি লাইনে একটি (সর্বোচ্চ ৩টি; দিলে Prefill এর বদলে এগুলো যাবে)" value={adForms[adSet.id]?.waIce ?? ""} onChange={(e) => setAdField(adSet.id, "waIce", e.target.value)} />
-                    <p className="text-[11px] leading-[1.7] text-slate-500">এগুলো Meta এর Page Welcome Message হিসেবে Publish এর সময় পাঠানো হয়। কিছুই না লিখলে Welcome Block যাবে না।</p>
+                    <div className="text-xs font-semibold text-emerald-700">{t("campaignBuilder.naWaTitle")}</div>
+                    <input className="input" placeholder={t("campaignBuilder.naWaGreetingPlaceholder")} value={adForms[adSet.id]?.waGreeting ?? ""} onChange={(e) => setAdField(adSet.id, "waGreeting", e.target.value)} />
+                    <input className="input" placeholder={t("campaignBuilder.naWaPrefillPlaceholder")} value={adForms[adSet.id]?.waPrefill ?? ""} onChange={(e) => setAdField(adSet.id, "waPrefill", e.target.value)} />
+                    <textarea className="input" rows={2} placeholder={t("campaignBuilder.naWaIcePlaceholder")} value={adForms[adSet.id]?.waIce ?? ""} onChange={(e) => setAdField(adSet.id, "waIce", e.target.value)} />
+                    <p className="text-[11px] leading-[1.7] text-slate-500">{t("campaignBuilder.naWaNote")}</p>
                   </div>
                 ) : null}
-                <button className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => addAd(adSet.id)}>Ad যোগ করুন</button>
+                <button className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => addAd(adSet.id)}>{t("campaignBuilder.naAddBtn")}</button>
               </div>
               <div className="space-y-2">
-                <div className="text-sm font-semibold">AI Copy (প্রোডাক্ট থেকে)</div>
+                <div className="text-sm font-semibold">{t("campaignBuilder.naCopyTitle")}</div>
                 <select className="input" value={copySelection[adSet.id] ?? ""} onChange={(e) => setCopySelection((s) => ({ ...s, [adSet.id]: e.target.value }))}>
-                  <option value="">প্রোডাক্ট বেছে নিন</option>
-                  {products.map((p) => <option key={p.id} value={p.id}>{p.name} - {formatMinor(BigInt(p.priceMinor), p.currency)}</option>)}
+                  <option value="">{t("campaignBuilder.naProductChoose")}</option>
+                  {products.map((p) => <option key={p.id} value={p.id}>{p.name} - {fmtMoneyMinor(locale, BigInt(p.priceMinor))}</option>)}
                 </select>
-                <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateCopy(adSet.id)}>{busy === `copy-${adSet.id}` ? "তৈরি হচ্ছে..." : "AI Copy তৈরি করুন"}</button>
-                <p className="text-xs text-slate-400">AI Copy প্রোডাক্টের আসল দাম ব্যবহার করে, কোনো ছাড় বা প্রতিশ্রুতি বানায় না। তৈরি হওয়া লেখা Draft, Publish এর আগে যাচাই করুন।</p>
+                <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateCopy(adSet.id)}>{busy === `copy-${adSet.id}` ? t("campaignBuilder.naCopyCreating") : t("campaignBuilder.naCopyBtn")}</button>
+                <p className="text-xs text-slate-400">{t("campaignBuilder.naCopyNote")}</p>
               </div>
               <div className="space-y-2">
-                <div className="text-sm font-semibold">AI দিয়ে ছবি বানান (Creative Library-র জন্য)</div>
-                <input className="input" placeholder="ছবির বর্ণনা — যেমন: লাল পাঞ্জাবি পরা মডেল, সাদা ব্যাকগ্রাউন্ডে" value={imagePrompts[adSet.id] ?? ""} onChange={(e) => setImagePrompts((s) => ({ ...s, [adSet.id]: e.target.value }))} />
-                <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateImage(adSet.id)}>{busy === `image-${adSet.id}` ? "তৈরি হচ্ছে..." : "AI ছবি তৈরি করুন"}</button>
-                <p className="text-xs text-slate-400">উপরে প্রোডাক্ট বেছে নিলে Prompt-এ শুধু প্রোডাক্টের নাম/ক্যাটাগরি যোগ হয় — দাম বা কোনো দাবি ছবিতে বসে না। তৈরি ছবি Creative Library-তে “AI ছবি — …” নামে থাকবে; সেখান থেকে Ad-এ বেছে নিন। Provider configure না থাকলে এখানে জানিয়ে দেওয়া হবে।</p>
+                <div className="text-sm font-semibold">{t("campaignBuilder.naImageTitle")}</div>
+                <input className="input" placeholder={t("campaignBuilder.naImagePlaceholder")} value={imagePrompts[adSet.id] ?? ""} onChange={(e) => setImagePrompts((s) => ({ ...s, [adSet.id]: e.target.value }))} />
+                <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateImage(adSet.id)}>{busy === `image-${adSet.id}` ? t("campaignBuilder.naCopyCreating") : t("campaignBuilder.naImageBtn")}</button>
+                <p className="text-xs text-slate-400">{t("campaignBuilder.naImageNote")}</p>
               </div>
               <div className="space-y-2">
-                <div className="text-sm font-semibold">AI দিয়ে ভিডিও বানান (প্রোডাক্টের ছবি দিয়ে Slideshow)</div>
-                <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateVideo(adSet.id)}>{busy === `video-${adSet.id}` ? "তৈরি হচ্ছে..." : "AI ভিডিও তৈরি করুন"}</button>
-                <p className="text-xs text-slate-400">উপরে বেছে নেওয়া প্রোডাক্টের নিজের ছবি দিয়ে 1:1, 4:5 ও 9:16 — তিনটি Aspect-এ Slideshow ভিডিও তৈরি হয় (ধারণ করা ফুটেজ নয়)। Script শুধু প্রোডাক্টের আসল তথ্য ব্যবহার করে; প্রোডাক্টের ছবি মিডিয়া CDN-এ না থাকলে তৈরি হবে না — আগে প্রোডাক্টে ছবি আপলোড করুন।</p>
+                <div className="text-sm font-semibold">{t("campaignBuilder.naVideoTitle")}</div>
+                <button className="btn-warning btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateVideo(adSet.id)}>{busy === `video-${adSet.id}` ? t("campaignBuilder.naCopyCreating") : t("campaignBuilder.naVideoBtn")}</button>
+                <p className="text-xs text-slate-400">{t("campaignBuilder.naVideoNote")}</p>
               </div>
             </div>
           ) : null}
@@ -2523,116 +2533,116 @@ export default function CampaignBuilderPage() {
 
       {editable ? (
         <form onSubmit={addAdSet} className={`space-y-3 card p-5 ${activeStep !== 1 ? "hidden" : ""}`}>
-          <div className="font-semibold">নতুন Ad Set</div>
+          <div className="font-semibold">{t("campaignBuilder.nsTitle")}</div>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-            <label className="block text-sm">নাম<input className={inputCls} value={adSetForm.name} onChange={(e) => setAdSetForm({ ...adSetForm, name: e.target.value })} required /></label>
-            <label className="block text-sm">দৈনিক বাজেট{plan.budgetMode === "cbo" ? " (CBO Plan — ঐচ্ছিক)" : ""}<input className={inputCls} value={adSetForm.dailyBudget} onChange={(e) => setAdSetForm({ ...adSetForm, dailyBudget: e.target.value })} placeholder="500.00" /></label>
-            <label className="block text-sm">শুরুর সময় (ঐচ্ছিক)<input type="datetime-local" className={inputCls} value={adSetStart} onChange={(e) => setAdSetStart(e.target.value)} /></label>
-            <label className="block text-sm">শেষের সময় (ঐচ্ছিক)<input type="datetime-local" className={inputCls} value={adSetEnd} onChange={(e) => setAdSetEnd(e.target.value)} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsNameLabel")}<input className={inputCls} value={adSetForm.name} onChange={(e) => setAdSetForm({ ...adSetForm, name: e.target.value })} required /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsDailyBudgetLabel")}{plan.budgetMode === "cbo" ? t("campaignBuilder.nsDailyBudgetCbo") : ""}<input className={inputCls} value={adSetForm.dailyBudget} onChange={(e) => setAdSetForm({ ...adSetForm, dailyBudget: e.target.value })} placeholder="500.00" /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsStartLabel")}<input type="datetime-local" className={inputCls} value={adSetStart} onChange={(e) => setAdSetStart(e.target.value)} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsEndLabel")}<input type="datetime-local" className={inputCls} value={adSetEnd} onChange={(e) => setAdSetEnd(e.target.value)} /></label>
             <label className="block text-sm">Optimization Goal
               <select className={inputCls} value={adSetForm.optimizationGoal} onChange={(e) => setAdSetForm({ ...adSetForm, optimizationGoal: e.target.value })}>
-                <option value="LINK_CLICKS">Link Clicks</option><option value="CONVERSATIONS">Conversations (WhatsApp Destination হলে)</option><option value="OFFSITE_CONVERSIONS">Conversions (Pixel লাগবে)</option>
-                <option value="LEAD_GENERATION">Lead Generation</option><option value="REACH">Reach</option><option value="LANDING_PAGE_VIEWS">Landing Page Views</option><option value="VALUE">Value (ROAS — Pixel লাগবে)</option>
-                <option value="APP_INSTALLS">App Installs (App Promotion Plan হলে)</option>
+                <option value="LINK_CLICKS">Link Clicks</option><option value="CONVERSATIONS">{t("campaignBuilder.nsGoalConversations")}</option><option value="OFFSITE_CONVERSIONS">{t("campaignBuilder.nsGoalConversions")}</option>
+                <option value="LEAD_GENERATION">Lead Generation</option><option value="REACH">Reach</option><option value="LANDING_PAGE_VIEWS">Landing Page Views</option><option value="VALUE">{t("campaignBuilder.nsGoalValue")}</option>
+                <option value="APP_INSTALLS">{t("campaignBuilder.nsGoalAppInstalls")}</option>
               </select>
             </label>
             {plan.objective === "OUTCOME_APP_PROMOTION" ? <>
-              <label className="block text-sm">App ID (Meta application_id, CA23)<input className={inputCls} value={adSetForm.appId} onChange={(e) => setAdSetForm({ ...adSetForm, appId: e.target.value })} placeholder="1234567890" required /></label>
-              <label className="block text-sm">App Store / Play Store URL (CA23)<input className={inputCls} value={adSetForm.appStoreUrl} onChange={(e) => setAdSetForm({ ...adSetForm, appStoreUrl: e.target.value })} placeholder="https://play.google.com/store/apps/details?id=..." required /></label>
+              <label className="block text-sm">{t("campaignBuilder.nsAppIdLabel")}<input className={inputCls} value={adSetForm.appId} onChange={(e) => setAdSetForm({ ...adSetForm, appId: e.target.value })} placeholder="1234567890" required /></label>
+              <label className="block text-sm">{t("campaignBuilder.nsAppStoreLabel")}<input className={inputCls} value={adSetForm.appStoreUrl} onChange={(e) => setAdSetForm({ ...adSetForm, appStoreUrl: e.target.value })} placeholder="https://play.google.com/store/apps/details?id=..." required /></label>
             </> : null}
-            <label className="block text-sm">Facebook Page ID<input className={inputCls} value={adSetForm.pageId} onChange={(e) => setAdSetForm({ ...adSetForm, pageId: e.target.value })} required /></label>
-            <label className="block text-sm">Pixel ID (Conversions হলে)<input className={inputCls} value={adSetForm.pixelId} onChange={(e) => setAdSetForm({ ...adSetForm, pixelId: e.target.value })} /></label>
-            <label className="block text-sm">দেশ (কমা দিয়ে)<input className={inputCls} value={adSetForm.countries} onChange={(e) => setAdSetForm({ ...adSetForm, countries: e.target.value })} placeholder="BD" /></label>
-            <label className="block text-sm">Interests (কমা দিয়ে; ID-যাচাই চাইলে নাম|ID)<input className={inputCls} value={adSetForm.interests} onChange={(e) => setAdSetForm({ ...adSetForm, interests: e.target.value })} placeholder="Online shopping, Fashion|600123..." /></label>
-            <label className="block text-sm">শহর — City Key (কমা; Radius চাইলে key:km)<input className={inputCls} value={adSetForm.cities} onChange={(e) => setAdSetForm({ ...adSetForm, cities: e.target.value })} placeholder="Targeting Search থেকে Key নিন" /></label>
-            <label className="block text-sm">Postcodes (Zip Key, কমা দিয়ে)<input className={inputCls} value={adSetForm.postcodes} onChange={(e) => setAdSetForm({ ...adSetForm, postcodes: e.target.value })} placeholder="US:90210" /></label>
-            <label className="block text-sm">Location Types (home,recent,travel_in,everyone)<input className={inputCls} value={adSetForm.locationTypes} onChange={(e) => setAdSetForm({ ...adSetForm, locationTypes: e.target.value })} placeholder="home" /></label>
-            <label className="block text-sm">ভাষা — Locale ID (কমা দিয়ে)<input className={inputCls} value={adSetForm.locales} onChange={(e) => setAdSetForm({ ...adSetForm, locales: e.target.value })} placeholder="Targeting Search থেকে ID নিন" /></label>
-            <label className="block text-sm">Behaviors (কমা দিয়ে; নাম|ID চলবে)<input className={inputCls} value={adSetForm.behaviors} onChange={(e) => setAdSetForm({ ...adSetForm, behaviors: e.target.value })} /></label>
-            <label className="block text-sm">Narrowing — Interests (AND স্তর, কমা দিয়ে)<input className={inputCls} value={adSetForm.narrowInterests} onChange={(e) => setAdSetForm({ ...adSetForm, narrowInterests: e.target.value })} placeholder="উপরের Audience এর মধ্যেই আরও সংকীর্ণ" /></label>
-            <label className="block text-sm">Education Status IDs (কমা)<input className={inputCls} value={adSetForm.eduStatuses} onChange={(e) => setAdSetForm({ ...adSetForm, eduStatuses: e.target.value })} /></label>
-            <label className="block text-sm">Relationship Status IDs (কমা)<input className={inputCls} value={adSetForm.relStatuses} onChange={(e) => setAdSetForm({ ...adSetForm, relStatuses: e.target.value })} /></label>
-            <label className="block text-sm">Life Events (কমা দিয়ে; নাম|ID চলবে)<input className={inputCls} value={adSetForm.lifeEvents} onChange={(e) => setAdSetForm({ ...adSetForm, lifeEvents: e.target.value })} placeholder="Targeting Search এ Life Event খুঁজে ID নিন" /></label>
-            <label className="block text-sm">Work Positions (কমা দিয়ে; নাম|ID চলবে)<input className={inputCls} value={adSetForm.workPositions} onChange={(e) => setAdSetForm({ ...adSetForm, workPositions: e.target.value })} placeholder="Targeting Search এ Work Position খুঁজে ID নিন" /></label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={expansion} onChange={(e) => setExpansion(e.target.checked)} /> Detailed Targeting Expansion (Advantage Audience)</label>
-            <label className="block text-sm">Bid Strategy (CN2)
+            <label className="block text-sm">{t("campaignBuilder.nsPageIdLabel")}<input className={inputCls} value={adSetForm.pageId} onChange={(e) => setAdSetForm({ ...adSetForm, pageId: e.target.value })} required /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsPixelIdLabel")}<input className={inputCls} value={adSetForm.pixelId} onChange={(e) => setAdSetForm({ ...adSetForm, pixelId: e.target.value })} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsCountriesLabel")}<input className={inputCls} value={adSetForm.countries} onChange={(e) => setAdSetForm({ ...adSetForm, countries: e.target.value })} placeholder="BD" /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsInterestsLabel")}<input className={inputCls} value={adSetForm.interests} onChange={(e) => setAdSetForm({ ...adSetForm, interests: e.target.value })} placeholder="Online shopping, Fashion|600123..." /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsCitiesLabel")}<input className={inputCls} value={adSetForm.cities} onChange={(e) => setAdSetForm({ ...adSetForm, cities: e.target.value })} placeholder={t("campaignBuilder.nsCitiesPlaceholder")} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsPostcodesLabel")}<input className={inputCls} value={adSetForm.postcodes} onChange={(e) => setAdSetForm({ ...adSetForm, postcodes: e.target.value })} placeholder="US:90210" /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsLocationTypesLabel")}<input className={inputCls} value={adSetForm.locationTypes} onChange={(e) => setAdSetForm({ ...adSetForm, locationTypes: e.target.value })} placeholder="home" /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsLocalesLabel")}<input className={inputCls} value={adSetForm.locales} onChange={(e) => setAdSetForm({ ...adSetForm, locales: e.target.value })} placeholder={t("campaignBuilder.nsLocalesPlaceholder")} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsBehaviorsLabel")}<input className={inputCls} value={adSetForm.behaviors} onChange={(e) => setAdSetForm({ ...adSetForm, behaviors: e.target.value })} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsNarrowLabel")}<input className={inputCls} value={adSetForm.narrowInterests} onChange={(e) => setAdSetForm({ ...adSetForm, narrowInterests: e.target.value })} placeholder={t("campaignBuilder.nsNarrowPlaceholder")} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsEduLabel")}<input className={inputCls} value={adSetForm.eduStatuses} onChange={(e) => setAdSetForm({ ...adSetForm, eduStatuses: e.target.value })} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsRelLabel")}<input className={inputCls} value={adSetForm.relStatuses} onChange={(e) => setAdSetForm({ ...adSetForm, relStatuses: e.target.value })} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsLifeEventsLabel")}<input className={inputCls} value={adSetForm.lifeEvents} onChange={(e) => setAdSetForm({ ...adSetForm, lifeEvents: e.target.value })} placeholder={t("campaignBuilder.nsLifeEventsPlaceholder")} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsWorkLabel")}<input className={inputCls} value={adSetForm.workPositions} onChange={(e) => setAdSetForm({ ...adSetForm, workPositions: e.target.value })} placeholder={t("campaignBuilder.nsWorkPlaceholder")} /></label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={expansion} onChange={(e) => setExpansion(e.target.checked)} /> {t("campaignBuilder.nsExpansionLabel")}</label>
+            <label className="block text-sm">{t("campaignBuilder.nsBidStrategyLabel")}
               <select className={inputCls} value={adSetForm.bidStrategy} onChange={(e) => setAdSetForm({ ...adSetForm, bidStrategy: e.target.value })}>
-                <option value="">Lowest Cost (Meta Default)</option>
+                <option value="">{t("campaignBuilder.nsBidLowest")}</option>
                 <option value="bid_cap">Bid Cap</option>
                 <option value="cost_cap">Cost Per Result Goal</option>
-                <option value="roas_goal">ROAS Goal (Sales + Value)</option>
+                <option value="roas_goal">{t("campaignBuilder.nsBidRoas")}</option>
               </select>
             </label>
-            {adSetForm.bidStrategy === "bid_cap" ? <label className="block text-sm">Bid Amount (টাকা)<input className={inputCls} value={adSetForm.bidAmount} onChange={(e) => setAdSetForm({ ...adSetForm, bidAmount: e.target.value })} /></label> : null}
-            {adSetForm.bidStrategy === "cost_cap" ? <label className="block text-sm">Cost Per Result Goal (টাকা)<input className={inputCls} value={adSetForm.costPerResultGoal} onChange={(e) => setAdSetForm({ ...adSetForm, costPerResultGoal: e.target.value })} /></label> : null}
-            {adSetForm.bidStrategy === "roas_goal" ? <label className="block text-sm">ROAS Goal (যেমন 2.0)<input className={inputCls} value={adSetForm.roasGoal} onChange={(e) => setAdSetForm({ ...adSetForm, roasGoal: e.target.value })} /></label> : null}
-            <label className="block text-sm">Conversion Event (CN3)
+            {adSetForm.bidStrategy === "bid_cap" ? <label className="block text-sm">{t("campaignBuilder.nsBidAmountLabel")}<input className={inputCls} value={adSetForm.bidAmount} onChange={(e) => setAdSetForm({ ...adSetForm, bidAmount: e.target.value })} /></label> : null}
+            {adSetForm.bidStrategy === "cost_cap" ? <label className="block text-sm">{t("campaignBuilder.nsCostGoalLabel")}<input className={inputCls} value={adSetForm.costPerResultGoal} onChange={(e) => setAdSetForm({ ...adSetForm, costPerResultGoal: e.target.value })} /></label> : null}
+            {adSetForm.bidStrategy === "roas_goal" ? <label className="block text-sm">{t("campaignBuilder.nsRoasGoalLabel")}<input className={inputCls} value={adSetForm.roasGoal} onChange={(e) => setAdSetForm({ ...adSetForm, roasGoal: e.target.value })} /></label> : null}
+            <label className="block text-sm">{t("campaignBuilder.nsConversionEventLabel")}
               <select className={inputCls} value={adSetForm.conversionEvent} onChange={(e) => setAdSetForm({ ...adSetForm, conversionEvent: e.target.value })}>
                 <option value="">PURCHASE (Default)</option>
                 {(adSetForm.optimizationGoal === "LEAD_GENERATION" ? LEAD_EVENTS : SALES_EVENTS).map((ev) => <option key={ev} value={ev}>{ev}</option>)}
               </select>
             </label>
-            <label className="block text-sm">ক্যাটালগ (CN3 — Catalog Ads)
+            <label className="block text-sm">{t("campaignBuilder.nsCatalogLabel")}
               <select className={inputCls} value={adSetForm.catalogRecordId} onChange={(e) => setAdSetForm({ ...adSetForm, catalogRecordId: e.target.value, productSetId: "" })}>
-                <option value="">ক্যাটালগ নয় (সাধারণ Ad Set)</option>
+                <option value="">{t("campaignBuilder.nsCatalogNone")}</option>
                 {catalogs.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.platform})</option>)}
               </select>
             </label>
             {adSetForm.catalogRecordId ? (
-              <label className="block text-sm">Product Set (Meta তে তৈরি হওয়া Set ই চলবে)
+              <label className="block text-sm">{t("campaignBuilder.nsProductSetLabel")}
                 <select className={inputCls} value={adSetForm.productSetId} onChange={(e) => setAdSetForm({ ...adSetForm, productSetId: e.target.value })}>
-                  <option value="">Product Set বেছে নিন</option>
-                  {formSets.map((s) => <option key={s.id} value={s.id} disabled={s.status !== "created"}>{s.name} · {s.itemCount} আইটেম{s.status === "created" ? "" : ` (${s.status} — Meta তে তৈরি হয়নি)`}</option>)}
+                  <option value="">{t("campaignBuilder.nsProductSetChoose")}</option>
+                  {formSets.map((s) => <option key={s.id} value={s.id} disabled={s.status !== "created"}>{s.name} · {fmtNumBn(s.itemCount)}{t("campaignBuilder.nsItemsSuffix")}{s.status === "created" ? "" : t("campaignBuilder.nsProductSetNotCreated", { status: s.status })}</option>)}
                 </select>
               </label>
             ) : null}
-            <label className="block text-sm">Lead Form (CN4 — Lead Generation হলে)
+            <label className="block text-sm">{t("campaignBuilder.nsLeadFormLabel")}
               <select className={inputCls} value={adSetForm.leadFormId} onChange={(e) => setAdSetForm({ ...adSetForm, leadFormId: e.target.value })}>
-                <option value="">ফর্ম নেই</option>
-                {leadForms.filter((f) => !adSetForm.pageId || f.pageId === adSetForm.pageId).map((f) => <option key={f.id} value={f.id}>{f.name} ({f.status === "created" ? "Meta তে তৈরি" : "লোকাল — Publish এ তৈরি হবে"})</option>)}
+                <option value="">{t("campaignBuilder.nsLeadFormNone")}</option>
+                {leadForms.filter((f) => !adSetForm.pageId || f.pageId === adSetForm.pageId).map((f) => <option key={f.id} value={f.id}>{f.name} ({f.status === "created" ? t("campaignBuilder.nsLeadFormCreated") : t("campaignBuilder.nsLeadFormLocal")})</option>)}
               </select>
             </label>
-            <label className="block text-sm">Destination (CN13 — Click-to-WhatsApp)
+            <label className="block text-sm">{t("campaignBuilder.nsDestinationLabel")}
               <select className={inputCls} value={adSetForm.destinationType} onChange={(e) => setAdSetForm({ ...adSetForm, destinationType: e.target.value, whatsappIntegrationId: "" })}>
-                <option value="">Website (সাধারণ)</option>
-                <option value="WHATSAPP">WhatsApp — Click-to-WhatsApp Ad</option>
+                <option value="">{t("campaignBuilder.nsWebsiteOption")}</option>
+                <option value="WHATSAPP">{t("campaignBuilder.nsWaOption")}</option>
               </select>
             </label>
             {adSetForm.destinationType === "WHATSAPP" ? (
-              <label className="block text-sm">WhatsApp Connection (শুধু Connected টাই চলবে)
+              <label className="block text-sm">{t("campaignBuilder.nsWaConnectionLabel")}
                 <select className={inputCls} value={adSetForm.whatsappIntegrationId} onChange={(e) => setAdSetForm({ ...adSetForm, whatsappIntegrationId: e.target.value })}>
-                  <option value="">Connection বেছে নিন</option>
+                  <option value="">{t("campaignBuilder.nsConnectionChoose")}</option>
                   {(waDestinations?.destinations ?? []).map((d) => (
                     <option key={d.integrationId} value={d.integrationId} disabled={!d.connected}>
-                      {d.phoneNumberId ?? "Phone Number ID নেই"} · WABA {d.wabaId ?? "—"}{d.isDefault ? " · Default" : ""}{d.connected ? "" : ` · ${d.status} (ব্যবহারযোগ্য নয়)`}
+                      {d.phoneNumberId ?? t("campaignBuilder.nsNoPhoneId")} · WABA {d.wabaId ?? "—"}{d.isDefault ? " · Default" : ""}{d.connected ? "" : t("campaignBuilder.nsNotUsableSuffix", { status: d.status })}
                     </option>
                   ))}
                 </select>
                 {(waDestinations?.destinations ?? []).filter((d) => d.connected).length === 0 ? (
-                  <span className="mt-1 block text-xs font-medium text-red-600">⛔ কোনো Connected WhatsApp Connection নেই — আগে Connect Center থেকে WhatsApp Connect করুন। নম্বর হাতে লিখে দেওয়া যায় না; সেভের সময় নম্বরটি Meta থেকে পড়ে যাচাই করা হয়।</span>
+                  <span className="mt-1 block text-xs font-medium text-red-600">{t("campaignBuilder.nsWaNoneConnected")}</span>
                 ) : (
-                  <span className="mt-1 block text-xs text-slate-500">সেভের সময় এই Connection এর নম্বর Meta থেকে পড়া হবে — এখানে কোনো নম্বর লেখা যায় না। Goal হিসেবে সাধারণত CONVERSATIONS নিন; Readiness এ Connection এর অবস্থা Error আকারে দেখা যাবে।</span>
+                  <span className="mt-1 block text-xs text-slate-500">{t("campaignBuilder.nsWaNumberNote")}</span>
                 )}
               </label>
             ) : null}
             <div className="space-y-1 rounded-lg bg-slate-50 p-2 lg:col-span-3">
-              <div className="text-xs font-semibold text-slate-600">🔎 Targeting Search (CN1) — Meta এর আসল তালিকা থেকে ID নিন; ID-সহ Entry সেভের সময় Meta দিয়ে যাচাই হয়</div>
+              <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.nsSearchTitle")}</div>
               <div className="flex flex-wrap items-center gap-2">
                 <select className="input w-36" value={tSearch.kind} onChange={(e) => setTSearch({ ...tSearch, kind: e.target.value })}>
-                  <option value="interest">Interest</option><option value="behavior">Behavior</option><option value="geo">শহর/এলাকা (Geo)</option><option value="locale">ভাষা (Locale)</option><option value="life_event">Life Event</option><option value="work_position">Work Position</option>
+                  <option value="interest">Interest</option><option value="behavior">Behavior</option><option value="geo">{t("campaignBuilder.nsSearchGeo")}</option><option value="locale">{t("campaignBuilder.nsSearchLocale")}</option><option value="life_event">Life Event</option><option value="work_position">Work Position</option>
                 </select>
-                <input className="input w-56" value={tSearch.query} onChange={(e) => setTSearch({ ...tSearch, query: e.target.value })} placeholder="যেমন: Fashion" />
+                <input className="input w-56" value={tSearch.query} onChange={(e) => setTSearch({ ...tSearch, query: e.target.value })} placeholder={t("campaignBuilder.nsSearchPlaceholder")} />
                 <button type="button" className="btn-secondary btn-sm" disabled={busy !== "" || !tSearch.query.trim()} onClick={async () => {
                   const res = await wrap("tsearch", () => apiFetch<{ available: boolean; reason?: string; results: { id: string; name: string | null; audienceSizeLower: number | null; audienceSizeUpper: number | null }[] }>(`/organizations/${orgId}/campaign-plans/targeting/search?adAccountId=${encodeURIComponent(plan.adAccountId)}&kind=${encodeURIComponent(tSearch.kind)}&q=${encodeURIComponent(tSearch.query)}`));
                   if (res) setTSearch({ ...tSearch, available: res.available, reason: res.reason, results: res.results ?? [] });
-                }}>খুঁজুন</button>
+                }}>{t("campaignBuilder.nsSearchBtn")}</button>
               </div>
-              {tSearch.available === false ? <p className="text-xs text-amber-600">পাওয়া যাচ্ছে না: {tSearch.reason}</p> : null}
-              {tSearch.results.length > 0 ? <ul className="space-y-0.5 text-xs text-slate-600">{tSearch.results.map((r) => <li key={r.id}>{r.name ?? "—"} · ID: <span className="font-mono">{r.id}</span>{r.audienceSizeLower != null ? ` · আনুমানিক Audience: ${fmtNumBn(r.audienceSizeLower)}–${fmtNumBn(r.audienceSizeUpper ?? 0)}` : ""}</li>)}</ul> : null}
+              {tSearch.available === false ? <p className="text-xs text-amber-600">{t("campaignBuilder.nsSearchUnavailable", { reason: tSearch.reason ?? "" })}</p> : null}
+              {tSearch.results.length > 0 ? <ul className="space-y-0.5 text-xs text-slate-600">{tSearch.results.map((r) => <li key={r.id}>{r.name ?? "—"} · ID: <span className="font-mono">{r.id}</span>{r.audienceSizeLower != null ? t("campaignBuilder.nsSearchAudience", { lower: fmtNumBn(r.audienceSizeLower), upper: fmtNumBn(r.audienceSizeUpper ?? 0) }) : ""}</li>)}</ul> : null}
             </div>
-            <label className="block text-sm">Custom Audience IDs (Meta ID, কমা দিয়ে)<input className={inputCls} value={adSetForm.audienceIds} onChange={(e) => setAdSetForm({ ...adSetForm, audienceIds: e.target.value })} placeholder={audList.filter((a) => a.externalAudienceId).map((a) => a.externalAudienceId).join(", ") || "যেমন: 23850..."} /></label>
-            <label className="block text-sm">বাদ দিতে Audience IDs<input className={inputCls} value={adSetForm.excludeIds} onChange={(e) => setAdSetForm({ ...adSetForm, excludeIds: e.target.value })} /></label>
-            <label className="block text-sm">Saved প্রিসেট প্রয়োগ
+            <label className="block text-sm">{t("campaignBuilder.nsAudienceIdsLabel")}<input className={inputCls} value={adSetForm.audienceIds} onChange={(e) => setAdSetForm({ ...adSetForm, audienceIds: e.target.value })} placeholder={audList.filter((a) => a.externalAudienceId).map((a) => a.externalAudienceId).join(", ") || t("campaignBuilder.nsAudienceIdsPlaceholder")} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsExcludeLabel")}<input className={inputCls} value={adSetForm.excludeIds} onChange={(e) => setAdSetForm({ ...adSetForm, excludeIds: e.target.value })} /></label>
+            <label className="block text-sm">{t("campaignBuilder.nsPresetLabel")}
               <select className={inputCls} value="" onChange={(e) => {
                 const p = savedList.find((x) => x.id === e.target.value);
                 if (!p) return;
@@ -2645,13 +2655,13 @@ export default function CampaignBuilderPage() {
                   audienceIds: Array.isArray(t.customAudienceIds) ? t.customAudienceIds.join(",") : f.audienceIds,
                 }));
               }}>
-                <option value="">— প্রিসেট বেছে নিন —</option>
+                <option value="">{t("campaignBuilder.nsPresetChoose")}</option>
                 {savedList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </label>
             <PlacementChecks values={placements} onChange={setPlacements} />
           </div>
-          <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>Ad Set যোগ করুন</button>
+          <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{t("campaignBuilder.nsAddBtn")}</button>
         </form>
       ) : null}
 
@@ -2659,49 +2669,49 @@ export default function CampaignBuilderPage() {
 
       {(plan.status === "approved" || plan.status === "published" || plan.status === "publish_failed") ? (
         <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
-          <div className="font-semibold">🌐 অন্য প্ল্যাটফর্মে Draft <span className="text-xs font-normal text-slate-400">(CB6 · CN17: Performance Max ও TikTok Objective)</span></div>
-          <p className="text-xs text-slate-500">এই অনুমোদিত Plan থেকে Google Search, Google Performance Max বা TikTok এ PAUSED Draft তৈরি হবে — বিদ্যমান Publish পথ দিয়েই। যা Map করা যাবে না তা তালিকা করে জানানো হবে; সেক্ষেত্রে কোনো কল যাবে না, Payload টি Export হিসেবে দেখাবে। TikTok Objective শুধু এই Draft পথের জন্য — সরাসরি Publish পেজের আচরণ অপরিবর্তিত।</p>
+          <div className="font-semibold">{t("campaignBuilder.xp2Title")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.xp2TitleNote")}</span></div>
+          <p className="text-xs text-slate-500">{t("campaignBuilder.xp2Intro")}</p>
           <div className="space-y-3">
             <div>
-              <div className="text-xs font-semibold text-slate-600">প্ল্যাটফর্ম ও Target Account</div>
+              <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xp2PlatformLabel")}</div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <select className="input w-40" id="x-platform">
                   <option value="google">Google Ads</option>
                   <option value="tiktok">TikTok Ads</option>
                 </select>
                 <select className="input w-64" id="x-account">
-                  <option value="">Target Account বেছে নিন</option>
+                  <option value="">{t("campaignBuilder.xp2TargetChoose")}</option>
                   {accounts.filter((a) => a.platform === "google" || a.platform === "tiktok").map((a) => <option key={a.id} value={a.id}>{a.name} ({a.platform})</option>)}
                 </select>
               </div>
             </div>
             <div className="grid gap-3 lg:grid-cols-2">
               <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-xs font-semibold text-slate-600">Google হলে — Draft-এর ধরন</div>
-                <select className="input mt-1 w-52" id="x-kind" title="Google Draft-এর ধরন">
+                <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xp2GoogleKindLabel")}</div>
+                <select className="input mt-1 w-52" id="x-kind" title={t("campaignBuilder.xp2KindTitle")}>
                   <option value="search">Google: Search (RSA)</option>
                   <option value="pmax">Google: Performance Max</option>
                 </select>
-                <p className="mt-1 text-xs leading-[1.7] text-slate-500">Performance Max-এ Keyword থাকে না; এই Path-এ Video Asset যায় না। Audience Signal Draft-এ সংরক্ষিত থাকে, Google-এ পাঠানো হয় না (Meta Audience-এর Google User List নেই) — যা যায়নি তা Draft-এ তালিকা হয়ে থাকে।</p>
+                <p className="mt-1 text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.xp2PmaxNote")}</p>
               </div>
               <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-xs font-semibold text-slate-600">TikTok হলে — Objective</div>
+                <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xp2TiktokObjectiveLabel")}</div>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <select className="input w-56" id="x-objective" title="TikTok Objective (শুধু Draft পথে)">
+                  <select className="input w-56" id="x-objective" title={t("campaignBuilder.xp2ObjectiveTitle")}>
                     <option value="TRAFFIC">TikTok: Traffic</option>
                     <option value="WEB_CONVERSIONS">TikTok: Website Conversions</option>
                     <option value="LEAD_GENERATION">TikTok: Lead Generation</option>
                   </select>
-                  <input className="input w-44" id="x-pixel" placeholder="TikTok Pixel ID (Conversions হলে)" />
-                  <input className="input w-52" id="x-event" placeholder="Optimization Event (যেমন COMPLETE_PAYMENT)" />
+                  <input className="input w-44" id="x-pixel" placeholder={t("campaignBuilder.xp2PixelPlaceholder")} />
+                  <input className="input w-52" id="x-event" placeholder={t("campaignBuilder.xp2EventPlaceholder")} />
                 </div>
-                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs leading-[1.7] text-amber-800">⚠ LEAD_GENERATION এই Flow-তে তৈরি হয় না (Ad-এর সঙ্গে Instant Form বাঁধা লাগে) — Draft-এ পছন্দটি থাকে, Readiness কারণসহ আটকায়।</p>
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs leading-[1.7] text-amber-800">{t("campaignBuilder.xp2LeadNote")}</p>
               </div>
             </div>
             <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
               const platform = (document.getElementById("x-platform") as HTMLSelectElement)?.value ?? "google";
               const target = (document.getElementById("x-account") as HTMLSelectElement)?.value ?? "";
-              if (!target) { setError("Target Account বেছে নিন"); return; }
+              if (!target) { setError(t("campaignBuilder.xp2ErrTarget")); return; }
               const kind = (document.getElementById("x-kind") as HTMLSelectElement)?.value ?? "search";
               const objectiveType = (document.getElementById("x-objective") as HTMLSelectElement)?.value ?? "TRAFFIC";
               const pixelId = (document.getElementById("x-pixel") as HTMLInputElement)?.value.trim() ?? "";
@@ -2710,34 +2720,34 @@ export default function CampaignBuilderPage() {
               const res = await wrap("xplat", () => apiFetch<{ status: string; unmapped: string[]; notCarried?: string[]; transformations: string[]; publication?: { externalCampaignId?: string | null } }>(`/organizations/${orgId}/campaign-plans/${plan.id}/cross-platform`, { method: "POST", body: JSON.stringify({ platform, targetAdAccountId: target, ...extra }) }));
               if (res) {
                 setXdNote({ notCarried: res.notCarried ?? [] });
-                if (res.status === "created") setNotice(`${platform === "google" ? "Google" : "TikTok"} এ PAUSED Draft তৈরি হয়েছে (Campaign ID: ${res.publication?.externalCampaignId ?? "—"})। Publish Log এ রেকর্ড আছে।${res.notCarried?.length ? ` যা এই ধরনে যায়নি: ${res.notCarried.join(" · ")}` : ""}`);
-                else if (res.status === "blocked") setError(`Draft হয়নি — ঘাটতি: ${res.unmapped.join(" · ")}`);
-                else setError("প্ল্যাটফর্ম Publish ব্যর্থ হয়েছে — Publish Log এ কারণ লেখা আছে।");
+                if (res.status === "created") setNotice(t("campaignBuilder.xp2CreatedNotice", { platform: platform === "google" ? "Google" : "TikTok", id: res.publication?.externalCampaignId ?? "—", notCarried: res.notCarried?.length ? t("campaignBuilder.xp2NotCarriedPart", { items: res.notCarried.join(" · ") }) : "" }));
+                else if (res.status === "blocked") setError(t("campaignBuilder.xp2BlockedError", { items: res.unmapped.join(" · ") }));
+                else setError(t("campaignBuilder.xp2FailedError"));
                 await loadPlan(plan.id);
               }
-            }}>Draft তৈরি করুন</button>
+            }}>{t("campaignBuilder.xp2CreateBtn")}</button>
             {xdNote && xdNote.notCarried.length ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-[1.7] text-amber-800">
-                <p className="font-semibold">⚠ এই ধরনে যা যায়নি (notCarried):</p>
+                <p className="font-semibold">{t("campaignBuilder.xp2NotCarriedTitle")}</p>
                 <ul className="mt-1 list-inside list-disc">{xdNote.notCarried.map((n, i) => <li key={i}>{n}</li>)}</ul>
               </div>
             ) : null}
             <div className="rounded-lg border border-slate-200 p-3">
-              <div className="text-xs font-semibold text-slate-600">🚀 এক ক্লিকে Fan-out — Google + TikTok একসঙ্গে <span className="font-normal text-slate-400">(CA15)</span></div>
-              <p className="mt-1 text-xs leading-[1.7] text-slate-500">দুই প্ল্যাটফর্মের Account বেছে Preview দেখুন — যা Map হবে আর যা হবে না (ঘাটতি) আগেই দেখাবে; কোনো Draft তৈরি হবে না। Confirm করলেই দুই জায়গায় PAUSED Draft তৈরি হবে। বাজেট BDT-তেই কপি হয় — কোনো Currency Conversion হয় না। Google-এর ধরন ও TikTok Objective উপরের পছন্দ থেকেই যাবে।</p>
+              <div className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xp2FanoutTitle")}<span className="font-normal text-slate-400">(CA15)</span></div>
+              <p className="mt-1 text-xs leading-[1.7] text-slate-500">{t("campaignBuilder.xp2FanoutIntro")}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <select className="input w-64" id="fo-google-account">
-                  <option value="">Google Account — নেই</option>
+                  <option value="">{t("campaignBuilder.xp2GoogleNone")}</option>
                   {accounts.filter((a) => a.platform === "google").map((a) => <option key={a.id} value={a.id}>{a.name} (google)</option>)}
                 </select>
                 <select className="input w-64" id="fo-tiktok-account">
-                  <option value="">TikTok Account — নেই</option>
+                  <option value="">{t("campaignBuilder.xp2TiktokNone")}</option>
                   {accounts.filter((a) => a.platform === "tiktok").map((a) => <option key={a.id} value={a.id}>{a.name} (tiktok)</option>)}
                 </select>
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const googleAccountId = (document.getElementById("fo-google-account") as HTMLSelectElement)?.value ?? "";
                   const tiktokAccountId = (document.getElementById("fo-tiktok-account") as HTMLSelectElement)?.value ?? "";
-                  if (!googleAccountId && !tiktokAccountId) { setError("অন্তত একটি Account বেছে নিন"); return; }
+                  if (!googleAccountId && !tiktokAccountId) { setError(t("campaignBuilder.xp2ErrAnyAccount")); return; }
                   const kind = (document.getElementById("x-kind") as HTMLSelectElement)?.value ?? "search";
                   const objectiveType = (document.getElementById("x-objective") as HTMLSelectElement)?.value ?? "TRAFFIC";
                   const pixelId = (document.getElementById("x-pixel") as HTMLInputElement)?.value.trim() ?? "";
@@ -2748,19 +2758,19 @@ export default function CampaignBuilderPage() {
                   };
                   const res = await wrap("fanout-preview", () => apiFetch<{ platforms: any[]; note?: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/fanout/preview`, { method: "POST", body: JSON.stringify(body) }));
                   if (res) setFanout(res);
-                }}>👁 Fan-out Preview</button>
+                }}>{t("campaignBuilder.xp2PreviewBtn")}</button>
               </div>
               {fanout ? (
                 <div className="mt-3 space-y-2">
                   {fanout.platforms.map((b: any, i: number) => (
                     <div key={i} className="rounded-lg bg-slate-50 p-3 text-xs leading-[1.7]">
-                      <p className="font-semibold">{b.platform === "google" ? (b.kind === "pmax" ? "Google Performance Max" : "Google Search") : "TikTok"} — {b.status === "error" ? "⛔ ত্রুটি" : b.status === "blocked" ? "⛔ ঘাটতি আছে" : b.status === "created" ? "✓ তৈরি হয়েছে" : "✓ প্রস্তুত"}</p>
+                      <p className="font-semibold">{b.platform === "google" ? (b.kind === "pmax" ? "Google Performance Max" : "Google Search") : "TikTok"} — {b.status === "error" ? t("campaignBuilder.xp2StatusError") : b.status === "blocked" ? t("campaignBuilder.xp2StatusBlocked") : b.status === "created" ? t("campaignBuilder.xp2StatusCreated") : t("campaignBuilder.xp2StatusReady")}</p>
                       {b.error ? <p className="text-red-600">{b.error}</p> : null}
-                      {b.mapped ? <p className="text-slate-600">নাম: {b.mapped.name ?? "—"} · দৈনিক বাজেট: ৳{b.mapped.dailyBudget ?? "—"} (BDT কপি, Conversion নয়) · দেশ: {(b.mapped.countryCodes ?? []).join(", ")}</p> : null}
-                      {Array.isArray(b.mapped?.audienceSignals) && b.mapped.audienceSignals.length ? <p className="text-slate-600">Audience Signal Draft-এ থাকবে: {b.mapped.audienceSignals.map((s: any) => s.name ?? s.externalAudienceId ?? s.savedAudienceId).join(", ")} (Google-এ পাঠানো হবে না — User List নেই)</p> : null}
-                      {Array.isArray(b.unmapped) && b.unmapped.length ? <p className="text-amber-700">ঘাটতি: {b.unmapped.join(" · ")}</p> : null}
-                      {Array.isArray(b.notCarried) && b.notCarried.length ? <p className="text-amber-700">যা এই ধরনে যায় না: {b.notCarried.join(" · ")}</p> : null}
-                      {Array.isArray(b.transformations) && b.transformations.length ? <p className="text-slate-500">রূপান্তর: {b.transformations.join(" · ")}</p> : null}
+                      {b.mapped ? <p className="text-slate-600">{t("campaignBuilder.xp2MappedLine", { name: b.mapped.name ?? "—", budget: b.mapped.dailyBudget != null ? fmtMoney(locale, Number(b.mapped.dailyBudget)) : "—", countries: (b.mapped.countryCodes ?? []).join(", ") })}</p> : null}
+                      {Array.isArray(b.mapped?.audienceSignals) && b.mapped.audienceSignals.length ? <p className="text-slate-600">{t("campaignBuilder.xp2SignalsLine", { signals: b.mapped.audienceSignals.map((s: any) => s.name ?? s.externalAudienceId ?? s.savedAudienceId).join(", ") })}</p> : null}
+                      {Array.isArray(b.unmapped) && b.unmapped.length ? <p className="text-amber-700">{t("campaignBuilder.xp2UnmappedLine", { items: b.unmapped.join(" · ") })}</p> : null}
+                      {Array.isArray(b.notCarried) && b.notCarried.length ? <p className="text-amber-700">{t("campaignBuilder.xp2NotCarriedLine", { items: b.notCarried.join(" · ") })}</p> : null}
+                      {Array.isArray(b.transformations) && b.transformations.length ? <p className="text-slate-500">{t("campaignBuilder.xp2TransformsLine", { items: b.transformations.join(" · ") })}</p> : null}
                     </div>
                   ))}
                   <div className="flex flex-wrap items-center gap-2">
@@ -2778,13 +2788,13 @@ export default function CampaignBuilderPage() {
                       const res = await wrap("fanout-create", () => apiFetch<{ platforms: any[]; created: number; total: number }>(`/organizations/${orgId}/campaign-plans/${plan.id}/fanout`, { method: "POST", body: JSON.stringify(body) }));
                       if (res) {
                         setFanout({ platforms: res.platforms });
-                        if (res.created > 0) setNotice(`Fan-out: ${res.created}/${res.total}টি Platform-এ PAUSED Draft তৈরি হয়েছে — নিচের Draft তালিকায় দেখুন।`);
-                        else setError("Fan-out: কোনো Draft তৈরি হয়নি — প্রতিটি Block-এ কারণ দেখুন।");
+                        if (res.created > 0) setNotice(t("campaignBuilder.xp2FanoutNotice", { created: fmtNumBn(res.created), total: fmtNumBn(res.total) }));
+                        else setError(t("campaignBuilder.xp2FanoutError"));
                         const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
                         if (list) setXdrafts(list);
                       }
-                    }}>✓ Confirm — দুই Platform-এ Draft তৈরি করুন</button>
-                    <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => setFanout(null)}>Preview বন্ধ করুন</button>
+                    }}>{t("campaignBuilder.xp2ConfirmBtn")}</button>
+                    <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => setFanout(null)}>{t("campaignBuilder.xp2PreviewCloseBtn")}</button>
                   </div>
                 </div>
               ) : null}
@@ -2795,23 +2805,23 @@ export default function CampaignBuilderPage() {
 
       {(plan.status === "approved" || plan.status === "published" || plan.status === "publish_failed") ? (
         <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
-          <div className="font-semibold">📂 Cross-Platform Drafts <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN9)</span></div>
-          <p className="text-xs text-slate-500">উপরে তৈরি প্রতিটি Draft এখানে সংরক্ষিত থাকে — Field Edit, Readiness যাচাই, স্থানীয় Preview, আর Re-publish (সবসময় নতুন PAUSED Draft; আগেরটি বদলায় না) করা যায়। Status Sync এখন প্ল্যাটফর্ম থেকে আসল Campaign Status পড়ে (OU4 Provider Status / CA16 Live Status — একই Sync-এ দুই Path), আর তৈরি Draft-এ Pause/Resume-ও প্ল্যাটফর্মেই পাঠানো হয় — OU4 Lifecycle অথবা CA16 Set-Status; CA16 Budget বদলও Platform নিশ্চিত করলেই কার্যকর হয় (Delete এই Flow-তে নেই)।</p>
+          <div className="font-semibold">{t("campaignBuilder.xd2Title")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.xd2TitleNote")}</span></div>
+          <p className="text-xs text-slate-500">{t("campaignBuilder.xd2Intro")}</p>
           <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("xdrafts", () => apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`));
             if (res) setXdrafts(res);
-          }}>Draft তালিকা লোড করুন</button>
-          {xdrafts ? (xdrafts.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো Draft নেই — উপরে তৈরি করুন।</p> : (
+          }}>{t("campaignBuilder.xd2LoadBtn")}</button>
+          {xdrafts ? (xdrafts.length === 0 ? <p className="text-sm text-slate-400">{t("campaignBuilder.xd2None")}</p> : (
             <div className="space-y-2">
               {xdrafts.map((d) => (
                 <div key={d.id} className="rounded-lg bg-slate-50 p-3 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium">{d.platform === "google" ? (d.kind === "pmax" ? "Google Performance Max" : "Google Search") : `TikTok · ${d.fields?.objectiveType ?? "TRAFFIC"}`} — {d.fields?.name ?? ""} <span className="text-xs text-slate-400">দৈনিক বাজেট: {d.fields?.dailyBudget ?? "—"}</span></span>
+                    <span className="font-medium">{d.platform === "google" ? (d.kind === "pmax" ? "Google Performance Max" : "Google Search") : `TikTok · ${d.fields?.objectiveType ?? "TRAFFIC"}`} — {d.fields?.name ?? ""} <span className="text-xs text-slate-400">{t("campaignBuilder.xd2DailyBudget", { amount: d.fields?.dailyBudget ?? "—" })}</span></span>
                     <span className={d.status === "created" ? "rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-semibold text-green-700" : d.status === "blocked" ? "rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700" : d.status === "failed" ? "rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700" : "rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"}>{d.status}{d.externalCampaignId ? ` · ${d.externalCampaignId}` : ""}</span>
                   </div>
                   {d.lastError ? <p className="mt-1 text-xs text-red-600">{d.lastError}</p> : null}
-                  {Array.isArray(d.unmapped) && d.unmapped.length ? <p className="mt-1 text-xs leading-[1.7] text-amber-700">{d.status === "created" ? "যা এই ধরনে যায়নি (notCarried)" : "ঘাটতি"}: {d.unmapped.join(" · ")}</p> : null}
-                  <p className="mt-1 text-xs text-slate-500">{d.platform === "google" && d.kind === "pmax" ? `Headline ${(d.fields?.headlines ?? []).length}টি · Long ${(d.fields?.longHeadlines ?? []).length}টি · Description ${(d.fields?.descriptions ?? []).length}টি · ছবি ${(d.fields?.imageUrls ?? []).length}টি · Business: ${d.fields?.businessName ?? "—"} · ${(d.fields?.countryCodes ?? []).join(",")}` : d.platform === "google" ? `Headline ${(d.fields?.headlines ?? []).length}টি · Description ${(d.fields?.descriptions ?? []).length}টি · Keyword ${(d.fields?.keywords ?? []).length}টি · ${(d.fields?.countryCodes ?? []).join(",")}` : `Text: ${String(d.fields?.adText ?? "").slice(0, 60)} · ${(d.fields?.countryCodes ?? []).join(",")}`}</p>
+                  {Array.isArray(d.unmapped) && d.unmapped.length ? <p className="mt-1 text-xs leading-[1.7] text-amber-700">{d.status === "created" ? t("campaignBuilder.xd2NotCarriedLabel") : t("campaignBuilder.xd2MissingLabel")}: {d.unmapped.join(" · ")}</p> : null}
+                  <p className="mt-1 text-xs text-slate-500">{d.platform === "google" && d.kind === "pmax" ? t("campaignBuilder.xd2PmaxSummary", { headlines: fmtNumBn((d.fields?.headlines ?? []).length), long: fmtNumBn((d.fields?.longHeadlines ?? []).length), descriptions: fmtNumBn((d.fields?.descriptions ?? []).length), images: fmtNumBn((d.fields?.imageUrls ?? []).length), business: d.fields?.businessName ?? "—", countries: (d.fields?.countryCodes ?? []).join(",") }) : d.platform === "google" ? t("campaignBuilder.xd2SearchSummary", { headlines: fmtNumBn((d.fields?.headlines ?? []).length), descriptions: fmtNumBn((d.fields?.descriptions ?? []).length), keywords: fmtNumBn((d.fields?.keywords ?? []).length), countries: (d.fields?.countryCodes ?? []).join(",") }) : `Text: ${String(d.fields?.adText ?? "").slice(0, 60)} · ${(d.fields?.countryCodes ?? []).join(",")}`}</p>
                   <div className="mt-2 flex flex-wrap gap-1">
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => {
                       if (xdEditId === d.id) { setXdEditId(null); setXdForm(null); return; }
@@ -2828,70 +2838,70 @@ export default function CampaignBuilderPage() {
                     }}>✎ Edit</button>
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`xd-ready-${d.id}`, () => apiFetch<{ ready: boolean; checks: { level: string; label: string; detail: string }[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/readiness`, { method: "POST", body: JSON.stringify({}) }));
-                      if (res) setXdResult((s) => ({ ...s, [d.id]: (res.ready ? "✓ Readiness: প্রস্তুত\n" : "⛔ Readiness: ঘাটতি আছে\n") + res.checks.map((c) => `${c.level === "error" ? "⛔" : c.level === "warn" ? "⚠" : "✓"} ${c.label}: ${c.detail}`).join("\n") }));
-                    }}>✓ Readiness</button>
+                      if (res) setXdResult((s) => ({ ...s, [d.id]: (res.ready ? t("campaignBuilder.xd2ReadyOk") + "\n" : t("campaignBuilder.xd2ReadyBlocked") + "\n") + res.checks.map((c) => `${c.level === "error" ? "⛔" : c.level === "warn" ? "⚠" : "✓"} ${c.label}: ${c.detail}`).join("\n") }));
+                    }}>{t("campaignBuilder.xd2ReadyBtn")}</button>
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`xd-prev-${d.id}`, () => apiFetch<any>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/preview`));
                       if (res) setXdResult((s) => ({ ...s, [d.id]: JSON.stringify(res, null, 1) }));
-                    }}>👁 Preview (স্থানীয়)</button>
+                    }}>{t("campaignBuilder.xd2PreviewBtn")}</button>
                     <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`xd-pub-${d.id}`, () => apiFetch<{ status: string; note?: string; unmapped?: string[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/publish`, { method: "POST", body: JSON.stringify({}) }));
                       if (res) {
-                        setXdResult((s) => ({ ...s, [d.id]: res.status === "created" ? `✓ ${res.note ?? "নতুন PAUSED Draft তৈরি হয়েছে।"}` : res.status === "blocked" ? `⛔ Readiness-এ আটকেছে: ${(res.unmapped ?? []).join(" · ")}` : "⛔ Publish ব্যর্থ — Draft-এ কারণ লেখা আছে।" }));
+                        setXdResult((s) => ({ ...s, [d.id]: res.status === "created" ? t("campaignBuilder.xd2PublishCreated", { note: res.note ?? t("campaignBuilder.xd2PublishCreatedFallback") }) : res.status === "blocked" ? t("campaignBuilder.xd2PublishBlocked", { items: (res.unmapped ?? []).join(" · ") }) : t("campaignBuilder.xd2PublishFailed") }));
                         const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
                         if (list) setXdrafts(list);
                       }
-                    }}>🚀 Re-publish (নতুন PAUSED)</button>
-                    <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => { await runXdSync(d); }}>↻ Status Sync</button>
+                    }}>{t("campaignBuilder.xd2RepublishBtn")}</button>
+                    <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => { await runXdSync(d); }}>{t("campaignBuilder.xd2SyncBtn")}</button>
                     {d.status === "created" && d.externalCampaignId ? (<>
-                      <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => { await runXdLifecycle(d, "pause"); }}>⏸ Pause (প্ল্যাটফর্মে)</button>
-                      <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => { await runXdLifecycle(d, "resume"); }}>▶ Resume (প্ল্যাটফর্মে)</button>
+                      <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => { await runXdLifecycle(d, "pause"); }}>{t("campaignBuilder.xd2PausePlatformBtn")}</button>
+                      <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => { await runXdLifecycle(d, "resume"); }}>{t("campaignBuilder.xd2ResumePlatformBtn")}</button>
                       <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
-                        if (!window.confirm("এই Draft-এর Campaign-টি Platform-এ Pause করতে চান? Platform নিশ্চিত করলেই কার্যকর হবে।")) return;
+                        if (!window.confirm(t("campaignBuilder.xd2PauseConfirm"))) return;
                         const res = await wrap(`xd-pause-${d.id}`, () => apiFetch<{ platformStatus: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/set-status`, { method: "POST", body: JSON.stringify({ target: "PAUSED" }) }));
-                        if (res) setXdResult((s) => ({ ...s, [d.id]: `✓ Platform-এ Pause নিশ্চিত হয়েছে (${res.platformStatus})।` }));
-                      }}>⏸ Platform-এ Pause</button>
+                        if (res) setXdResult((s) => ({ ...s, [d.id]: t("campaignBuilder.xd2PauseDone", { status: res.platformStatus }) }));
+                      }}>{t("campaignBuilder.xd2PauseBtn")}</button>
                       <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
-                        if (!window.confirm("এই Draft-এর Campaign-টি Platform-এ চালু করতে চান? এটি Live বিজ্ঞাপন চালু করবে।")) return;
+                        if (!window.confirm(t("campaignBuilder.xd2ActivateConfirm"))) return;
                         const res = await wrap(`xd-activate-${d.id}`, () => apiFetch<{ platformStatus: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/set-status`, { method: "POST", body: JSON.stringify({ target: "ACTIVE" }) }));
-                        if (res) setXdResult((s) => ({ ...s, [d.id]: `✓ Platform-এ চালু নিশ্চিত হয়েছে (${res.platformStatus})।` }));
-                      }}>▶ Platform-এ চালু</button>
+                        if (res) setXdResult((s) => ({ ...s, [d.id]: t("campaignBuilder.xd2ActivateDone", { status: res.platformStatus }) }));
+                      }}>{t("campaignBuilder.xd2ActivateBtn")}</button>
                     </>) : null}
                   </div>
                   {xdResult[d.id] ? <pre className="mt-2 whitespace-pre-wrap rounded bg-white p-2 text-xs text-slate-600">{xdResult[d.id]}</pre> : null}
                   {xdEditId === d.id && xdForm ? (
                     <div className="mt-2 space-y-2 border-t pt-2">
-                      <p className="text-xs font-semibold text-slate-600">সাধারণ</p>
+                      <p className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xd2EditHeading")}</p>
                       <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
-                        <label className="block text-sm">নাম<input className="input" value={xdForm.name} onChange={(e) => setXdForm({ ...xdForm, name: e.target.value })} /></label>
-                        <label className="block text-sm">দৈনিক বাজেট<input className="input" value={xdForm.dailyBudget} onChange={(e) => setXdForm({ ...xdForm, dailyBudget: e.target.value })} /></label>
-                        <label className="block text-sm">দেশ (কমা দিয়ে)<input className="input" value={xdForm.countries} onChange={(e) => setXdForm({ ...xdForm, countries: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2NameLabel")}<input className="input" value={xdForm.name} onChange={(e) => setXdForm({ ...xdForm, name: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2DailyBudgetLabel")}<input className="input" value={xdForm.dailyBudget} onChange={(e) => setXdForm({ ...xdForm, dailyBudget: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2CountriesLabel")}<input className="input" value={xdForm.countries} onChange={(e) => setXdForm({ ...xdForm, countries: e.target.value })} /></label>
                       </div>
                       {d.platform === "google" && d.kind === "pmax" ? (<>
-                        <p className="text-xs font-semibold text-slate-600">Asset Group — Performance Max</p>
-                        <label className="block text-sm">Final URL<input className="input" value={xdForm.finalUrl} onChange={(e) => setXdForm({ ...xdForm, finalUrl: e.target.value })} /></label>
+                        <p className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xd2PmaxHeading")}</p>
+                        <label className="block text-sm">{t("campaignBuilder.xd2FinalUrlLabel")}<input className="input" value={xdForm.finalUrl} onChange={(e) => setXdForm({ ...xdForm, finalUrl: e.target.value })} /></label>
                         <div className="grid grid-cols-2 gap-2">
-                          <label className="block text-sm">Business Name (≤২৫ অক্ষর)<input className="input" value={xdForm.businessName} onChange={(e) => setXdForm({ ...xdForm, businessName: e.target.value })} /></label>
-                          <label className="block text-sm">Logo URL (http)<input className="input" value={xdForm.logoUrl} onChange={(e) => setXdForm({ ...xdForm, logoUrl: e.target.value })} /></label>
+                          <label className="block text-sm">{t("campaignBuilder.xd2BusinessNameLabel")}<input className="input" value={xdForm.businessName} onChange={(e) => setXdForm({ ...xdForm, businessName: e.target.value })} /></label>
+                          <label className="block text-sm">{t("campaignBuilder.xd2LogoLabel")}<input className="input" value={xdForm.logoUrl} onChange={(e) => setXdForm({ ...xdForm, logoUrl: e.target.value })} /></label>
                         </div>
-                        <label className="block text-sm">Headlines — প্রতি লাইনে একটি (৩–১৫টি, ≤৩০ অক্ষর)<textarea className="input font-mono text-xs" rows={5} value={xdForm.headlinesText} onChange={(e) => setXdForm({ ...xdForm, headlinesText: e.target.value })} /></label>
-                        <label className="block text-sm">Long Headlines — প্রতি লাইনে একটি (১–৫টি, ≤৯০ অক্ষর)<textarea className="input font-mono text-xs" rows={3} value={xdForm.longHeadlinesText} onChange={(e) => setXdForm({ ...xdForm, longHeadlinesText: e.target.value })} /></label>
-                        <label className="block text-sm">Descriptions — প্রতি লাইনে একটি (২–৫টি, ≤৯০ অক্ষর)<textarea className="input font-mono text-xs" rows={3} value={xdForm.descriptionsText} onChange={(e) => setXdForm({ ...xdForm, descriptionsText: e.target.value })} /></label>
-                        <label className="block text-sm">Marketing Image URLs — প্রতি লাইনে একটি (১–২০টি)<textarea className="input font-mono text-xs" rows={3} value={xdForm.imageUrlsText} onChange={(e) => setXdForm({ ...xdForm, imageUrlsText: e.target.value })} /></label>
-                        <p className="text-xs text-slate-400">Performance Max-এ Keyword থাকে না; এই Path-এ Video Asset যায় না। Audience Signal Draft-এ সংরক্ষিত থাকে — Google-এ পাঠানো হয় না।</p>
+                        <label className="block text-sm">{t("campaignBuilder.xd2HeadlinesPmax")}<textarea className="input font-mono text-xs" rows={5} value={xdForm.headlinesText} onChange={(e) => setXdForm({ ...xdForm, headlinesText: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2LongHeadlines")}<textarea className="input font-mono text-xs" rows={3} value={xdForm.longHeadlinesText} onChange={(e) => setXdForm({ ...xdForm, longHeadlinesText: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2DescriptionsPmax")}<textarea className="input font-mono text-xs" rows={3} value={xdForm.descriptionsText} onChange={(e) => setXdForm({ ...xdForm, descriptionsText: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2ImageUrls")}<textarea className="input font-mono text-xs" rows={3} value={xdForm.imageUrlsText} onChange={(e) => setXdForm({ ...xdForm, imageUrlsText: e.target.value })} /></label>
+                        <p className="text-xs text-slate-400">{t("campaignBuilder.xd2PmaxNote")}</p>
                       </>) : d.platform === "google" ? (<>
-                        <p className="text-xs font-semibold text-slate-600">Responsive Search Ad — Google Search</p>
-                        <label className="block text-sm">Final URL<input className="input" value={xdForm.finalUrl} onChange={(e) => setXdForm({ ...xdForm, finalUrl: e.target.value })} /></label>
-                        <label className="block text-sm">Headlines — প্রতি লাইনে একটি (৩–১৫টি, ≤৩০ অক্ষর)<textarea className="input font-mono text-xs" rows={5} value={xdForm.headlinesText} onChange={(e) => setXdForm({ ...xdForm, headlinesText: e.target.value })} /></label>
-                        <label className="block text-sm">Descriptions — প্রতি লাইনে একটি (২–৪টি, ≤৯০ অক্ষর)<textarea className="input font-mono text-xs" rows={3} value={xdForm.descriptionsText} onChange={(e) => setXdForm({ ...xdForm, descriptionsText: e.target.value })} /></label>
-                        <label className="block text-sm">Keywords — প্রতি লাইনে: text অথবা text|BROAD/PHRASE<textarea className="input font-mono text-xs" rows={4} value={xdForm.keywordsText} onChange={(e) => setXdForm({ ...xdForm, keywordsText: e.target.value })} /></label>
+                        <p className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xd2SearchHeading")}</p>
+                        <label className="block text-sm">{t("campaignBuilder.xd2FinalUrlLabel")}<input className="input" value={xdForm.finalUrl} onChange={(e) => setXdForm({ ...xdForm, finalUrl: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2HeadlinesPmax")}<textarea className="input font-mono text-xs" rows={5} value={xdForm.headlinesText} onChange={(e) => setXdForm({ ...xdForm, headlinesText: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2DescriptionsSearch")}<textarea className="input font-mono text-xs" rows={3} value={xdForm.descriptionsText} onChange={(e) => setXdForm({ ...xdForm, descriptionsText: e.target.value })} /></label>
+                        <label className="block text-sm">{t("campaignBuilder.xd2KeywordsLabel")}<textarea className="input font-mono text-xs" rows={4} value={xdForm.keywordsText} onChange={(e) => setXdForm({ ...xdForm, keywordsText: e.target.value })} /></label>
                       </>) : (<>
-                        <p className="text-xs font-semibold text-slate-600">TikTok Ad</p>
-                        <label className="block text-sm">Ad Text (≤১০০ অক্ষর)<textarea className="input text-xs" rows={2} value={xdForm.adText} onChange={(e) => setXdForm({ ...xdForm, adText: e.target.value })} /></label>
+                        <p className="text-xs font-semibold text-slate-600">{t("campaignBuilder.xd2TiktokHeading")}</p>
+                        <label className="block text-sm">{t("campaignBuilder.xd2AdTextLabel")}<textarea className="input text-xs" rows={2} value={xdForm.adText} onChange={(e) => setXdForm({ ...xdForm, adText: e.target.value })} /></label>
                         <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
-                          <label className="block text-sm">Landing URL<input className="input" value={xdForm.landingUrl} onChange={(e) => setXdForm({ ...xdForm, landingUrl: e.target.value })} /></label>
-                          <label className="block text-sm">ছবির URL<input className="input" value={xdForm.imageUrl} onChange={(e) => setXdForm({ ...xdForm, imageUrl: e.target.value })} /></label>
-                          <label className="block text-sm">ভিডিওর URL<input className="input" value={xdForm.videoUrl} onChange={(e) => setXdForm({ ...xdForm, videoUrl: e.target.value })} /></label>
+                          <label className="block text-sm">{t("campaignBuilder.xd2LandingUrlLabel")}<input className="input" value={xdForm.landingUrl} onChange={(e) => setXdForm({ ...xdForm, landingUrl: e.target.value })} /></label>
+                          <label className="block text-sm">{t("campaignBuilder.xd2ImageUrlLabel")}<input className="input" value={xdForm.imageUrl} onChange={(e) => setXdForm({ ...xdForm, imageUrl: e.target.value })} /></label>
+                          <label className="block text-sm">{t("campaignBuilder.xd2VideoUrlLabel")}<input className="input" value={xdForm.videoUrl} onChange={(e) => setXdForm({ ...xdForm, videoUrl: e.target.value })} /></label>
                         </div>
                         <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
                           <label className="block text-sm">Objective
@@ -2901,10 +2911,10 @@ export default function CampaignBuilderPage() {
                               <option value="LEAD_GENERATION">LEAD_GENERATION</option>
                             </select>
                           </label>
-                          <label className="block text-sm">Pixel ID (শুধু WEB_CONVERSIONS)<input className="input" value={xdForm.pixelId} onChange={(e) => setXdForm({ ...xdForm, pixelId: e.target.value })} /></label>
+                          <label className="block text-sm">{t("campaignBuilder.xd2PixelLabel")}<input className="input" value={xdForm.pixelId} onChange={(e) => setXdForm({ ...xdForm, pixelId: e.target.value })} /></label>
                           <label className="block text-sm">Optimization Event<input className="input" value={xdForm.optimizationEvent} onChange={(e) => setXdForm({ ...xdForm, optimizationEvent: e.target.value })} /></label>
                         </div>
-                        <p className="text-xs text-slate-400">LEAD_GENERATION এই Flow-তে তৈরি হয় না (Ad-এর সঙ্গে Instant Form বাঁধা লাগে) — Draft-এ পছন্দটি থাকে, Readiness কারণসহ আটকায়।</p>
+                        <p className="text-xs text-slate-400">{t("campaignBuilder.xp2LeadNote")}</p>
                       </>)}
                       <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                         const countries = xdForm.countries.split(",").map((x: string) => x.trim()).filter(Boolean);
@@ -2927,24 +2937,24 @@ export default function CampaignBuilderPage() {
                         };
                         const res = await wrap(`xd-save-${d.id}`, () => apiFetch<{ problems: string[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}`, { method: "PATCH", body: JSON.stringify({ fields }) }));
                         if (res) {
-                          if (res.problems.length) setXdResult((s) => ({ ...s, [d.id]: `⚠ সেভ হয়েছে, কিন্তু ঘাটতি: ${res.problems.join(" · ")}` }));
-                          else { setNotice("Draft সেভ হয়েছে — সব Field ঠিক আছে।"); noteSaved(); setXdEditId(null); setXdForm(null); }
+                          if (res.problems.length) setXdResult((s) => ({ ...s, [d.id]: t("campaignBuilder.xd2SaveProblems", { items: res.problems.join(" · ") }) }));
+                          else { setNotice(t("campaignBuilder.xd2SavedNotice")); noteSaved(); setXdEditId(null); setXdForm(null); }
                           const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
                           if (list) setXdrafts(list);
                         }
-                      }}>সেভ করুন</button>
+                      }}>{t("campaignBuilder.xd2SaveBtn")}</button>
                       {d.status === "created" ? (
                         <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                           const amount = String(xdForm.dailyBudget ?? "").trim();
-                          if (!amount || !(Number(amount) > 0)) { setError("আগে দৈনিক বাজেটে একটি ধনাত্মক সংখ্যা লিখুন"); return; }
-                          if (!window.confirm(`Platform-এ এই Campaign-এর দৈনিক বাজেট ৳${amount} করতে চান? এটি একটি Budget পরিবর্তন — Platform নিশ্চিত করলেই কার্যকর হবে।`)) return;
+                          if (!amount || !(Number(amount) > 0)) { setError(t("campaignBuilder.xd2ErrBudgetPositive")); return; }
+                          if (!window.confirm(t("campaignBuilder.xd2BudgetConfirm", { amount: fmtMoney(locale, Number(amount)) }))) return;
                           const res = await wrap(`xd-budget-${d.id}`, () => apiFetch<{ before: string | null; after: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/budget`, { method: "POST", body: JSON.stringify({ dailyBudget: amount }) }));
                           if (res) {
-                            setXdResult((s) => ({ ...s, [d.id]: `✓ Platform Budget নিশ্চিত হয়েছে: ৳${res.before ?? "—"} → ৳${res.after} (দৈনিক)।` }));
+                            setXdResult((s) => ({ ...s, [d.id]: t("campaignBuilder.xd2BudgetDone", { before: res.before != null ? fmtMoney(locale, Number(res.before)) : "—", after: fmtMoney(locale, Number(res.after)) }) }));
                             const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
                             if (list) setXdrafts(list);
                           }
-                        }}>💰 Platform-এ Budget পাঠান (CA16)</button>
+                        }}>{t("campaignBuilder.xd2BudgetBtn")}</button>
                       ) : null}
                     </div>
                   ) : null}
@@ -2956,76 +2966,76 @@ export default function CampaignBuilderPage() {
       ) : null}
 
       <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
-        <div className="font-semibold">🔀 অন্য Ad Account-এ Clone <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN8)</span></div>
-        <p className="text-xs text-slate-500">Plan টি অন্য Meta Account-এ নতুন DRAFT হিসেবে যাবে। Page/Pixel/Audience/Catalog শুধু তখনই যাবে যখন Target Account-এ তা যাচাই করা গেছে কিংবা আপনি আবার বেছে দিয়েছেন — বাকি সব Blocker হিসেবে তালিকায় আসবে, চুপচাপ যাবে না।</p>
+        <div className="font-semibold">{t("campaignBuilder.clTitle")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.clTitleNote")}</span></div>
+        <p className="text-xs text-slate-500">{t("campaignBuilder.clIntro")}</p>
         <div className="flex flex-wrap items-center gap-2">
           <select className="input w-72" id="clone-account">
-            <option value="">Target Meta Account বেছে নিন</option>
-            {accountsHealth.filter((a) => a.platform === "meta" && a.id !== plan.adAccountId).map((a) => <option key={a.id} value={a.id}>{a.name} — Status: {a.health.platformStatusBucket}{a.health.connection === "none" ? " · API সংযোগ নেই" : ""}</option>)}
+            <option value="">{t("campaignBuilder.clTargetChoose")}</option>
+            {accountsHealth.filter((a) => a.platform === "meta" && a.id !== plan.adAccountId).map((a) => <option key={a.id} value={a.id}>{a.name} — Status: {a.health.platformStatusBucket}{a.health.connection === "none" ? t("campaignBuilder.clNoConnection") : ""}</option>)}
           </select>
-          <input className="input w-44" id="clone-page" placeholder="Page ID (আবার বাছাই, ঐচ্ছিক)" />
-          <input className="input w-44" id="clone-pixel" placeholder="Pixel ID (আবার বাছাই, ঐচ্ছিক)" />
+          <input className="input w-44" id="clone-page" placeholder={t("campaignBuilder.clPagePlaceholder")} />
+          <input className="input w-44" id="clone-pixel" placeholder={t("campaignBuilder.clPixelPlaceholder")} />
           <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
             const target = (document.getElementById("clone-account") as HTMLSelectElement)?.value ?? "";
-            if (!target) { setError("Target Account বেছে নিন — তালিকা খালি থাকলে আগে 🛡 Guardrails বোতামে Account Health লোড করুন"); return; }
+            if (!target) { setError(t("campaignBuilder.clErrTarget")); return; }
             const pageId = (document.getElementById("clone-page") as HTMLInputElement)?.value.trim();
             const pixelId = (document.getElementById("clone-pixel") as HTMLInputElement)?.value.trim();
             const res = await wrap("clone", () => apiFetch<NonNullable<typeof cloneReport>>(`/organizations/${orgId}/campaign-plans/${plan.id}/clone-to-account`, { method: "POST", body: JSON.stringify({ targetAdAccountId: target, resolutions: { ...(pageId ? { pageId } : {}), ...(pixelId ? { pixelId } : {}) } }) }));
-            if (res) { setCloneReport(res); setNotice(`Clone তৈরি: "${res.plan.name}" (${res.targetAccount.name}) — DRAFT। Blocker থাকলে নিচের তালিকা দেখুন।`); }
-          }}>Clone করুন</button>
+            if (res) { setCloneReport(res); setNotice(t("campaignBuilder.clCreatedNotice", { plan: res.plan.name, account: res.targetAccount.name })); }
+          }}>{t("campaignBuilder.clBtn")}</button>
           <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
             const acc = await apiFetch<typeof accountsHealth>(`/organizations/${orgId}/campaign-plans/accounts/health`).catch(() => null);
             if (acc) setAccountsHealth(acc);
-          }}>Account Health লোড</button>
+          }}>{t("campaignBuilder.clHealthBtn")}</button>
         </div>
         {cloneReport ? (
           <div className="space-y-1 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
-            <p className="font-semibold text-sm">Mapping Report — {cloneReport.plan.name}</p>
-            {cloneReport.blockers.length ? <div className="rounded bg-red-50 p-2 text-red-700">{cloneReport.blockers.map((b, i) => <p key={i}>⛔ {b}</p>)}</div> : <p className="text-emerald-700">✓ কোনো Blocker নেই — সব যাচাই/বাছাই সম্পূর্ণ।</p>}
+            <p className="font-semibold text-sm">{t("campaignBuilder.clReportTitle", { plan: cloneReport.plan.name })}</p>
+            {cloneReport.blockers.length ? <div className="rounded bg-red-50 p-2 text-red-700">{cloneReport.blockers.map((b, i) => <p key={i}>⛔ {b}</p>)}</div> : <p className="text-emerald-700">{t("campaignBuilder.clNoBlockers")}</p>}
             {cloneReport.mapping.map((m, i) => (
-              <p key={i}><span className={m.outcome === "carried_verified" ? "font-semibold text-emerald-700" : m.outcome === "carried_user_confirmed" ? "font-semibold text-sky-700" : "font-semibold text-red-700"}>{m.outcome === "carried_verified" ? "✓ যাচাই হয়ে গেছে" : m.outcome === "carried_user_confirmed" ? "✓ আপনার বাছাই" : "⛔ বাদ (Blocker)"}</span> {m.adSet} · {m.field}: {m.detail}</p>
+              <p key={i}><span className={m.outcome === "carried_verified" ? "font-semibold text-emerald-700" : m.outcome === "carried_user_confirmed" ? "font-semibold text-sky-700" : "font-semibold text-red-700"}>{m.outcome === "carried_verified" ? t("campaignBuilder.clOutcomeVerified") : m.outcome === "carried_user_confirmed" ? t("campaignBuilder.clOutcomeUser") : t("campaignBuilder.clOutcomeBlocked")}</span> {m.adSet} · {m.field}: {m.detail}</p>
             ))}
           </div>
         ) : null}
       </div>
 
       <div className={`card space-y-3 p-5 ${activeStep !== 0 ? "hidden" : ""}`}>
-        <div className="font-semibold">📋 Lead Forms (Instant Forms) <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN4)</span></div>
-        <p className="text-xs text-slate-500">ফর্ম এখানে মডেল করা হয়; Meta তে তৈরি হয় এই Plan এর Ad Account দিয়ে — Meta নিশ্চিত করলেই ফর্মটি &quot;তৈরি&quot; হিসেবে গণ্য হয়। তৈরি ফর্ম পরে সম্পাদনা করলে তা নতুন লোকাল ফর্মে পরিণত হয় (Meta তে ফর্ম Edit হয় না)। লিড এলে এখানকার Field Mapping অনুযায়ী CRM Lead এ ক্ষেত্র বসে।</p>
+        <div className="font-semibold">{t("campaignBuilder.lfTitle")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.lfTitleNote")}</span></div>
+        <p className="text-xs text-slate-500">{t("campaignBuilder.lfIntro")}</p>
         <div>
           <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("lfquality", () => apiFetch<NonNullable<typeof leadQuality>>(`/organizations/${orgId}/campaign-plans/lead-forms/quality`));
             if (res) setLeadQuality(res);
-          }}>📊 Form Quality দেখুন (CA20)</button>
-          {leadQuality ? <p className="mt-1 text-xs text-slate-400">আসল CRM Lead থেকে হিসাব — Form-যুক্ত লিড: {fmtNumBn(leadQuality.coverage.attributedLeads)}টি · Form চিহ্নিত নয় এমন Lead Ads লিড: {fmtNumBn(leadQuality.coverage.unattributedLeadAdsLeads)}টি (আন্দাজে কোনো Form-এ দেওয়া হয়নি)। Rate দেখাতে ফর্মপ্রতি অন্তত {fmtNumBn(leadQuality.minLeads)}টি লিড লাগে।</p> : null}
+          }}>{t("campaignBuilder.lfQualityBtn")}</button>
+          {leadQuality ? <p className="mt-1 text-xs text-slate-400">{t("campaignBuilder.lfQualityNote", { attributed: fmtNumBn(leadQuality.coverage.attributedLeads), unattributed: fmtNumBn(leadQuality.coverage.unattributedLeadAdsLeads), min: fmtNumBn(leadQuality.minLeads) })}</p> : null}
         </div>
-        {leadForms.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো Lead Form নেই।</p> : (
+        {leadForms.length === 0 ? <p className="text-sm text-slate-400">{t("campaignBuilder.lfNone")}</p> : (
           <div className="space-y-2">
             {leadForms.map((f) => (
               <div key={f.id} className="rounded-lg bg-slate-50 p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium">{f.name} <span className="text-xs text-slate-400">Page: {f.pageId}</span></span>
-                  <span className={f.status === "created" ? "rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-semibold text-green-700" : f.status === "failed" ? "rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700" : "rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"}>{f.status === "created" ? `Meta তে তৈরি · ${f.externalFormId}` : f.status === "failed" ? "Meta তে তৈরি ব্যর্থ" : "লোকাল"}</span>
+                  <span className={f.status === "created" ? "rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-semibold text-green-700" : f.status === "failed" ? "rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700" : "rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"}>{f.status === "created" ? t("campaignBuilder.lfStatusCreated", { id: f.externalFormId ?? "" }) : f.status === "failed" ? t("campaignBuilder.lfStatusFailed") : t("campaignBuilder.lfStatusLocal")}</span>
                 </div>
                 {f.error ? <p className="mt-1 text-xs text-red-600">{f.error}</p> : null}
                 {leadQuality ? (() => { const q = leadQuality.forms.find((x) => x.formId === f.id); if (!q) return null; return (
                   <div className="mt-1 rounded bg-white p-2 text-xs leading-[1.7] text-slate-600">
-                    {q.belowThreshold ? <p>🎯 Quality: {q.thresholdNote}</p> : (
-                      <p>🎯 লিড: <b>{fmtNumBn(q.totalLeads)}</b> · Qualified: <b>{fmtNumBn(q.qualified)}</b> ({q.qualifiedRate ?? "—"}%) · Order হয়েছে: <b>{fmtNumBn(q.convertedToOrder)}</b> ({q.orderRate ?? "—"}%) · Stage: {Object.entries(q.stages).map(([s, n]) => `${s} ${n}`).join(" · ")}</p>
+                    {q.belowThreshold ? <p>{t("campaignBuilder.lfQualityPrefix")}{q.thresholdNote}</p> : (
+                      <p>{t("campaignBuilder.lfQualityLine", { leads: fmtNumBn(q.totalLeads), qualified: fmtNumBn(q.qualified), qualifiedRate: q.qualifiedRate ?? "—", converted: fmtNumBn(q.convertedToOrder), orderRate: q.orderRate ?? "—", stages: Object.entries(q.stages).map(([s, n]) => `${s} ${n}`).join(" · ") })}</p>
                     )}
-                    <p>{q.costPerQualifiedMinor != null ? <>প্রতি Qualified লিডে খরচ: <b>{fmtMoneyBn(q.costPerQualifiedMinor)}</b> (যুক্ত Campaign-এর সংরক্ষিত খরচ থেকে)</> : q.costNote}</p>
-                    <p>CN14 Feedback: পাঠানো {fmtNumBn(q.feedback.sent)} · ব্যর্থ {fmtNumBn(q.feedback.failed)}{q.feedback.lastSentAt ? ` · সর্বশেষ ${q.feedback.lastSentAt.slice(0, 10)}` : " · কখনো পাঠানো হয়নি"}</p>
+                    <p>{q.costPerQualifiedMinor != null ? <>{t("campaignBuilder.lfCostLine", { cost: fmtMoneyBn(q.costPerQualifiedMinor) })}</> : q.costNote}</p>
+                    <p>{t("campaignBuilder.lfFeedbackLine", { sent: fmtNumBn(q.feedback.sent), failed: fmtNumBn(q.feedback.failed), last: q.feedback.lastSentAt ? t("campaignBuilder.lfFeedbackLast", { date: q.feedback.lastSentAt.slice(0, 10) }) : t("campaignBuilder.lfFeedbackNever") })}</p>
                   </div>
                 ); })() : null}
-                {f.introHeadline ? <p className="mt-1 text-xs text-slate-500">শিরোনাম: {f.introHeadline}</p> : null}
-                <div className="mt-1 text-xs text-slate-500">প্রশ্ন: {f.questions.map((q) => q.label ?? q.type).join(" · ")}</div>
-                <div className="text-xs text-slate-500">Mapping: {Object.entries(f.fieldMapping ?? {}).map(([k, v]) => `${k} → ${v}`).join(", ") || "—"}{f.higherIntent ? " · Higher Intent (Review)" : ""}</div>
+                {f.introHeadline ? <p className="mt-1 text-xs text-slate-500">{t("campaignBuilder.lfIntroLabel")}{f.introHeadline}</p> : null}
+                <div className="mt-1 text-xs text-slate-500">{t("campaignBuilder.lfQuestionsLabel")}{f.questions.map((q) => q.label ?? q.type).join(" · ")}</div>
+                <div className="text-xs text-slate-500">Mapping: {Object.entries(f.fieldMapping ?? {}).map(([k, v]) => `${k} → ${v}`).join(", ") || "—"}{f.higherIntent ? t("campaignBuilder.lfHigherIntentSuffix") : ""}</div>
                 {f.status !== "created" ? (
                   <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={async () => {
                     const res = await wrap(`lfmeta-${f.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/lead-forms/${f.id}/create-on-meta`, { method: "POST", body: JSON.stringify({ adAccountId: plan.adAccountId }) }));
-                    if (res) { setNotice("Meta ফর্ম তৈরি নিশ্চিত করেছে।"); await reloadLeadForms(); await loadPlan(plan.id); }
+                    if (res) { setNotice(t("campaignBuilder.lfMetaConfirmed")); await reloadLeadForms(); await loadPlan(plan.id); }
                     else await reloadLeadForms();
-                  }}>Meta তে তৈরি করুন (এই Plan এর Ad Account দিয়ে)</button>
+                  }}>{t("campaignBuilder.lfCreateOnMetaBtn")}</button>
                 ) : null}
               </div>
             ))}
@@ -3033,20 +3043,20 @@ export default function CampaignBuilderPage() {
         )}
         {editable ? (
           <div className="space-y-2 border-t pt-3">
-            <div className="text-sm font-semibold">নতুন Lead Form</div>
+            <div className="text-sm font-semibold">{t("campaignBuilder.lfNewTitle")}</div>
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
-              <label className="block text-sm">নাম<input className="input" value={leadFormForm.name} onChange={(e) => setLeadFormForm({ ...leadFormForm, name: e.target.value })} /></label>
-              <label className="block text-sm">Facebook Page ID<input className="input" value={leadFormForm.pageId} onChange={(e) => setLeadFormForm({ ...leadFormForm, pageId: e.target.value })} /></label>
-              <label className="block text-sm">শিরোনাম (Intro Headline)<input className="input" value={leadFormForm.introHeadline} onChange={(e) => setLeadFormForm({ ...leadFormForm, introHeadline: e.target.value })} /></label>
-              <label className="block text-sm">Privacy Policy URL (https, বাধ্যতামূলক)<input className="input" value={leadFormForm.privacyPolicyUrl} onChange={(e) => setLeadFormForm({ ...leadFormForm, privacyPolicyUrl: e.target.value })} placeholder="https://example.com/privacy" /></label>
-              <label className="block text-sm">ধন্যবাদ-শিরোনাম<input className="input" value={leadFormForm.thankYouTitle} onChange={(e) => setLeadFormForm({ ...leadFormForm, thankYouTitle: e.target.value })} placeholder="ধন্যবাদ!" /></label>
-              <label className="block text-sm">Follow-up URL (ঐচ্ছিক)<input className="input" value={leadFormForm.followUpActionUrl} onChange={(e) => setLeadFormForm({ ...leadFormForm, followUpActionUrl: e.target.value })} /></label>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={leadFormForm.higherIntent} onChange={(e) => setLeadFormForm({ ...leadFormForm, higherIntent: e.target.checked })} /> Higher Intent (জমা দেওয়ার আগে Review)</label>
+              <label className="block text-sm">{t("campaignBuilder.lfNameLabel")}<input className="input" value={leadFormForm.name} onChange={(e) => setLeadFormForm({ ...leadFormForm, name: e.target.value })} /></label>
+              <label className="block text-sm">{t("campaignBuilder.lfPageLabel")}<input className="input" value={leadFormForm.pageId} onChange={(e) => setLeadFormForm({ ...leadFormForm, pageId: e.target.value })} /></label>
+              <label className="block text-sm">{t("campaignBuilder.lfIntroHeadlineLabel")}<input className="input" value={leadFormForm.introHeadline} onChange={(e) => setLeadFormForm({ ...leadFormForm, introHeadline: e.target.value })} /></label>
+              <label className="block text-sm">{t("campaignBuilder.lfPrivacyLabel")}<input className="input" value={leadFormForm.privacyPolicyUrl} onChange={(e) => setLeadFormForm({ ...leadFormForm, privacyPolicyUrl: e.target.value })} placeholder="https://example.com/privacy" /></label>
+              <label className="block text-sm">{t("campaignBuilder.lfThankYouLabel")}<input className="input" value={leadFormForm.thankYouTitle} onChange={(e) => setLeadFormForm({ ...leadFormForm, thankYouTitle: e.target.value })} placeholder={t("campaignBuilder.lfThankYouPlaceholder")} /></label>
+              <label className="block text-sm">{t("campaignBuilder.lfFollowUpLabel")}<input className="input" value={leadFormForm.followUpActionUrl} onChange={(e) => setLeadFormForm({ ...leadFormForm, followUpActionUrl: e.target.value })} /></label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={leadFormForm.higherIntent} onChange={(e) => setLeadFormForm({ ...leadFormForm, higherIntent: e.target.checked })} />{t("campaignBuilder.lfHigherIntentLabel")}</label>
             </div>
-            <label className="block text-sm">প্রশ্ন — প্রতি লাইনে: TYPE|key|Label|Option1,Option2 <span className="text-xs text-slate-400">(TYPE: FULL_NAME, EMAIL, PHONE, CITY, COUNTRY, POST_CODE, CUSTOM …)</span>
+            <label className="block text-sm">{t("campaignBuilder.lfQuestionsFieldLabel")}<span className="text-xs text-slate-400">{t("campaignBuilder.lfQuestionsHint")}</span>
               <textarea className="input font-mono text-xs" rows={4} value={leadFormForm.questionsText} onChange={(e) => setLeadFormForm({ ...leadFormForm, questionsText: e.target.value })} />
             </label>
-            <label className="block text-sm">Field Mapping — প্রতি লাইনে: questionKey=target <span className="text-xs text-slate-400">(target: name, email, phone, notes, custom:&lt;key&gt;{customFields.length ? ` — Custom Fields: ${customFields.map((c) => c.key).join(", ")}` : ""})</span>
+            <label className="block text-sm">{t("campaignBuilder.lfMappingLabel")}<span className="text-xs text-slate-400">{t("campaignBuilder.lfMappingHint", { custom: customFields.length ? t("campaignBuilder.lfMappingCustom", { fields: customFields.map((c) => c.key).join(", ") }) : "" })}</span>
               <textarea className="input font-mono text-xs" rows={3} value={leadFormForm.mappingText} onChange={(e) => setLeadFormForm({ ...leadFormForm, mappingText: e.target.value })} />
             </label>
             <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
@@ -3068,107 +3078,107 @@ export default function CampaignBuilderPage() {
                   questions, fieldMapping,
                 }),
               }));
-              if (res) { setNotice("Lead Form তৈরি হয়েছে (লোকাল)। Ad Set এ যোগ করে Publish করলে Meta তে তৈরি হবে, অথবা উপরের বোতামে এখনই তৈরি করুন।"); setLeadFormForm(emptyLeadForm); await reloadLeadForms(); }
-            }}>ফর্ম তৈরি করুন (লোকাল)</button>
+              if (res) { setNotice(t("campaignBuilder.lfCreatedNotice")); setLeadFormForm(emptyLeadForm); await reloadLeadForms(); }
+            }}>{t("campaignBuilder.lfCreateBtn")}</button>
           </div>
         ) : null}
       </div>
 
       <div className={`card space-y-3 p-5 ${activeStep !== 1 ? "hidden" : ""}`}>
-        <div className="font-semibold">🎯 Dynamic Retargeting প্রিসেট <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN3)</span></div>
-        <p className="text-xs text-slate-500">বিদ্যমান Audience Record দিয়ে Retargeting Ad Set এর খসড়া বানায়। নতুন Audience তৈরি করা CN6 এর কাজ — এখানে শুধু তৈরি Record ব্যবহার হয়; না থাকলে ঠিক কী নেই তা জানানো হয়।</p>
+        <div className="font-semibold">{t("campaignBuilder.rtTitle")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.rtTitleNote")}</span></div>
+        <p className="text-xs text-slate-500">{t("campaignBuilder.rtIntro")}</p>
         <div className="flex flex-wrap items-end gap-2">
-          <label className="block text-sm">ধরন
+          <label className="block text-sm">{t("campaignBuilder.rtKindLabel")}
             <select className="input" value={preset.kind} onChange={(e) => setPreset({ ...preset, kind: e.target.value })}>
               <option value="product_viewers">Product Viewers</option>
-              <option value="add_to_cart">Add-to-Cart (কিনেনি)</option>
+              <option value="add_to_cart">{t("campaignBuilder.rtCartSuffix")}</option>
             </select>
           </label>
-          <label className="block text-sm">Audience Record
+          <label className="block text-sm">{t("campaignBuilder.rtAudienceLabel")}
             <select className="input w-64" value={preset.audienceRecordId} onChange={(e) => setPreset({ ...preset, audienceRecordId: e.target.value })}>
-              <option value="">(স্বয়ংক্রিয় — তৈরি Record খুঁজবে)</option>
+              <option value="">{t("campaignBuilder.rtAutoOption")}</option>
               {audList.filter((a) => a.externalAudienceId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </label>
-          <label className="block text-sm">নাম (ঐচ্ছিক)<input className="input" value={preset.name} onChange={(e) => setPreset({ ...preset, name: e.target.value })} /></label>
+          <label className="block text-sm">{t("campaignBuilder.rtNameLabel")}<input className="input" value={preset.name} onChange={(e) => setPreset({ ...preset, name: e.target.value })} /></label>
           <button className="btn-primary btn-sm" disabled={busy !== "" || !editable} onClick={async () => {
             const res = await wrap("preset", () => apiFetch<NonNullable<typeof presetResult>>(`/organizations/${orgId}/campaign-plans/${plan.id}/retargeting-preset`, { method: "POST", body: JSON.stringify({ kind: preset.kind, audienceRecordId: preset.audienceRecordId || undefined, name: preset.name || undefined, pixelId: plan.adSets[0]?.pixelId || undefined }) }));
             if (res) {
               setPresetResult(res);
-              if (res.status === "created") { setNotice("Retargeting Ad Set (Draft) তৈরি হয়েছে।"); await loadPlan(plan.id); }
+              if (res.status === "created") { setNotice(t("campaignBuilder.rtCreatedNotice")); await loadPlan(plan.id); }
             }
-          }}>প্রিসেট প্রয়োগ করুন</button>
+          }}>{t("campaignBuilder.rtApplyBtn")}</button>
         </div>
-        {presetResult?.status === "missing" ? <p className="text-sm text-amber-600">তৈরি হয়নি — ঘাটতি: {(presetResult.missing ?? []).join(" · ")}</p> : null}
+        {presetResult?.status === "missing" ? <p className="text-sm text-amber-600">{t("campaignBuilder.rtMissing", { items: (presetResult.missing ?? []).join(" · ") })}</p> : null}
         {presetResult?.status === "needs_choice" ? (
           <div className="text-sm">
-            <p className="text-slate-600">একাধিক তৈরি Audience Record আছে — একটি বেছে আবার চাপুন:</p>
+            <p className="text-slate-600">{t("campaignBuilder.rtNeedsChoice")}</p>
             <div className="mt-1 flex flex-wrap gap-2">
               {(presetResult.candidates ?? []).map((c) => <button key={c.id} className="btn-secondary btn-sm" onClick={() => setPreset({ ...preset, audienceRecordId: c.id })}>{c.name}</button>)}
             </div>
             {(presetResult.missing ?? []).length ? <p className="mt-1 text-xs text-slate-500">{(presetResult.missing ?? []).join(" · ")}</p> : null}
           </div>
         ) : null}
-        {presetResult?.status === "created" && (presetResult.missing ?? []).length ? <p className="text-sm text-slate-500">তৈরি হয়েছে। নোট: {(presetResult.missing ?? []).join(" · ")}</p> : null}
+        {presetResult?.status === "created" && (presetResult.missing ?? []).length ? <p className="text-sm text-slate-500">{t("campaignBuilder.rtCreatedNote", { items: (presetResult.missing ?? []).join(" · ") })}</p> : null}
       </div>
 
       <div id="cbx-step-review" tabIndex={-1} className={`r2-step-enter card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
         <div className="flex items-center justify-between">
-          <div className="font-semibold">💬 আলোচনা ও কার্যক্রম <span className="text-xs font-normal text-slate-400">(Campaign Builder CB4)</span></div>
+          <div className="font-semibold">{t("campaignBuilder.cmTitle")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.cmTitleNote")}</span></div>
           <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
-            const [c, t] = await Promise.all([
+            const [cmts, tl] = await Promise.all([
               apiFetch<NonNullable<typeof comments>>(`/organizations/${orgId}/campaign-plans/${plan.id}/comments`).catch(() => []),
               apiFetch<NonNullable<typeof timeline>>(`/organizations/${orgId}/campaign-plans/${plan.id}/timeline`).catch(() => []),
             ]);
-            setComments(c); setTimeline(t);
-          }}>লোড করুন</button>
+            setComments(cmts); setTimeline(tl);
+          }}>{t("campaignBuilder.cmLoadBtn")}</button>
         </div>
-        {comments === null ? <p className="text-sm text-slate-400">মন্তব্য ও কার্যক্রম দেখতে "লোড করুন" চাপুন। অনুমোদনের সময় যা Submit হয়েছিল তার Snapshot সার্ভারে জমা থাকে — Publish এর সময় মিলিয়ে দেখা হয়।</p> : (
+        {comments === null ? <p className="text-sm text-slate-400">{t("campaignBuilder.cmNotLoaded")}</p> : (
           <>
             <div className="space-y-2">
-              {comments.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো মন্তব্য নেই।</p> : comments.map((c) => (
+              {comments.length === 0 ? <p className="text-sm text-slate-400">{t("campaignBuilder.cmNone")}</p> : comments.map((c) => (
                 <div key={c.id} className="rounded-lg bg-slate-50 p-3 text-sm">
-                  <span className="font-semibold">{c.authorName}</span> <span className="text-xs text-slate-400">{new Date(c.createdAt).toLocaleString("bn-BD")}</span>
+                  <span className="font-semibold">{c.authorName}</span> <span className="text-xs text-slate-400">{fmtDateTime(locale, c.createdAt)}</span>
                   <p className="mt-0.5 whitespace-pre-wrap">{mentionSegments(c.body, (c.mentions ?? []).map((m) => m.name)).map((seg, si) => seg.mention ? <span key={si} className="cbx-mention">{seg.text}</span> : <React.Fragment key={si}>{seg.text}</React.Fragment>)}</p>
                 </div>
               ))}
             </div>
             {members.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-600">@ Mention:</span>
+                <span className="text-xs font-semibold text-slate-600">{t("campaignBuilder.cmMentionLabel")}</span>
                 <select className="input w-56" id="plan-mention-picker" defaultValue="" onChange={(e) => {
                   const m = members.find((x) => x.user.id === e.target.value);
                   const el = document.getElementById("plan-comment") as HTMLInputElement | null;
                   if (m && el) { el.value = `${el.value}${el.value && !el.value.endsWith(" ") ? " " : ""}@${m.user.name} `; el.focus(); }
                   e.target.value = "";
                 }}>
-                  <option value="">সদস্য বেছে Mention করুন</option>
+                  <option value="">{t("campaignBuilder.cmMemberChoose")}</option>
                   {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name} ({m.role})</option>)}
                 </select>
-                <span className="text-xs text-slate-400">বাছাই করলে মন্তব্য বাক্সে @নাম বসবে — সার্ভার Mention টি যাচাই করে জানিয়ে দেয়।</span>
+                <span className="text-xs text-slate-400">{t("campaignBuilder.cmMentionNote")}</span>
               </div>
             ) : null}
             <div className="flex gap-2">
-              <input className="input flex-1" id="plan-comment" placeholder="মন্তব্য লিখুন — যেমন: বাজেট ঠিক আছে, কপিটা বদলান" maxLength={2000} />
+              <input className="input flex-1" id="plan-comment" placeholder={t("campaignBuilder.cmPlaceholder")} maxLength={2000} />
               <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const v = (document.getElementById("plan-comment") as HTMLInputElement)?.value ?? "";
-                if (!v.trim()) { setError("মন্তব্য লিখুন"); return; }
+                if (!v.trim()) { setError(t("campaignBuilder.cmErrEmpty")); return; }
                 const res = await wrap("comment", () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/comments`, { method: "POST", body: JSON.stringify({ body: v }) }));
                 if (res) {
                   (document.getElementById("plan-comment") as HTMLInputElement).value = "";
                   const c = await apiFetch<NonNullable<typeof comments>>(`/organizations/${orgId}/campaign-plans/${plan.id}/comments`).catch(() => comments);
-                  setComments(c); setNotice("মন্তব্য যোগ হয়েছে।");
+                  setComments(c); setNotice(t("campaignBuilder.cmAddedNotice"));
                 }
-              }}>মন্তব্য করুন</button>
+              }}>{t("campaignBuilder.cmPostBtn")}</button>
             </div>
             {timeline && timeline.length > 0 ? (
               <div className="border-t pt-2">
-                <div className="text-sm font-semibold">🕘 কার্যক্রমের ইতিহাস</div>
+                <div className="text-sm font-semibold">{t("campaignBuilder.cmHistoryTitle")}</div>
                 <div className="mt-1 space-y-1">
                   {timeline.slice(0, 20).map((e, i) => (
                     <div key={i} className="flex items-baseline justify-between gap-2 text-xs">
                       <span><span className="font-medium">{e.title}</span>{e.detail ? <span className="text-slate-500"> — {e.detail}</span> : null}</span>
-                      <span className="shrink-0 text-slate-400">{new Date(e.at).toLocaleString("bn-BD")}</span>
+                      <span className="shrink-0 text-slate-400">{fmtDateTime(locale, e.at)}</span>
                     </div>
                   ))}
                 </div>
@@ -3181,45 +3191,45 @@ export default function CampaignBuilderPage() {
 
       <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">🗂 Plan Versions <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN11)</span></div>
+          <div className="font-semibold">{t("campaignBuilder.vrTitle")}<span className="text-xs font-normal text-slate-400">{t("campaignBuilder.vrTitleNote")}</span></div>
           <span className="flex gap-2">
             <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
               const res = await wrap("versions", () => apiFetch<NonNullable<typeof versions>>(`/organizations/${orgId}/campaign-plans/${plan.id}/versions`));
               if (res) setVersions(res);
-            }}>তালিকা লোড করুন</button>
+            }}>{t("campaignBuilder.vrLoadBtn")}</button>
             <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
               const res = await wrap("snapshot", () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/versions`, { method: "POST", body: JSON.stringify({}) }));
               if (res) {
-                setNotice("বর্তমান Plan এর Snapshot নেওয়া হয়েছে।");
+                setNotice(t("campaignBuilder.vrSnapshotNotice"));
                 const list = await apiFetch<NonNullable<typeof versions>>(`/organizations/${orgId}/campaign-plans/${plan.id}/versions`).catch(() => null);
                 if (list) setVersions(list);
               }
-            }}>📸 Snapshot নিন</button>
+            }}>{t("campaignBuilder.vrSnapshotBtn")}</button>
           </span>
         </div>
         {busy === "versions" || busy === "snapshot" ? <div className="space-y-2"><div className="cbx-skel" style={{ height: 18 }} /><div className="cbx-skel" style={{ height: 18 }} /></div> : null}
-        {versions === null ? <p className="text-sm text-slate-400">Version ইতিহাস দেখতে "তালিকা লোড করুন" চাপুন। Submit এর সময়কার Snapshot ও হাতে নেওয়া Snapshot এখানে থাকে।</p> : versions.length === 0 ? (
-          <div className="cbx-empty"><p className="cbx-empty-title">এখনো কোনো Version নেই</p><p className="cbx-empty-text">উপরে "📸 Snapshot নিন" চেপে বর্তমান অবস্থার একটি সংস্করণ জমা রাখুন।</p></div>
+        {versions === null ? <p className="text-sm text-slate-400">{t("campaignBuilder.vrNotLoaded")}</p> : versions.length === 0 ? (
+          <div className="cbx-empty"><p className="cbx-empty-title">{t("campaignBuilder.vrEmptyTitle")}</p><p className="cbx-empty-text">{t("campaignBuilder.vrEmptyText")}</p></div>
         ) : (
           <div className="space-y-2">
             {versions.map((v) => (
               <div key={v.id} className="rounded-lg bg-slate-50 p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">{v.kind === "submit" ? "Submit Snapshot" : v.kind === "manual" ? "হাতে নেওয়া Snapshot" : v.kind} <span className="text-xs text-slate-400">· {new Date(v.createdAt).toLocaleString("bn-BD")}</span></span>
+                  <span className="font-medium">{v.kind === "submit" ? "Submit Snapshot" : v.kind === "manual" ? t("campaignBuilder.vrManualKind") : v.kind} <span className="text-xs text-slate-400">· {fmtDateTime(locale, v.createdAt)}</span></span>
                   <span className="flex gap-1">
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`vdiff-${v.id}`, () => apiFetch<{ differs: boolean; summary: NonNullable<typeof versionDiffs>[string]["summary"] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/versions/${v.id}/diff`));
                       if (res) setVersionDiffs((s) => ({ ...s, [v.id]: res }));
-                    }}>Diff দেখুন</button>
+                    }}>{t("campaignBuilder.vrDiffBtn")}</button>
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
-                      if (!window.confirm("এই Version থেকে একটি নতুন Draft Plan তৈরি হবে। বর্তমান Plan টি অপরিবর্তিত থাকবে — Restore মানে বর্তমান Plan বদলে যাওয়া নয়। এগিয়ে যাবেন?")) return;
+                      if (!window.confirm(t("campaignBuilder.vrRestoreConfirm"))) return;
                       const res = await wrap(`vrestore-${v.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/versions/${v.id}/restore`, { method: "POST", body: JSON.stringify({}) }));
-                      if (res) { setPlan(res); setVersions(null); setNotice(`নতুন Draft তৈরি হয়েছে Version থেকে: "${res.name}" — বর্তমান (আগের) Plan টি অপরিবর্তিত আছে, এটি তার আলাদা কপি।`); window.scrollTo({ top: 0 }); }
-                    }}>Restore (নতুন Draft)</button>
+                      if (res) { setPlan(res); setVersions(null); setNotice(t("campaignBuilder.vrRestoredNotice", { name: res.name })); window.scrollTo({ top: 0 }); }
+                    }}>{t("campaignBuilder.vrRestoreBtn")}</button>
                   </span>
                 </div>
                 {versionDiffs[v.id] ? (
-                  <p className="mt-1 text-xs text-slate-600">{versionDiffs[v.id].differs ? <>বর্তমান Plan এর সাথে পার্থক্য: Ad Set +{versionDiffs[v.id].summary.adSetsAdded} / −{versionDiffs[v.id].summary.adSetsRemoved} / বদলেছে {versionDiffs[v.id].summary.adSetsChanged} · Ad +{versionDiffs[v.id].summary.adsAdded} / −{versionDiffs[v.id].summary.adsRemoved} / বদলেছে {versionDiffs[v.id].summary.adsChanged}{versionDiffs[v.id].summary.topLevelChanged.length ? ` · শীর্ষ-স্তরে বদল: ${versionDiffs[v.id].summary.topLevelChanged.join(", ")}` : ""}</> : "বর্তমান Plan এর সাথে কোনো পার্থক্য নেই।"}</p>
+                  <p className="mt-1 text-xs text-slate-600">{versionDiffs[v.id].differs ? <>{t("campaignBuilder.vrDiffLine", { asAdded: fmtNumBn(versionDiffs[v.id].summary.adSetsAdded), asRemoved: fmtNumBn(versionDiffs[v.id].summary.adSetsRemoved), asChanged: fmtNumBn(versionDiffs[v.id].summary.adSetsChanged), adAdded: fmtNumBn(versionDiffs[v.id].summary.adsAdded), adRemoved: fmtNumBn(versionDiffs[v.id].summary.adsRemoved), adChanged: fmtNumBn(versionDiffs[v.id].summary.adsChanged), top: versionDiffs[v.id].summary.topLevelChanged.length ? t("campaignBuilder.vrDiffTopPart", { items: versionDiffs[v.id].summary.topLevelChanged.join(", ") }) : "" })}</> : t("campaignBuilder.vrDiffNone")}</p>
                 ) : null}
               </div>
             ))}
@@ -3230,23 +3240,23 @@ export default function CampaignBuilderPage() {
       </div>
       <aside className="cbx-rail mt-6 space-y-4 lg:mt-0">
         <div>
-          <p className="cbx-rail-title">📋 Plan সারাংশ</p>
+          <p className="cbx-rail-title">{t("campaignBuilder.rlSummaryTitle")}</p>
           <div className="mt-2 space-y-1 rounded-xl border bg-white p-3 text-sm leading-[1.7]">
             <p className="font-semibold">{plan.name}</p>
-            <p className="text-xs text-slate-500">{plan.objective} · অবস্থা: <span className="font-semibold">{STATUS_LABEL[plan.status] ?? plan.status}</span></p>
-            <p className="text-xs text-slate-600">💰 মোট দৈনিক বাজেট: <span className="font-semibold">{readiness?.budget ? fmtMoneyBn(readiness.budget.dailyTotalMinor) : fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.dailyBudgetMinor ?? "0"), 0n))}</span> · Lifetime মোট: {readiness?.budget ? fmtMoneyBn(readiness.budget.lifetimeTotalMinor) : fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.lifetimeBudgetMinor ?? "0"), 0n))}</p>
-            <p className="text-xs text-slate-600">🧮 Budget Mode (CN2): <span className="font-semibold">{plan.advantagePlus ? "CBO — Advantage+ (Campaign পর্যায়ে)" : plan.budgetMode === "cbo" ? "CBO — বাজেট Campaign পর্যায়ে" : "ABO — বাজেট Ad Set পর্যায়ে"}</span>{plan.budgetMode === "cbo" || plan.advantagePlus ? <> · Campaign দৈনিক: {plan.campaignDailyBudgetMinor ? fmtMoneyBn(plan.campaignDailyBudgetMinor) : "—"}</> : null}</p>
-            {pacing ? <p className="text-xs text-slate-600">⏱ Pacing (CN2): এ পর্যন্ত খরচ: <b>{fmtMoneyBn(pacing.spentMinor)}</b> · আজ পর্যন্ত প্রত্যাশিত: <b>{pacing.expectedMinor != null ? fmtMoneyBn(pacing.expectedMinor) : "—"}</b> · পার্থক্য: <b>{pacing.varianceMinor != null ? fmtMoneyBn(pacing.varianceMinor) : "—"}</b></p> : null}
-            {readiness ? <p className="text-xs text-slate-600">Readiness সারাংশ: ⛔ Error ×{readinessCounts(readiness.checks).errors} · ⚠ Warning ×{readinessCounts(readiness.checks).warnings} · ✓ ঠিক আছে ×{readinessCounts(readiness.checks).oks}</p> : null}
+            <p className="text-xs text-slate-500">{plan.objective} · {t("campaignBuilder.rlStatusPart")}<span className="font-semibold">{statusLabel(plan.status)}</span></p>
+            <p className="text-xs text-slate-600">{t("campaignBuilder.rlTotalDaily")}<span className="font-semibold">{readiness?.budget ? fmtMoneyBn(readiness.budget.dailyTotalMinor) : fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.dailyBudgetMinor ?? "0"), 0n))}</span>{t("campaignBuilder.rlLifetimeTotal")}{readiness?.budget ? fmtMoneyBn(readiness.budget.lifetimeTotalMinor) : fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.lifetimeBudgetMinor ?? "0"), 0n))}</p>
+            <p className="text-xs text-slate-600">{t("campaignBuilder.rlBudgetMode")}<span className="font-semibold">{plan.advantagePlus ? t("campaignBuilder.rlModeAdvantage") : plan.budgetMode === "cbo" ? t("campaignBuilder.rlModeCbo") : t("campaignBuilder.rlModeAbo")}</span>{plan.budgetMode === "cbo" || plan.advantagePlus ? <>{t("campaignBuilder.rlCampaignDailyPart", { amount: plan.campaignDailyBudgetMinor ? fmtMoneyBn(plan.campaignDailyBudgetMinor) : "—" })}</> : null}</p>
+            {pacing ? <p className="text-xs text-slate-600">{t("campaignBuilder.rlPacing", { spent: fmtMoneyBn(pacing.spentMinor), expected: pacing.expectedMinor != null ? fmtMoneyBn(pacing.expectedMinor) : "—", variance: pacing.varianceMinor != null ? fmtMoneyBn(pacing.varianceMinor) : "—" })}</p> : null}
+            {readiness ? <p className="text-xs text-slate-600">{t("campaignBuilder.rlReadinessSummary", { errors: fmtNumBn(readinessCounts(readiness.checks).errors), warnings: fmtNumBn(readinessCounts(readiness.checks).warnings), oks: fmtNumBn(readinessCounts(readiness.checks).oks) })}</p> : null}
             {renderSaveIndicator()}
           </div>
         </div>
         <div>
-          <p className="cbx-rail-title">✓ Readiness + 👁 Preview</p>
+          <p className="cbx-rail-title">{t("campaignBuilder.rlReadinessPreviewTitle")}</p>
           {busy === "ready" ? <div className="mt-2 space-y-2"><div className="cbx-skel" style={{ height: 18 }} /><div className="cbx-skel" style={{ height: 18 }} /><div className="cbx-skel" style={{ height: 18 }} /></div> : null}
           {readiness ? (
             <div className={`mt-2 space-y-1 rounded-xl border p-3 text-sm ${readiness.ready ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
-              <p className="font-semibold">{readiness.ready ? "✓ Readiness: প্রকাশের জন্য প্রস্তুত" : "⛔ Readiness: সমস্যা আছে"}</p>
+              <p className="font-semibold">{readiness.ready ? t("campaignBuilder.rlReadyOk") : t("campaignBuilder.rlReadyIssues")}</p>
               {readiness.checks.map((c, i) => (
                 <div key={i} className="text-xs">
                   <span className={c.level === "error" ? "font-semibold text-red-700" : c.level === "warn" ? "font-semibold text-amber-700" : "font-semibold text-emerald-700"}>{c.level === "error" ? "⛔" : c.level === "warn" ? "⚠" : "✓"} {c.label}:</span>{" "}
@@ -3254,49 +3264,49 @@ export default function CampaignBuilderPage() {
                 </div>
               ))}
               {readiness.estimate.available ? (
-                <p className="text-xs text-slate-500">{`📈 Meta এর আনুমানিক Reach (প্রথম Ad Set): ${fmtNumBn(readiness.estimate.lowerBound)} – ${fmtNumBn(readiness.estimate.upperBound)} জন — এটি Meta এর মডেল-ভিত্তিক Estimate, প্রতিশ্রুতি নয়।`}</p>
+                <p className="text-xs text-slate-500">{t("campaignBuilder.rlReachLine", { lower: fmtNumBn(readiness.estimate.lowerBound), upper: fmtNumBn(readiness.estimate.upperBound) })}</p>
               ) : (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs leading-[1.7] text-slate-600">
-                  <p>{`📈 Reach Estimate পাওয়া যায়নি: ${readiness.estimate.reason ?? ""}`}</p>
-                  <p>পরের পদক্ষেপ: Meta সংযোগ ও Ad Account ঠিক আছে কিনা যাচাই করে আবার Readiness চালান।</p>
+                  <p>{t("campaignBuilder.rlReachUnavailable", { reason: readiness.estimate.reason ?? "" })}</p>
+                  <p>{t("campaignBuilder.rlReachNextStep")}</p>
                 </div>
               )}
               {readiness.estimates && readiness.estimates.length > 1 ? (
                 <div className="space-y-0.5">
                   {readiness.estimates.map((e) => (
-                    <p key={e.adSetId} className="text-xs text-slate-500">📈 {e.name}: {e.available ? `${fmtNumBn(e.lowerBound)} – ${fmtNumBn(e.upperBound)} জন (Meta Estimate)` : `পাওয়া যায়নি — ${e.reason ?? ""}`}</p>
+                    <p key={e.adSetId} className="text-xs text-slate-500">{t("campaignBuilder.rlReachPerSet", { name: e.name, value: e.available ? t("campaignBuilder.rlReachPerSetValue", { lower: fmtNumBn(e.lowerBound), upper: fmtNumBn(e.upperBound) }) : t("campaignBuilder.rlReachPerSetUnavailable", { reason: e.reason ?? "" }) })}</p>
                   ))}
                 </div>
               ) : null}
             </div>
           ) : null}
-          {!readiness && busy !== "ready" ? <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs leading-[1.7] text-slate-500"><p>ℹ️ Readiness যাচাই এখনো চালানো হয়নি — উপরের "✓ Readiness যাচাই" বোতামে চালালে চেকলিস্ট এখানে আটকে (Sticky) থাকবে।</p></div> : null}
+          {!readiness && busy !== "ready" ? <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs leading-[1.7] text-slate-500"><p>{t("campaignBuilder.rlReadinessNotRun")}</p></div> : null}
           {(() => { const ad = previewAdId ? plan.adSets.flatMap((s) => s.ads).find((a) => a.id === previewAdId) : null; const firstAd = ad ?? plan.adSets.flatMap((s) => s.ads)[0] ?? null; return (<>
-            {ad ? <div className="mt-2 overflow-x-auto"><AdPreview ad={ad} pageName={plan.name} /></div> : <p className="mt-2 text-xs text-slate-500">কোনো Ad এর "👁 Preview" চাপলে তার Placement Preview এখানেও আটকে থাকবে।</p>}
+            {ad ? <div className="mt-2 overflow-x-auto"><AdPreview ad={ad} pageName={plan.name} /></div> : <p className="mt-2 text-xs text-slate-500">{t("campaignBuilder.rlPreviewHint")}</p>}
             {!ad && firstAd ? <div className="mt-2 overflow-x-auto"><AdPreview ad={firstAd} pageName={plan.name} /></div> : null}
           </>); })()}
         </div>
         <div className="border-t pt-3">
-          <p className="cbx-rail-title">🏛 অনুমোদন কাঠামো (CN11)</p>
-          {twoStep === null ? <p className="mt-1 text-xs text-slate-500">অনুমোদন সেটিং লোড হয়নি।</p> : myRole === "OWNER" || myRole === "ADMIN" ? (
+          <p className="cbx-rail-title">{t("campaignBuilder.rlApprovalTitle")}</p>
+          {twoStep === null ? <p className="mt-1 text-xs text-slate-500">{t("campaignBuilder.rlApprovalNotLoaded")}</p> : myRole === "OWNER" || myRole === "ADMIN" ? (
             <label className="mt-2 flex min-h-[44px] cursor-pointer items-center gap-2 text-sm">
               <input type="checkbox" checked={twoStep} onChange={async (e) => {
                 const next = e.target.checked;
                 const res = await wrap("chain", () => apiFetch<{ twoStepApproval: boolean }>(`/organizations/${orgId}/campaign-plans/settings/approval-chain`, { method: "PATCH", body: JSON.stringify({ twoStepApproval: next }) }));
-                if (res) { setTwoStep(res.twoStepApproval); noteSaved(); setNotice(res.twoStepApproval ? "দুই ধাপের অনুমোদন চালু হয়েছে — এখন থেকে Pending Plan এ দুইজন আলাদা Approver লাগবে।" : "দুই ধাপের অনুমোদন বন্ধ — আগের মতো এক ধাপের অনুমোদন চলবে।"); }
+                if (res) { setTwoStep(res.twoStepApproval); noteSaved(); setNotice(res.twoStepApproval ? t("campaignBuilder.rlTwoStepOnNotice") : t("campaignBuilder.rlTwoStepOffNotice")); }
               }} />
-              <span>দুই ধাপের অনুমোদন (Two-step) {twoStep ? "চালু আছে" : "বন্ধ আছে"}</span>
+              <span>{t("campaignBuilder.rlTwoStepLabel")}{twoStep ? t("campaignBuilder.rlOnState") : t("campaignBuilder.rlOffState")}</span>
             </label>
-          ) : <p className="mt-1 text-xs text-slate-600">দুই ধাপের অনুমোদন: <b>{twoStep ? "চালু আছে" : "বন্ধ আছে"}</b> — বদলাতে OWNER/ADMIN লাগবে।</p>}
-          {plan.status === "pending_approval" && plan.firstApproverId ? <p className="mt-1 text-xs font-semibold text-amber-700">প্রথম অনুমোদন সম্পন্ন — দ্বিতীয় অনুমোদন বাকি</p> : null}
+          ) : <p className="mt-1 text-xs text-slate-600">{t("campaignBuilder.rlTwoStepView", { state: twoStep ? t("campaignBuilder.rlOnState") : t("campaignBuilder.rlOffState") })}</p>}
+          {plan.status === "pending_approval" && plan.firstApproverId ? <p className="mt-1 text-xs font-semibold text-amber-700">{t("campaignBuilder.rlFirstApprovalDone")}</p> : null}
         </div>
         {/* CA13: org naming template — stored on the org's
             BusinessProfile (Organization Settings surface);
             edited here next to the approval-chain setting. */}
         <div>
-          <p className="cbx-rail-title">🏷️ Naming Template (CA13)</p>
+          <p className="cbx-rail-title">{t("campaignBuilder.rlNamingTitle")}</p>
           <div className="mt-2 rounded-xl border bg-white p-3 text-sm">
-            {namingTpl === null ? <p className="text-xs text-slate-500">Naming Template লোড হয়নি।</p> : (
+            {namingTpl === null ? <p className="text-xs text-slate-500">{t("campaignBuilder.rlNamingNotLoaded")}</p> : (
               <>
                 <input className={inputCls} value={namingDraft} onChange={(e) => setNamingDraft(e.target.value)} placeholder="{product} - {audience} - {date}" maxLength={200} />
                 <div className="mt-1 flex flex-wrap gap-1">
@@ -3304,17 +3314,17 @@ export default function CampaignBuilderPage() {
                     <button key={t} type="button" className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-mono" onClick={() => setNamingDraft((d) => `${d}{${t}}`)}>{`{${t}}`}</button>
                   ))}
                 </div>
-                <p className="mt-1 text-xs text-slate-600">নমুনা Preview: <b>{renderNamingPreview(namingDraft) || "—"}</b> <span className="text-slate-400">(নমুনা মান: Panjabi · Dhaka Men · OUTCOME_SALES · 2026-10-17 · Meta — আসল নামে আসল রেকর্ডের মান বসে; মান না থাকলে Token ও তার Separator মুছে যায়)</span></p>
-                <p className="mt-1 text-xs text-slate-500">নতুন Plan/Ad Set/Ad তৈরির সময় নাম খালি থাকলে বা "Template দিয়ে নাম" চালু থাকলে এই Template থেকে নাম হয় — টাইপ করা নাম কখনো নিজে থেকে বদলায় না।</p>
+                <p className="mt-1 text-xs text-slate-600">{t("campaignBuilder.rlNamingPreviewLabel")}<b>{renderNamingPreview(namingDraft) || "—"}</b> <span className="text-slate-400">{t("campaignBuilder.rlNamingPreviewNote")}</span></p>
+                <p className="mt-1 text-xs text-slate-500">{t("campaignBuilder.rlNamingNote")}</p>
                 <div className="mt-2 flex gap-2">
                   <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const res = await wrap("naming-save", () => apiFetch<NonNullable<typeof namingTpl>>(`/organizations/${orgId}/campaign-plans/settings/naming-template`, { method: "PATCH", body: JSON.stringify({ template: namingDraft.trim() === "" ? null : namingDraft }) }));
-                    if (res) { setNamingTpl(res); setNamingDraft(res.template ?? ""); setNotice(res.template ? "Naming Template সংরক্ষিত হয়েছে।" : "Naming Template সরানো হয়েছে।"); }
-                  }}>সংরক্ষণ করুন</button>
+                    if (res) { setNamingTpl(res); setNamingDraft(res.template ?? ""); setNotice(res.template ? t("campaignBuilder.rlNamingSaved") : t("campaignBuilder.rlNamingRemoved")); }
+                  }}>{t("campaignBuilder.rlSaveBtn")}</button>
                   {namingTpl.template ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const res = await wrap("naming-clear", () => apiFetch<NonNullable<typeof namingTpl>>(`/organizations/${orgId}/campaign-plans/settings/naming-template`, { method: "PATCH", body: JSON.stringify({ template: null }) }));
-                    if (res) { setNamingTpl(res); setNamingDraft(""); setNotice("Naming Template সরানো হয়েছে।"); }
-                  }}>সরিয়ে দিন</button> : null}
+                    if (res) { setNamingTpl(res); setNamingDraft(""); setNotice(t("campaignBuilder.rlNamingRemoved")); }
+                  }}>{t("campaignBuilder.rlRemoveBtn")}</button> : null}
                 </div>
               </>
             )}
@@ -3325,28 +3335,28 @@ export default function CampaignBuilderPage() {
             Final URL Suffix, TikTok landing URL). Empty =
             built-in defaults shown as samples below. */}
         <div>
-          <p className="cbx-rail-title">🔗 UTM Template (CA17)</p>
+          <p className="cbx-rail-title">{t("campaignBuilder.rlUtmTitle")}</p>
           <div className="mt-2 rounded-xl border bg-white p-3 text-sm">
-            {utmTpl === null ? <p className="text-xs text-slate-500">UTM Template লোড হয়নি।</p> : (
+            {utmTpl === null ? <p className="text-xs text-slate-500">{t("campaignBuilder.rlUtmNotLoaded")}</p> : (
               <>
                 {(utmTpl.keys ?? ["source", "medium", "campaign", "content", "term"]).map((k) => (
                   <label key={k} className="mt-1 block text-xs text-slate-600">utm_{k}
                     <input className={inputCls} value={utmDraft[k] ?? ""} onChange={(e) => setUtmDraft((d) => ({ ...d, [k]: e.target.value }))} placeholder={k === "source" ? "{platform}" : k === "medium" ? "cpc" : k === "campaign" ? "{campaign}" : k === "content" ? "{adset}" : "{ad}"} maxLength={120} />
                   </label>
                 ))}
-                <p className="mt-1 text-[11px] text-slate-500">Token: {"{platform} {campaign} {adset} {ad}"} — খালি ঘর = Default মান। Publish-এর সময় Link-এ আগে থেকে থাকা utm_* কখনো বদলায় না।</p>
-                <p className="mt-1 break-all text-[11px] text-slate-600">নমুনা (Meta): <span className="font-mono">{utmTpl.samples.meta || "—"}</span><br />নমুনা (Google Suffix): <span className="font-mono">{utmTpl.samples.google || "—"}</span></p>
+                <p className="mt-1 text-[11px] text-slate-500">{t("campaignBuilder.rlUtmNote", { tokens: "{platform} {campaign} {adset} {ad}" })}</p>
+                <p className="mt-1 break-all text-[11px] text-slate-600">{t("campaignBuilder.rlUtmSampleMeta")}<span className="font-mono">{utmTpl.samples.meta || "—"}</span><br />{t("campaignBuilder.rlUtmSampleGoogle")}<span className="font-mono">{utmTpl.samples.google || "—"}</span></p>
                 <div className="mt-2 flex gap-2">
                   <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const template: Record<string, string> = {};
                     for (const [k, v] of Object.entries(utmDraft)) if (v.trim()) template[k] = v.trim();
                     const res = await wrap("utm-save", () => apiFetch<NonNullable<typeof utmTpl>>(`/organizations/${orgId}/campaign-plans/${plan.id}/utm-template`, { method: "POST", body: JSON.stringify({ template: Object.keys(template).length ? template : null }) }));
-                    if (res) { setUtmTpl(res); setUtmDraft(res.template ?? {}); setNotice(Object.keys(template).length ? "UTM Template সংরক্ষিত হয়েছে — পরের Publish/Fan-out থেকে কার্যকর।" : "UTM Template সরানো হয়েছে — এখন Default Tagging চলবে।"); }
-                  }}>সংরক্ষণ করুন</button>
+                    if (res) { setUtmTpl(res); setUtmDraft(res.template ?? {}); setNotice(Object.keys(template).length ? t("campaignBuilder.rlUtmSaved") : t("campaignBuilder.rlUtmRemoved")); }
+                  }}>{t("campaignBuilder.rlSaveBtn")}</button>
                   {utmTpl.template ? <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const res = await wrap("utm-clear", () => apiFetch<NonNullable<typeof utmTpl>>(`/organizations/${orgId}/campaign-plans/${plan.id}/utm-template`, { method: "POST", body: JSON.stringify({ template: null }) }));
-                    if (res) { setUtmTpl(res); setUtmDraft({}); setNotice("UTM Template সরানো হয়েছে — এখন Default Tagging চলবে।"); }
-                  }}>Default-এ ফিরুন</button> : null}
+                    if (res) { setUtmTpl(res); setUtmDraft({}); setNotice(t("campaignBuilder.rlUtmRemoved")); }
+                  }}>{t("campaignBuilder.rlUtmDefaultBtn")}</button> : null}
                 </div>
               </>
             )}
@@ -3359,20 +3369,20 @@ export default function CampaignBuilderPage() {
       </div>
 
       <div className="cbx-mobile-bar">
-        <span className={`cbx-pill cbx-pill-${plan.status}`}>{STATUS_LABEL[plan.status] ?? plan.status}</span>
-        {editable ? <button type="button" className="btn-primary btn-sm flex-1" disabled={busy !== ""} onClick={() => action("submit", "submit")}>অনুমোদনের জন্য পাঠান</button> : null}
-        {plan.status === "pending_approval" ? <><button type="button" className="btn-success btn-sm flex-1" disabled={busy !== ""} onClick={() => action("approve", "approve")}>Approve করুন (Owner/Admin)</button><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold text-red-600" onClick={rejectPlan}>Reject</button></> : null}
-        {(plan.status === "approved" || plan.status === "publish_failed") ? <button type="button" className="btn-primary btn-sm flex-1" disabled={busy !== ""} onClick={() => action("publish", "publish")}>{busy === "publish" ? "Publish হচ্ছে..." : plan.status === "publish_failed" ? "আবার Publish চেষ্টা (Resume)" : "Meta তে Publish করুন (PAUSED)"}</button> : null}
-        {plan.status === "published" && plan.metaStatus !== "ACTIVE" ? <button type="button" className="btn-success btn-sm flex-1" disabled={busy !== ""} onClick={() => action("activate", "activate")}>সক্রিয় করুন (খরচ শুরু হবে)</button> : null}
-        {plan.status === "published" && plan.metaStatus === "ACTIVE" ? <button type="button" className="btn-warning btn-sm flex-1" disabled={busy !== ""} onClick={() => action("pause", "pause")}>Pause করুন</button> : null}
+        <span className={`cbx-pill cbx-pill-${plan.status}`}>{statusLabel(plan.status)}</span>
+        {editable ? <button type="button" className="btn-primary btn-sm flex-1" disabled={busy !== ""} onClick={() => action("submit", "submit")}>{t("campaignBuilder.abSubmitBtn")}</button> : null}
+        {plan.status === "pending_approval" ? <><button type="button" className="btn-success btn-sm flex-1" disabled={busy !== ""} onClick={() => action("approve", "approve")}>{t("campaignBuilder.abApproveBtn")}</button><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold text-red-600" onClick={rejectPlan}>{t("campaignBuilder.abRejectBtn")}</button></> : null}
+        {(plan.status === "approved" || plan.status === "publish_failed") ? <button type="button" className="btn-primary btn-sm flex-1" disabled={busy !== ""} onClick={() => action("publish", "publish")}>{busy === "publish" ? t("campaignBuilder.abPublishing") : plan.status === "publish_failed" ? t("campaignBuilder.abPublishResume") : t("campaignBuilder.abPublishBtn")}</button> : null}
+        {plan.status === "published" && plan.metaStatus !== "ACTIVE" ? <button type="button" className="btn-success btn-sm flex-1" disabled={busy !== ""} onClick={() => action("activate", "activate")}>{t("campaignBuilder.abActivateBtn")}</button> : null}
+        {plan.status === "published" && plan.metaStatus === "ACTIVE" ? <button type="button" className="btn-warning btn-sm flex-1" disabled={busy !== ""} onClick={() => action("pause", "pause")}>{t("campaignBuilder.abPauseBtn")}</button> : null}
       </div>
       {plan.publishLogs.length > 0 ? (
         <div className={`card p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
-          <div className="font-semibold">Publish Log (প্রতিটি Meta কলের রেকর্ড)</div>
+          <div className="font-semibold">{t("campaignBuilder.plTitle")}</div>
           <div className="mt-2 space-y-1">
             {plan.publishLogs.map((l) => (
               <div key={l.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-sm">
-                <span><span className="font-medium capitalize">{l.step}</span> · {new Date(l.createdAt).toLocaleString("bn-BD")}</span>
+                <span><span className="font-medium capitalize">{l.step}</span> · {fmtDateTime(locale, l.createdAt)}</span>
                 <span className={l.status === "success" ? "text-green-600" : "text-red-600"}>{l.status}{l.externalId ? ` · ${l.externalId}` : ""}{l.error ? ` · ${l.error}` : ""}</span>
               </div>
             ))}

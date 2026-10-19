@@ -1,4 +1,14 @@
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import type { UiLocale } from "./i18n/dict";
+import { tr } from "./i18n/lookup";
+import { aiBn, aiEn } from "./i18n/ai";
+
+const AI_DICTS = { bn: aiBn, en: aiEn };
+/** MB2 (ML6): recommendation copy reads the `ai` namespace;
+ * locale defaults to "bn" so existing callers keep today's copy. */
+function L(locale: UiLocale | undefined, key: string, params?: Record<string, string | number>): string {
+  return tr(AI_DICTS, locale ?? "bn", key, params) ?? key;
+}
 
 export interface PlanMetricInput {
   id: string;
@@ -40,7 +50,8 @@ export interface MediaBuyerRecommendation {
  * honest marketing optimization recommendations.
  */
 export function generateMediaBuyerRecommendations(
-  plans: PlanMetricInput[]
+  plans: PlanMetricInput[],
+  locale: UiLocale = "bn"
 ): MediaBuyerRecommendation[] {
   const recommendations: MediaBuyerRecommendation[] = [];
 
@@ -56,13 +67,13 @@ export function generateMediaBuyerRecommendations(
         id: `fatigue-${p.id}`,
         type: "creative_refresh",
         severity: "high",
-        badgeLabel: "⚠️ দর্শক ক্লান্তি (Fatigue)",
-        title: "ক্রিয়েটিভ রিফ্রেশ প্রয়োজন",
+        badgeLabel: L(locale, "advFatigueBadge"),
+        title: L(locale, "advFatigueTitle"),
         campaignName: p.name,
         planId: p.id,
-        reason: `বিজ্ঞাপনের ফ্রিকোয়েন্সি ${p.fatigue.frequency?.toFixed(1)}x ছাড়িয়েছে এবং CTR ${p.fatigue.ctrDropPercent ?? 30}% কমেছে। নতুন ব্যানার যুক্ত করুন।`,
+        reason: L(locale, "advFatigueReason", { freq: p.fatigue.frequency?.toFixed(1) ?? "", drop: p.fatigue.ctrDropPercent ?? 30 }),
         metricBadge: `Freq: ${p.fatigue.frequency?.toFixed(1)}x`,
-        suggestedActionLabel: "Creative Studio-তে ব্যানার বানান",
+        suggestedActionLabel: L(locale, "advFatigueAction"),
         actionUrl: "/dashboard/creative-studio",
       });
       continue;
@@ -71,9 +82,9 @@ export function generateMediaBuyerRecommendations(
     // 2. High Spend with Zero/Low Conversions (Stop the Leak)
     // Spend >= ৳200 (20000 minor units) and 0 conversions
     if (isLive && spend >= 20000n && convs === 0) {
-      let spendFormatted = "৳২০০+";
+      let spendFormatted = L(locale, "advLeakSpendFallback");
       try {
-        spendFormatted = formatMinor(spend, "BDT");
+        spendFormatted = fmtMoneyMinor(locale, spend);
       } catch {
         // fallback
       }
@@ -81,13 +92,13 @@ export function generateMediaBuyerRecommendations(
         id: `leak-${p.id}`,
         type: "pause_loss",
         severity: "high",
-        badgeLabel: "🛑 অপচয় সতর্কতা",
-        title: "বাজেট অপচয় বন্ধ করুন",
+        badgeLabel: L(locale, "advLeakBadge"),
+        title: L(locale, "advLeakTitle"),
         campaignName: p.name,
         planId: p.id,
-        reason: `ক্যাম্পেইনটিতে ${spendFormatted} খরচ হওয়া সত্ত্বেও কোনো অর্ডার বা কনভার্সন আসেনি। সাময়িকভাবে পজ করা বুদ্ধিমানের কাজ।`,
-        metricBadge: `খরচ: ${spendFormatted} | অর্ডার: ০`,
-        suggestedActionLabel: "১-ক্লিকে ক্যাম্পেইন পজ করুন",
+        reason: L(locale, "advLeakReason", { spend: spendFormatted }),
+        metricBadge: L(locale, "advLeakMetric", { spend: spendFormatted }),
+        suggestedActionLabel: L(locale, "advLeakAction"),
         proposalType: "pause_campaign",
       });
       continue;
@@ -99,7 +110,7 @@ export function generateMediaBuyerRecommendations(
       let cpaFormatted = "";
       if (perf?.cpaMinor) {
         try {
-          cpaFormatted = formatMinor(BigInt(perf.cpaMinor), "BDT");
+          cpaFormatted = fmtMoneyMinor(locale, BigInt(perf.cpaMinor));
         } catch {
           // fallback
         }
@@ -108,13 +119,13 @@ export function generateMediaBuyerRecommendations(
         id: `scale-${p.id}`,
         type: "scale_budget",
         severity: "opportunity",
-        badgeLabel: "🚀 স্কেলিং সুযোগ",
-        title: "বাজেট স্কেল করে সেলস বাড়ান",
+        badgeLabel: L(locale, "advScaleBadge"),
+        title: L(locale, "advScaleTitle"),
         campaignName: p.name,
         planId: p.id,
-        reason: `ক্যাম্পেইনটি চমৎকার পারফর্ম করছে (${convs}টি অর্ডার, CTR ${perf?.ctrPercent}%${cpaFormatted ? `, CPA ${cpaFormatted}` : ""})। বাজেট ১৫-২০% বাড়িয়ে আরও সেলস আনা সম্ভব।`,
-        metricBadge: `অর্ডার: ${convs} | CTR: ${perf?.ctrPercent}%`,
-        suggestedActionLabel: "Campaign Builder-এ বাজেট বাড়ান",
+        reason: L(locale, "advScaleReason", { convs: fmtNumber(locale, convs), ctr: perf?.ctrPercent ?? "", cpaPart: cpaFormatted ? L(locale, "advScaleCpaPart", { cpa: cpaFormatted }) : "" }),
+        metricBadge: L(locale, "advScaleMetric", { convs: fmtNumber(locale, convs), ctr: perf?.ctrPercent ?? "" }),
+        suggestedActionLabel: L(locale, "advScaleAction"),
         actionUrl: `/dashboard/campaign-builder?id=${p.id}`,
       });
       continue;
@@ -126,13 +137,13 @@ export function generateMediaBuyerRecommendations(
         id: `ab-${p.id}`,
         type: "ab_test_opportunity",
         severity: "medium",
-        badgeLabel: "⚖️ A/B টেস্ট সুযোগ",
-        title: "নতুন ভ্যারিয়েন্ট টেস্ট করুন",
+        badgeLabel: L(locale, "advAbBadge"),
+        title: L(locale, "advAbTitle"),
         campaignName: p.name,
         planId: p.id,
-        reason: `ক্যাম্পেইনে ${perf?.impressions.toLocaleString()}টি ইমপ্রেশন এসেছে। একটি নতুন ব্যানার বা টেক্সট দিয়ে A/B টেস্ট করলে CPA আরও কমানো যেতে পারে।`,
-        metricBadge: `ইমপ্রেশন: ${perf?.impressions.toLocaleString()}`,
-        suggestedActionLabel: "A/B টেস্ট তৈরি করুন",
+        reason: L(locale, "advAbReason", { impressions: fmtNumber(locale, perf?.impressions ?? 0) }),
+        metricBadge: L(locale, "advAbMetric", { impressions: fmtNumber(locale, perf?.impressions ?? 0) }),
+        suggestedActionLabel: L(locale, "advAbAction"),
         actionUrl: "/dashboard/campaigns",
       });
     }

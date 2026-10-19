@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor, type UiLocale } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface ProductItem {
   id: string;
@@ -57,21 +58,22 @@ interface DraftResponse {
 }
 
 const TONE_OPTIONS = [
-  { value: "friendly", label: "বন্ধুসুলভ" },
-  { value: "professional", label: "পেশাদার" },
-  { value: "offer", label: "আকর্ষণীয় অফার" },
-  { value: "direct", label: "সরাসরি" },
+  { value: "friendly", label: "বন্ধুসুলভ", labelEn: "Friendly" },
+  { value: "professional", label: "পেশাদার", labelEn: "Professional" },
+  { value: "offer", label: "আকর্ষণীয় অফার", labelEn: "Attractive offer" },
+  { value: "direct", label: "সরাসরি", labelEn: "Direct" },
 ] as const;
 
-function formatProductPrice(p: ProductItem): string {
+function formatProductPrice(p: ProductItem, locale: UiLocale = "bn"): string {
   try {
-    return formatMinor(BigInt(p.priceMinor), p.currency ?? "BDT");
+    return fmtMoneyMinor(locale, BigInt(p.priceMinor), { currency: p.currency ?? "BDT" });
   } catch {
     return p.priceMinor;
   }
 }
 
 function PolicyFindings({ findings }: { findings: PolicyFinding[] }) {
+  const { t } = useLocale();
   if (findings.length === 0) return null;
   return (
     <ul className="mt-2 space-y-2">
@@ -79,12 +81,12 @@ function PolicyFindings({ findings }: { findings: PolicyFinding[] }) {
         <li key={i} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
           {f.snippet ? (
             <p>
-              উদ্ধৃতি: <span className="font-medium">“{f.snippet}”</span>
+              {t("ai.csQuote")} <span className="font-medium">“{f.snippet}”</span>
             </p>
           ) : null}
           <p>{f.explanation}</p>
           <p className="mt-1">
-            <span className="font-semibold">পরামর্শ: </span>
+            <span className="font-semibold">{t("ai.csAdvice")}</span>
             {f.suggestion}
           </p>
           <p className="mt-1 text-[11px] text-amber-700">
@@ -97,16 +99,17 @@ function PolicyFindings({ findings }: { findings: PolicyFinding[] }) {
 }
 
 function PolicyBadge({ policy }: { policy: PolicyResult }) {
+  const { t } = useLocale();
   if (policy.status === "pass") {
     return (
       <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
-        ✅ পলিসি চেক: পাস
+        {t("ai.csPolicyPass")}
       </span>
     );
   }
   return (
     <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-      ⚠️ পলিসি সতর্কতা
+      {t("ai.csPolicyWarn")}
     </span>
   );
 }
@@ -114,6 +117,7 @@ function PolicyBadge({ policy }: { policy: PolicyResult }) {
 import { BannerStudio } from "./banner-studio";
 
 export default function CreativeStudioPage() {
+  const { t, locale } = useLocale();
   const [activeTab, setActiveTab] = React.useState<"copy" | "banner">("copy");
   const [products, setProducts] = React.useState<ProductItem[]>([]);
   const [productsLoading, setProductsLoading] = React.useState(true);
@@ -157,9 +161,9 @@ export default function CreativeStudioPage() {
         },
       );
       setDraftResults((prev) => ({ ...prev, [999]: res }));
-      alert("✅ ব্যানার ও কপি দিয়ে সফলভাবে ক্যাম্পেইন ড্রাফট তৈরি করা হয়েছে!\nPlan ID: " + res.planId);
+      alert(t("ai.csDraftSuccessAlert", { id: res.planId }));
     } catch (e) {
-      alert("ড্রাফট তৈরি করা যায়নি: " + (e instanceof Error ? e.message : "Error"));
+      alert(t("ai.csDraftFailAlert", { error: e instanceof Error ? e.message : "Error" }));
     } finally {
       setDraftingIndex(null);
     }
@@ -171,7 +175,7 @@ export default function CreativeStudioPage() {
       const { getOrganizationId } = await import("@/lib/org");
       const orgId = getOrganizationId();
       if (!orgId) {
-        setGenerateError("কোনো Organization নির্বাচিত নেই। আবার লগইন করে Onboarding শেষ করুন।");
+        setGenerateError(t("ai.csNoOrg"));
         setProductsLoading(false);
         return;
       }
@@ -182,7 +186,7 @@ export default function CreativeStudioPage() {
         setProducts(data.items);
         if (data.items[0]) setProductId(data.items[0].id);
       } catch (e) {
-        setGenerateError(e instanceof Error ? e.message : "পণ্যের তালিকা লোড হয়নি");
+        setGenerateError(e instanceof Error ? e.message : t("ai.csProductsLoadFail"));
       } finally {
         setProductsLoading(false);
       }
@@ -219,7 +223,7 @@ export default function CreativeStudioPage() {
       setResult(res);
     } catch (e) {
       setResult(null);
-      setGenerateError(e instanceof Error ? e.message : "কপি তৈরি করা যায়নি");
+      setGenerateError(e instanceof Error ? e.message : t("ai.csCopyFail"));
     } finally {
       setGenerating(false);
     }
@@ -256,7 +260,7 @@ export default function CreativeStudioPage() {
     } catch (e) {
       setDraftErrors((prev) => ({
         ...prev,
-        [index]: e instanceof Error ? e.message : "ড্রাফট তৈরি করা যায়নি",
+        [index]: e instanceof Error ? e.message : t("ai.csDraftFail"),
       }));
     } finally {
       setDraftingIndex(null);
@@ -270,7 +274,7 @@ export default function CreativeStudioPage() {
       <div>
         <h1 className="page-title">🎨 AI Creative Studio</h1>
         <p className="text-sm text-slate-500">
-          আসল পণ্যের তথ্য (নাম, দাম, বিবরণ) থেকেই AI বিজ্ঞাপনের কপি ও ব্যানার বানায় — দাম/ছাড়/দাবি বানিয়ে বলে না; প্রতিটি ভ্যারিয়েন্ট স্বয়ংক্রিয় পলিসি চেকে যাচাই হয়।
+          {t("ai.csSubtitle")}
         </p>
       </div>
 
@@ -286,7 +290,7 @@ export default function CreativeStudioPage() {
           }`}
         >
           <span>📝</span>
-          <span>অ্যাড কপি জেনারেটর (Copywriting)</span>
+          <span>{t("ai.csTabCopy")}</span>
         </button>
         <button
           type="button"
@@ -298,7 +302,7 @@ export default function CreativeStudioPage() {
           }`}
         >
           <span>🎨</span>
-          <span>ভিজ্যুয়াল স্টুডিও ও ব্যানার মেকার (Banner Studio)</span>
+          <span>{t("ai.csTabBanner")}</span>
           <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
             NEW
           </span>
@@ -315,17 +319,17 @@ export default function CreativeStudioPage() {
       ) : (
         <>
           <div className="card space-y-4 p-5">
-            <div className="font-semibold">বিজ্ঞাপনের কপি তৈরি করুন</div>
+            <div className="font-semibold">{t("ai.csCardTitle")}</div>
             {productsLoading ? (
-              <p className="text-sm text-slate-500">লোড হচ্ছে...</p>
+              <p className="text-sm text-slate-500">{t("ai.csLoading")}</p>
             ) : products.length === 0 ? (
               <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-                কোনো পণ্য নেই — আগে Products পেজে পণ্য যোগ করুন।
+                {t("ai.csNoProducts")}
               </p>
             ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             <label className="text-sm">
-              পণ্য
+              {t("ai.csProduct")}
               <select
                 className="input mt-1 w-full"
                 value={productId}
@@ -333,43 +337,43 @@ export default function CreativeStudioPage() {
               >
                 {products.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} — {formatProductPrice(p)}
+                    {p.name} — {formatProductPrice(p, locale)}
                   </option>
                 ))}
               </select>
             </label>
             <label className="text-sm">
-              লক্ষ্য (ঐচ্ছিক)
+              {t("ai.csGoal")}
               <input
                 className="input mt-1 w-full"
-                placeholder="যেমন: ঈদ বিক্রি বাড়ানো"
+                placeholder={t("ai.csGoalPlaceholder")}
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
               />
             </label>
             <label className="text-sm">
-              টোন
+              {t("ai.csTone")}
               <select
                 className="input mt-1 w-full"
                 value={tone}
                 onChange={(e) => setTone(e.target.value)}
               >
-                {TONE_OPTIONS.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
+                {TONE_OPTIONS.map((toneOpt) => (
+                  <option key={toneOpt.value} value={toneOpt.value}>
+                    {locale === "en" ? toneOpt.labelEn : toneOpt.label}
                   </option>
                 ))}
               </select>
             </label>
             <div className="text-sm">
-              ভাষা
+              {t("ai.csLanguage")}
               <div className="mt-1 flex gap-2">
                 <button
                   type="button"
                   className={`rounded-lg px-4 py-2 text-sm font-medium ${language === "bn" ? "bg-blue-600 text-white" : "border bg-white"}`}
                   onClick={() => setLanguage("bn")}
                 >
-                  বাংলা
+                  {t("ai.csLangBn")}
                 </button>
                 <button
                   type="button"
@@ -383,7 +387,7 @@ export default function CreativeStudioPage() {
           </div>
         )}
         {selectedProduct?.imageUrl ? (
-          <p className="text-xs text-slate-400">নির্বাচিত পণ্য: {selectedProduct.name}</p>
+          <p className="text-xs text-slate-400">{t("ai.csSelectedProduct", { name: selectedProduct.name })}</p>
         ) : null}
         <button
           type="button"
@@ -391,7 +395,7 @@ export default function CreativeStudioPage() {
           disabled={generating || !productId || products.length === 0}
           onClick={() => onGenerate()}
         >
-          {generating ? "তৈরি হচ্ছে..." : "✨ কপি তৈরি করুন"}
+          {generating ? t("ai.csGenerating") : t("ai.csGenerate")}
         </button>
         {generateError ? (
           <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{generateError}</p>
@@ -399,22 +403,22 @@ export default function CreativeStudioPage() {
       </div>
 
       <div className="card p-4 text-sm text-slate-500">
-        🖼️ ছবি তৈরির সুবিধা এখনো যুক্ত হয়নি — Creative Studio এখন শুধু বিজ্ঞাপনের লেখা (কপি) তৈরি করে। ড্রাফটে পণ্যের নিজের ছবি (যদি থাকে) ব্যবহৃত হবে।
+        {t("ai.csImageNote")}
       </div>
 
       <div className="card space-y-3 p-5">
-        <div className="font-semibold">ক্যাম্পেইন ড্রাফট</div>
+        <div className="font-semibold">{t("ai.csDraftTitle")}</div>
         <p className="text-sm text-slate-500">
-          পছন্দের ভ্যারিয়েন্ট থেকে সরাসরি ক্যাম্পেইন ড্রাফট বানানো যাবে — ড্রাফট মানেই শুধু খসড়া, কিছুই প্রকাশ হবে না।
+          {t("ai.csDraftDesc")}
         </p>
         {adAccounts.length === 0 ? (
           <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-            ক্যাম্পেইন ড্রাফট বানাতে একটি Meta বিজ্ঞাপন অ্যাকাউন্ট দরকার — Ad Accounts পেজে যুক্ত করুন।
+            {t("ai.csNeedAccount")}
           </p>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             <label className="text-sm">
-              Meta বিজ্ঞাপন অ্যাকাউন্ট
+              {t("ai.csMetaAccount")}
               <select
                 className="input mt-1 w-full"
                 value={adAccountId}
@@ -428,10 +432,10 @@ export default function CreativeStudioPage() {
               </select>
             </label>
             <label className="text-sm">
-              ল্যান্ডিং লিংক (ঐচ্ছিক)
+              {t("ai.csLinkUrl")}
               <input
                 className="input mt-1 w-full"
-                placeholder="ল্যান্ডিং লিংক (না দিলে Business Knowledge-এর ওয়েবসাইট লিংক ব্যবহৃত হবে)"
+                placeholder={t("ai.csLinkPlaceholder")}
                 value={linkUrl}
                 onChange={(e) => setLinkUrl(e.target.value)}
               />
@@ -444,11 +448,11 @@ export default function CreativeStudioPage() {
         <div className="space-y-4">
           {result.isRealLlm === false ? (
             <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-              {result.notice ?? "আসল AI কনফিগার করা হয়নি — এগুলো Dev Template Adapter-এর টেমপ্লেট।"}
+              {result.notice ?? t("ai.csDevNotice")}
             </p>
           ) : null}
           <div className="text-sm text-slate-500">
-            পণ্য: <span className="font-medium text-slate-700">{result.product.name}</span>
+            {t("ai.csProductLabel")} <span className="font-medium text-slate-700">{result.product.name}</span>
             {result.product.price !== undefined && result.product.price !== null && result.product.price !== "" ? (
               <span> — {String(result.product.price)} {result.product.currency}</span>
             ) : null}
@@ -480,7 +484,7 @@ export default function CreativeStudioPage() {
                     disabled={!adAccountId || adAccounts.length === 0 || draftingIndex !== null}
                     onClick={() => onDraft(v, i)}
                   >
-                    {draftingIndex === i ? "ড্রাফট তৈরি হচ্ছে..." : "📝 ক্যাম্পেইনে ব্যবহার করুন"}
+                    {draftingIndex === i ? t("ai.csDrafting") : t("ai.csUseInCampaign")}
                   </button>
 
                   {draftError ? (
@@ -491,15 +495,15 @@ export default function CreativeStudioPage() {
                     <div className="space-y-2">
                       <div className="rounded-lg bg-green-50 p-3 text-sm text-green-800">
                         <p>{draft.note}</p>
-                        <p className="mt-1">ড্রাফট আইডি: {draft.planId}</p>
-                        <p className="mt-1 font-medium">এটি শুধু ড্রাফট — কিছুই প্রকাশ হয়নি।</p>
+                        <p className="mt-1">{t("ai.csDraftId", { id: draft.planId })}</p>
+                        <p className="mt-1 font-medium">{t("ai.csDraftOnlyNote")}</p>
                         <a className="mt-2 inline-block font-semibold text-blue-700 underline" href="/dashboard/campaign-builder">
-                          Campaign Builder-এ খুলুন
+                          {t("ai.csOpenInBuilder")}
                         </a>
                       </div>
                       {draft.policy.status === "flagged" ? (
                         <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-                          <p>ড্রাফট তৈরি হয়েছে, তবে এই কপিতে পলিসি সতর্কতা আছে — প্রকাশের আগে ঠিক করুন।</p>
+                          <p>{t("ai.csDraftPolicyWarn")}</p>
                           <PolicyFindings findings={draft.policy.findings} />
                         </div>
                       ) : null}

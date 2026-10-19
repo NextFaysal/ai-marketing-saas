@@ -91,21 +91,37 @@ export function startSaving(_state: SaveState): SaveState {
   return { kind: "saving" };
 }
 
-/** "HH:MM" in bn-BD, the format the summary rail displays. */
-export function formatSavedTime(d: Date): string {
-  return d.toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" });
+/** "HH:MM" in the active locale, the format the summary rail displays.
+ * ML6 (W-D): `locale` threaded with a "bn" default — existing
+ * callers/tests keep the byte-identical bn output. */
+export function formatSavedTime(d: Date, locale: "bn" | "en" = "bn"): string {
+  return d.toLocaleTimeString(locale === "en" ? "en-IN" : "bn-BD", { hour: "2-digit", minute: "2-digit" });
 }
 
 /** Only call this after the savers' API calls actually succeeded. */
-export function markSaved(_state: SaveState, when: Date): SaveState {
-  return { kind: "saved", at: formatSavedTime(when) };
+export function markSaved(_state: SaveState, when: Date, locale: "bn" | "en" = "bn"): SaveState {
+  return { kind: "saved", at: formatSavedTime(when, locale) };
 }
 
 export function markFailed(_state: SaveState): SaveState {
   return { kind: "failed" };
 }
 
-export function saveStateLabel(state: SaveState): string {
+export function saveStateLabel(state: SaveState, locale: "bn" | "en" = "bn"): string {
+  if (locale === "en") {
+    switch (state.kind) {
+      case "saving":
+        return "Saving…";
+      case "saved":
+        return `All saved · ${state.at}`;
+      case "failed":
+        return "⚠ Not saved — try again";
+      case "dirty":
+        return "✎ Unsaved changes — saved when you change step";
+      default:
+        return "Save status: no changes yet";
+    }
+  }
   switch (state.kind) {
     case "saving":
       return "সেভ হচ্ছে…";

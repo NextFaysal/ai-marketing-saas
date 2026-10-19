@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { useRouter } from "next/navigation";
 import {
   BANNER_PALETTES,
@@ -54,6 +55,7 @@ export function BannerStudio({
   selectedAdAccountId,
   onDraftWithBanner,
 }: BannerStudioProps) {
+  const { t, locale } = useLocale();
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -83,7 +85,7 @@ export function BannerStudio({
     if (activeProduct) {
       setHeadline(activeProduct.name);
       try {
-        const pStr = formatMinor(BigInt(activeProduct.priceMinor), activeProduct.currency ?? "BDT");
+        const pStr = fmtMoneyMinor(locale, BigInt(activeProduct.priceMinor), { currency: activeProduct.currency ?? "BDT" });
         setPriceText(pStr);
       } catch {
         setPriceText(activeProduct.priceMinor ? `${activeProduct.priceMinor} BDT` : "৳০");
@@ -91,7 +93,7 @@ export function BannerStudio({
 
       if (activeProduct.compareAtMinor) {
         try {
-          const cpStr = formatMinor(BigInt(activeProduct.compareAtMinor), activeProduct.currency ?? "BDT");
+          const cpStr = fmtMoneyMinor(locale, BigInt(activeProduct.compareAtMinor), { currency: activeProduct.currency ?? "BDT" });
           setComparePriceText(cpStr);
         } catch {
           setComparePriceText("");
@@ -117,7 +119,7 @@ export function BannerStudio({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dims = formatBannerDimensions(ratio);
+    const dims = formatBannerDimensions(ratio, locale);
     const width = dims.width;
     const height = dims.height;
     canvas.width = width;
@@ -536,7 +538,7 @@ export function BannerStudio({
       link.href = dataUrl;
       link.click();
     } catch (e) {
-      alert("ইমেজ ডাউনলোড করা সম্ভব হয়নি: " + (e instanceof Error ? e.message : "Error"));
+      alert(t("ai.bsDownloadFail", { error: e instanceof Error ? e.message : "Error" }));
     } finally {
       setDownloading(false);
     }
@@ -556,7 +558,7 @@ export function BannerStudio({
           setCopied(true);
           setTimeout(() => setCopied(false), 2500);
         } catch {
-          alert("ক্লিপবোর্ডে কপি সরাসরি ব্রাউজারে সাপোর্টেড নয়, অনুগ্রহ করে 'ডাউনলোড' বাটন ব্যবহার করুন।");
+          alert(t("ai.bsClipboardUnsupported"));
         }
       });
     } catch {
@@ -574,10 +576,10 @@ export function BannerStudio({
           </div>
           <div>
             <h3 className="font-semibold text-slate-900">
-              AI ভিজ্যুয়াল ক্রিয়েটিভ স্টুডিও ও ব্যানার জেনারেটর (Visual Banner Studio)
+              {t("ai.bsTitle")}
             </h3>
             <p className="text-xs text-slate-600">
-              আপনার স্টোরের আসল পণ্য নিয়ে মাত্র কয়েক ক্লিকে ফেসবুক/ইনস্টাগ্রাম ফিড (১:১), স্টোরিজ ও রিলস (৯:১৬), ল্যান্ডস্কেপ (১৬:৯) এবং পোর্ট্রেট (৪:৫) ব্যানার তৈরি করুন।
+              {t("ai.bsSubtitle")}
             </p>
           </div>
         </div>
@@ -589,7 +591,7 @@ export function BannerStudio({
           {/* 1. Product Selector */}
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-              ১. পণ্য নির্বাচন করুন
+              {t("ai.bsStep1")}
             </label>
             <select
               className="mt-1.5 w-full rounded-lg border border-slate-300 p-2 text-sm focus:border-sky-500 focus:outline-none"
@@ -597,7 +599,7 @@ export function BannerStudio({
               onChange={(e) => setSelectedProductId(e.target.value)}
             >
               {products.length === 0 ? (
-                <option value="">কোনো সক্রিয় পণ্য নেই</option>
+                <option value="">{t("ai.bsNoProduct")}</option>
               ) : (
                 products.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -611,16 +613,16 @@ export function BannerStudio({
           {/* 2. Format & Style Selector */}
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-              ২. আকার ও উৎসব টেমপ্লেট
+              {t("ai.bsStep2")}
             </label>
 
             {/* Aspect ratio */}
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
-                { id: "1:1", label: "১:১ স্কয়ার (Feed)" },
-                { id: "9:16", label: "৯:১৬ রিলস (Story)" },
-                { id: "16:9", label: "১৬:৯ ব্যানার (Wide)" },
-                { id: "4:5", label: "৪:৫ পোর্ট্রেট (FB/IG)" },
+                { id: "1:1", label: t("ai.bsRatioSquare") },
+                { id: "9:16", label: t("ai.bsRatioReels") },
+                { id: "16:9", label: t("ai.bsRatioWide") },
+                { id: "4:5", label: t("ai.bsRatioPortrait") },
               ].map((r) => (
                 <button
                   key={r.id}
@@ -639,35 +641,35 @@ export function BannerStudio({
 
             {/* Template presets */}
             <div className="mt-3">
-              <label className="block text-[11px] font-medium text-slate-600">উৎসব ও মার্কেটিং টেমপ্লেট:</label>
+              <label className="block text-[11px] font-medium text-slate-600">{t("ai.bsTemplateLabel")}</label>
               <div className="mt-1 grid grid-cols-2 gap-1.5">
-                {BANNER_TEMPLATES.map((t) => (
+                {BANNER_TEMPLATES.map((tpl) => (
                   <button
-                    key={t.id}
+                    key={tpl.id}
                     type="button"
                     onClick={() => {
-                      setTemplate(t.id);
-                      if (t.id === "eid_special") {
+                      setTemplate(tpl.id);
+                      if (tpl.id === "eid_special") {
                         setPaletteId("eid_emerald_gold");
                         setBadgeText("🌙 ঈদ মেগা সেল");
-                      } else if (t.id === "pohela_boishakh") {
+                      } else if (tpl.id === "pohela_boishakh") {
                         setPaletteId("boishakh_red");
                         setBadgeText("🪕 বৈশাখী মেলা ১৪৩৩");
-                      } else if (t.id === "black_friday") {
+                      } else if (tpl.id === "black_friday") {
                         setPaletteId("cyber_neon");
                         setBadgeText("🔥 ১১.১১ মেগা ফ্ল্যাশ সেল");
-                      } else if (t.id === "winter_clearance") {
+                      } else if (tpl.id === "winter_clearance") {
                         setPaletteId("navy");
                         setBadgeText("❄️ উইন্টার ক্লিয়ারেন্স সেল");
                       }
                     }}
                     className={`rounded-md px-2.5 py-1.5 text-xs text-left transition ${
-                      template === t.id
+                      template === tpl.id
                         ? "bg-slate-900 text-white font-medium shadow-xs"
                         : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                     }`}
                   >
-                    {t.icon} {t.label}
+                    {tpl.icon} {locale === "en" ? tpl.labelEn : tpl.label}
                   </button>
                 ))}
               </div>
@@ -675,7 +677,7 @@ export function BannerStudio({
 
             {/* Palette */}
             <div className="mt-3">
-              <label className="block text-[11px] font-medium text-slate-600">কালার প্যালেট:</label>
+              <label className="block text-[11px] font-medium text-slate-600">{t("ai.bsPaletteLabel")}</label>
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {BANNER_PALETTES.map((pal) => (
                   <button
@@ -693,7 +695,7 @@ export function BannerStudio({
                       className="h-3 w-3 rounded-full border border-white"
                       style={{ backgroundColor: pal.accent }}
                     />
-                    <span>{pal.name}</span>
+                    <span>{locale === "en" ? pal.nameEn : pal.name}</span>
                   </button>
                 ))}
               </div>
@@ -703,11 +705,11 @@ export function BannerStudio({
           {/* 3. Text & Badges Customization */}
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-              ৩. টেক্সট ও অফার কাস্টমাইজেশন
+              {t("ai.bsStep3")}
             </label>
 
             <div>
-              <label className="text-[11px] font-medium text-slate-600">অফার ব্যাজ (Badge):</label>
+              <label className="text-[11px] font-medium text-slate-600">{t("ai.bsBadgeLabel")}</label>
               <div className="mt-1 flex flex-wrap gap-1">
                 {QUICK_BADGES.map((qb) => (
                   <button
@@ -725,12 +727,12 @@ export function BannerStudio({
                 className="mt-1.5 w-full rounded-md border border-slate-300 p-1.5 text-xs focus:border-sky-500 focus:outline-none"
                 value={badgeText}
                 onChange={(e) => setBadgeText(e.target.value)}
-                placeholder="যেমন: 🔥 ধামাকা অফার"
+                placeholder={t("ai.bsBadgePlaceholder")}
               />
             </div>
 
             <div>
-              <label className="text-[11px] font-medium text-slate-600">হেডলাইন (Headline):</label>
+              <label className="text-[11px] font-medium text-slate-600">{t("ai.bsHeadlineLabel")}</label>
               <input
                 type="text"
                 className="mt-1 w-full rounded-md border border-slate-300 p-1.5 text-xs focus:border-sky-500 focus:outline-none"
@@ -740,7 +742,7 @@ export function BannerStudio({
             </div>
 
             <div>
-              <label className="text-[11px] font-medium text-slate-600">সাবটেক্সট (বৈশিষ্ট্য):</label>
+              <label className="text-[11px] font-medium text-slate-600">{t("ai.bsSubtextLabel")}</label>
               <input
                 type="text"
                 className="mt-1 w-full rounded-md border border-slate-300 p-1.5 text-xs focus:border-sky-500 focus:outline-none"
@@ -751,7 +753,7 @@ export function BannerStudio({
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[11px] font-medium text-slate-600">বর্তমান মূল্য:</label>
+                <label className="text-[11px] font-medium text-slate-600">{t("ai.bsPriceLabel")}</label>
                 <input
                   type="text"
                   className="mt-1 w-full rounded-md border border-slate-300 p-1.5 text-xs focus:border-sky-500 focus:outline-none"
@@ -760,20 +762,20 @@ export function BannerStudio({
                 />
               </div>
               <div>
-                <label className="text-[11px] font-medium text-slate-600">পূর্বের মূল্য (ছাড় দেখাতে):</label>
+                <label className="text-[11px] font-medium text-slate-600">{t("ai.bsCompareLabel")}</label>
                 <input
                   type="text"
                   className="mt-1 w-full rounded-md border border-slate-300 p-1.5 text-xs focus:border-sky-500 focus:outline-none"
                   value={comparePriceText}
                   onChange={(e) => setComparePriceText(e.target.value)}
-                  placeholder="যেমন: ৳১,৫০০"
+                  placeholder={t("ai.bsComparePlaceholder")}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[11px] font-medium text-slate-600">ব্র্যান্ডের নাম:</label>
+                <label className="text-[11px] font-medium text-slate-600">{t("ai.bsBrandLabel")}</label>
                 <input
                   type="text"
                   className="mt-1 w-full rounded-md border border-slate-300 p-1.5 text-xs focus:border-sky-500 focus:outline-none"
@@ -782,7 +784,7 @@ export function BannerStudio({
                 />
               </div>
               <div>
-                <label className="text-[11px] font-medium text-slate-600">CTA বাটন টেক্সট:</label>
+                <label className="text-[11px] font-medium text-slate-600">{t("ai.bsCtaLabel")}</label>
                 <input
                   type="text"
                   className="mt-1 w-full rounded-md border border-slate-300 p-1.5 text-xs focus:border-sky-500 focus:outline-none"
@@ -801,7 +803,7 @@ export function BannerStudio({
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-xs font-medium text-slate-300">
-                  লাইভ ক্যানভাস প্রিভিউ ({ratio === "1:1" ? "1080×1080 Feed" : ratio === "9:16" ? "1080×1920 Story" : ratio === "16:9" ? "1920×1080 Wide" : "1080×1350 Portrait"})
+                  {t("ai.bsLivePreview")} ({ratio === "1:1" ? "1080×1080 Feed" : ratio === "9:16" ? "1080×1920 Story" : ratio === "16:9" ? "1920×1080 Wide" : "1080×1350 Portrait"})
                 </span>
               </div>
               <span className="text-[11px] text-slate-400">Crisp Ultra-HD 300 DPI</span>
@@ -833,7 +835,7 @@ export function BannerStudio({
                   className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md hover:bg-sky-500 disabled:opacity-50"
                 >
                   <span>📥</span>
-                  <span>{downloading ? "প্রস্তুত হচ্ছে..." : "ব্যানার ডাউনলোড (HD PNG)"}</span>
+                  <span>{downloading ? t("ai.bsPreparing") : t("ai.bsDownload")}</span>
                 </button>
                 <button
                   type="button"
@@ -841,7 +843,7 @@ export function BannerStudio({
                   className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2.5 text-xs font-medium text-slate-200 hover:bg-slate-750 hover:text-white"
                 >
                   <span>📋</span>
-                  <span>{copied ? "কপি হয়েছে!" : "ক্লিপবোর্ডে কপি"}</span>
+                  <span>{copied ? t("ai.bsCopied") : t("ai.bsCopyClipboard")}</span>
                 </button>
                 <button
                   type="button"
@@ -853,7 +855,7 @@ export function BannerStudio({
                   className="flex items-center gap-1.5 rounded-lg border border-indigo-700 bg-indigo-900/60 px-3 py-2.5 text-xs font-medium text-indigo-200 hover:bg-indigo-800 hover:text-white"
                 >
                   <span>📣</span>
-                  <span>সোশ্যাল পোস্ট করুন</span>
+                  <span>{t("ai.bsSocialPost")}</span>
                 </button>
               </div>
 
@@ -871,7 +873,7 @@ export function BannerStudio({
                   className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md hover:bg-emerald-500 disabled:opacity-50"
                 >
                   <span>📝</span>
-                  <span>এই ব্যানার দিয়ে ক্যাম্পেইন ড্রাফট করুন</span>
+                  <span>{t("ai.bsDraftCta")}</span>
                 </button>
               ) : null}
             </div>
@@ -879,11 +881,11 @@ export function BannerStudio({
 
           {/* Quick Marketer Tips */}
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm text-xs text-slate-600 space-y-1.5">
-            <div className="font-semibold text-slate-800">💡 প্রফেশনাল পারফরম্যান্স টিপস:</div>
-            <p>• <strong>১:১ ফিড ব্যানার:</strong> ফেসবুক ও ইনস্টাগ্রাম ক্যারোসেল অ্যাড ও ফিড পোস্টের জন্য আদর্শ।</p>
-            <p>• <strong>৯:১৬ স্টোরি ও রিলস:</strong> ইনস্টাগ্রাম রিলস, ফেসবুক স্টোরিজ ও টিকটক ভিডিও কভারের জন্য সেরা কনভার্সন দেয়।</p>
-            <p>• <strong>১৬:৯ ল্যান্ডস্কেপ:</strong> ফেসবুক পেজ কভার, ওয়েবসাইট হিরো ব্যানার ও ইউটিউব থাম্বনেইলের জন্য উপযুক্ত।</p>
-            <p>• <strong>৪:৫ পোর্ট্রেট:</strong> মোবাইল স্ক্রিনে সবচেয়ে বেশি জায়গা দখল করে, ফলে অর্গানিক রিচ ও এঙ্গেজমেন্ট বাড়ে।</p>
+            <div className="font-semibold text-slate-800">{t("ai.bsTipsTitle")}</div>
+            <p>• <strong>{t("ai.bsTip1Head")}</strong> {t("ai.bsTip1")}</p>
+            <p>• <strong>{t("ai.bsTip2Head")}</strong> {t("ai.bsTip2")}</p>
+            <p>• <strong>{t("ai.bsTip3Head")}</strong> {t("ai.bsTip3")}</p>
+            <p>• <strong>{t("ai.bsTip4Head")}</strong> {t("ai.bsTip4")}</p>
           </div>
         </div>
       </div>

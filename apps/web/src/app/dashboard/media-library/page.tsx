@@ -4,6 +4,8 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
 import { MediaImage } from "@/components/media-image";
+import { fmtDate, fmtNumber, type UiLocale } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * RB5/RM7 — unified media library: every StoredFile the org owns
@@ -40,26 +42,38 @@ const SURFACE_LABELS: Record<string, string> = {
   library: "লাইব্রেরি",
   other: "অন্যান্য",
 };
+const SURFACE_LABELS_EN: Record<string, string> = {
+  product: "Product",
+  social: "Social",
+  branding: "Branding",
+  creative: "Creative",
+  inbox: "Inbox",
+  review: "Review",
+  digital: "Digital",
+  document: "Document",
+  library: "Library",
+  other: "Other",
+};
+function surfaceLabel(surface: string, locale: UiLocale): string {
+  return (locale === "en" ? SURFACE_LABELS_EN[surface] : SURFACE_LABELS[surface]) ?? surface;
+}
 const SURFACES = ["", ...Object.keys(SURFACE_LABELS)];
 const KINDS = [
-  { value: "", label: "সব ধরন" },
-  { value: "image", label: "ছবি" },
-  { value: "video", label: "ভিডিও" },
-  { value: "file", label: "ফাইল" },
+  { value: "", labelKey: "social.mlKindAll" },
+  { value: "image", labelKey: "social.mlKindImage" },
+  { value: "video", labelKey: "social.mlKindVideo" },
+  { value: "file", labelKey: "social.mlKindFile" },
 ];
 const PAGE_SIZE = 24;
 const UPLOAD_MAX = 10 * 1024 * 1024; // = API MEDIA_LIBRARY_UPLOAD_MAX_BYTES
 const UPLOAD_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
-function bnNum(s: string): string {
-  return s.replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]);
-}
-function formatSize(sizeBytes: string): string {
+function formatSize(sizeBytes: string, locale: UiLocale): string {
   const n = Number(sizeBytes);
   if (!Number.isFinite(n)) return "—";
-  if (n < 1024) return `${bnNum(String(n))} B`;
-  if (n < 1024 * 1024) return `${bnNum((n / 1024).toFixed(1))} KB`;
-  return `${bnNum((n / (1024 * 1024)).toFixed(1))} MB`;
+  if (n < 1024) return `${fmtNumber(locale, n)} B`;
+  if (n < 1024 * 1024) return `${fmtNumber(locale, Number((n / 1024).toFixed(1)))} KB`;
+  return `${fmtNumber(locale, Number((n / (1024 * 1024)).toFixed(1)))} MB`;
 }
 function fileName(key: string): string {
   const seg = key.split("/").pop() ?? key;
@@ -67,6 +81,7 @@ function fileName(key: string): string {
 }
 
 export default function MediaLibraryPage() {
+  const { t, locale } = useLocale();
   const [items, setItems] = useState<MediaItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -106,7 +121,7 @@ export default function MediaLibraryPage() {
       setTotal(res.total ?? 0);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "মিডিয়া লাইব্রেরি লোড ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.mlLoadFailed"));
     } finally {
       setLoading(false);
     }
@@ -124,20 +139,20 @@ export default function MediaLibraryPage() {
     let okCount = 0;
     for (const file of files) {
       try {
-        if (!UPLOAD_TYPES.includes(file.type)) throw new Error("শুধু PNG, JPEG বা WebP ছবি আপলোড করা যায়।");
-        if (file.size > UPLOAD_MAX) throw new Error("ছবিটি ১০ MB-এর বেশি বড়।");
+        if (!UPLOAD_TYPES.includes(file.type)) throw new Error(t("social.mlUploadTypeError"));
+        if (file.size > UPLOAD_MAX) throw new Error(t("social.mlUploadTooBig"));
         const pre = await apiFetch<{ uploadUrl: string; key: string }>(
           `/organizations/${orgId}/media-library/upload/presign`,
           { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type, sizeBytes: file.size }) },
         );
         const putRes = await fetch(pre.uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-        if (!putRes.ok) throw new Error(`আপলোড সার্ভার ছবিটি নেয়নি (HTTP ${putRes.status})।`);
+        if (!putRes.ok) throw new Error(t("social.mlUploadServerError", { status: putRes.status }));
         await apiFetch(`/organizations/${orgId}/media-library/upload/complete`, {
           method: "POST", body: JSON.stringify({ key: pre.key, contentType: file.type, sizeBytes: file.size }),
         });
         okCount += 1;
       } catch (e) {
-        problems.push(`${file.name}: ${e instanceof Error ? e.message : "আপলোড ব্যর্থ হয়েছে"}`);
+        problems.push(`${file.name}: ${e instanceof Error ? e.message : t("social.mlUploadFailed")}`);
       }
     }
     setUploading(false);
@@ -149,32 +164,32 @@ export default function MediaLibraryPage() {
       setPage(1);
       await load();
     }
-    setMsg([...(okCount > 0 ? [`${bnNum(String(okCount))}টি ছবি আপলোড হয়েছে।`] : []), ...problems].join("\n"));
+    setMsg([...(okCount > 0 ? [t("social.mlUploadedCount", { count: fmtNumber(locale, okCount) })] : []), ...problems].join("\n"));
   }
 
   async function copyUrl(item: MediaItem) {
     if (!item.url) return;
     try {
       await navigator.clipboard.writeText(item.url);
-      setMsg("URL কপি হয়েছে।");
+      setMsg(t("social.mlUrlCopied"));
       setError("");
     } catch {
-      setError("URL কপি করা যায়নি — ব্রাউজারের অনুমতি লাগতে পারে।");
+      setError(t("social.mlUrlCopyFailed"));
     }
   }
 
   async function trash(item: MediaItem) {
     if (!orgId) return;
-    if (!window.confirm("এই ফাইলটি ট্র্যাশে পাঠাবেন? (তালিকা থেকে সরে যাবে)")) return;
+    if (!window.confirm(t("social.mlTrashConfirm"))) return;
     setBusyId(item.id);
     setMsg("");
     setError("");
     try {
       await apiFetch(`/organizations/${orgId}/media-library/${item.id}`, { method: "DELETE" });
-      setMsg("ফাইলটি ট্র্যাশে পাঠানো হয়েছে।");
+      setMsg(t("social.mlTrashed"));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ট্র্যাশে পাঠানো ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.mlTrashFailed"));
     } finally {
       setBusyId("");
     }
@@ -186,12 +201,12 @@ export default function MediaLibraryPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">🗂️ মিডিয়া লাইব্রেরি</h1>
-          <p className="text-sm text-slate-500">সব সারফেসের ফাইল এক জায়গায় — প্রোডাক্ট, সোশ্যাল, ব্র্যান্ডিং, ক্রিয়েটিভ, ইনবক্স ও সরাসরি আপলোড। প্রাইভেট ফাইলের প্রিভিউ ও URL স্বল্পমেয়াদি স্বাক্ষরিত লিংকে আসে।</p>
+          <h1 className="page-title">{t("social.mlTitle")}</h1>
+          <p className="text-sm text-slate-500">{t("social.mlSub")}</p>
         </div>
         <div>
           <button type="button" className="btn-primary disabled:opacity-50" disabled={uploading} onClick={() => fileInputRef.current?.click()}>
-            {uploading ? "আপলোড হচ্ছে…" : "⬆️ ছবি আপলোড"}
+            {uploading ? t("social.mlUploading") : t("social.mlUploadImage")}
           </button>
           <input
             ref={fileInputRef}
@@ -201,7 +216,7 @@ export default function MediaLibraryPage() {
             className="hidden"
             onChange={(e) => { void uploadFiles(e.target.files ?? []); e.target.value = ""; }}
           />
-          <p className="mt-1 text-right text-[11px] text-slate-400">PNG / JPEG / WebP · সর্বোচ্চ ১০ MB</p>
+          <p className="mt-1 text-right text-[11px] text-slate-400">{t("social.mlUploadHint")}</p>
         </div>
       </div>
 
@@ -217,7 +232,7 @@ export default function MediaLibraryPage() {
               onClick={() => { setSurface(s); setPage(1); }}
               className={`rounded-full px-3 py-1 text-xs font-semibold ${surface === s ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
             >
-              {s === "" ? "সব সারফেস" : SURFACE_LABELS[s]}
+              {s === "" ? t("social.mlAllSurfaces") : surfaceLabel(s, locale)}
             </button>
           ))}
         </div>
@@ -229,13 +244,13 @@ export default function MediaLibraryPage() {
               onClick={() => { setKind(k.value); setPage(1); }}
               className={`rounded-full px-3 py-1 text-xs font-semibold ${kind === k.value ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
             >
-              {k.label}
+              {t(k.labelKey)}
             </button>
           ))}
           <input
             className="input ml-auto w-full sm:w-64"
             type="search"
-            placeholder="ফাইলের নাম দিয়ে খুঁজুন…"
+            placeholder={t("social.mlSearchPlaceholder")}
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
           />
@@ -243,9 +258,9 @@ export default function MediaLibraryPage() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
+        <p className="text-sm text-slate-500">{t("social.mlLoading")}</p>
       ) : items.length === 0 ? (
-        <EmptyState title="কোনো ফাইল পাওয়া যায়নি" description="ফিল্টার বদলে দেখুন, অথবা প্রথম ছবিটি আপলোড করুন — সব সারফেসের ফাইল এখানেই জমা হবে।" />
+        <EmptyState title={t("social.mlEmptyTitle")} description={t("social.mlEmptyDesc")} />
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -267,27 +282,27 @@ export default function MediaLibraryPage() {
                   ) : (
                     <div className="flex h-44 w-full flex-col items-center justify-center gap-1 rounded-lg bg-slate-100 text-slate-400">
                       <span className="text-3xl">{isVideo ? "🎬" : isImage ? "🖼️" : "📄"}</span>
-                      <span className="px-2 text-center text-[11px]">প্রিভিউ নেই{item.url ? "" : " (URL পাওয়া যায়নি)"}</span>
+                      <span className="px-2 text-center text-[11px]">{t("social.mlNoPreview")}{item.url ? "" : t("social.mlNoUrlSuffix")}</span>
                     </div>
                   )}
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium" title={item.key}>{fileName(item.key)}</p>
                     <p className="text-[11px] text-slate-400">
-                      {SURFACE_LABELS[item.surface] ?? item.surface}
-                      {item.visibility === "private" ? " · 🔒 প্রাইভেট" : " · পাবলিক"}
-                      {" · "}{formatSize(item.sizeBytes)}
-                      {" · "}{new Date(item.createdAt).toLocaleDateString("bn-BD")}
+                      {surfaceLabel(item.surface, locale)}
+                      {item.visibility === "private" ? t("social.mlPrivate") : t("social.mlPublic")}
+                      {" · "}{formatSize(item.sizeBytes, locale)}
+                      {" · "}{fmtDate(locale, item.createdAt)}
                     </p>
                     {item.visibility === "private" && item.url ? (
-                      <p className="text-[11px] text-amber-600">প্রাইভেট ফাইলের URLটি মাত্র ১৫ মিনিটের জন্য বৈধ।</p>
+                      <p className="text-[11px] text-amber-600">{t("social.mlPrivateUrlNote")}</p>
                     ) : null}
                   </div>
                   <div className="flex gap-2">
                     <button type="button" className="btn-secondary btn-sm disabled:opacity-40" disabled={!item.url} onClick={() => copyUrl(item)}>
-                      🔗 URL কপি
+                      {t("social.mlCopyUrl")}
                     </button>
                     <button type="button" className="btn-secondary btn-sm text-red-600 disabled:opacity-40" disabled={busyId === item.id} onClick={() => trash(item)}>
-                      🗑️ ট্র্যাশ
+                      {t("social.mlTrash")}
                     </button>
                   </div>
                 </div>
@@ -295,10 +310,10 @@ export default function MediaLibraryPage() {
             })}
           </div>
           <div className="flex items-center justify-between text-sm text-slate-500">
-            <span>মোট {bnNum(String(total))}টি ফাইল · পৃষ্ঠা {bnNum(String(page))}/{bnNum(String(totalPages))}</span>
+            <span>{t("social.mlTotalLine", { total: fmtNumber(locale, total), page: fmtNumber(locale, page), pages: fmtNumber(locale, totalPages) })}</span>
             <span className="flex gap-2">
-              <button type="button" className="btn-secondary btn-sm disabled:opacity-40" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>← আগের</button>
-              <button type="button" className="btn-secondary btn-sm disabled:opacity-40" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>পরের →</button>
+              <button type="button" className="btn-secondary btn-sm disabled:opacity-40" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>{t("social.mlPrev")}</button>
+              <button type="button" className="btn-secondary btn-sm disabled:opacity-40" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>{t("social.mlNext")}</button>
             </span>
           </div>
         </>

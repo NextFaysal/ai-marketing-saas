@@ -1,3 +1,4 @@
+import { fmtNumber, type UiLocale } from "@repo/contracts";
 import { fmtNumBn } from "./money-bn";
 
 /**
@@ -37,6 +38,11 @@ const SHORT_LABELS: Record<string, string> = {
   cart_abandoners: "Cart Abandoners",
   buyers: "আগের Buyers",
 };
+const SHORT_LABELS_EN: Record<string, string> = {
+  product_viewers: "Product Viewers",
+  cart_abandoners: "Cart Abandoners",
+  buyers: "Previous buyers",
+};
 
 /** The catalog keys each funnel layer is built from
  *  (frontier.service resolveLayerAudiences). Prospecting
@@ -46,21 +52,22 @@ export const FUNNEL_LAYER_SOURCE_KEYS: Record<"retargeting" | "retention", strin
   retention: ["buyers"],
 };
 
-export function sourceCountView(sources: AudienceSourceEntry[] | null | undefined, key: string): SourceCountView {
-  const shortLabel = SHORT_LABELS[key] ?? key;
+export function sourceCountView(sources: AudienceSourceEntry[] | null | undefined, key: string, locale: UiLocale = "bn"): SourceCountView {
+  const shortLabel = (locale === "en" ? SHORT_LABELS_EN[key] : SHORT_LABELS[key]) ?? key;
   const entry = (sources ?? []).find((s) => s.key === key);
   if (!entry || entry.contactCount === null || entry.contactCount === undefined) {
-    return { key, shortLabel, count: null, state: "unknown", text: `${shortLabel}: সংখ্যা পাওয়া যায়নি` };
+    return { key, shortLabel, count: null, state: "unknown", text: locale === "en" ? `${shortLabel}: count unavailable` : `${shortLabel}: সংখ্যা পাওয়া যায়নি` };
   }
   if (entry.contactCount === 0) {
-    return { key, shortLabel, count: 0, state: "empty", text: `${shortLabel}: ০ জন — এই Source-এ এখনো কেউ নেই` };
+    return { key, shortLabel, count: 0, state: "empty", text: locale === "en" ? `${shortLabel}: 0 people — nobody in this source yet` : `${shortLabel}: ০ জন — এই Source-এ এখনো কেউ নেই` };
   }
-  return { key, shortLabel, count: entry.contactCount, state: "ok", text: `${shortLabel}: ${fmtNumBn(entry.contactCount)} জন` };
+  return { key, shortLabel, count: entry.contactCount, state: "ok", text: locale === "en" ? `${shortLabel}: ${fmtNumber(locale, entry.contactCount)} people` : `${shortLabel}: ${fmtNumBn(entry.contactCount)} জন` };
 }
 
 export function layerSourceViews(
   sources: AudienceSourceEntry[] | null | undefined,
   layer: "retargeting" | "retention",
+  locale: UiLocale = "bn",
 ): SourceCountView[] {
-  return FUNNEL_LAYER_SOURCE_KEYS[layer].map((key) => sourceCountView(sources, key));
+  return FUNNEL_LAYER_SOURCE_KEYS[layer].map((key) => sourceCountView(sources, key, locale));
 }

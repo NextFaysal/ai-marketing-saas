@@ -13,9 +13,11 @@ import { MentionPicker } from "@/components/mention-picker";
 import { ATTACHMENT_ACCEPT, uploadChatAttachment, type ChatAttachment } from "@/lib/attachments";
 import { useVoiceInput } from "@/lib/voice-input";
 import { useSpeechOutput } from "@/lib/voice-output";
-import { PERSONAS_UI, personaLabel } from "@/lib/personas";
+import { personasForLocale, personaLabel } from "@/lib/personas";
 import { AiMessageAttachment } from "@/components/ai-rich";
 import { MediaBuyerAdvisor } from "./media-buyer-advisor";
+import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface Conversation { id: string; title?: string | null; updatedAt: string; pinnedAt?: string | null; tags?: string[]; persona?: string }
 interface Proposal { id: string; type: string; title: string; preview: string; status: string; error?: string | null; createdAt: string }
@@ -30,6 +32,7 @@ const SUGGESTION_ICONS = ["📊", "📣", "🔔", "⚠️", "💰", "👥", "�
 const SUGGESTIONS: { icon: string; text: string }[] = STARTER_PROMPTS.map((text, i) => ({ icon: SUGGESTION_ICONS[i] ?? "✦", text }));
 
 export default function AiAssistantPage() {
+  const { t, locale } = useLocale();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -69,16 +72,16 @@ export default function AiAssistantPage() {
       setNewKeyName("");
       setKeyNotice("");
       await loadApiKeys();
-    } catch (e) { setKeyNotice(e instanceof Error ? e.message : "Key তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setKeyNotice(e instanceof Error ? e.message : t("ai.pgKeyCreateFail")); }
   }
   async function revokeApiKey(id: string) {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (!window.confirm("এই API key revoke করবেন? এটি দিয়ে আর কোনো কল চলবে না।")) return;
+    if (!window.confirm(t("ai.pgRevokeConfirm"))) return;
     try {
       await apiFetch(`/organizations/${orgId}/ai/api-keys/${id}`, { method: "DELETE" });
       await loadApiKeys();
-    } catch (e) { setKeyNotice(e instanceof Error ? e.message : "Revoke ব্যর্থ হয়েছে"); }
+    } catch (e) { setKeyNotice(e instanceof Error ? e.message : t("ai.pgRevokeFail")); }
   }
 
   // AP6: assistant task inbox aggregate.
@@ -215,7 +218,7 @@ export default function AiAssistantPage() {
   async function saveAutonomy(on: boolean) {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (on && !window.confirm("Autonomy Level 2 চালু করবেন? Quick reply সেভ ও CRM ফলো-আপ টাস্ক অনুমোদন ছাড়াই কার্যকর হবে (শুধু এই দুই অভ্যন্তরীণ ধরন)।")) return;
+    if (on && !window.confirm(t("ai.pgAutonomyConfirm"))) return;
     try {
       const saved = await apiFetch<any>(`/organizations/${orgId}/ai/proactive/settings`, {
         method: "PATCH",
@@ -244,7 +247,7 @@ export default function AiAssistantPage() {
     if (!orgId) return;
     try {
       const res = await apiFetch<{ briefings?: number; anomalyAlerts?: number; skipped?: string }>(`/organizations/${orgId}/ai/proactive/run-now`, { method: "POST", body: JSON.stringify({}) });
-      setBriefingResult(res.skipped ? `চালানো হয়নি: ${res.skipped}` : `পাঠানো হয়েছে — ব্রিফিং ${res.briefings ?? 0}টি, anomaly alert ${res.anomalyAlerts ?? 0}টি (আজ আগেই পাঠিয়ে থাকলে dedupe-এ ০ দেখাবে)। নোটিফিকেশন বেলে দেখুন।`);
+      setBriefingResult(res.skipped ? t("ai.pgBriefingSkipped", { reason: res.skipped }) : t("ai.pgBriefingSent", { briefings: fmtNumber(locale, res.briefings ?? 0), alerts: fmtNumber(locale, res.anomalyAlerts ?? 0) }));
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
 
@@ -252,7 +255,7 @@ export default function AiAssistantPage() {
   async function approveAllProposals() {
     const ids = proposals.filter((x) => x.status === "proposed").map((x) => x.id);
     if (ids.length < 2) return;
-    if (!window.confirm(`${ids.length}টি অপেক্ষমাণ প্রস্তাবের সবগুলো অনুমোদন দেবেন? প্রতিটির ফলাফল আলাদাভাবে জানানো হবে।`)) return;
+    if (!window.confirm(t("ai.pgApproveAllConfirm", { count: fmtNumber(locale, ids.length) }))) return;
     const orgId = getOrganizationId();
     if (!orgId) return;
     try {
@@ -260,10 +263,10 @@ export default function AiAssistantPage() {
         `/organizations/${orgId}/ai/proposals/bulk-approve`, { method: "POST", body: JSON.stringify({ ids }) });
       const failures = out.results.filter((r) => r.status !== "executed");
       setPropNotice(failures.length === 0
-        ? `সবগুলো প্রস্তাব কার্যকর হয়েছে (${out.executed}টি)।`
-        : `${out.executed}টি কার্যকর হয়েছে; ${failures.length}টি হয়নি: ${failures.map((f) => f.error ?? f.status).join(" · ")}`);
+        ? t("ai.pgApproveAllDone", { count: fmtNumber(locale, out.executed) })
+        : t("ai.pgApproveAllPartial", { done: fmtNumber(locale, out.executed), failed: fmtNumber(locale, failures.length), errors: failures.map((f) => f.error ?? f.status).join(" · ") }));
       await loadProposals();
-    } catch (e) { setPropNotice(e instanceof Error ? e.message : "Bulk অনুমোদন ব্যর্থ হয়েছে"); }
+    } catch (e) { setPropNotice(e instanceof Error ? e.message : t("ai.pgBulkApproveFail")); }
   }
 
   // AP7: copy a signed one-time approval link (e.g. for Telegram).
@@ -273,17 +276,17 @@ export default function AiAssistantPage() {
     try {
       const out = await apiFetch<{ url: string; expiresAt: string }>(`/organizations/${orgId}/ai/proposals/${p.id}/approval-link`, { method: "POST", body: JSON.stringify({}) });
       await navigator.clipboard?.writeText(out.url).catch(() => undefined);
-      setPropNotice(`অনুমোদন লিংক কপি হয়েছে — মেয়াদ শেষ: ${new Date(out.expiresAt).toLocaleString("bn-BD")}। লিংকটি যার কাছেই যাক, সিদ্ধান্ত OWNER হিসেবে রেকর্ড হবে; একবার সিদ্ধান্ত হলেই লিংক অকেজো।`);
-    } catch (e) { setPropNotice(e instanceof Error ? e.message : "লিংক তৈরি ব্যর্থ হয়েছে"); }
+      setPropNotice(t("ai.pgLinkCopied", { date: fmtDateTime(locale, out.expiresAt) }));
+    } catch (e) { setPropNotice(e instanceof Error ? e.message : t("ai.pgLinkFail")); }
   }
 
   async function decideProposal(p: Proposal, action: "approve" | "reject") {
     if (!orgId) return;
-    if (action === "approve" && !window.confirm(`${p.preview}\n\nআপনি কি সত্যিই অনুমোদন দিচ্ছেন?`)) return;
+    if (action === "approve" && !window.confirm(t("ai.pgApproveConfirm", { preview: p.preview }))) return;
     setPropNotice("");
     try {
       const updated = await apiFetch<Proposal>(`/organizations/${orgId}/ai/proposals/${p.id}/${action}`, { method: "POST", body: JSON.stringify({}) });
-      if (updated.status === "failed") setPropNotice(`প্রস্তাবটি ব্যর্থ হিসেবে রেকর্ড হয়েছে: ${updated.error ?? "platform error"}`);
+      if (updated.status === "failed") setPropNotice(t("ai.pgProposalFailed", { error: updated.error ?? "platform error" }));
       await loadProposals();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
@@ -295,7 +298,7 @@ export default function AiAssistantPage() {
         ? { type: propKind, name: propDraft.name, channel: propDraft.channel, subject: propDraft.subject || undefined, body: propDraft.body, audienceType: "customers" }
         : { type: propKind, ...(propKind === "pause_campaign" ? { planId: propTarget } : { adSetId: propTarget }) };
       await apiFetch(`/organizations/${orgId}/ai/proposals`, { method: "POST", body: JSON.stringify(body) });
-      setPropNotice("প্রস্তাব তৈরি হয়েছে — অনুমোদন ছাড়া কিছুই করা হয়নি।");
+      setPropNotice(t("ai.pgProposalCreated"));
       await loadProposals();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
@@ -322,25 +325,25 @@ export default function AiAssistantPage() {
     try {
       await apiFetch(`/organizations/${orgId}/ai/chat/conversations/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
       await loadConversations(search);
-    } catch (e) { setError(e instanceof Error ? e.message : "আপডেট করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("ai.pgUpdateFail")); }
   }
 
   async function renameConversation(c: Conversation) {
-    const title = window.prompt("কথোপকথনের নতুন নাম লিখুন:", c.title ?? "");
+    const title = window.prompt(t("ai.pgRenamePrompt"), c.title ?? "");
     if (title === null) return;
-    if (!title.trim()) { setError("নাম খালি রাখা যাবে না"); return; }
+    if (!title.trim()) { setError(t("ai.pgNameEmpty")); return; }
     await patchConversation(c.id, { title: title.trim() });
   }
 
   async function deleteConversation(c: Conversation) {
     if (!orgId) return;
-    if (!window.confirm(`“${c.title ?? "নতুন কথোপকথন"}” মুছে ফেলবেন? সব মেসেজ মুছে যাবে।`)) return;
+    if (!window.confirm(t("ai.pgDeleteConfirm", { title: c.title ?? t("ai.pgNewConversation") }))) return;
     setError("");
     try {
       await apiFetch(`/organizations/${orgId}/ai/chat/conversations/${c.id}`, { method: "DELETE" });
       if (activeId === c.id) { setActiveId(""); setMessages([]); setFollowUps([]); }
       await loadConversations(search);
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("ai.pgDeleteFail")); }
   }
 
   async function exportConversation(c: Conversation, format: "json" | "markdown") {
@@ -354,7 +357,7 @@ export default function AiAssistantPage() {
       const a = document.createElement("a");
       a.href = url; a.download = res.filename; a.click();
       URL.revokeObjectURL(url);
-    } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("ai.pgExportFail")); }
   }
 
   // AP1: send() goes through the SSE stream endpoint. The user bubble
@@ -400,7 +403,7 @@ export default function AiAssistantPage() {
         setStreaming(null);
         setFollowUps(done.suggestions ?? []);
         if (done.proposal) {
-          setPropNotice(`একটি প্রস্তাব তৈরি হয়েছে: ${done.proposal.title} — অনুমোদন ছাড়া কিছুই করা হয়নি। নিচের প্রস্তাব প্যানেলে দেখুন।`);
+          setPropNotice(t("ai.pgProposalCreatedChat", { title: done.proposal.title ?? "" }));
           void loadProposals();
         }
         void loadConversations(search);
@@ -436,11 +439,11 @@ export default function AiAssistantPage() {
   async function onAttachFile(file: File | undefined) {
     if (!file) return;
     const orgId = getOrganizationId();
-    if (!orgId) { setError("Organization পাওয়া যায়নি"); return; }
+    if (!orgId) { setError(t("ai.pgOrgNotFound")); return; }
     setAttaching(true);
     try {
       setPendingAttachment(await uploadChatAttachment(orgId, file));
-    } catch (e) { setError(e instanceof Error ? e.message : "আপলোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("ai.pgUploadFail")); }
     setAttaching(false);
   }
 
@@ -455,29 +458,29 @@ export default function AiAssistantPage() {
     const body = input.trim();
     if (!body || body.startsWith("/")) return;
     const fallback = body.split("\n")[0].slice(0, 60);
-    const title = window.prompt("এই prompt-এর নাম দিন:", fallback);
+    const title = window.prompt(t("ai.pgPromptNamePrompt"), fallback);
     if (title === null) return;
-    if (!title.trim()) { setError("Prompt-এর নাম খালি রাখা যাবে না"); return; }
+    if (!title.trim()) { setError(t("ai.pgPromptNameEmpty")); return; }
     try {
       await promptsLib.create(title.trim(), body);
-      setPromptNote("✓ Prompt save হয়েছে — এবার “/” লিখলেই পাবেন");
-    } catch (e) { setError(e instanceof Error ? e.message : "Prompt save করা যায়নি"); }
+      setPromptNote(t("ai.pgPromptSaved"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("ai.pgPromptSaveFail")); }
   }
 
   function renameSavedPrompt(sp: SavedPrompt) {
-    const title = window.prompt("Prompt-এর নতুন নাম:", sp.title);
+    const title = window.prompt(t("ai.pgPromptRenamePrompt"), sp.title);
     if (title === null) return;
-    if (!title.trim()) { setError("Prompt-এর নাম খালি রাখা যাবে না"); return; }
-    promptsLib.rename(sp.id, title.trim()).catch((e) => setError(e instanceof Error ? e.message : "নাম বদলানো যায়নি"));
+    if (!title.trim()) { setError(t("ai.pgPromptNameEmpty")); return; }
+    promptsLib.rename(sp.id, title.trim()).catch((e) => setError(e instanceof Error ? e.message : t("ai.pgRenameFail")));
   }
 
   function deleteSavedPrompt(sp: SavedPrompt) {
-    if (!window.confirm(`“${sp.title}” prompt-টি মুছে ফেলবেন?`)) return;
-    promptsLib.remove(sp.id).catch((e) => setError(e instanceof Error ? e.message : "মুছে ফেলা যায়নি"));
+    if (!window.confirm(t("ai.pgPromptDeleteConfirm", { title: sp.title }))) return;
+    promptsLib.remove(sp.id).catch((e) => setError(e instanceof Error ? e.message : t("ai.pgDeleteFail")));
   }
 
   const providerBadge = provider === "dev-template"
-    ? <span className="ai3-hero-badge ai3-hero-badge-warn">⚠ Dev Template Mode: আসল LLM কনফিগার করা হয়নি</span>
+    ? <span className="ai3-hero-badge ai3-hero-badge-warn">{t("ai.pgDevMode")}</span>
     : provider
       ? <span className="ai3-hero-badge">● LLM: {provider}</span>
       : null;
@@ -490,8 +493,8 @@ export default function AiAssistantPage() {
   const conversationRow = (c: Conversation) => (
     <div key={c.id} className={`ai3-conv ${c.id === activeId ? "ai3-conv-active" : ""}`}>
       <button onClick={() => { setActiveId(c.id); setFollowUps([]); }} className="w-full text-left">
-        <span className={`block truncate text-sm ${c.id === activeId ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>{c.pinnedAt ? "📌 " : ""}{c.title ?? "নতুন কথোপকথন"}</span>
-        <span className="mt-0.5 block text-[11px] text-slate-400">{new Date(c.updatedAt).toLocaleDateString()}</span>
+        <span className={`block truncate text-sm ${c.id === activeId ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>{c.pinnedAt ? "📌 " : ""}{c.title ?? t("ai.pgNewConversation")}</span>
+        <span className="mt-0.5 block text-[11px] text-slate-400">{fmtDate(locale, c.updatedAt)}</span>
       </button>
       {c.tags && c.tags.length > 0 ? (
         <span className="mt-1.5 flex flex-wrap gap-1">
@@ -499,11 +502,11 @@ export default function AiAssistantPage() {
         </span>
       ) : null}
       <span className="ai3-conv-actions mt-2 flex flex-wrap gap-1">
-        <button className="ai3-act-btn" title={c.pinnedAt ? "আনপিন করুন" : "পিন করুন"} onClick={() => patchConversation(c.id, { pinned: !c.pinnedAt })}>{c.pinnedAt ? "আনপিন" : "পিন"}</button>
-        <button className="ai3-act-btn" onClick={() => renameConversation(c)}>নাম বদল</button>
+        <button className="ai3-act-btn" title={c.pinnedAt ? t("ai.pgUnpin") : t("ai.pgPin")} onClick={() => patchConversation(c.id, { pinned: !c.pinnedAt })}>{c.pinnedAt ? t("ai.pgUnpinLabel") : t("ai.pgPinLabel")}</button>
+        <button className="ai3-act-btn" onClick={() => renameConversation(c)}>{t("ai.pgRename")}</button>
         <button className="ai3-act-btn" onClick={() => exportConversation(c, "markdown")}>MD</button>
         <button className="ai3-act-btn" onClick={() => exportConversation(c, "json")}>JSON</button>
-        <button className="ai3-act-btn ai3-act-btn-danger" onClick={() => deleteConversation(c)}>মুছুন</button>
+        <button className="ai3-act-btn ai3-act-btn-danger" onClick={() => deleteConversation(c)}>{t("ai.pgDelete")}</button>
       </span>
     </div>
   );
@@ -518,12 +521,12 @@ export default function AiAssistantPage() {
     <div className="flex flex-col gap-4 lg:flex-row">
       {/* ── Left rail v3: sticky glass card, brand-active rows ─────── */}
       <div className="ai3-rail hidden w-72 shrink-0 flex-col gap-2 md:flex">
-        <button className="btn-primary min-h-[44px] w-full rounded-2xl" onClick={() => newConversation()}>✦ + নতুন কথোপকথন</button>
+        <button className="btn-primary min-h-[44px] w-full rounded-2xl" onClick={() => newConversation()}>{t("ai.pgNewConversationBtn")}</button>
         <div className="relative">
           <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">🔍</span>
           <input
             className="input pl-9"
-            placeholder="কথোপকথন খুঁজুন (নাম বা মেসেজ)..."
+            placeholder={t("ai.pgSearchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -535,8 +538,8 @@ export default function AiAssistantPage() {
             <div className="skeleton h-14 w-full" />
           </div>
         ) : null}
-        {conversations.length === 0 && search.trim() && !convLoading ? <p className="px-1 text-xs text-slate-400">কিছু পাওয়া যায়নি</p> : null}
-        {conversations.length === 0 && !search.trim() && !convLoading ? <p className="px-1 py-3 text-center text-xs leading-5 text-slate-400">এখনো কোনো কথোপকথন নেই।<br />নতুন কথোপকথন দিয়ে শুরু করুন।</p> : null}
+        {conversations.length === 0 && search.trim() && !convLoading ? <p className="px-1 text-xs text-slate-400">{t("ai.pgNothingFound")}</p> : null}
+        {conversations.length === 0 && !search.trim() && !convLoading ? <p className="px-1 py-3 text-center text-xs leading-5 text-slate-400">{t("ai.pgNoConversations")}<br />{t("ai.pgStartNew")}</p> : null}
         <div className="space-y-1">
           {conversations.map(conversationRow)}
         </div>
@@ -551,10 +554,10 @@ export default function AiAssistantPage() {
               value={activeId}
               onChange={(e) => { setActiveId(e.target.value); setFollowUps([]); }}
             >
-              <option value="">কথোপকথন বেছে নিন...</option>
-              {conversations.map((c) => <option key={c.id} value={c.id}>{c.pinnedAt ? "📌 " : ""}{c.title ?? "নতুন কথোপকথন"}</option>)}
+              <option value="">{t("ai.pgPickConversation")}</option>
+              {conversations.map((c) => <option key={c.id} value={c.id}>{c.pinnedAt ? "📌 " : ""}{c.title ?? t("ai.pgNewConversation")}</option>)}
             </select>
-            <button className="btn-primary btn-sm shrink-0" onClick={() => newConversation()}>+ নতুন</button>
+            <button className="btn-primary btn-sm shrink-0" onClick={() => newConversation()}>{t("ai.pgNewShort")}</button>
           </div>
 
           {/* Hero header v3: brand gradient, orb, honest subtitle,
@@ -566,16 +569,16 @@ export default function AiAssistantPage() {
                 <h1 className="text-[24px] font-bold leading-tight tracking-tight">{proactive.assistantName || "AI Assistant"}</h1>
                 <label className="mt-1 flex items-center gap-2 text-xs font-semibold text-slate-500">Persona:
                   <select className="input w-auto py-1 text-xs" value={activeId ? activePersona : pendingPersona} onChange={(e) => void changePersona(e.target.value)}>
-                    {PERSONAS_UI.map((p) => <option key={p.id} value={p.id}>{p.icon} {p.labelBn}</option>)}
+                    {personasForLocale(locale).map((p) => <option key={p.id} value={p.id}>{p.icon} {p.label}</option>)}
                   </select>
                 </label>
                 <p className="mt-1 max-w-2xl text-[13.5px] leading-6 text-white/85">
-                  শুধুমাত্র যাচাইকৃত ডেটা দিয়ে উত্তর দেয়। AI নিজে থেকে কিছু বদলায় না — কাজের প্রস্তাব দিতে পারে, কিন্তু অনুমোদন ছাড়া কিছুই হয় না।
+                  {t("ai.pgHeroText")}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {providerBadge ?? <span className="ai3-hero-badge">● যাচাইকৃত ডেটা-ভিত্তিক উত্তর</span>}
-                  {pendingProposals.length > 0 ? <span className="ai3-hero-badge">⏳ {pendingProposals.length}টি প্রস্তাব অনুমোদনের অপেক্ষায়</span> : null}
-                  {sessionUsage.count > 0 ? <span className="ai3-hero-badge">এই session-এ {sessionUsage.count}টি উত্তর</span> : null}
+                  {providerBadge ?? <span className="ai3-hero-badge">{t("ai.pgVerifiedBadge")}</span>}
+                  {pendingProposals.length > 0 ? <span className="ai3-hero-badge">{t("ai.pgPendingBadge", { count: fmtNumber(locale, pendingProposals.length) })}</span> : null}
+                  {sessionUsage.count > 0 ? <span className="ai3-hero-badge">{t("ai.pgSessionAnswers", { count: fmtNumber(locale, sessionUsage.count) })}</span> : null}
                 </div>
               </div>
             </div>
@@ -588,11 +591,11 @@ export default function AiAssistantPage() {
           {recentConversation && messages.length === 0 && !activeId ? (
             <div className="ai3-recap">
               <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">শেষ কথোপকথন</p>
-                <p className="truncate font-bold text-slate-900">{recentConversation.title ?? "নতুন কথোপকথন"}</p>
-                <p className="text-[13px] text-slate-500">Pending প্রস্তাব: {pendingProposals.length}টি</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{t("ai.pgLastConversation")}</p>
+                <p className="truncate font-bold text-slate-900">{recentConversation.title ?? t("ai.pgNewConversation")}</p>
+                <p className="text-[13px] text-slate-500">{t("ai.pgPendingProposalsLine", { count: fmtNumber(locale, pendingProposals.length) })}</p>
               </div>
-              <button className="btn-primary btn-sm" onClick={() => { setActiveId(recentConversation.id); setFollowUps([]); }}>চালিয়ে যান →</button>
+              <button className="btn-primary btn-sm" onClick={() => { setActiveId(recentConversation.id); setFollowUps([]); }}>{t("ai.pgContinue")}</button>
             </div>
           ) : null}
 
@@ -607,8 +610,8 @@ export default function AiAssistantPage() {
               <div className="fade-rise space-y-4 py-2">
                 <div className="text-center">
                   <span className="ai3-orb mx-auto" aria-hidden="true" style={{ backgroundImage: "linear-gradient(135deg, var(--brand-from), var(--brand-to))", color: "#fff" }}>✦</span>
-                  <p className="mt-3 text-[17px] font-bold tracking-tight text-slate-900">আজ কী জানতে চান?</p>
-                  <p className="mt-1 text-sm text-slate-500">বিক্রি, ক্যাম্পেইন, অর্ডার, স্টক বা কুরিয়ার — যেকোনো একটি দিয়ে শুরু করুন:</p>
+                  <p className="mt-3 text-[17px] font-bold tracking-tight text-slate-900">{t("ai.pgAskToday")}</p>
+                  <p className="mt-1 text-sm text-slate-500">{t("ai.pgAskTodaySub")}</p>
                 </div>
                 <div className="ai3-suggest-grid">
                   {SUGGESTIONS.map((s) => (
@@ -627,7 +630,7 @@ export default function AiAssistantPage() {
                       <p className="text-sm leading-6">{m.content}</p>
                       {m.attachmentName ? <AiMessageAttachment name={m.attachmentName} kind={m.attachmentKind ?? "file"} text={m.attachmentText} /> : null}
                     </div>
-                    <span className="ai3-avatar ai3-avatar-user" aria-hidden="true">আ</span>
+                    <span className="ai3-avatar ai3-avatar-user" aria-hidden="true">{t("ai.pgUserAvatar")}</span>
                   </div>
                 ) : (
                   <div key={m.id} className="fade-rise flex items-start gap-2.5">
@@ -646,26 +649,26 @@ export default function AiAssistantPage() {
                       {streaming.steps.map((s, i) => (
                         <p key={i} className="ai-step-row">
                           <span className="ai-step-dot" />
-                          {s.phase === "planning" ? "পরিকল্পনা চলছে…" : `টুল চলছে… ${s.tool ?? ""}`}
+                          {s.phase === "planning" ? t("ai.pgPlanning") : t("ai.pgToolRunning", { tool: s.tool ?? "" })}
                         </p>
                       ))}
                       {streaming.text ? (
                         <div className="ai-stream-caret mt-1"><Markdown text={streaming.text} /></div>
                       ) : (
-                        <span className="ai3-typing" aria-label="ভাবছি"><span /><span /><span /></span>
+                        <span className="ai3-typing" aria-label={t("ai.pgThinking")}><span /><span /><span /></span>
                       )}
                     </div>
                   </div>
                 ) : null}
               </>
             )}
-            {sending && !streaming ? <p className="flex items-center gap-2 text-sm text-slate-400"><span className="ai3-typing"><span /><span /><span /></span> ভাবছি...</p> : null}
+            {sending && !streaming ? <p className="flex items-center gap-2 text-sm text-slate-400"><span className="ai3-typing"><span /><span /><span /></span> {t("ai.pgThinkingDots")}</p> : null}
             <div ref={bottomRef} />
           </div>
 
           {followUps.length > 0 && !sending ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-400">এরপর জিজ্ঞেস করতে পারেন:</span>
+              <span className="text-xs font-semibold text-slate-400">{t("ai.pgFollowUps")}</span>
               {followUps.map((s) => (
                 <button key={s} className="ai3-follow-chip" onClick={() => send(s)}>{s}</button>
               ))}
@@ -680,28 +683,28 @@ export default function AiAssistantPage() {
               <textarea
                 className="ai3-textarea"
                 rows={1}
-                placeholder="বাংলা বা ইংরেজিতে জিজ্ঞেস করুন..."
+                placeholder={t("ai.pgInputPlaceholder")}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
               />
               {sending ? (
-                <button type="button" className="ai3-stop-btn" onClick={() => stopStreaming()}>■ থামান</button>
+                <button type="button" className="ai3-stop-btn" onClick={() => stopStreaming()}>{t("ai.pgStop")}</button>
               ) : (
-                <button type="submit" className="ai3-send-btn" disabled={!input.trim()}>পাঠান ➤</button>
+                <button type="submit" className="ai3-send-btn" disabled={!input.trim()}>{t("ai.pgSend")}</button>
               )}
             </form>
             {pendingAttachment ? (
               <div className="mx-2 mb-1 flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                <span className="min-w-0 flex-1 truncate">{pendingAttachment.kind === "image" ? "🖼️" : "📎"} {pendingAttachment.name}{pendingAttachment.truncated ? " (আংশিক)" : ""}</span>
-                <button type="button" aria-label="সংযুক্তি সরান" onClick={() => setPendingAttachment(null)}>✕</button>
+                <span className="min-w-0 flex-1 truncate">{pendingAttachment.kind === "image" ? "🖼️" : "📎"} {pendingAttachment.name}{pendingAttachment.truncated ? t("ai.pgTruncated") : ""}</span>
+                <button type="button" aria-label={t("ai.pgRemoveAttachment")} onClick={() => setPendingAttachment(null)}>✕</button>
               </div>
             ) : null}
             <input ref={fileInputRef} type="file" accept={ATTACHMENT_ACCEPT} className="hidden" onChange={(e) => { void onAttachFile(e.target.files?.[0]); e.target.value = ""; }} />
             {mentionRef ? (
               <div className="mx-3 mb-1 flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
-                <span className="min-w-0 flex-1 truncate">📌 সংযুক্ত রেকর্ড: {mentionRef.label}</span>
-                <button type="button" aria-label="রেকর্ড সরান" onClick={() => setMentionRef(null)}>✕</button>
+                <span className="min-w-0 flex-1 truncate">{t("ai.pgAttachedRecord", { label: mentionRef.label })}</span>
+                <button type="button" aria-label={t("ai.pgRemoveRecord")} onClick={() => setMentionRef(null)}>✕</button>
               </div>
             ) : null}
             {mentionOpen ? (
@@ -723,19 +726,19 @@ export default function AiAssistantPage() {
               />
             ) : null}
             <div className="flex flex-wrap items-center gap-2 px-3 pb-1 pt-1.5">
-              <p className="min-w-0 flex-1 text-[11px] text-slate-400"><span className="kbd">Enter</span> পাঠান · <span className="kbd">Shift</span> + <span className="kbd">Enter</span> নতুন লাইন · <span className="kbd">/</span> prompt লাইব্রেরি · উত্তর শুধু যাচাইকৃত ডেটা থেকে</p>
-              <button type="button" className="ai3-act-btn" disabled={attaching} title="ফাইল বা ছবি সংযুক্ত করুন (.txt, .md, .csv, .pdf, .docx, ছবি)" onClick={() => fileInputRef.current?.click()}>{attaching ? "…" : "📎"}</button>
+              <p className="min-w-0 flex-1 text-[11px] text-slate-400"><span className="kbd">Enter</span> {t("ai.pgSendWord")} · <span className="kbd">Shift</span> + <span className="kbd">Enter</span> {t("ai.pgNewLine")} · <span className="kbd">/</span> {t("ai.pgPromptLibrary")} · {t("ai.pgVerifiedOnly")}</p>
+              <button type="button" className="ai3-act-btn" disabled={attaching} title={t("ai.pgAttachTitle")} onClick={() => fileInputRef.current?.click()}>{attaching ? "…" : "📎"}</button>
               {voice.supported ? (
                 <span className="inline-flex items-center gap-1">
-                  <button type="button" className="ai3-act-btn" title="ভয়েসে লিখুন (বাংলা/English)" onClick={() => (voice.listening ? voice.stop() : voice.start(input))}>{voice.listening ? "🔴 শুনছি…" : "🎤"}</button>
-                  <button type="button" className="ai3-act-btn" title="ভয়েসের ভাষা বদলান" onClick={() => voice.setLang(voice.lang === "bn-BD" ? "en-US" : "bn-BD")}>{voice.lang === "bn-BD" ? "বাং" : "EN"}</button>
+                  <button type="button" className="ai3-act-btn" title={t("ai.pgVoiceTitle")} onClick={() => (voice.listening ? voice.stop() : voice.start(input))}>{voice.listening ? t("ai.pgListening") : "🎤"}</button>
+                  <button type="button" className="ai3-act-btn" title={t("ai.pgVoiceLangTitle")} onClick={() => voice.setLang(voice.lang === "bn-BD" ? "en-US" : "bn-BD")}>{voice.lang === "bn-BD" ? "বাং" : "EN"}</button>
                 </span>
               ) : null}
               {tts.supported ? (
-                <button type="button" className="ai3-act-btn" title="উত্তর পড়ে শোনান (voice-first)" onClick={() => tts.setEnabled(!tts.enabled)}>{tts.enabled ? "🔊 শোনা চালু" : "🔇"}</button>
+                <button type="button" className="ai3-act-btn" title={t("ai.pgTtsTitle")} onClick={() => tts.setEnabled(!tts.enabled)}>{tts.enabled ? t("ai.pgTtsOn") : "🔇"}</button>
               ) : null}
               {input.trim() && !input.startsWith("/") ? (
-                <button type="button" className="ai3-act-btn" onClick={() => void saveCurrentAsPrompt()}>＋ Prompt হিসেবে save</button>
+                <button type="button" className="ai3-act-btn" onClick={() => void saveCurrentAsPrompt()}>{t("ai.pgSaveAsPrompt")}</button>
               ) : null}
               {promptNote ? <span className="text-[11px] font-semibold text-emerald-600">{promptNote}</span> : null}
             </div>
@@ -749,14 +752,14 @@ export default function AiAssistantPage() {
               <div className="flex items-start gap-3">
                 <span className="ai3-panel-icon" aria-hidden="true">📥</span>
                 <div className="min-w-0 flex-1">
-                  <h2 className="section-title">টাস্ক ইনবক্স</h2>
-                  <p className="mt-0.5 text-sm leading-6 text-slate-500">যা যা আপনার সিদ্ধান্ত বা মনোযোগ চায় — সব আসল গণনা থেকে।</p>
+                  <h2 className="section-title">{t("ai.pgTaskInbox")}</h2>
+                  <p className="mt-0.5 text-sm leading-6 text-slate-500">{t("ai.pgTaskInboxSub")}</p>
                 </div>
-                {taskInbox.briefingToday ? <span className="badge badge-brand">আজকের ব্রিফিং হয়েছে</span> : null}
+                {taskInbox.briefingToday ? <span className="badge badge-brand">{t("ai.pgBriefingToday")}</span> : null}
               </div>
               <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-                <span className="badge badge-amber">⏳ {taskInbox.pendingProposals}টি প্রস্তাব অপেক্ষমাণ</span>
-                <span className="badge badge-slate">❓ {taskInbox.unansweredOpen}টি উত্তর-বাকি প্রশ্ন</span>
+                <span className="badge badge-amber">{t("ai.pgPendingProposalsBadge", { count: fmtNumber(locale, taskInbox.pendingProposals) })}</span>
+                <span className="badge badge-slate">{t("ai.pgUnansweredBadge", { count: fmtNumber(locale, taskInbox.unansweredOpen) })}</span>
               </div>
               {taskInbox.radar.length > 0 ? (
                 <ul className="space-y-1.5">
@@ -773,12 +776,12 @@ export default function AiAssistantPage() {
               <div className="flex items-start gap-3">
                 <span className="ai3-panel-icon" aria-hidden="true">🧠</span>
                 <div className="min-w-0 flex-1">
-                  <h2 className="section-title">AI যা জানে</h2>
-                  <p className="mt-0.5 text-sm leading-6 text-slate-500">Assistant শুধু এই আসল তথ্য থেকেই উত্তর দেয় — নিজে থেকে কিছু শেখে বা বানায় না।</p>
+                  <h2 className="section-title">{t("ai.pgAiKnows")}</h2>
+                  <p className="mt-0.5 text-sm leading-6 text-slate-500">{t("ai.pgAiKnowsSub")}</p>
                 </div>
-                <span className="badge badge-brand">{memoryInfo.percent}% সম্পূর্ণ</span>
+                <span className="badge badge-brand">{t("ai.pgCompletePct", { percent: fmtNumber(locale, memoryInfo.percent) })}</span>
               </div>
-              <p className="text-xs font-semibold text-slate-500">📦 {memoryInfo.counts.products}টি পণ্য · ❓ {memoryInfo.counts.faq}টি FAQ · 📄 {memoryInfo.counts.documents}টি ডকুমেন্ট · 📜 {memoryInfo.counts.policies}টি নীতি</p>
+              <p className="text-xs font-semibold text-slate-500">{t("ai.pgMemoryCounts", { products: fmtNumber(locale, memoryInfo.counts.products), faq: fmtNumber(locale, memoryInfo.counts.faq), documents: fmtNumber(locale, memoryInfo.counts.documents), policies: fmtNumber(locale, memoryInfo.counts.policies) })}</p>
               <ul className="space-y-1.5">
                 {memoryInfo.sections.map((s) => (
                   <li key={s.key} className="flex items-start gap-2 text-sm">
@@ -791,13 +794,13 @@ export default function AiAssistantPage() {
                 ))}
               </ul>
               <p className="text-sm text-slate-600">
-                {profileInfo?.hasInstructions ? "✅ কাস্টম AI নির্দেশনা সেট করা আছে" : "⚪ কাস্টম AI নির্দেশনা নেই"}
-                {profileInfo?.replyLanguage ? <span className="text-slate-400"> · উত্তরের ভাষা: {profileInfo.replyLanguage === "bn" ? "বাংলা" : profileInfo.replyLanguage === "en" ? "English" : profileInfo.replyLanguage}</span> : null}
+                {profileInfo?.hasInstructions ? t("ai.pgHasInstructions") : t("ai.pgNoInstructions")}
+                {profileInfo?.replyLanguage ? <span className="text-slate-400">{t("ai.pgReplyLanguage", { lang: profileInfo.replyLanguage === "bn" ? t("ai.pgLangBn") : profileInfo.replyLanguage === "en" ? "English" : profileInfo.replyLanguage })}</span> : null}
               </p>
               <div className="flex flex-wrap gap-2">
                 <Link className="btn btn-secondary btn-sm" href="/dashboard/settings#hub-knowledge">Business Knowledge</Link>
-                <Link className="btn btn-secondary btn-sm" href="/dashboard/ai-instructions">AI নির্দেশনা</Link>
-                <Link className="btn btn-secondary btn-sm" href="/dashboard/settings">Business সেটিংস</Link>
+                <Link className="btn btn-secondary btn-sm" href="/dashboard/ai-instructions">{t("ai.pgInstructionsLink")}</Link>
+                <Link className="btn btn-secondary btn-sm" href="/dashboard/settings">{t("ai.pgBusinessSettings")}</Link>
               </div>
             </div>
           ) : null}
@@ -806,23 +809,23 @@ export default function AiAssistantPage() {
             <div className="flex items-start gap-3">
               <span className="ai3-panel-icon" aria-hidden="true">✅</span>
               <div>
-                <h2 className="section-title">কার্যক্রমের প্রস্তাব (অনুমোদন লাগবে)</h2>
-                <p className="mt-0.5 text-sm leading-6 text-slate-500">প্রস্তাব তৈরি হলেই কিছু হয় না। অনুমোদন দিলে তবেই আসল কাজটি হয় — ক্যাম্পেইন pause হলে Meta-র নিশ্চিতকরণ লাগে, broadcast শুধু draft তৈরি হয়, কখনো নিজে থেকে পাঠানো হয় না।</p>
+                <h2 className="section-title">{t("ai.pgProposalsTitle")}</h2>
+                <p className="mt-0.5 text-sm leading-6 text-slate-500">{t("ai.pgProposalsSub")}</p>
               </div>
             </div>
             {propNotice ? <p className="alert alert-amber">{propNotice}</p> : null}
             <div className="flex flex-wrap items-end gap-2 rounded-2xl bg-slate-50/80 p-3 ring-1 ring-inset ring-slate-200/60">
-              <label className="text-sm font-medium text-slate-600">ধরন
+              <label className="text-sm font-medium text-slate-600">{t("ai.pgTypeLabel")}
                 <select className="input ml-2 w-auto" value={propKind} onChange={(e) => { setPropKind(e.target.value as typeof propKind); setPropTarget(""); }}>
-                  <option value="pause_campaign">ক্যাম্পেইন Pause</option>
+                  <option value="pause_campaign">{t("ai.pgPropPause")}</option>
                   <option value="pause_ad_set">Ad Set Pause</option>
-                  <option value="create_broadcast_draft">Broadcast Draft তৈরি</option>
+                  <option value="create_broadcast_draft">{t("ai.pgPropBroadcast")}</option>
                 </select>
               </label>
               {propKind !== "create_broadcast_draft" ? (
-                <label className="text-sm font-medium text-slate-600">লক্ষ্য
+                <label className="text-sm font-medium text-slate-600">{t("ai.pgTargetLabel")}
                   <select className="input ml-2 w-auto min-w-52" value={propTarget} onChange={(e) => setPropTarget(e.target.value)}>
-                    <option value="">— বেছে নিন —</option>
+                    <option value="">{t("ai.pgPick")}</option>
                     {propKind === "pause_campaign"
                       ? targets.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}{c.metaStatus ? ` (${c.metaStatus})` : ""}</option>)
                       : targets.adSets.map((a) => <option key={a.id} value={a.id}>{a.planName} / {a.name}</option>)}
@@ -830,7 +833,7 @@ export default function AiAssistantPage() {
                 </label>
               ) : (
                 <>
-                  <input className="input w-auto" placeholder="Draft-এর নাম" value={propDraft.name} onChange={(e) => setPropDraft({ ...propDraft, name: e.target.value })} />
+                  <input className="input w-auto" placeholder={t("ai.pgDraftNamePlaceholder")} value={propDraft.name} onChange={(e) => setPropDraft({ ...propDraft, name: e.target.value })} />
                   <select className="input w-auto" value={propDraft.channel} onChange={(e) => setPropDraft({ ...propDraft, channel: e.target.value })}>
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
@@ -839,27 +842,27 @@ export default function AiAssistantPage() {
                   <input className="input min-w-52 flex-1" placeholder="Message body" value={propDraft.body} onChange={(e) => setPropDraft({ ...propDraft, body: e.target.value })} />
                 </>
               )}
-              <button className="btn-primary btn-sm min-h-[40px]" onClick={() => createProposal()}>প্রস্তাব তৈরি করুন</button>
+              <button className="btn-primary btn-sm min-h-[40px]" onClick={() => createProposal()}>{t("ai.pgCreateProposal")}</button>
             </div>
             {proposals.filter((x) => x.status === "proposed").length >= 2 ? (
               <div className="flex justify-end">
-                <button className="btn-primary btn-sm" onClick={() => void approveAllProposals()}>সব অনুমোদন করুন ({proposals.filter((x) => x.status === "proposed").length}টি)</button>
+                <button className="btn-primary btn-sm" onClick={() => void approveAllProposals()}>{t("ai.pgApproveAll", { count: fmtNumber(locale, proposals.filter((x) => x.status === "proposed").length) })}</button>
               </div>
             ) : null}
             <div className="space-y-2">
-              {proposals.length === 0 ? <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-400 ring-1 ring-inset ring-slate-200/60">কোনো প্রস্তাব নেই। চ্যাটে কোনো published ক্যাম্পেইনের নাম ধরে “pause করে দাও” বললেও প্রস্তাব তৈরি হবে।</p> : proposals.map((p) => (
+              {proposals.length === 0 ? <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-400 ring-1 ring-inset ring-slate-200/60">{t("ai.pgNoProposals")}</p> : proposals.map((p) => (
                 <div key={p.id} className="ai3-prop-card">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold text-slate-900">{p.title}</span>
                     <span className={`badge ${proposalStatusCls(p.status)}`}>{p.status}</span>
                   </div>
                   <p className="mt-1 text-sm leading-6 text-slate-600">{p.preview}</p>
-                  {p.error ? <p className="mt-1 text-sm text-red-600">ত্রুটি: {p.error}</p> : null}
+                  {p.error ? <p className="mt-1 text-sm text-red-600">{t("ai.pgErrorPrefix", { error: p.error })}</p> : null}
                   {p.status === "proposed" ? (
                     <div className="mt-2.5 flex gap-2">
-                      <button className="btn-primary btn-sm" onClick={() => decideProposal(p, "approve")}>অনুমোদন দিন</button>
-                      <button className="btn-secondary btn-sm" onClick={() => decideProposal(p, "reject")}>প্রত্যাখ্যান</button>
-                      <button className="btn-secondary btn-sm" title="Telegram-এ পাঠানোর মতো signed লিংক কপি করুন" onClick={() => void copyApprovalLink(p)}>🔗 লিংক</button>
+                      <button className="btn-primary btn-sm" onClick={() => decideProposal(p, "approve")}>{t("ai.pgApprove")}</button>
+                      <button className="btn-secondary btn-sm" onClick={() => decideProposal(p, "reject")}>{t("ai.pgReject")}</button>
+                      <button className="btn-secondary btn-sm" title={t("ai.pgLinkTitle")} onClick={() => void copyApprovalLink(p)}>{t("ai.pgLinkLabel")}</button>
                     </div>
                   ) : null}
                 </div>
@@ -873,11 +876,11 @@ export default function AiAssistantPage() {
           <div className="ai3-panel space-y-3">
             <div className="flex items-center gap-3">
               <span className="ai3-panel-icon" aria-hidden="true">⏳</span>
-              <h2 className="section-title flex-1">অপেক্ষমাণ প্রস্তাব</h2>
+              <h2 className="section-title flex-1">{t("ai.pgPendingTitle")}</h2>
               <span className="conv-unread">{pendingProposals.length}</span>
             </div>
             {pendingProposals.length === 0 ? (
-              <p className="rounded-2xl bg-slate-50 px-3.5 py-3 text-sm text-slate-400 ring-1 ring-inset ring-slate-200/60">কোনো pending প্রস্তাব নেই।</p>
+              <p className="rounded-2xl bg-slate-50 px-3.5 py-3 text-sm text-slate-400 ring-1 ring-inset ring-slate-200/60">{t("ai.pgNoPending")}</p>
             ) : pendingProposals.map((p) => (
               <div key={p.id} className="ai3-prop-card">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -886,64 +889,64 @@ export default function AiAssistantPage() {
                 </div>
                 <p className="mt-1 text-sm leading-6 text-slate-600">{p.preview}</p>
                 <div className="mt-2.5 flex gap-2">
-                  <button className="btn-primary btn-sm" onClick={() => decideProposal(p, "approve")}>অনুমোদন দিন</button>
-                  <button className="btn-secondary btn-sm" onClick={() => decideProposal(p, "reject")}>প্রত্যাখ্যান</button>
+                  <button className="btn-primary btn-sm" onClick={() => decideProposal(p, "approve")}>{t("ai.pgApprove")}</button>
+                  <button className="btn-secondary btn-sm" onClick={() => decideProposal(p, "reject")}>{t("ai.pgReject")}</button>
                 </div>
               </div>
             ))}
-            <a href="#ai-proposals" className="block text-sm font-semibold text-brand-600 hover:underline">সব প্রস্তাব প্যানেলে যান ↓</a>
+            <a href="#ai-proposals" className="block text-sm font-semibold text-brand-600 hover:underline">{t("ai.pgGoToPanel")}</a>
           </div>
 
           <div className="ai3-panel space-y-3">
             <div className="flex items-start gap-3">
               <span className="ai3-panel-icon" aria-hidden="true">🌅</span>
               <div>
-                <h2 className="section-title">Proactive সহকারী (দৈনিক ব্রিফিং)</h2>
+                <h2 className="section-title">{t("ai.pgProactiveTitle")}</h2>
               </div>
             </div>
-            <p className="text-sm leading-6 text-slate-500">প্রতিদিনের ব্রিফিং পেতে Automations পেজে একটি <b>Daily AI Briefing</b> job চালু করুন — ব্রিফিংটি নোটিফিকেশন হিসেবে OWNER/ADMIN-দের কাছে যাবে, শুধু আসল ডেটা থেকে তৈরি। ডেটা না থাকলে ব্রিফিংয়ে সেটাই লেখা থাকবে। Critical anomaly ধরা পড়লে আলাদা alert যাবে।</p>
+            <p className="text-sm leading-6 text-slate-500">{t("ai.pgProactiveDesc")}</p>
             <div className="space-y-2">
               <label className="setting-row cursor-pointer">
-                <span className="setting-row-label">দৈনিক ব্রিফিং চালু</span>
+                <span className="setting-row-label">{t("ai.pgBriefingEnabled")}</span>
                 <input type="checkbox" className="h-5 w-5 shrink-0 accent-indigo-600" checked={proactive.briefingEnabled} onChange={(e) => toggleProactive("briefingEnabled", e.target.checked)} />
               </label>
               <label className="setting-row cursor-pointer">
-                <span className="setting-row-label">Critical anomaly alert চালু</span>
+                <span className="setting-row-label">{t("ai.pgAnomalyEnabled")}</span>
                 <input type="checkbox" className="h-5 w-5 shrink-0 accent-indigo-600" checked={proactive.anomalyAlertsEnabled} onChange={(e) => toggleProactive("anomalyAlertsEnabled", e.target.checked)} />
               </label>
               <label className="setting-row cursor-pointer">
-                <span className="setting-row-label">দৈনিক ব্রিফিংয়ের ইমেইল কপি OWNER/ADMIN-দের কাছে পাঠান
-                  <span className="setting-row-help">শুধু কপি — আসল ব্রিফিং নোটিফিকেশনেই থাকে; SMTP সেট না থাকলে পাঠানো হবে না</span>
+                <span className="setting-row-label">{t("ai.pgEmailCopy")}
+                  <span className="setting-row-help">{t("ai.pgEmailCopyHelp")}</span>
                 </span>
                 <input type="checkbox" className="h-5 w-5 shrink-0 accent-indigo-600" checked={proactive.dailyReportEmailEnabled} onChange={(e) => toggleProactive("dailyReportEmailEnabled", e.target.checked)} />
               </label>
               <label className="setting-row cursor-pointer">
-                <span className="setting-row-label">ব্রিফিংয়ের Telegram কপি পাঠান
-                  <span className="setting-row-help">Telegram integration connected থাকলেই কাজ করবে; না থাকলে কপি যাবে না (ব্রিফিং নোটিফিকেশনেই থাকবে)</span>
+                <span className="setting-row-label">{t("ai.pgTelegramCopy")}
+                  <span className="setting-row-help">{t("ai.pgTelegramCopyHelp")}</span>
                 </span>
                 <input type="checkbox" className="h-5 w-5 shrink-0 accent-indigo-600" checked={proactive.telegramBriefEnabled} onChange={(e) => void saveTelegram(e.target.checked, proactive.telegramBriefChatId)} />
               </label>
               {proactive.telegramBriefEnabled ? (
                 <div className="flex flex-wrap items-center gap-2 px-1">
-                  <input className="input w-auto" placeholder="Telegram Chat ID (যেমন 123456789)" value={proactive.telegramBriefChatId} onChange={(e) => setProactive({ ...proactive, telegramBriefChatId: e.target.value })} />
-                  <button type="button" className="btn-secondary btn-sm" onClick={() => void saveTelegram(true, proactive.telegramBriefChatId)}>Chat ID সেভ করুন</button>
-                  <span className="text-xs text-slate-400">নিজের Chat ID জানতে Telegram-এ @userinfobot-কে message করুন।</span>
+                  <input className="input w-auto" placeholder={t("ai.pgChatIdPlaceholder")} value={proactive.telegramBriefChatId} onChange={(e) => setProactive({ ...proactive, telegramBriefChatId: e.target.value })} />
+                  <button type="button" className="btn-secondary btn-sm" onClick={() => void saveTelegram(true, proactive.telegramBriefChatId)}>{t("ai.pgSaveChatId")}</button>
+                  <span className="text-xs text-slate-400">{t("ai.pgChatIdHint")}</span>
                 </div>
               ) : null}
               <div className="flex flex-wrap items-center gap-2 px-1">
-                <span className="text-sm font-semibold text-slate-600">Assistant-এর নাম:</span>
-                <input className="input w-auto" placeholder="যেমন: Qosprey সহকারী" value={proactive.assistantName} onChange={(e) => setProactive({ ...proactive, assistantName: e.target.value })} />
-                <button type="button" className="btn-secondary btn-sm" onClick={() => void saveAssistantIdentity()}>সেভ করুন</button>
+                <span className="text-sm font-semibold text-slate-600">{t("ai.pgAssistantName")}</span>
+                <input className="input w-auto" placeholder={t("ai.pgAssistantNamePlaceholder")} value={proactive.assistantName} onChange={(e) => setProactive({ ...proactive, assistantName: e.target.value })} />
+                <button type="button" className="btn-secondary btn-sm" onClick={() => void saveAssistantIdentity()}>{t("ai.pgSave")}</button>
               </div>
               <label className="setting-row">
-                <span className="setting-row-label">Autonomy Level 2 — অভ্যন্তরীণ কাজ স্বয়ংক্রিয়
-                  <span className="setting-row-help">শুধু quick reply সেভ ও CRM ফলো-আপ টাস্ক (টাকা/বিজ্ঞাপন/পাঠানো — কোনোটাই নয়) অনুমোদন ছাড়া কার্যকর হবে; বাকি সব প্রস্তাবে মানুষের অনুমোদন লাগবেই। প্রতিটি স্বয়ংক্রিয় কাজ audit-এ চিহ্নিত থাকে।</span>
+                <span className="setting-row-label">{t("ai.pgAutonomyLabel")}
+                  <span className="setting-row-help">{t("ai.pgAutonomyHelp")}</span>
                 </span>
                 <input type="checkbox" className="h-5 w-5 shrink-0 accent-indigo-600" checked={proactive.autonomyLevel >= 2} onChange={(e) => void saveAutonomy(e.target.checked)} />
               </label>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button className="btn-primary btn-sm min-h-[40px]" onClick={() => runBriefingNow()}>এখনই ব্রিফিং পাঠান</button>
+              <button className="btn-primary btn-sm min-h-[40px]" onClick={() => runBriefingNow()}>{t("ai.pgRunBriefing")}</button>
               {briefingResult ? <span className="text-sm text-slate-600">{briefingResult}</span> : null}
             </div>
           </div>
@@ -954,29 +957,29 @@ export default function AiAssistantPage() {
                 <span className="ai3-panel-icon" aria-hidden="true">🔑</span>
                 <div className="min-w-0 flex-1">
                   <h2 className="section-title">Assistant API</h2>
-                  <p className="mt-0.5 text-sm leading-6 text-slate-500">বাইরের টুল থেকে assistant-কে ডাকার key। POST <code>/assistant-api/chat</code> — header: <code>x-api-key</code>। Key শুধু তৈরি করার সময় একবারই পুরোটা দেখা যায়।</p>
+                  <p className="mt-0.5 text-sm leading-6 text-slate-500">{t("ai.pgApiKeysDesc")} POST <code>/assistant-api/chat</code> — header: <code>x-api-key</code>। {t("ai.pgApiKeysDesc2")}</p>
                 </div>
               </div>
               {keyNotice ? <p className="alert alert-amber">{keyNotice}</p> : null}
               {createdKey ? (
                 <div className="rounded-2xl bg-emerald-50 px-4 py-3 ring-1 ring-inset ring-emerald-200">
-                  <p className="text-xs font-bold text-emerald-800">নতুন key — এখনই কপি করুন, পরে আর দেখা যাবে না:</p>
+                  <p className="text-xs font-bold text-emerald-800">{t("ai.pgNewKeyNote")}</p>
                   <p className="mt-1 break-all font-mono text-[13px] text-emerald-900">{createdKey}</p>
-                  <button type="button" className="btn-secondary btn-sm mt-2" onClick={() => { void navigator.clipboard?.writeText(createdKey).catch(() => undefined); setCreatedKey(""); }}>কপি করে বন্ধ করুন</button>
+                  <button type="button" className="btn-secondary btn-sm mt-2" onClick={() => { void navigator.clipboard?.writeText(createdKey).catch(() => undefined); setCreatedKey(""); }}>{t("ai.pgCopyAndClose")}</button>
                 </div>
               ) : null}
               <div className="flex flex-wrap items-center gap-2">
-                <input className="input w-auto" placeholder="Key-এর নাম (যেমন: Zapier)" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} />
-                <button type="button" className="btn-primary btn-sm" disabled={!newKeyName.trim()} onClick={() => void createApiKey()}>নতুন key তৈরি</button>
+                <input className="input w-auto" placeholder={t("ai.pgKeyNamePlaceholder")} value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} />
+                <button type="button" className="btn-primary btn-sm" disabled={!newKeyName.trim()} onClick={() => void createApiKey()}>{t("ai.pgCreateKey")}</button>
               </div>
-              {apiKeys.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো key নেই।</p> : (
+              {apiKeys.length === 0 ? <p className="text-sm text-slate-400">{t("ai.pgNoKeys")}</p> : (
                 <ul className="space-y-2">
                   {apiKeys.map((k) => (
                     <li key={k.id} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-inset ring-slate-200/60">
                       <span className="min-w-0 text-sm">
                         <span className="font-bold text-slate-800">{k.name}</span>{" "}
                         <span className="font-mono text-xs text-slate-500">{k.keyPrefix}…</span>
-                        <span className="block text-xs text-slate-400">{k.revokedAt ? "⛔ revoked" : k.lastUsedAt ? `সর্বশেষ ব্যবহার: ${new Date(k.lastUsedAt).toLocaleString("bn-BD")}` : "এখনো ব্যবহার হয়নি"}</span>
+                        <span className="block text-xs text-slate-400">{k.revokedAt ? t("ai.pgRevoked") : k.lastUsedAt ? t("ai.pgLastUsed", { date: fmtDateTime(locale, k.lastUsedAt) }) : t("ai.pgNeverUsed")}</span>
                       </span>
                       {!k.revokedAt ? <button type="button" className="btn-secondary btn-sm" onClick={() => void revokeApiKey(k.id)}>Revoke</button> : null}
                     </li>
@@ -989,16 +992,16 @@ export default function AiAssistantPage() {
           <div className="ai3-panel space-y-3">
             <div className="flex items-center gap-3">
               <span className="ai3-panel-icon" aria-hidden="true">📈</span>
-              <h2 className="section-title">ব্যবহার (এই session)</h2>
+              <h2 className="section-title">{t("ai.pgUsageTitle")}</h2>
             </div>
             {sessionUsage.count === 0 ? (
-              <p className="rounded-2xl bg-slate-50 px-3.5 py-3 text-sm text-slate-400 ring-1 ring-inset ring-slate-200/60">এই session-এ এখনো কোনো streamed উত্তর আসেনি।</p>
+              <p className="rounded-2xl bg-slate-50 px-3.5 py-3 text-sm text-slate-400 ring-1 ring-inset ring-slate-200/60">{t("ai.pgNoUsage")}</p>
             ) : (
               <>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="ai3-usage-tile">
-                    <p className="stat-label">উত্তর</p>
-                    <p className="mt-1 text-lg font-bold leading-none text-slate-900">{sessionUsage.count}টি</p>
+                    <p className="stat-label">{t("ai.pgAnswersLabel")}</p>
+                    <p className="mt-1 text-lg font-bold leading-none text-slate-900">{t("ai.pgAnswersCount", { count: fmtNumber(locale, sessionUsage.count) })}</p>
                   </div>
                   <div className="ai3-usage-tile">
                     <p className="stat-label">Input</p>
@@ -1009,10 +1012,10 @@ export default function AiAssistantPage() {
                     <p className="mt-1 text-lg font-bold leading-none text-slate-900">{sessionUsage.outputTokens}</p>
                   </div>
                 </div>
-                {sessionUsage.estimated ? <p className="alert alert-amber text-xs">~আনুমানিক (কমপক্ষে একটি উত্তরের usage আনুমানিক)</p> : null}
+                {sessionUsage.estimated ? <p className="alert alert-amber text-xs">{t("ai.pgEstimatedNote")}</p> : null}
               </>
             )}
-            <p className="text-xs leading-5 text-slate-400">শুধু এই পেজে এই session-এ আসা streamed উত্তরের done usage-এর যোগফল — কোনো cap বা limit-এর সংখ্যা এখানে দেখানো হয় না, কারণ এই পেজের হাতে সেই ডেটা নেই।</p>
+            <p className="text-xs leading-5 text-slate-400">{t("ai.pgUsageNote")}</p>
           </div>
         </aside>
       </div>

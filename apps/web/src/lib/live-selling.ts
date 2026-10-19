@@ -1,3 +1,5 @@
+import { fmtMoney, type UiLocale } from "@repo/contracts";
+
 /**
  * Social Live Selling & Comment-to-Order Engine
  * Specially designed for Bangladeshi Facebook, TikTok, and Instagram Live sellers.
@@ -146,10 +148,23 @@ export function buildLiveWhatsAppOrderMessage(
     checkoutUrl: string;
     customerPhone?: string | null;
   },
-  storeName = "আমাদের শপ"
+  storeName = "আমাদের শপ",
+  locale: UiLocale = "bn"
 ): string {
   const unitPrice = (Number(params.rule.priceMinor) / 100).toFixed(0);
   const total = ((Number(params.rule.priceMinor) * params.quantity) / 100).toFixed(0);
+
+  if (locale === "en") {
+    return `Hello! Thank you for commenting on the ${storeName} live 🎉
+Your requested product: *${params.rule.productName}*
+- Quantity: ${params.quantity}
+- Total price: ${fmtMoney(locale, Number(total))} (${params.quantity} × ${fmtMoney(locale, Number(unitPrice))})
+
+The live stock has been reserved for you for 15 minutes. To confirm your order with cash on delivery, click the link below and add your name and address:
+👉 ${params.checkoutUrl}
+
+If you have any question, just reply to this number. Thank you! 🙏`;
+  }
 
   return `আসসালামু আলাইকুম! ${storeName}-এর লাইভে কমেন্ট করার জন্য ধন্যবাদ 🎉
 আপনার কাঙ্ক্ষিত পণ্য: *${params.rule.productName}*
@@ -169,7 +184,8 @@ export function parseLiveComment(
   commentText: string,
   rules: LiveKeywordRule[],
   storeName = "আমাদের শপ",
-  checkoutBaseUrl = "https://shop.amarbrand.com"
+  checkoutBaseUrl = "https://shop.amarbrand.com",
+  locale: UiLocale = "bn"
 ): ParsedLiveOrder | null {
   if (!commentText || !commentText.trim()) return null;
   const raw = commentText.trim();
@@ -212,10 +228,14 @@ export function parseLiveComment(
       checkoutUrl,
       customerPhone,
     },
-    storeName
+    storeName,
+    locale
   );
 
-  const messengerReplyMessage = `ধন্যবাদ! আপনার অর্ডারকৃত ${matchedRule.productName} (${quantity}টি - ৳${(Number(totalPriceMinor) / 100).toFixed(0)}) এর লিংক: ${checkoutUrl}`;
+  const messengerReplyMessage =
+    locale === "en"
+      ? `Thank you! Here is the link for your ordered ${matchedRule.productName} (${quantity} pcs - ${fmtMoney(locale, Number(totalPriceMinor) / 100)}): ${checkoutUrl}`
+      : `ধন্যবাদ! আপনার অর্ডারকৃত ${matchedRule.productName} (${quantity}টি - ৳${(Number(totalPriceMinor) / 100).toFixed(0)}) এর লিংক: ${checkoutUrl}`;
 
   return {
     id: `ord-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,

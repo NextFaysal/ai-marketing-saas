@@ -1,4 +1,12 @@
 import { localInputToUtcIso, utcToLocalInput } from "./social-calendar";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { tr } from "./i18n/lookup";
+import { socialBn, socialEn } from "./i18n/social";
+
+const SOCIAL_DICTS = { bn: socialBn, en: socialEn };
+const L = (locale: UiLocale, key: string, params?: Record<string, string | number>) =>
+  tr(SOCIAL_DICTS, locale, key, params) ?? key;
+
 
 /**
  * SN3 — Content pipeline board + calendar drag: the PURE decision
@@ -14,13 +22,19 @@ import { localInputToUtcIso, utcToLocalInput } from "./social-calendar";
 
 export type BoardColumnId = "draft" | "pending" | "approved" | "scheduled" | "done";
 
-export const BOARD_COLUMNS: { id: BoardColumnId; label: string }[] = [
-  { id: "draft", label: "Draft (খসড়া)" },
-  { id: "pending", label: "অনুমোদনের অপেক্ষায়" },
-  { id: "approved", label: "অনুমোদিত" },
-  { id: "scheduled", label: "শিডিউল করা" },
-  { id: "done", label: "Published / Failed" },
+export const BOARD_COLUMNS: { id: BoardColumnId; label: string; labelEn: string }[] = [
+  { id: "draft", label: "Draft (খসড়া)", labelEn: "Draft" },
+  { id: "pending", label: "অনুমোদনের অপেক্ষায়", labelEn: "Awaiting approval" },
+  { id: "approved", label: "অনুমোদিত", labelEn: "Approved" },
+  { id: "scheduled", label: "শিডিউল করা", labelEn: "Scheduled" },
+  { id: "done", label: "Published / Failed", labelEn: "Published / Failed" },
 ];
+
+export function boardColumnLabel(id: BoardColumnId, locale: UiLocale = "bn"): string {
+  const col = BOARD_COLUMNS.find((c) => c.id === id);
+  if (!col) return id;
+  return locale === "en" ? col.labelEn : col.label;
+}
 
 export interface BoardPostLike {
   status: string;
@@ -64,6 +78,18 @@ export const BOARD_ACTION_LABELS: Record<BoardActionKind, string> = {
   "cancel-schedule": "শিডিউল বাতিল করে Draft-এ ফেরত নিন",
 };
 
+const BOARD_ACTION_KEYS: Record<BoardActionKind, string> = {
+  submit: "boardActSubmit",
+  approve: "boardActApprove",
+  schedule: "boardActSchedule",
+  publish: "boardActPublish",
+  "cancel-schedule": "boardActCancelSchedule",
+};
+
+export function boardActionLabel(kind: BoardActionKind, locale: UiLocale = "bn"): string {
+  return locale === "en" ? L(locale, BOARD_ACTION_KEYS[kind]) : BOARD_ACTION_LABELS[kind];
+}
+
 /**
  * Resolve a board move (drag drop or move-menu pick) to the ONE
  * existing action it maps to. `requireApproval` mirrors the org's
@@ -75,11 +101,12 @@ export function boardDropAction(
   post: BoardPostLike,
   target: BoardColumnId,
   opts: { requireApproval: boolean },
+  locale: UiLocale = "bn",
 ): BoardDropResult {
   const from = boardColumnForPost(post);
   if (from === target) return { kind: "noop" };
   if (post.status === "publishing") {
-    return { kind: "invalid", reason: "এই পোস্টটি এখন প্রকাশের কাজ চলছে — শেষ হলে আবার চেষ্টা করুন।" };
+    return { kind: "invalid", reason: L(locale, "boardReasonPublishing") };
   }
 
   switch (target) {
@@ -95,23 +122,23 @@ export function boardDropAction(
         return { kind: "submit" };
       }
       if (post.status === "draft" && !opts.requireApproval) {
-        return { kind: "invalid", reason: "এই Organization-এ অনুমোদন প্রক্রিয়া চালু নেই — Draft সরাসরি শিডিউল বা প্রকাশ করা যায়।" };
+        return { kind: "invalid", reason: L(locale, "boardReasonNoFlow") };
       }
-      return { kind: "invalid", reason: "এই পোস্টটি এখন অনুমোদনের জন্য পাঠানো যাবে না।" };
+      return { kind: "invalid", reason: L(locale, "boardReasonCannotSubmit") };
     }
     case "approved": {
       if (from === "pending") return { kind: "approve" };
       if (from === "draft") {
         return opts.requireApproval
-          ? { kind: "invalid", reason: "আগে পোস্টটি অনুমোদনের জন্য পাঠান — Pending কলামে ফেলুন, তারপর অনুমোদন করুন।" }
-          : { kind: "invalid", reason: "এই Organization-এ অনুমোদন প্রক্রিয়া চালু নেই — আলাদা Approved ধাপ নেই।" };
+          ? { kind: "invalid", reason: L(locale, "boardReasonSubmitFirst") }
+          : { kind: "invalid", reason: L(locale, "boardReasonNoApprovedStep") };
       }
-      return { kind: "invalid", reason: "এই ধাপ থেকে সরাসরি অনুমোদন করা যায় না।" };
+      return { kind: "invalid", reason: L(locale, "boardReasonCannotApprove") };
     }
     case "scheduled": {
       if (from === "draft" || from === "pending" || from === "approved") return { kind: "schedule" };
       if (from === "done" && post.status === "failed") return { kind: "schedule" };
-      return { kind: "invalid", reason: "প্রকাশিত/বাতিল পোস্ট আবার শিডিউল করা যায় না — দরকার হলে Clone করে নতুন Draft বানান।" };
+      return { kind: "invalid", reason: L(locale, "boardReasonCannotReschedule") };
     }
     case "done": {
       // Dropping on Published / Failed means "publish now" — the
@@ -121,22 +148,22 @@ export function boardDropAction(
         return { kind: "publish" };
       }
       if (post.status === "failed") return { kind: "publish" };
-      if (post.status === "published") return { kind: "invalid", reason: "পোস্টটি ইতিমধ্যে প্রকাশিত হয়েছে।" };
+      if (post.status === "published") return { kind: "invalid", reason: L(locale, "boardReasonAlreadyPublished") };
       if (post.status === "sent_to_creator") {
-        return { kind: "invalid", reason: "পোস্টটি ইতিমধ্যে Creator-এর কাছে পাঠানো হয়েছে — TikTok অ্যাপে গিয়ে প্রকাশ শেষ করুন।" };
+        return { kind: "invalid", reason: L(locale, "boardReasonSentToCreator") };
       }
-      return { kind: "invalid", reason: "বাতিল করা পোস্ট প্রকাশ করা যায় না — Clone করে নতুন Draft বানান।" };
+      return { kind: "invalid", reason: L(locale, "boardReasonCancelledPublish") };
     }
     case "draft": {
       // The only road back to Draft is cancelling a schedule.
       if (from === "scheduled") return { kind: "cancel-schedule" };
       if (from === "pending") {
-        return { kind: "invalid", reason: "প্রত্যাখ্যান করতে হলে কারণ লিখতে হয় — তালিকা ভিউ থেকে প্রত্যাখ্যান করুন; Board থেকে Pending পোস্ট Draft-এ ফেরানো যায় না।" };
+        return { kind: "invalid", reason: L(locale, "boardReasonRejectNeedsReason") };
       }
       if (from === "approved") {
-        return { kind: "invalid", reason: "অনুমোদিত পোস্ট Draft-এ ফেরানোর কোনো পথ নেই।" };
+        return { kind: "invalid", reason: L(locale, "boardReasonApprovedNoDraft") };
       }
-      return { kind: "invalid", reason: "প্রকাশিত/ব্যর্থ পোস্ট Draft-এ ফেরানো যায় না।" };
+      return { kind: "invalid", reason: L(locale, "boardReasonTerminalNoDraft") };
     }
   }
 }

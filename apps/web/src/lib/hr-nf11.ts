@@ -6,13 +6,20 @@
  * — pinned by the vitest suite.
  */
 
+import { miscBn, miscEn } from "./i18n/misc";
+
 export const PAYROLL_RECORD_NOTE = "এই রানটি পরিশোধের একটি রেকর্ড মাত্র — এর মাধ্যমে সরাসরি কোনো অর্থ স্থানান্তর হয় না। (This is a record of payment only — no money is transferred by it.)";
 
 export const WEEKDAYS = ["রবিবার", "সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার"] as const;
 
-export function weekdayLabel(v: number | null | undefined): string {
+/** MB2 (ML6): label helpers take a locale (default "bn" — existing
+ * callers/tests keep today's copy); strings live in the `misc`
+ * namespace, weekday names come from Intl for the locale. */
+export function weekdayLabel(v: number | null | undefined, locale: "bn" | "en" = "bn"): string {
   if (v == null || v < 0 || v > 6) return "—";
-  return WEEKDAYS[v];
+  if (locale === "bn") return WEEKDAYS[v];
+  // 2024-01-07 was a Sunday.
+  return new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(new Date(2024, 0, 7 + v));
 }
 
 /** Minutes-from-midnight → "HH:MM" (org-local wall time). */
@@ -33,35 +40,37 @@ export function parseTimeToMinutes(v: string): number | null {
   return h * 60 + min;
 }
 
-export function leaveStatusLabel(v: string | null | undefined): string {
+const D = (locale: "bn" | "en") => (locale === "en" ? miscEn : miscBn);
+
+export function leaveStatusLabel(v: string | null | undefined, locale: "bn" | "en" = "bn"): string {
   switch (v) {
-    case "pending": return "অপেক্ষমাণ";
-    case "approved": return "অনুমোদিত";
-    case "rejected": return "প্রত্যাখ্যাত";
+    case "pending": return D(locale).hrLeavePending;
+    case "approved": return D(locale).hrLeaveApproved;
+    case "rejected": return D(locale).hrLeaveRejected;
     default: return v ?? "—";
   }
 }
 
-export function leavePaidLabel(v: string | null | undefined): string {
+export function leavePaidLabel(v: string | null | undefined, locale: "bn" | "en" = "bn"): string {
   switch (v) {
-    case "paid": return "বেতনসহ ছুটি";
-    case "unpaid": return "বেতনবিহীন ছুটি";
+    case "paid": return D(locale).hrLeavePaid;
+    case "unpaid": return D(locale).hrLeaveUnpaid;
     default: return v ?? "—";
   }
 }
 
-export function runStatusLabel(v: string | null | undefined): string {
+export function runStatusLabel(v: string | null | undefined, locale: "bn" | "en" = "bn"): string {
   switch (v) {
-    case "draft": return "খসড়া (Draft)";
-    case "paid": return "পরিশোধের রেকর্ড (Paid)";
+    case "draft": return D(locale).hrRunDraft;
+    case "paid": return D(locale).hrRunPaid;
     default: return v ?? "—";
   }
 }
 
-export function attendanceSourceLabel(v: string | null | undefined): string {
+export function attendanceSourceLabel(v: string | null | undefined, locale: "bn" | "en" = "bn"): string {
   switch (v) {
-    case "self": return "নিজে চেক-ইন";
-    case "staff_correction": return "সংশোধন (Correction)";
+    case "self": return D(locale).hrSourceSelf;
+    case "staff_correction": return D(locale).hrSourceCorrection;
     default: return v ?? "—";
   }
 }

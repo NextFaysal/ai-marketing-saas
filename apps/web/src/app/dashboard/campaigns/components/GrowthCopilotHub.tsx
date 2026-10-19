@@ -3,6 +3,8 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { fmtMoney, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 export interface GrowthOpportunity {
   id: string;
@@ -49,6 +51,7 @@ export interface GrowthCopilotHubProps {
 }
 
 export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
+  const { t, locale } = useLocale();
   const [data, setData] = useState<GrowthCopilotSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string>("all");
@@ -96,11 +99,11 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
           }),
         },
       );
-      setActionNotice(res.message || "অ্যাকশনটি সফলভাবে কার্যকর হয়েছে!");
+      setActionNotice(res.message || t("ads.copActionDone"));
       await loadAudit();
       await props.onActionApplied?.();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "অ্যাকশন সম্পন্ন করা যায়নি");
+      setActionError(e instanceof Error ? e.message : t("ads.copActionError"));
     } finally {
       setActionBusyId(null);
     }
@@ -110,7 +113,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
     return (
       <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-6 flex items-center justify-center gap-2 text-xs text-indigo-700">
         <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
-        <span>এআই গ্রোথ কোপাইলট লাইভ বিজ্ঞাপন ও পারফরম্যান্স স্ক্যান করছে...</span>
+        <span>{t("ads.copLoading")}</span>
       </div>
     );
   }
@@ -128,18 +131,18 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
     if (p === "critical")
       return (
         <span className="rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-800 border border-red-200">
-          🚨 জরুরি অ্যালার্ট
+          {t("ads.copCritical")}
         </span>
       );
     if (p === "high")
       return (
         <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
-          ⚡ গুরুত্বপূর্ণ সুযোগ
+          {t("ads.copHigh")}
         </span>
       );
     return (
       <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800 border border-blue-200">
-        💡 পরামর্শ
+        {t("ads.copAdvice")}
       </span>
     );
   };
@@ -162,7 +165,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              অটোমেটেড বিজ্ঞাপন অডিট: লস কমানো, উইনিং ক্যাম্পেইন স্কেলিং ও ক্রিয়েটিভ অপটিমাইজেশন
+              {t("ads.copSubtitle")}
             </p>
           </div>
         </div>
@@ -170,7 +173,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
         {/* Health Score & 7-day stats */}
         <div className="flex items-center gap-4">
           <div className="text-right">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">বিজ্ঞাপন স্বাস্থ্য স্কোর</span>
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">{t("ads.copHealthScore")}</span>
             <div className="flex items-baseline justify-end gap-1">
               <span
                 className={`text-2xl font-black ${
@@ -181,16 +184,16 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
                     : "text-red-600"
                 }`}
               >
-                {data.overallHealthScore}
+                {fmtNumber(locale, data.overallHealthScore)}
               </span>
-              <span className="text-xs font-semibold text-slate-400">/১০০</span>
+              <span className="text-xs font-semibold text-slate-400">{t("ads.copScoreOf")}</span>
             </div>
           </div>
 
           <div className="hidden sm:block h-8 w-px bg-slate-200" />
 
           <div className="hidden sm:block text-right">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">গত ৭ দিনের ROAS</span>
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">{t("ads.copRoas7d")}</span>
             <span className="text-base font-bold text-slate-800">
               {data.blendedRoas ? `${data.blendedRoas}x` : "—"}
             </span>
@@ -221,7 +224,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
               : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
           }`}
         >
-          সব সুযোগ ({data.opportunities.length})
+          {t("ads.copAll", { count: fmtNumber(locale, data.opportunities.length) })}
         </button>
         <button
           type="button"
@@ -232,7 +235,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
               : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
           }`}
         >
-          🛑 ক্ষতি রোধ
+          {t("ads.copTabPause")}
         </button>
         <button
           type="button"
@@ -243,7 +246,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
               : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
           }`}
         >
-          🚀 উইনার স্কেল
+          {t("ads.copTabScale")}
         </button>
         <button
           type="button"
@@ -254,7 +257,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
               : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
           }`}
         >
-          ⚡ ক্রিয়েটিভ রিফ্রেশ
+          {t("ads.copTabCreative")}
         </button>
         <button
           type="button"
@@ -265,7 +268,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
               : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
           }`}
         >
-          🛒 কার্ট রিকভারি
+          {t("ads.copTabRetarget")}
         </button>
       </div>
 
@@ -295,10 +298,10 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2.5">
               <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
                 {opp.metrics.spendBdt && (
-                  <span>খরচ: <b className="text-slate-800">৳{opp.metrics.spendBdt}</b></span>
+                  <span>{t("ads.copSpend")} <b className="text-slate-800">{Number.isFinite(Number(opp.metrics.spendBdt)) ? fmtMoney(locale, Number(opp.metrics.spendBdt)) : opp.metrics.spendBdt}</b></span>
                 )}
                 {opp.metrics.purchases !== undefined && (
-                  <span>অর্ডার: <b className="text-slate-800">{opp.metrics.purchases}টি</b></span>
+                  <span>{t("ads.copOrders", { count: fmtNumber(locale, opp.metrics.purchases) })}</span>
                 )}
                 {opp.metrics.ctrPercent !== undefined && opp.metrics.ctrPercent !== null && (
                   <span>CTR: <b className="text-slate-800">{opp.metrics.ctrPercent}%</b></span>
@@ -311,7 +314,7 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
                     href="/dashboard/creative-studio"
                     className="inline-flex items-center gap-1 rounded-lg bg-purple-50 border border-purple-200 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 transition"
                   >
-                    🎨 ক্রিয়েটিভ স্টুডিও
+                    {t("ads.copCreativeStudio")}
                   </Link>
                 ) : (
                   <button
@@ -329,13 +332,13 @@ export function GrowthCopilotHub(props: GrowthCopilotHubProps) {
                     {actionBusyId === opp.id ? (
                       <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
                     ) : opp.actionType === "pause_campaign" ? (
-                      "🛑 ক্যাম্পেইন পজ করুন"
+                      t("ads.copPause")
                     ) : opp.actionType === "scale_budget" ? (
-                      "📈 বাজেট ২০% বাড়ান"
+                      t("ads.copScale")
                     ) : opp.actionType === "create_broadcast" ? (
-                      "💬 কার্ট রিকভারি ড্রাফট"
+                      t("ads.copBroadcast")
                     ) : (
-                      "অ্যাকশন নিন"
+                      t("ads.copTakeAction")
                     )}
                   </button>
                 )}
