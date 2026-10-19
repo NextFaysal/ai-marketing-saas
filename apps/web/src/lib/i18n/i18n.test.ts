@@ -32,8 +32,26 @@ describe("dashboard i18n dictionary (ML1/ML3)", () => {
     const en = flatten(dicts.en);
     expect([...en.keys()].sort()).toEqual([...bn.keys()].sort());
     expect(bn.size).toBeGreaterThan(10);
+    // Documented exception (MB2 assembly): Bengali count-classifier
+    // suffix keys — bn carries "টি"-style suffixes that attach to a
+    // count, English has NO suffix, so the en value is legitimately
+    // empty. These five keys (and only these) may be empty in en;
+    // they must be non-empty in bn and empty in en — pinned here so
+    // the exception cannot silently grow.
+    const EN_EMPTY_ALLOWLIST = new Set([
+      "automations.countSuffixTi",
+      "commerce.text1ou8",
+      "crm.audMembersCountSuffix",
+      "messaging.pushSubscriberSuffix",
+      "messaging.pushDeviceSuffix",
+    ]);
+    for (const key of EN_EMPTY_ALLOWLIST) {
+      expect(bn.get(key)?.trim(), `bn.${key}`).not.toBe("");
+      expect(en.get(key), `en.${key}`).toBe("");
+    }
     for (const [locale, flat] of [["bn", bn], ["en", en]] as const) {
       for (const [key, value] of flat) {
+        if (locale === "en" && EN_EMPTY_ALLOWLIST.has(key)) continue;
         expect(value.trim(), `${locale}.${key}`).not.toBe("");
       }
     }

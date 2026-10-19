@@ -1,47 +1,87 @@
 /**
- * ML1/ML3 (Multi-Language MB1) — dashboard UI dictionary.
+ * ML1/ML3 (Multi-Language MB1) + MB2 assembly — dashboard UI dictionary.
  *
  * bn is the source-of-truth shape; en MUST mirror it exactly
- * (same key set, no empty values — pinned by i18n.test.ts).
- * Scope for MB1 is deliberately SMALL: shared `common` strings,
- * dashboard `shell` chrome, and the Organization Settings
- * language section (`settingsLanguage`). Module-by-module
- * conversion of the dashboard is a later batch — do not grow
- * this file page by page ahead of that plan.
+ * (same key set, no empty values — pinned by i18n.test.ts, which
+ * also pins bn/en placeholder-set equality for parameterised
+ * values since MB2 STEP-0).
+ *
+ * MB2: the dashboard namespaces live in per-namespace files in
+ * this directory (common, shell, settings, connections, team,
+ * agency, commerce, orders, pos, products, inventory, delivery,
+ * inbox, messaging, crm, automations, workflows, ads,
+ * campaignBuilder, ai, social, analytics, billing, misc, shared),
+ * each exporting `XBn` / `XEn: typeof XBn`. This file ASSEMBLES
+ * them into the single typed `Dict` the LocaleProvider serves,
+ * and keeps the MB1 `settingsLanguage` namespace inline.
  *
  * This file intentionally does NOT import @repo/contracts
  * (not even at runtime): the dictionary must stay a pure,
  * dependency-free module so its tests never need a built
  * contracts dist. `UiLocale` below mirrors the canonical
- * `UiLocale` union exported by @repo/contracts (ML1) — the two
- * are the same "bn" | "en" union, so values flow between them
- * without conversion.
+ * `UiLocale` union exported by @repo/contracts (ML1).
  *
  * House rules: Bengali strings live ONLY in dictionary files
- * (this file, ./shop.ts, and the admin dictionary); components
- * read strings through the LocaleProvider's `dict`, never by
+ * (this directory and the admin dictionary); components read
+ * strings through the LocaleProvider's `dict`/`t`, never by
  * hardcoding copy. bn copy uses the আপনি tone and the fixed
- * project glossary (Settings = সেটিংস, Dashboard = ড্যাশবোর্ড,
- * Organization = প্রতিষ্ঠান); en copy is plain sentence case.
+ * project glossary; en copy is plain sentence case.
  */
+
+import { commonBn, commonEn } from "./common";
+import { shellBn, shellEn } from "./shell";
+import { settingsBn, settingsEn } from "./settings";
+import { connectionsBn, connectionsEn } from "./connections";
+import { teamBn, teamEn } from "./team";
+import { agencyBn, agencyEn } from "./agency";
+import { commerceBn, commerceEn } from "./commerce";
+import { ordersBn, ordersEn } from "./orders";
+import { posBn, posEn } from "./pos";
+import { productsBn, productsEn } from "./products";
+import { inventoryBn, inventoryEn } from "./inventory";
+import { deliveryBn, deliveryEn } from "./delivery";
+import { inboxBn, inboxEn } from "./inbox";
+import { messagingBn, messagingEn } from "./messaging";
+import { crmBn, crmEn } from "./crm";
+import { automationsBn, automationsEn } from "./automations";
+import { workflowsBn, workflowsEn } from "./workflows";
+import { adsBn, adsEn } from "./ads";
+import { campaignBuilderBn, campaignBuilderEn } from "./campaignBuilder";
+import { aiBn, aiEn } from "./ai";
+import { socialBn, socialEn } from "./social";
+import { analyticsBn, analyticsEn } from "./analytics";
+import { billingBn, billingEn } from "./billing";
+import { miscBn, miscEn } from "./misc";
+import { sharedBn, sharedEn } from "./shared";
 
 export type UiLocale = "bn" | "en";
 
 const bnDict = {
-  common: {
-    save: "সংরক্ষণ করুন",
-    cancel: "বাতিল",
-    loading: "লোড হচ্ছে…",
-    language: "ভাষা",
-    languageBn: "বাংলা",
-    languageEn: "English",
-    followOrg: "প্রতিষ্ঠানের ডিফল্ট",
-  },
-  shell: {
-    languageSwitcherLabel: "ভাষা বেছে নিন",
-    settings: "সেটিংস",
-    dashboard: "ড্যাশবোর্ড",
-  },
+  common: commonBn,
+  shell: shellBn,
+  settings: settingsBn,
+  connections: connectionsBn,
+  team: teamBn,
+  agency: agencyBn,
+  commerce: commerceBn,
+  orders: ordersBn,
+  pos: posBn,
+  products: productsBn,
+  inventory: inventoryBn,
+  delivery: deliveryBn,
+  inbox: inboxBn,
+  messaging: messagingBn,
+  crm: crmBn,
+  automations: automationsBn,
+  workflows: workflowsBn,
+  ads: adsBn,
+  campaignBuilder: campaignBuilderBn,
+  ai: aiBn,
+  social: socialBn,
+  analytics: analyticsBn,
+  billing: billingBn,
+  misc: miscBn,
+  shared: sharedBn,
   settingsLanguage: {
     title: "ভাষা",
     description:
@@ -65,20 +105,31 @@ const bnDict = {
 export type Dict = typeof bnDict;
 
 const enDict: Dict = {
-  common: {
-    save: "Save",
-    cancel: "Cancel",
-    loading: "Loading…",
-    language: "Language",
-    languageBn: "বাংলা",
-    languageEn: "English",
-    followOrg: "Organization default",
-  },
-  shell: {
-    languageSwitcherLabel: "Choose language",
-    settings: "Settings",
-    dashboard: "Dashboard",
-  },
+  common: commonEn,
+  shell: shellEn,
+  settings: settingsEn,
+  connections: connectionsEn,
+  team: teamEn,
+  agency: agencyEn,
+  commerce: commerceEn,
+  orders: ordersEn,
+  pos: posEn,
+  products: productsEn,
+  inventory: inventoryEn,
+  delivery: deliveryEn,
+  inbox: inboxEn,
+  messaging: messagingEn,
+  crm: crmEn,
+  automations: automationsEn,
+  workflows: workflowsEn,
+  ads: adsEn,
+  campaignBuilder: campaignBuilderEn,
+  ai: aiEn,
+  social: socialEn,
+  analytics: analyticsEn,
+  billing: billingEn,
+  misc: miscEn,
+  shared: sharedEn,
   settingsLanguage: {
     title: "Language",
     description:
