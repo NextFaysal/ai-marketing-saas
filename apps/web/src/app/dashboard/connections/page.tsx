@@ -10,25 +10,29 @@ import {
   qualityMeta, whatsappHealth,
   type ConnectionAccount, type ConnectionsOverview, type TenantAppConfigView, type OwnAppGuides,
 } from "@/lib/connections";
+import dynamic from "next/dynamic";
 import { AccountInsights } from "@/components/connect/account-insights";
-import { AlertsPanel } from "@/components/connect/alerts-panel";
-import { CommerceConnectPanel } from "@/components/connect/commerce-connect-panel";
-import { CourierConnectPanel } from "@/components/connect/courier-connect-panel";
 import { MessagingConnectPanel } from "@/components/connect/messaging-connect-panel";
 import { SenderConnectPanel } from "@/components/connect/sender-connect-panel";
 import { LlmConfigPanel } from "@/components/connect/llm-config-panel";
-import { PaymentGatewayPanel } from "@/components/connect/payment-gateway-panel";
-import { PaymentAttemptsPanel } from "@/components/connect/payment-attempts-panel";
 import { MemberAccessPanel } from "@/components/connect/member-access-panel";
-import { PaymentHistoryPanel } from "@/components/connect/payment-history-panel";
-import { PaymentRefundsPanel } from "@/components/connect/payment-refunds-panel";
-import { SettlementImportsPanel } from "@/components/connect/settlement-imports-panel";
-import { PayoutAutomationPanel } from "@/components/connect/payout-automation-panel";
-import { PaymentLinksPanel } from "@/components/connect/payment-links-panel";
 import { SetupAssistantPanel } from "@/components/connect/setup-assistant-panel";
-import { HealthAnalyticsPanel } from "@/components/connect/health-analytics-panel";
-import { DeliverabilityPanel, UsageInsightsPanel } from "@/components/connect/usage-insights-panel";
-import { GoogleLinkedInPanel, GooglePickCard, LinkedInPickCard } from "@/components/connect/google-linkedin-panel";
+import { GooglePickCard, LinkedInPickCard } from "@/components/connect/google-linkedin-panel";
+
+const CommerceConnectPanel = dynamic(() => import("@/components/connect/commerce-connect-panel").then((m) => m.CommerceConnectPanel), { ssr: false });
+const CourierConnectPanel = dynamic(() => import("@/components/connect/courier-connect-panel").then((m) => m.CourierConnectPanel), { ssr: false });
+const PaymentGatewayPanel = dynamic(() => import("@/components/connect/payment-gateway-panel").then((m) => m.PaymentGatewayPanel), { ssr: false });
+const PaymentAttemptsPanel = dynamic(() => import("@/components/connect/payment-attempts-panel").then((m) => m.PaymentAttemptsPanel), { ssr: false });
+const PaymentHistoryPanel = dynamic(() => import("@/components/connect/payment-history-panel").then((m) => m.PaymentHistoryPanel), { ssr: false });
+const PaymentRefundsPanel = dynamic(() => import("@/components/connect/payment-refunds-panel").then((m) => m.PaymentRefundsPanel), { ssr: false });
+const SettlementImportsPanel = dynamic(() => import("@/components/connect/settlement-imports-panel").then((m) => m.SettlementImportsPanel), { ssr: false });
+const PayoutAutomationPanel = dynamic(() => import("@/components/connect/payout-automation-panel").then((m) => m.PayoutAutomationPanel), { ssr: false });
+const PaymentLinksPanel = dynamic(() => import("@/components/connect/payment-links-panel").then((m) => m.PaymentLinksPanel), { ssr: false });
+const AlertsPanel = dynamic(() => import("@/components/connect/alerts-panel").then((m) => m.AlertsPanel), { ssr: false });
+const HealthAnalyticsPanel = dynamic(() => import("@/components/connect/health-analytics-panel").then((m) => m.HealthAnalyticsPanel), { ssr: false });
+const DeliverabilityPanel = dynamic(() => import("@/components/connect/usage-insights-panel").then((m) => m.DeliverabilityPanel), { ssr: false });
+const UsageInsightsPanel = dynamic(() => import("@/components/connect/usage-insights-panel").then((m) => m.UsageInsightsPanel), { ssr: false });
+const GoogleLinkedInPanel = dynamic(() => import("@/components/connect/google-linkedin-panel").then((m) => m.GoogleLinkedInPanel), { ssr: false });
 import { MARKETPLACE_NOTES, googleKindLabel } from "@/lib/connections";
 
 /**
