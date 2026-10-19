@@ -71,8 +71,11 @@ only.
   and fixed before commit). Negative money: `-৳…` (sign before ৳).
 - **EN spec pinned**: Latin digits, en-IN lakh grouping for
   numbers/money (1,00,000), day-first long dates `19 October 2026`
-  (en-GB date locale — en-IN's own long date is numeric in this
-  ICU), 12-hour `2:30 PM`.
+  (rendered by en-IN itself in this Node's full-icu — verified live
+  and pinned; no en-GB fallback was needed). Two further ICU
+  deviations from the plan's illustrative strings, pinned as the
+  observed truth: bn-BD time keeps a Latin AM/PM marker (`২:৩০ PM`,
+  not দুপুর) and en-IN time is lowercase (`2:30 pm`).
 - **Fonts**: no new font files — Hind Siliguri was already self-hosted
   via Fontsource in BOTH root layouts (web: full subset, all weights;
   admin: Bengali subset). ML2 adds the locale-driven application:
