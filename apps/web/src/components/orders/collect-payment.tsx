@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
@@ -25,6 +27,7 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
   customerPhone?: string | null;
   customerEmail?: string | null;
 }) {
+  const { dict, t, locale } = useLocale();
   const [ownGateways, setOwnGateways] = useState<TenantPaymentGatewayView[]>([]);
   const [platform, setPlatform] = useState<PlatformPaymentsView | null>(null);
   const [txns, setTxns] = useState<PaymentTransactionView[]>([]);
@@ -53,7 +56,7 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
   const ownOptions = ownGateways.filter(
     (g) => g.isEnabled && (g.environment ?? "live") === "live" && (g.provider === "sslcommerz" || g.provider === "bkash" || g.provider === "stripe"),
   );
-  const providerLabel = (provider: string) => provider === "bkash" ? "বিকাশ" : provider === "stripe" ? "Stripe (কার্ড)" : "SSLCommerz";
+  const providerLabel = (provider: string) => provider === "bkash" ? dict.orders.bKash : provider === "stripe" ? dict.orders.stripeCard : "SSLCommerz";
   const platformOptions = (platform?.providers ?? []).filter((p) => p.offered && p.enabled);
 
   async function initiate(source: "own" | "platform", provider: string) {
@@ -74,11 +77,11 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
         }),
       });
       const url = res.redirectUrl ?? res.bkashURL ?? "";
-      if (!url) throw new Error("গেটওয়ে কোনো পেমেন্ট লিংক দেয়নি — পেমেন্ট শুরু হয়নি।");
+      if (!url) throw new Error(dict.orders.theGatewayGaveNoPayment);
       setLink(url);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পেমেন্ট শুরু করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.orders.couldNotStartPayment);
     } finally { setBusy(""); }
   }
 
@@ -86,7 +89,7 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
 
   return (
     <div className="space-y-2 border-t pt-3">
-      <label className="text-sm font-medium">💳 অনলাইন পেমেন্ট সংগ্রহ করুন</label>
+      <label className="text-sm font-medium">{dict.orders.collectOnlinePayment}</label>
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
         {ownOptions.map((g) => (
@@ -97,7 +100,7 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
             onClick={() => void initiate("own", g.provider)}
             className="btn-primary btn-sm"
           >
-            {busy === `own:${g.provider}` ? "লিংক তৈরি হচ্ছে..." : `${providerLabel(g.provider)} — নিজের গেটওয়ে`}
+            {busy === `own:${g.provider}` ? dict.orders.creatingLink : t("orders.ownGateway2", { providerLabel: providerLabel(g.provider) })}
           </button>
         ))}
         {platformOptions.map((p) => (
@@ -108,13 +111,13 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
             onClick={() => void initiate("platform", p.provider)}
             className="btn-primary btn-sm"
           >
-            {busy === `platform:${p.provider}` ? "লিংক তৈরি হচ্ছে..." : `${p.provider === "bkash" ? "বিকাশ" : "SSLCommerz"} — প্ল্যাটফর্ম গেটওয়ে`}
+            {busy === `platform:${p.provider}` ? dict.orders.creatingLink : t("orders.platformGateway2", { p: p.provider === "bkash" ? dict.orders.bKash : "SSLCommerz" })}
           </button>
         ))}
       </div>
       {link ? (
         <div className="space-y-1 rounded-lg bg-indigo-50 px-3 py-2">
-          <p className="text-xs font-semibold text-indigo-800">পেমেন্ট লিংক তৈরি হয়েছে — কাস্টমারকে পাঠান:</p>
+          <p className="text-xs font-semibold text-indigo-800">{dict.orders.paymentLinkCreatedSendIt}</p>
           <div className="flex flex-wrap items-center gap-2">
             <input readOnly value={link} className="input min-w-52 flex-1 font-mono text-xs" onFocus={(e) => e.target.select()} />
             <button
@@ -122,9 +125,9 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
               className="btn-primary btn-sm"
               onClick={() => { void navigator.clipboard?.writeText(link).then(() => setCopied(true)).catch(() => undefined); }}
             >
-              {copied ? "কপি হয়েছে ✓" : "কপি করুন"}
+              {copied ? dict.orders.copied : dict.orders.copy}
             </button>
-            <a href={link} target="_blank" rel="noreferrer" className="text-xs font-semibold text-indigo-700 underline">লিংক খুলুন ↗</a>
+            <a href={link} target="_blank" rel="noreferrer" className="text-xs font-semibold text-indigo-700 underline">{dict.orders.openLink}</a>
           </div>
         </div>
       ) : null}
@@ -136,16 +139,15 @@ export function CollectPayment({ orderId, customerName, customerPhone, customerE
               <div key={t.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
                 <span className={`rounded-full px-2 py-0.5 font-semibold ${meta.cls}`}>{meta.label}</span>
                 <span className="font-semibold">{formatTakaMinor(t.amountMinor)}</span>
-                <span className="text-slate-500">{providerLabel(t.provider)} · {t.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের গেটওয়ে"}</span>
-                <span className="text-slate-400">{new Date(t.createdAt).toLocaleString("bn-BD")}</span>
+                <span className="text-slate-500">{providerLabel(t.provider)} · {t.source === "platform" ? dict.orders.platform : dict.orders.ownGateway}</span>
+                <span className="text-slate-400">{fmtDateTime(locale, new Date(t.createdAt))}</span>
               </div>
             );
           })}
         </div>
       ) : null}
       <p className="text-xs text-slate-400">
-        লিংক পাঠালেই পেমেন্ট ধরা হয় না — কাস্টমার পেমেন্ট শেষ করে গেটওয়ের সার্ভার-যাচাই (IPN) এলেই কেবল অর্ডারটি paid হবে। অবস্থা এখানেই হালনাগাদ দেখা যাবে।
-      </p>
+        {dict.orders.sendingTheLinkDoesNot}</p>
     </div>
   );
 }

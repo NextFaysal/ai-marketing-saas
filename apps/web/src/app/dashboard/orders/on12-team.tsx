@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { ResponsiveTable } from "@repo/ui";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -27,6 +28,7 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
   onClose: () => void;
   onViewAssignee: (userId: string) => void;
 }) {
+  const { dict, t, locale } = useLocale();
   const orgId = getOrganizationId() ?? "";
   const [preset, setPreset] = useState<"7" | "30" | "custom">("30");
   const initial = rangeForPreset(30);
@@ -40,7 +42,7 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
       const out = await apiFetch<TeamPerformancePayload>(buildTeamPerformancePath(orgId, f, t));
       setData(out); setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "টিম পারফরম্যান্স লোড ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.orders.teamPerformanceLoadFailed);
     }
   }, [orgId]);
 
@@ -55,29 +57,26 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="টিম পারফরম্যান্স">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label={dict.orders.teamPerformance2}>
       <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold">👥 টিম পারফরম্যান্স</h2>
-          <button type="button" className="btn-ghost btn-sm" onClick={onClose}>বন্ধ করুন</button>
+          <h2 className="text-lg font-semibold">{dict.orders.teamPerformance}</h2>
+          <button type="button" className="btn-ghost btn-sm" onClick={onClose}>{dict.orders.close}</button>
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          সব হিসাব Asia/Dhaka ক্যালেন্ডার দিনে, শুধু সক্রিয় টিম সদস্যদের জন্য। স্ট্যাটাস পরিবর্তন, হোল্ড, COD কল ও মন্তব্য
-          গণনা হয় অর্ডারের অডিট লগ থেকে; পিক গণনা হয় পিক ওয়েভ থেকে। বাল্ক (একসঙ্গে অনেক) স্ট্যাটাস পরিবর্তন অডিটে একটিমাত্র
-          বাল্ক রেকর্ড হিসেবে থাকে, তাই তা আলাদা স্ট্যাটাস-পরিবর্তন হিসেবে এখানে গণনা হয় না।
-          <span className="font-medium text-slate-600"> "এখন খোলা (বর্তমান)" কলামটি এই মুহূর্তের চিত্র — তারিখের সীমা এতে প্রযোজ্য নয়।</span>
+          {dict.orders.allCalculationsAreByAsia}<span className="font-medium text-slate-600"> {dict.orders.theNowOpenCurrentColumn}</span>
         </p>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" className={preset === "7" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("7")}>শেষ ৭ দিন</button>
-          <button type="button" className={preset === "30" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("30")}>শেষ ৩০ দিন</button>
-          <button type="button" className={preset === "custom" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("custom")}>কাস্টম</button>
+          <button type="button" className={preset === "7" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("7")}>{dict.orders.last7Days}</button>
+          <button type="button" className={preset === "30" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("30")}>{dict.orders.last30Days}</button>
+          <button type="button" className={preset === "custom" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("custom")}>{dict.orders.custom}</button>
           {preset === "custom" ? (
             <>
-              <input type="date" className="input input-sm" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="শুরুর তারিখ" />
-              <span className="text-sm text-slate-500">থেকে</span>
-              <input type="date" className="input input-sm" value={to} onChange={(e) => setTo(e.target.value)} aria-label="শেষ তারিখ" />
-              <button type="button" className="btn-secondary btn-sm" onClick={() => void load(from, to)}>দেখুন</button>
+              <input type="date" className="input input-sm" value={from} onChange={(e) => setFrom(e.target.value)} aria-label={dict.orders.startDate} />
+              <span className="text-sm text-slate-500">{dict.orders.from}</span>
+              <input type="date" className="input input-sm" value={to} onChange={(e) => setTo(e.target.value)} aria-label={dict.orders.endDate} />
+              <button type="button" className="btn-secondary btn-sm" onClick={() => void load(from, to)}>{dict.orders.view}</button>
             </>
           ) : null}
           {data ? <span className="text-xs text-slate-500">{data.from} → {data.to}</span> : null}
@@ -93,15 +92,15 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
                 <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="text-left text-slate-500">
-                  <th className="py-1 pr-2">সদস্য</th>
-                  <th className="py-1 pr-2">ভূমিকা</th>
-                  <th className="py-1 pr-2" title="এই মুহূর্তে এই সদস্যের দায়িত্বে থাকা অসমাপ্ত অর্ডার — তারিখের সীমা প্রযোজ্য নয়">এখন খোলা (বর্তমান)</th>
-                  <th className="py-1 pr-2">স্ট্যাটাস পরিবর্তন</th>
-                  <th className="py-1 pr-2">হোল্ড (+/−)</th>
-                  <th className="py-1 pr-2">COD কল</th>
-                  <th className="py-1 pr-2">পিক সম্পন্ন</th>
-                  <th className="py-1 pr-2">মন্তব্য</th>
-                  <th className="py-1">অর্ডার</th>
+                  <th className="py-1 pr-2">{dict.orders.member}</th>
+                  <th className="py-1 pr-2">{dict.orders.role}</th>
+                  <th className="py-1 pr-2" title={dict.orders.unfinishedOrdersCurrentlyAssignedTo}>{dict.orders.nowOpenCurrent}</th>
+                  <th className="py-1 pr-2">{dict.orders.statusChange}</th>
+                  <th className="py-1 pr-2">{dict.orders.hold}</th>
+                  <th className="py-1 pr-2">{dict.orders.cODCall}</th>
+                  <th className="py-1 pr-2">{dict.orders.picked}</th>
+                  <th className="py-1 pr-2">{dict.orders.comment}</th>
+                  <th className="py-1">{dict.orders.order}</th>
                 </tr></thead>
                 <tbody>
                   {data.members.map((m) => (
@@ -110,7 +109,7 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
                         <span className="font-medium">{memberDisplayName(m)}</span>
                         {m.email && m.name !== m.email ? <span className="block text-xs text-slate-500">{m.email}</span> : null}
                       </td>
-                      <td className="py-1.5 pr-2">{roleLabel(m.role)}</td>
+                      <td className="py-1.5 pr-2">{roleLabel(m.role, locale)}</td>
                       <td className="py-1.5 pr-2">{m.assignedOpen}</td>
                       <td className="py-1.5 pr-2">{m.statusChanges}</td>
                       <td className="py-1.5 pr-2">{formatHolds(m.holdsPlaced, m.holdsReleased)}</td>
@@ -118,14 +117,14 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
                       <td className="py-1.5 pr-2">{m.picksDone}</td>
                       <td className="py-1.5 pr-2">{m.commentsPosted}</td>
                       <td className="py-1.5">
-                        <button type="button" className="btn-secondary btn-sm" onClick={() => onViewAssignee(m.userId)}>অর্ডার দেখুন</button>
+                        <button type="button" className="btn-secondary btn-sm" onClick={() => onViewAssignee(m.userId)}>{dict.orders.viewOrder}</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 font-semibold">
-                    <td className="py-1.5 pr-2">মোট</td>
+                    <td className="py-1.5 pr-2">{dict.orders.total}</td>
                     <td className="py-1.5 pr-2">—</td>
                     <td className="py-1.5 pr-2">{data.totals.assignedOpen}</td>
                     <td className="py-1.5 pr-2">{data.totals.statusChanges}</td>
@@ -148,35 +147,35 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
                           <div className="font-bold text-slate-900">{memberDisplayName(m)}</div>
                           {m.email && m.name !== m.email ? <div className="text-xs text-slate-500">{m.email}</div> : null}
                         </div>
-                        <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{roleLabel(m.role)}</span>
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{roleLabel(m.role, locale)}</span>
                       </div>
                       <dl className="mt-2 space-y-1 text-xs">
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">এখন খোলা (বর্তমান)</dt><dd className="font-medium">{m.assignedOpen}</dd></div>
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">স্ট্যাটাস পরিবর্তন</dt><dd className="font-medium">{m.statusChanges}</dd></div>
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">হোল্ড (+/−)</dt><dd className="font-medium">{formatHolds(m.holdsPlaced, m.holdsReleased)}</dd></div>
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">COD কল</dt><dd className="font-medium">{m.codCalls}</dd></div>
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">পিক সম্পন্ন</dt><dd className="font-medium">{m.picksDone}</dd></div>
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">মন্তব্য</dt><dd className="font-medium">{m.commentsPosted}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.nowOpenCurrent}</dt><dd className="font-medium">{m.assignedOpen}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.statusChange}</dt><dd className="font-medium">{m.statusChanges}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.hold}</dt><dd className="font-medium">{formatHolds(m.holdsPlaced, m.holdsReleased)}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.cODCall}</dt><dd className="font-medium">{m.codCalls}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.picked}</dt><dd className="font-medium">{m.picksDone}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.comment}</dt><dd className="font-medium">{m.commentsPosted}</dd></div>
                       </dl>
-                      <button type="button" className="btn-secondary btn-sm mt-3 inline-flex min-h-[44px] items-center" onClick={() => onViewAssignee(m.userId)}>অর্ডার দেখুন</button>
+                      <button type="button" className="btn-secondary btn-sm mt-3 inline-flex min-h-[44px] items-center" onClick={() => onViewAssignee(m.userId)}>{dict.orders.viewOrder}</button>
                     </div>
                   ))}
                   <div className="rounded-xl border bg-slate-50 p-3 shadow-sm">
-                    <div className="font-bold text-slate-900">মোট</div>
+                    <div className="font-bold text-slate-900">{dict.orders.total}</div>
                     <dl className="mt-2 space-y-1 text-xs">
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">এখন খোলা (বর্তমান)</dt><dd className="font-semibold">{data.totals.assignedOpen}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">স্ট্যাটাস পরিবর্তন</dt><dd className="font-semibold">{data.totals.statusChanges}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">হোল্ড (+/−)</dt><dd className="font-semibold">{formatHolds(data.totals.holdsPlaced, data.totals.holdsReleased)}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">COD কল</dt><dd className="font-semibold">{data.totals.codCalls}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">পিক সম্পন্ন</dt><dd className="font-semibold">{data.totals.picksDone}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">মন্তব্য</dt><dd className="font-semibold">{data.totals.commentsPosted}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.nowOpenCurrent}</dt><dd className="font-semibold">{data.totals.assignedOpen}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.statusChange}</dt><dd className="font-semibold">{data.totals.statusChanges}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.hold}</dt><dd className="font-semibold">{formatHolds(data.totals.holdsPlaced, data.totals.holdsReleased)}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.cODCall}</dt><dd className="font-semibold">{data.totals.codCalls}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.picked}</dt><dd className="font-semibold">{data.totals.picksDone}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.comment}</dt><dd className="font-semibold">{data.totals.commentsPosted}</dd></div>
                     </dl>
                   </div>
                 </>
               }
             />
-          ) : <p className="mt-4 text-sm text-slate-500">এই সংগঠনে কোনো সক্রিয় টিম সদস্য নেই।</p>
-        ) : <p className="mt-4 text-sm text-slate-500">লোড হচ্ছে…</p>}
+          ) : <p className="mt-4 text-sm text-slate-500">{dict.orders.thisOrganizationHasNoActive}</p>
+        ) : <p className="mt-4 text-sm text-slate-500">{dict.common.loading}</p>}
       </div>
     </div>
   );

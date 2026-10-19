@@ -1,5 +1,7 @@
 "use client";
 import React, { useState } from "react";
+import { fmtDateTime } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { ResponsiveTable } from "@repo/ui";
 import type { CourierRule, CourierPerformance, ReviewRow, ChaseRow } from "./types";
 import { PERF_PROVIDER_LABEL } from "./types";
@@ -92,6 +94,7 @@ export function CourierHubModal({
   reviews,
   chases,
 }: CourierHubModalProps) {
+  const { dict, t, locale } = useLocale();
   const [hubTab, setHubTab] = useState<"connections" | "rules" | "perf" | "chase">("connections");
 
   if (!isOpen) return null;
@@ -102,16 +105,15 @@ export function CourierHubModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-4">
           <div>
-            <h3 className="text-base font-bold text-slate-900">🚚 কুরিয়ার হাব ও অটোমেশন কন্ট্রোল</h3>
+            <h3 className="text-base font-bold text-slate-900">{dict.orders.courierHubAutomationControl}</h3>
             <p className="text-xs text-slate-500">
-              Steadfast, Pathao ও RedX কানেকশন, অটো-সিলেক্ট রুলস ও পারফরম্যান্স মেট্রিক্স।
-            </p>
+              {dict.orders.steadfastPathaoRedXConnectionsAuto}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-sm hover:bg-slate-100 hover:text-slate-700"
-            aria-label="বন্ধ করুন"
+            aria-label={dict.orders.close}
           >
             ✕
           </button>
@@ -128,8 +130,7 @@ export function CourierHubModal({
                 : "border-transparent text-slate-500 hover:text-slate-800"
             }`}
           >
-            🔌 সংযোগ (APIs)
-          </button>
+            {dict.orders.connectionsAPIs}</button>
           <button
             type="button"
             onClick={() => setHubTab("rules")}
@@ -139,7 +140,7 @@ export function CourierHubModal({
                 : "border-transparent text-slate-500 hover:text-slate-800"
             }`}
           >
-            ⚙️ অটো-সিলেক্ট রুলস ({courierRules.length})
+            {dict.orders.autoSelectRules}{courierRules.length})
           </button>
           <button
             type="button"
@@ -150,8 +151,7 @@ export function CourierHubModal({
                 : "border-transparent text-slate-500 hover:text-slate-800"
             }`}
           >
-            📊 ডেলিভারি পারফরম্যান্স
-          </button>
+            {dict.orders.deliveryPerformance}</button>
           <button
             type="button"
             onClick={() => setHubTab("chase")}
@@ -161,7 +161,7 @@ export function CourierHubModal({
                 : "border-transparent text-slate-500 hover:text-slate-800"
             }`}
           >
-            🎯 থেমে যাওয়া সেশন (Chase) ({chases.length})
+            {dict.orders.stalledSessionsChase}{chases.length})
           </button>
         </div>
 
@@ -181,14 +181,14 @@ export function CourierHubModal({
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="font-bold text-slate-900 text-sm">Steadfast Courier</span>
-                    <span className="ml-2 text-xs text-slate-500">এপিআই সংযোগ</span>
+                    <span className="ml-2 text-xs text-slate-500">{dict.orders.aPIConnection}</span>
                   </div>
                   <span
                     className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
                       courier?.connected ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500"
                     }`}
                   >
-                    {courier?.connected ? "✓ যুক্ত আছে" : "যুক্ত নেই"}
+                    {courier?.connected ? dict.orders.linked2 : dict.orders.notLinked}
                   </span>
                 </div>
 
@@ -200,15 +200,14 @@ export function CourierHubModal({
                       onClick={onSyncAllCourier}
                       className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                     >
-                      {courierBusy === "syncall" ? "Sync হচ্ছে..." : "সব পার্সেলের স্ট্যাটাস Sync করুন"}
+                      {courierBusy === "syncall" ? dict.orders.syncing : dict.orders.syncAllParcelStatuses}
                     </button>
                     <button
                       type="button"
                       onClick={onDisconnectSteadfast}
                       className="rounded-xl px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
                     >
-                      সংযোগ বিচ্ছিন্ন
-                    </button>
+                      {dict.orders.disconnected}</button>
                   </div>
                 ) : (
                   <form onSubmit={onConnectCourier} className="grid gap-2.5 sm:grid-cols-2">
@@ -227,13 +226,13 @@ export function CourierHubModal({
                       required
                     />
                     <div className="sm:col-span-2 flex items-center justify-between">
-                      <p className="text-[11px] text-slate-500">Key Steadfast Merchant Portal থেকে পাবেন।</p>
+                      <p className="text-[11px] text-slate-500">{dict.orders.youWillGetTheKey}</p>
                       <button
                         type="submit"
                         disabled={courierBusy !== ""}
                         className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
                       >
-                        {courierBusy === "connect" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}
+                        {courierBusy === "connect" ? dict.orders.verifying : dict.orders.verifyAndAdd}
                       </button>
                     </div>
                   </form>
@@ -253,7 +252,7 @@ export function CourierHubModal({
                           : "bg-slate-100 text-slate-500"
                       }`}
                     >
-                      {conns.find((c) => c.provider === "pathao")?.connected ? "যুক্ত আছে" : "যুক্ত নেই"}
+                      {conns.find((c) => c.provider === "pathao")?.connected ? dict.orders.linked : dict.orders.notLinked}
                     </span>
                   </div>
 
@@ -263,8 +262,7 @@ export function CourierHubModal({
                       onClick={() => onDisconnectProvider("pathao")}
                       className="rounded-xl px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50"
                     >
-                      সংযোগ বিচ্ছিন্ন
-                    </button>
+                      {dict.orders.disconnected}</button>
                   ) : (
                     <form onSubmit={onConnectPathao} className="space-y-2 text-xs">
                       <input
@@ -283,7 +281,7 @@ export function CourierHubModal({
                       />
                       <input
                         className="w-full rounded-xl border border-slate-200 p-2"
-                        placeholder="Merchant ইমেইল (Username)"
+                        placeholder={dict.orders.merchantEmailUsername}
                         value={pathaoForm.username}
                         onChange={(e) => onPathaoFormChange({ ...pathaoForm, username: e.target.value })}
                         required
@@ -291,7 +289,7 @@ export function CourierHubModal({
                       <input
                         type="password"
                         className="w-full rounded-xl border border-slate-200 p-2"
-                        placeholder="Merchant পাসওয়ার্ড"
+                        placeholder={dict.orders.merchantPassword}
                         value={pathaoForm.password}
                         onChange={(e) => onPathaoFormChange({ ...pathaoForm, password: e.target.value })}
                         required
@@ -302,14 +300,13 @@ export function CourierHubModal({
                           checked={pathaoForm.sandbox}
                           onChange={(e) => onPathaoFormChange({ ...pathaoForm, sandbox: e.target.checked })}
                         />
-                        Sandbox (টেস্ট) পরিবেশ
-                      </label>
+                        {dict.orders.sandboxTestEnvironment}</label>
                       <button
                         type="submit"
                         disabled={courierBusy !== ""}
                         className="w-full rounded-xl bg-slate-900 py-2 font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                       >
-                        {courierBusy === "pathao" ? "যাচাই হচ্ছে..." : "Pathao যুক্ত করুন"}
+                        {courierBusy === "pathao" ? dict.orders.verifying : dict.orders.connectPathao}
                       </button>
                     </form>
                   )}
@@ -326,7 +323,7 @@ export function CourierHubModal({
                           : "bg-slate-100 text-slate-500"
                       }`}
                     >
-                      {conns.find((c) => c.provider === "redx")?.connected ? "যুক্ত আছে" : "যুক্ত নেই"}
+                      {conns.find((c) => c.provider === "redx")?.connected ? dict.orders.linked : dict.orders.notLinked}
                     </span>
                   </div>
 
@@ -336,8 +333,7 @@ export function CourierHubModal({
                       onClick={() => onDisconnectProvider("redx")}
                       className="rounded-xl px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50"
                     >
-                      সংযোগ বিচ্ছিন্ন
-                    </button>
+                      {dict.orders.disconnected}</button>
                   ) : (
                     <form onSubmit={onConnectRedx} className="space-y-2 text-xs">
                       <input
@@ -349,7 +345,7 @@ export function CourierHubModal({
                       />
                       <input
                         className="w-full rounded-xl border border-slate-200 p-2"
-                        placeholder="Base URL (ঐচ্ছিক)"
+                        placeholder={dict.orders.baseURLOptional}
                         value={redxForm.baseUrl}
                         onChange={(e) => onRedxFormChange({ ...redxForm, baseUrl: e.target.value })}
                       />
@@ -358,7 +354,7 @@ export function CourierHubModal({
                         disabled={courierBusy !== ""}
                         className="w-full rounded-xl bg-slate-900 py-2 font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                       >
-                        {courierBusy === "redx" ? "যাচাই হচ্ছে..." : "RedX যুক্ত করুন"}
+                        {courierBusy === "redx" ? dict.orders.verifying : dict.orders.connectRedX}
                       </button>
                     </form>
                   )}
@@ -368,8 +364,7 @@ export function CourierHubModal({
               {/* Tracking URL Templates */}
               <div className="rounded-2xl border border-slate-200/80 p-5 space-y-3">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  ট্র্যাকিং URL কাস্টমাইজেশন
-                </span>
+                  {dict.orders.trackingURLCustomization}</span>
                 <div className="space-y-2">
                   {conns
                     .filter((c) => c.connected)
@@ -388,12 +383,11 @@ export function CourierHubModal({
                           onClick={() => onSaveTrackingTemplate(c.provider)}
                           className="rounded-xl bg-slate-900 px-3 py-1.5 font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                         >
-                          সংরক্ষণ
-                        </button>
+                          {dict.orders.save}</button>
                       </div>
                     ))}
                   {conns.filter((c) => c.connected).length === 0 && (
-                    <p className="text-xs text-slate-500">কোনো সক্রিয় কুরিয়ার সংযোগ নেই।</p>
+                    <p className="text-xs text-slate-500">{dict.orders.noActiveCourierConnections}</p>
                   )}
                 </div>
               </div>
@@ -412,10 +406,9 @@ export function CourierHubModal({
               {/* Existing Rules List */}
               <div className="space-y-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  বিদ্যমান অটো-সিলেক্ট নিয়মাবলী
-                </span>
+                  {dict.orders.existingAutoSelectRules}</span>
                 {courierRules.length === 0 ? (
-                  <p className="text-xs text-slate-500">এখনো কোনো নিয়ম তৈরি করা হয়নি।</p>
+                  <p className="text-xs text-slate-500">{dict.orders.noRulesCreatedYet}</p>
                 ) : (
                   <div className="space-y-2">
                     {[...courierRules]
@@ -437,7 +430,7 @@ export function CourierHubModal({
                                   r.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-500"
                                 }`}
                               >
-                                {r.active ? "সক্রিয়" : "নিষ্ক্রিয়"}
+                                {r.active ? dict.orders.active : dict.orders.inactive}
                               </span>
                             </div>
                             <div className="mt-1 text-slate-500">{ruleConditionsSummary(r)}</div>
@@ -449,16 +442,14 @@ export function CourierHubModal({
                               onClick={() => onEditRule(r)}
                               className="font-semibold text-indigo-600 hover:underline"
                             >
-                              সম্পাদনা
-                            </button>
+                              {dict.orders.edit}</button>
                             <button
                               type="button"
                               disabled={ruleBusy !== ""}
                               onClick={() => onDeleteRule(r)}
                               className="font-semibold text-rose-600 hover:underline disabled:opacity-50"
                             >
-                              মুছুন
-                            </button>
+                              {dict.orders.delete}</button>
                           </div>
                         </div>
                       ))}
@@ -469,13 +460,13 @@ export function CourierHubModal({
               {/* Add / Edit Rule Form */}
               <form onSubmit={onSaveRule} className="rounded-2xl border border-slate-200/80 p-5 space-y-3">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  {editingRule ? "নিয়ম সম্পাদনা করুন" : "+ নতুন অটো-সিলেক্ট নিয়ম যোগ করুন"}
+                  {editingRule ? dict.orders.editRule : dict.orders.addNewAutoSelectRule}
                 </span>
 
                 <div className="grid gap-2 sm:grid-cols-3">
                   <input
                     className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
-                    placeholder="নিয়মের নাম *"
+                    placeholder={dict.orders.ruleName}
                     value={ruleForm.name}
                     onChange={(e) => onRuleFormChange({ ...ruleForm, name: e.target.value })}
                     required
@@ -493,7 +484,7 @@ export function CourierHubModal({
                     }}
                     required
                   >
-                    <option value="">কুরিয়ার অ্যাকাউন্ট বেছে নিন</option>
+                    <option value="">{dict.orders.chooseACourierAccount}</option>
                     {conns
                       .filter((c) => c.connected)
                       .map((c) => (
@@ -505,27 +496,27 @@ export function CourierHubModal({
                   <input
                     className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
                     type="number"
-                    placeholder="Priority (যেমন: 10)"
+                    placeholder={dict.orders.priorityEG10}
                     value={ruleForm.priority}
                     onChange={(e) => onRuleFormChange({ ...ruleForm, priority: e.target.value })}
                   />
                   <input
                     className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
-                    placeholder="জেলাসমূহ (কমা দিয়ে)"
+                    placeholder={dict.orders.districtsCommaSeparated}
                     value={ruleForm.districts}
                     onChange={(e) => onRuleFormChange({ ...ruleForm, districts: e.target.value })}
                   />
                   <input
                     className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
                     type="number"
-                    placeholder="সর্বনিম্ন ওজন (গ্রাম)"
+                    placeholder={dict.orders.minimumWeightGrams}
                     value={ruleForm.minWeightGrams}
                     onChange={(e) => onRuleFormChange({ ...ruleForm, minWeightGrams: e.target.value })}
                   />
                   <input
                     className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
                     type="number"
-                    placeholder="সর্বোচ্চ ওজন (গ্রাম)"
+                    placeholder={dict.orders.maximumWeightGrams}
                     value={ruleForm.maxWeightGrams}
                     onChange={(e) => onRuleFormChange({ ...ruleForm, maxWeightGrams: e.target.value })}
                   />
@@ -538,18 +529,17 @@ export function CourierHubModal({
                       checked={ruleForm.active}
                       onChange={(e) => onRuleFormChange({ ...ruleForm, active: e.target.checked })}
                     />
-                    সক্রিয় রাখুন
-                  </label>
+                    {dict.orders.keepActive}</label>
                   <button
                     type="submit"
                     disabled={ruleBusy !== ""}
                     className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                   >
                     {ruleBusy === "save"
-                      ? "সংরক্ষণ হচ্ছে..."
+                      ? dict.orders.saving2
                       : editingRule
-                        ? "নিয়ম আপডেট করুন"
-                        : "নিয়ম সংরক্ষণ করুন"}
+                        ? dict.orders.updateRule
+                        : dict.orders.saveRule}
                   </button>
                   {editingRule && (
                     <button
@@ -557,8 +547,7 @@ export function CourierHubModal({
                       onClick={onCancelEditRule}
                       className="rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
                     >
-                      বাতিল
-                    </button>
+                      {dict.common.cancel}</button>
                   )}
                 </div>
               </form>
@@ -570,21 +559,20 @@ export function CourierHubModal({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  কুরিয়ার পারফরম্যান্স তুলনা
-                </span>
+                  {dict.orders.courierPerformanceComparison}</span>
                 <select
                   className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold"
                   value={perfDays}
                   onChange={(e) => onPerfDaysChange(Number(e.target.value))}
                 >
-                  <option value={7}>শেষ ৭ দিন</option>
-                  <option value={30}>শেষ ৩০ দিন</option>
-                  <option value={90}>শেষ ৯০ দিন</option>
+                  <option value={7}>{dict.orders.last7Days}</option>
+                  <option value={30}>{dict.orders.last30Days}</option>
+                  <option value={90}>{dict.orders.last90Days}</option>
                 </select>
               </div>
 
               {!perf || perf.providers.length === 0 ? (
-                <p className="text-xs text-slate-500">এই সময়ে কোনো ডেটা পাওয়া যায়নি।</p>
+                <p className="text-xs text-slate-500">{dict.orders.noDataFoundForThis}</p>
               ) : (
                 <ResponsiveTable
                   table={
@@ -592,14 +580,14 @@ export function CourierHubModal({
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 border-b text-slate-500">
                       <tr>
-                        <th className="py-2.5 px-3 font-semibold">কুরিয়ার</th>
-                        <th className="py-2.5 px-3 font-semibold">বুকিং</th>
-                        <th className="py-2.5 px-3 font-semibold">ডেলিভার্ড</th>
-                        <th className="py-2.5 px-3 font-semibold">রিটার্ন</th>
-                        <th className="py-2.5 px-3 font-semibold">বাতিল</th>
-                        <th className="py-2.5 px-3 font-semibold">পথে আছে</th>
-                        <th className="py-2.5 px-3 font-semibold">ডেলিভারি হার</th>
-                        <th className="py-2.5 px-3 font-semibold">রিটার্ন হার</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.orders.courier}</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.orders.booking}</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.orders.delivered2}</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.orders.return2}</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.common.cancel}</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.orders.inTransit}</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.orders.deliveryRate}</th>
+                        <th className="py-2.5 px-3 font-semibold">{dict.orders.returnRate}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -612,7 +600,7 @@ export function CourierHubModal({
                             className={isTotal ? "bg-slate-50 font-bold" : "hover:bg-slate-50/50"}
                           >
                             <td className="py-2.5 px-3">
-                              {PERF_PROVIDER_LABEL[row.provider] ?? row.provider}
+                              {row.provider === "total" ? dict.orders.total : PERF_PROVIDER_LABEL[row.provider] ?? row.provider}
                             </td>
                             <td className="py-2.5 px-3">{row.booked}</td>
                             <td className="py-2.5 px-3 text-emerald-700">{row.delivered}</td>
@@ -635,15 +623,15 @@ export function CourierHubModal({
                     const rate = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
                     return (
                       <div key={row.provider} className={`rounded-xl border bg-white p-3 shadow-sm ${isTotal ? "bg-slate-50 font-bold" : ""}`}>
-                        <div className="font-bold text-slate-900">{PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</div>
+                        <div className="font-bold text-slate-900">{row.provider === "total" ? dict.orders.total : PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</div>
                         <dl className="mt-2 space-y-1 text-xs">
-                          <div className="flex justify-between gap-2"><dt className="text-slate-500">বুকিং</dt><dd className="font-medium">{row.booked}</dd></div>
-                          <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভার্ড</dt><dd className="font-medium text-emerald-700">{row.delivered}</dd></div>
-                          <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন</dt><dd className="font-medium text-rose-600">{row.returned}</dd></div>
-                          <div className="flex justify-between gap-2"><dt className="text-slate-500">বাতিল</dt><dd className="font-medium">{row.cancelled}</dd></div>
-                          <div className="flex justify-between gap-2"><dt className="text-slate-500">পথে আছে</dt><dd className="font-medium text-indigo-600">{row.inFlight}</dd></div>
-                          <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভারি হার</dt><dd className="font-bold text-emerald-700">{rate(row.deliveryRate)}</dd></div>
-                          <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন হার</dt><dd className="font-bold text-rose-600">{rate(row.returnRate)}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.booking}</dt><dd className="font-medium">{row.booked}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.delivered2}</dt><dd className="font-medium text-emerald-700">{row.delivered}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.return2}</dt><dd className="font-medium text-rose-600">{row.returned}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.common.cancel}</dt><dd className="font-medium">{row.cancelled}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.inTransit}</dt><dd className="font-medium text-indigo-600">{row.inFlight}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.deliveryRate}</dt><dd className="font-bold text-emerald-700">{rate(row.deliveryRate)}</dd></div>
+                          <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.returnRate}</dt><dd className="font-bold text-rose-600">{rate(row.returnRate)}</dd></div>
                         </dl>
                       </div>
                     );
@@ -657,22 +645,21 @@ export function CourierHubModal({
           {hubTab === "chase" && (
             <div className="space-y-4">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                🎯 থেমে যাওয়া অর্ডার বট সেশন
-              </span>
+                {dict.orders.stalledOrderBotSessions}</span>
               {chases.length === 0 ? (
-                <p className="text-xs text-slate-500">কোনো থেমে যাওয়া সেশন নেই।</p>
+                <p className="text-xs text-slate-500">{dict.orders.noStalledSessions}</p>
               ) : (
                 <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200/80">
                   {chases.slice(0, 30).map((c) => (
                     <div key={c.id} className="p-3 text-xs flex items-center justify-between">
                       <div>
-                        <span className="font-semibold text-slate-900">{c.productName ?? "পণ্য অজানা"}</span>
+                        <span className="font-semibold text-slate-900">{c.productName ?? dict.orders.productUnknown}</span>
                         <div className="text-[10px] text-slate-400">
-                          {c.lastChasedAt ? `সর্বশেষ: ${new Date(c.lastChasedAt).toLocaleString("bn-BD")}` : "—"}
+                          {c.lastChasedAt ? t("orders.last2", { p0: fmtDateTime(locale, new Date(c.lastChasedAt)) }) : "—"}
                         </div>
                       </div>
                       <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
-                        {c.attempts > 0 ? `${c.attempts} বার অনুস্মারক` : "অপেক্ষমাণ"}
+                        {c.attempts > 0 ? t("orders.reminders", { attempts: c.attempts }) : dict.orders.pending}
                       </span>
                     </div>
                   ))}

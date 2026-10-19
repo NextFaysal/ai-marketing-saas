@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { extractedSummary, type LabelScanResultView, type LabelMatchView } from "@/lib/cx8";
 
 interface LabelScannerModalProps {
@@ -27,6 +28,7 @@ export function LabelScannerModal({
   onRunLabelLookup,
   onOpenScannedOrder,
 }: LabelScannerModalProps) {
+  const { dict, t, locale } = useLocale();
   if (!isOpen) return null;
 
   return (
@@ -35,10 +37,9 @@ export function LabelScannerModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div>
-            <h3 className="text-base font-bold text-slate-900">📷 AI প্যাকিং — লেবেল স্ক্যানার</h3>
+            <h3 className="text-base font-bold text-slate-900">{dict.orders.aIPackingLabelScanner}</h3>
             <p className="text-xs text-slate-500">
-              পার্সেলের লেবেলের ছবি দিলে AI ট্র্যাকিং কোড বা অর্ডার নম্বর শনাক্ত করে খুঁজে দেয়।
-            </p>
+              {dict.orders.giveAPhotoOfThe}</p>
           </div>
           <button
             type="button"
@@ -57,7 +58,7 @@ export function LabelScannerModal({
                 labelBusy ? "pointer-events-none opacity-50" : "cursor-pointer"
               }`}
             >
-              <span>{labelBusy === "scan" ? "ছবি পড়া হচ্ছে..." : "📷 ছবির ফাইল বা ক্যামেরা"}</span>
+              <span>{labelBusy === "scan" ? dict.orders.readingImage : dict.orders.imageFileOrCamera}</span>
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -71,14 +72,14 @@ export function LabelScannerModal({
               />
             </label>
 
-            <span className="text-xs text-slate-400">অথবা নম্বর লিখুন:</span>
+            <span className="text-xs text-slate-400">{dict.orders.orTypeTheNumber}</span>
           </div>
 
           <div className="flex items-center gap-2">
             <input
               type="text"
               className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="ট্র্যাকিং কোড, অর্ডার # বা ফোনের শেষ ৪ ডিজিট..."
+              placeholder={dict.orders.trackingCodeOrderOrLast}
               value={labelQuery}
               onChange={(e) => onLabelQueryChange(e.target.value)}
               onKeyDown={(e) => {
@@ -94,7 +95,7 @@ export function LabelScannerModal({
               onClick={onRunLabelLookup}
               className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
             >
-              {labelBusy === "lookup" ? "খোঁজা হচ্ছে..." : "খুঁজুন"}
+              {labelBusy === "lookup" ? dict.orders.searching : dict.orders.search}
             </button>
           </div>
         </div>
@@ -109,14 +110,13 @@ export function LabelScannerModal({
         {/* Results Display */}
         {labelScan && !labelScan.available && (
           <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">
-            AI ছবি পড়া এখন সেটআপ করা নেই — উপরের বক্সে সরাসরি নম্বর লিখে খুঁজুন।
-          </div>
+            {dict.orders.aIImageReadingIsNot}</div>
         )}
 
         {labelScan && labelScan.matched && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-emerald-800 text-xs">✓ অর্ডার শনাক্ত হয়েছে!</span>
+              <span className="font-bold text-emerald-800 text-xs">{dict.orders.orderIdentified}</span>
               <button
                 type="button"
                 onClick={() => {
@@ -125,14 +125,13 @@ export function LabelScannerModal({
                 }}
                 className="rounded-xl bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-800"
               >
-                ড্রয়ারে খুলুন →
-              </button>
+                {dict.orders.openInDrawer}</button>
             </div>
             <div className="text-xs text-emerald-900">
-              অর্ডার #{labelScan.matched.orderNumber ?? labelScan.matched.orderId.slice(0, 8)}
+              {dict.orders.order3}{labelScan.matched.orderNumber ?? labelScan.matched.orderId.slice(0, 8)}
               {labelScan.matched.trackingCode && ` · Tracking: ${labelScan.matched.trackingCode}`}
               {labelScan.matched.provider && ` · ${labelScan.matched.provider}`}
-              {labelScan.matched.shipmentStatus && ` · শিপমেন্ট: ${labelScan.matched.shipmentStatus}`}
+              {labelScan.matched.shipmentStatus && t("orders.shipment2", { shipmentStatus: labelScan.matched.shipmentStatus })}
             </div>
           </div>
         )}
@@ -140,8 +139,7 @@ export function LabelScannerModal({
         {labelScan && !labelScan.matched && labelScan.candidates.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs font-semibold text-slate-700">
-              ফোনের শেষ ৪ ডিজিট মিলিয়ে সম্ভাব্য পার্সেল ({labelScan.candidates.length}টি):
-            </p>
+              {dict.orders.possibleParcelsMatchingTheLast}{labelScan.candidates.length}{dict.orders.items4}</p>
             <div className="max-h-48 space-y-1.5 overflow-y-auto">
               {labelScan.candidates.map((c) => (
                 <div
@@ -163,8 +161,7 @@ export function LabelScannerModal({
                     }}
                     className="font-bold text-indigo-600 hover:underline"
                   >
-                    খুলুন
-                  </button>
+                    {dict.orders.open}</button>
                 </div>
               ))}
             </div>
@@ -173,10 +170,9 @@ export function LabelScannerModal({
 
         {labelScan && labelScan.available && !labelScan.matched && labelScan.candidates.length === 0 && (
           <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
-            কোনো মিল পাওয়া যায়নি।
-            {extractedSummary(labelScan)
-              ? ` ছবি/খোঁজ থেকে পড়া মান: ${extractedSummary(labelScan)}`
-              : " ছবি থেকে কোনো নম্বর পরিষ্কার পড়া যায়নি।"}
+            {dict.orders.noMatchesFound}{extractedSummary(labelScan)
+              ? t("orders.valuesReadFromImageSearch", { extractedSummary: extractedSummary(labelScan) })
+              : dict.orders.noNumberCouldBeRead}
           </div>
         )}
       </div>

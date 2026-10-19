@@ -12,14 +12,23 @@
  *   render yet (the dependency-free PDF toolkit cannot embed
  *   raster images) — the form says so, it never pretends.
  */
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
+
 
 export type PrintJobType = "invoices" | "labels" | "packing_slips" | "challans";
 
 export const PRINT_TYPE_OPTIONS: { value: PrintJobType; label: string; hint: string }[] = [
-  { value: "invoices", label: "ইনভয়েস", hint: "প্রতি অর্ডারে এক পৃষ্ঠা — টেমপ্লেট সেটিংস প্রযোজ্য" },
-  { value: "labels", label: "শিপিং লেবেল", hint: "সর্বশেষ কুরিয়ার শিপমেন্ট থেকে; বুকিং না থাকলে ওই অর্ডার ব্যর্থ তালিকায় যাবে" },
-  { value: "packing_slips", label: "প্যাকিং স্লিপ", hint: "সার্ভার-তৈরি স্লিপ (ওয়েব প্রিন্ট পেজের একই তথ্য) — দাম ছাড়া, উপহারের বার্তাসহ" },
-  { value: "challans", label: "ডেলিভারি চালান", hint: "COD বকেয়াসহ হস্তান্তর দলিল (মোট − অনুমোদিত পেমেন্ট)" },
+  { value: "invoices", label: ordersBn.invoice, hint: ordersBn.onePagePerOrderTemplate },
+  { value: "labels", label: ordersBn.shippingLabel, hint: ordersBn.fromTheLastCourierShipment },
+  { value: "packing_slips", label: ordersBn.packingSlip, hint: ordersBn.serverMadeSlipSameInfo },
+  { value: "challans", label: ordersBn.deliveryChallan, hint: ordersBn.handoverDocumentWithCODDue },
 ];
 
 export interface PrintJobRow {
@@ -50,14 +59,24 @@ export interface PrintTemplate {
   updatedAt: string | null;
 }
 
-export function printTypeLabel(type: string): string {
-  return PRINT_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type;
+/** ML5 i18n: locale-built print-type options (bn constant stays default). */
+export function printTypeOptions(locale: LibLocale = "bn"): typeof PRINT_TYPE_OPTIONS {
+  const d = D(locale);
+  return [
+    { value: "invoices", label: d.invoice, hint: d.onePagePerOrderTemplate },
+    { value: "labels", label: d.shippingLabel, hint: d.fromTheLastCourierShipment },
+    { value: "packing_slips", label: d.packingSlip, hint: d.serverMadeSlipSameInfo },
+    { value: "challans", label: d.deliveryChallan, hint: d.handoverDocumentWithCODDue },
+  ] as typeof PRINT_TYPE_OPTIONS;
+}
+export function printTypeLabel(type: string, locale: LibLocale = "bn"): string {
+  return printTypeOptions(locale).find((o) => o.value === type)?.label ?? type;
 }
 
-export function printJobStatusLabel(job: PrintJobRow): string {
-  if (job.status === "failed") return "ব্যর্থ";
-  if (job.failedOrderIds.length > 0) return `হয়েছে (${job.failedOrderIds.length}টি বাদ)`;
-  return "হয়েছে";
+export function printJobStatusLabel(job: PrintJobRow, locale: LibLocale = "bn"): string {
+  if (job.status === "failed") return D(locale).failed;
+  if (job.failedOrderIds.length > 0) return interpolate(D(locale).doneSkipped, { length: job.failedOrderIds.length });
+  return D(locale).done;
 }
 
 /**
@@ -99,13 +118,13 @@ export const MAX_ORDERS_PER_JOB = 100;
 /** Client-side mirror of the API's template validation (the API
  * stays authoritative — this only fails fast). Empty string =
  * clear the field (sent as null). */
-export function validateTemplateForm(form: PrintTemplate): string | null {
+export function validateTemplateForm(form: PrintTemplate, locale: LibLocale = "bn"): string | null {
   const logo = (form.logoUrl ?? "").trim();
-  if (logo && !/^https?:\/\/\S+$/.test(logo)) return "লোগোর URL অবশ্যই http:// বা https:// দিয়ে শুরু হতে হবে";
+  if (logo && !/^https?:\/\/\S+$/.test(logo)) return D(locale).theLogoURLMustStart;
   const caps: [keyof PrintTemplate, number][] = [["logoUrl", 500], ["footerText", 200], ["termsText", 1000], ["invoiceNote", 500]];
   for (const [field, cap] of caps) {
     const v = (form[field] ?? "") as string;
-    if (v.length > cap) return `${field} সর্বোচ্চ ${cap} অক্ষর হতে পারবে`;
+    if (v.length > cap) return interpolate(D(locale).canBeAtMostCharacters, { field: field, cap: cap });
   }
   return null;
 }

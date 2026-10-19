@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDate } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -37,6 +39,7 @@ interface StaffReview {
 }
 
 export default function ReviewsModerationPage() {
+  const { dict, t, locale } = useLocale();
   const [reviews, setReviews] = useState<StaffReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -61,7 +64,7 @@ export default function ReviewsModerationPage() {
       const rows = await apiFetch<StaffReview[]>(`/organizations/${orgId}/product-reviews${qs ? `?${qs}` : ""}`);
       setReviews(Array.isArray(rows) ? rows : []);
       setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.loadingFailed); }
     finally { setLoading(false); }
   }, [fSource, fRating, fHidden]);
   useEffect(() => { load(); }, [load]);
@@ -74,9 +77,9 @@ export default function ReviewsModerationPage() {
         method: "PATCH",
         body: JSON.stringify({ isVisible: r.hidden }),
       });
-      setNotice(r.hidden ? "রিভিউটি এখন পাবলিক পেজে দেখা যাবে।" : "রিভিউটি লুকানো হয়েছে — পাবলিক পেজে আর দেখা যাবে না।");
+      setNotice(r.hidden ? dict.commerce.theReviewWillNowBe : dict.commerce.theReviewIsHiddenIt);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.failed); }
     finally { setBusy(""); }
   }
 
@@ -94,10 +97,10 @@ export default function ReviewsModerationPage() {
         { method: "POST", body: JSON.stringify({}) },
       );
       setNotice(out.created
-        ? "সোশ্যাল ড্রাফট তৈরি হয়েছে — Social পোস্ট পেজ থেকে যাচাই করে নিজে পাবলিশ করুন।"
-        : "এই রিভিউয়ের সোশ্যাল ড্রাফট আগেই তৈরি হয়েছে — একই ড্রাফটই আবার দেখানো হলো (নতুন তৈরি হয়নি)।");
+        ? dict.commerce.socialDraftCreatedVerifyIt
+        : dict.commerce.thisReviewSSocialDraft);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সোশ্যাল ড্রাফট তৈরি ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.socialDraftCreationFailed); }
     finally { setBusy(""); }
   }
 
@@ -110,9 +113,9 @@ export default function ReviewsModerationPage() {
         method: "PATCH",
         body: JSON.stringify({ replyText: replyDrafts[key] ?? "" }),
       });
-      setNotice("উত্তর সংরক্ষণ হয়েছে।");
+      setNotice(dict.commerce.replySaved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "উত্তর সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.replySaveFailed); }
     finally { setBusy(""); }
   }
 
@@ -120,11 +123,9 @@ export default function ReviewsModerationPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">রিভিউ মডারেশন</h1>
+          <h1 className="page-title">{dict.commerce.reviewModeration}</h1>
           <p className="text-sm text-slate-500">
-            নিজের দোকানের ডেলিভারি-পরবর্তী রিভিউ আর WooCommerce/Shopify থেকে টানা রিভিউ — একই তালিকায়।
-            লুকালে পাবলিক পণ্য/ল্যান্ডিং পেজে আর দেখা যাবে না। উত্তর শুধু নিজের দোকানের রিভিউতেই দেওয়া যায়।
-          </p>
+            {dict.commerce.postDeliveryReviewsOfYour2}</p>
         </div>
         <Link href="/dashboard/commerce" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">← Commerce Hub</Link>
       </div>
@@ -135,33 +136,30 @@ export default function ReviewsModerationPage() {
       <ReviewInsightCard />
 
       <div className="card flex flex-wrap items-end gap-3 p-5">
-        <label className="block text-sm">উৎস
-          <select className="input mt-1" value={fSource} onChange={(e) => setFSource(e.target.value)}>
-            <option value="">সব উৎস</option>
-            <option value="store">নিজের দোকান (store)</option>
+        <label className="block text-sm">{dict.commerce.source}<select className="input mt-1" value={fSource} onChange={(e) => setFSource(e.target.value)}>
+            <option value="">{dict.commerce.allSources}</option>
+            <option value="store">{dict.commerce.ownShopStore}</option>
             <option value="woocommerce">WooCommerce</option>
             <option value="shopify">Shopify</option>
           </select>
         </label>
-        <label className="block text-sm">রেটিং
-          <select className="input mt-1" value={fRating} onChange={(e) => setFRating(e.target.value)}>
-            <option value="">সব রেটিং</option>
-            {[5, 4, 3, 2, 1].map((n) => <option key={n} value={String(n)}>{n} স্টার</option>)}
+        <label className="block text-sm">{dict.commerce.rating}<select className="input mt-1" value={fRating} onChange={(e) => setFRating(e.target.value)}>
+            <option value="">{dict.commerce.allRatings}</option>
+            {[5, 4, 3, 2, 1].map((n) => <option key={n} value={String(n)}>{n} {dict.commerce.stars}</option>)}
           </select>
         </label>
-        <label className="block text-sm">দৃশ্যমানতা
-          <select className="input mt-1" value={fHidden} onChange={(e) => setFHidden(e.target.value)}>
-            <option value="">সব</option>
-            <option value="false">শুধু দেখা যাচ্ছে এমন</option>
-            <option value="true">শুধু লুকানো</option>
+        <label className="block text-sm">{dict.commerce.visibility}<select className="input mt-1" value={fHidden} onChange={(e) => setFHidden(e.target.value)}>
+            <option value="">{dict.commerce.all}</option>
+            <option value="false">{dict.commerce.visibleOnly}</option>
+            <option value="true">{dict.commerce.hiddenOnly}</option>
           </select>
         </label>
-        <span className="pb-2 text-sm text-slate-500">{loading ? "লোড হচ্ছে…" : `মোট ${reviews.length}টি রিভিউ`}</span>
+        <span className="pb-2 text-sm text-slate-500">{loading ? dict.common.loading : t("commerce.totalReviews", { length: reviews.length })}</span>
       </div>
 
       <div className="card space-y-3 p-5">
-        {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : reviews.length === 0 ? (
-          <p className="text-sm text-slate-500">এই ফিল্টারে কোনো রিভিউ নেই।</p>
+        {loading ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : reviews.length === 0 ? (
+          <p className="text-sm text-slate-500">{dict.commerce.noReviewsInThisFilter}</p>
         ) : (
           <ul className="divide-y">
             {reviews.map((r) => {
@@ -173,29 +171,29 @@ export default function ReviewsModerationPage() {
                     <div className="min-w-0 flex-1 space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-amber-500">{reviewStars(r.rating)}</span>
-                        <span className="text-sm font-bold text-slate-800">{r.authorName || "ক্রেতা"}</span>
+                        <span className="text-sm font-bold text-slate-800">{r.authorName || dict.commerce.buyer}</span>
                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${own ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600"}`}>
                           {reviewSourceLabel(r.source)}
                         </span>
                         {r.verified ? (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">✓ যাচাইকৃত ক্রেতা</span>
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">{dict.commerce.verifiedBuyer}</span>
                         ) : null}
                         {r.hidden ? (
-                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">লুকানো</span>
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">{dict.commerce.hidden}</span>
                         ) : null}
                         {r.createdAt ? (
-                          <span className="text-[11px] text-slate-400">{new Date(r.createdAt).toLocaleDateString("bn-BD")}</span>
+                          <span className="text-[11px] text-slate-400">{fmtDate(locale, new Date(r.createdAt))}</span>
                         ) : null}
                       </div>
-                      <div className="text-xs text-slate-500">পণ্য: <span className="font-semibold text-slate-700">{r.productName ?? "—"}</span></div>
+                      <div className="text-xs text-slate-500">{dict.commerce.product2}<span className="font-semibold text-slate-700">{r.productName ?? "—"}</span></div>
                       {r.text ? <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{r.text}</p> : (
-                        <p className="text-sm italic text-slate-400">(লেখা ছাড়া শুধু রেটিং)</p>
+                        <p className="text-sm italic text-slate-400">{dict.commerce.ratingOnlyNoText}</p>
                       )}
                       {(r.imageUrls ?? []).length > 0 ? (
                         <div className="flex flex-wrap gap-2">
                           {(r.imageUrls ?? []).map((src) => (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img key={src} src={src} alt="রিভিউয়ের ছবি" className="h-16 w-16 rounded-lg border border-slate-200 object-cover" />
+                            <img key={src} src={src} alt={dict.commerce.reviewPhoto} className="h-16 w-16 rounded-lg border border-slate-200 object-cover" />
                           ))}
                         </div>
                       ) : null}
@@ -209,14 +207,14 @@ export default function ReviewsModerationPage() {
                             m.url ? (
                               <video key={`${m.url}-${i}`} src={m.url} className="h-24 w-24 rounded-lg border border-slate-200 object-cover" controls preload="metadata" />
                             ) : (
-                              <span key={i} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] text-slate-500">ভিডিও সংযুক্ত আছে (প্রিভিউ URL পাওয়া যায়নি)</span>
+                              <span key={i} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] text-slate-500">{dict.commerce.videoAttachedPreviewURLNot}</span>
                             )
                           ))}
                         </div>
                       ) : null}
                       {r.replyText ? (
                         <div className="rounded-xl bg-indigo-50 p-3">
-                          <div className="text-[11px] font-bold text-indigo-700">বিক্রেতার উত্তর</div>
+                          <div className="text-[11px] font-bold text-indigo-700">{dict.commerce.sellerReply}</div>
                           <p className="mt-1 whitespace-pre-line text-sm text-slate-700">{r.replyText}</p>
                         </div>
                       ) : null}
@@ -227,21 +225,21 @@ export default function ReviewsModerationPage() {
                         disabled={busy !== ""}
                         onClick={() => toggleVisible(r)}
                       >
-                        {busy === `vis-${key}` ? "হচ্ছে…" : r.hidden ? "দেখান" : "লুকান"}
+                        {busy === `vis-${key}` ? dict.commerce.ing : r.hidden ? dict.commerce.show : dict.commerce.hide}
                       </button>
                       {/* NF8: social-proof draft — own + visible
                           reviews only (the API enforces the same
                           gate and the exactly-once claim). */}
                       {own && !r.hidden ? (
                         r.socialDraftPostId ? (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">✓ সোশ্যাল ড্রাফট তৈরি হয়েছে</span>
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">{dict.commerce.socialDraftCreated}</span>
                         ) : (
                           <button
                             className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-50"
                             disabled={busy !== ""}
                             onClick={() => createSocialDraft(r)}
                           >
-                            {busy === `draft-${key}` ? "তৈরি হচ্ছে…" : "📣 সোশ্যাল ড্রাফট তৈরি করুন"}
+                            {busy === `draft-${key}` ? dict.commerce.creating : dict.commerce.createSocialDraft}
                           </button>
                         )
                       ) : null}
@@ -254,7 +252,7 @@ export default function ReviewsModerationPage() {
                         <textarea
                           className="input min-w-64 flex-1"
                           rows={2}
-                          placeholder="ক্রেতাকে ধন্যবাদ জানিয়ে উত্তর লিখুন…"
+                          placeholder={dict.commerce.writeAReplyThankingThe}
                           value={replyDrafts[key] ?? r.replyText ?? ""}
                           onChange={(e) => setReplyDrafts((d) => ({ ...d, [key]: e.target.value }))}
                         />
@@ -263,14 +261,12 @@ export default function ReviewsModerationPage() {
                           disabled={busy !== ""}
                           onClick={() => saveReply(r)}
                         >
-                          {busy === `reply-${key}` ? "সংরক্ষণ হচ্ছে…" : r.replyText ? "উত্তর আপডেট করুন" : "উত্তর পাঠান"}
+                          {busy === `reply-${key}` ? dict.commerce.saving : r.replyText ? dict.commerce.updateReply : dict.commerce.sendReply}
                         </button>
                       </div>
                     ) : (
                       <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                        বাইরের রিভিউতে উত্তর দেওয়া যায় না — উত্তর শুধু নিজের দোকানের (store) রিভিউতে দেওয়া যায়।
-                        এই রিভিউটি {reviewSourceLabel(r.source)} থেকে এসেছে; চাইলে লুকিয়ে রাখতে পারেন।
-                      </p>
+                        {dict.commerce.repliesCannotBeGivenOn}{reviewSourceLabel(r.source)} {dict.commerce.cameFromYouCanKeep}</p>
                     )}
                   </div>
                 </li>

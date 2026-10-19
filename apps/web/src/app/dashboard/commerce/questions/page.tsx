@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { useConfirm, useToast } from "@repo/ui/client";
@@ -28,10 +30,10 @@ interface StaffQuestion {
 }
 
 const STATUS_FILTERS = [
-  { value: "", label: "সব" },
-  { value: "pending", label: "অপেক্ষমাণ" },
-  { value: "published", label: "প্রকাশিত" },
-  { value: "hidden", label: "লুকানো" },
+  { value: "", labelKey: "all" },
+  { value: "pending", labelKey: "pending" },
+  { value: "published", labelKey: "published" },
+  { value: "hidden", labelKey: "hidden" },
 ];
 
 function statusBadge(status: string): string {
@@ -44,6 +46,7 @@ function statusBadge(status: string): string {
 }
 
 export default function ProductQuestionsPage() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [items, setItems] = useState<StaffQuestion[]>([]);
@@ -55,7 +58,7 @@ export default function ProductQuestionsPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
+    if (!orgId) { setError(dict.commerce.noOrganizationSelected); setLoading(false); return; }
     setLoading(true);
     try {
       const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
@@ -63,7 +66,7 @@ export default function ProductQuestionsPage() {
       setItems(data.items ?? []);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "প্রশ্নের তালিকা লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadTheQuestion);
     } finally { setLoading(false); }
   }, [statusFilter]);
 
@@ -76,17 +79,16 @@ export default function ProductQuestionsPage() {
       toast({ title: okMessage, tone: "success" });
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "অ্যাকশনটি করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.theActionCouldNotBe);
     } finally { setBusy(""); }
   }
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-6">
       <div>
-        <h1 className="text-2xl font-black text-slate-900">❓ পণ্য প্রশ্নোত্তর</h1>
+        <h1 className="text-2xl font-black text-slate-900">{dict.commerce.productQA2}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          ক্রেতাদের প্রশ্ন এখানে আসে — উত্তর দিলেই পণ্য পেজে প্রকাশিত হয়। লুকিয়ে রাখা প্রশ্ন জনসাধারণ দেখতে পায় না।
-        </p>
+          {dict.commerce.buyersQuestionsComeHereAnswering}</p>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -97,7 +99,7 @@ export default function ProductQuestionsPage() {
             onClick={() => setStatusFilter(f.value)}
             className={`rounded-full px-4 py-1.5 text-xs font-bold ${statusFilter === f.value ? "bg-indigo-600 text-white" : "bg-white text-slate-700 border border-slate-200"}`}
           >
-            {f.label}
+            {dict.commerce[f.labelKey as keyof typeof dict.commerce]}
           </button>
         ))}
       </div>
@@ -105,11 +107,10 @@ export default function ProductQuestionsPage() {
       {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p> : null}
 
       {loading ? (
-        <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
+        <p className="text-sm text-slate-500">{dict.common.loading}</p>
       ) : items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm font-semibold text-slate-500">
-          এই অবস্থায় কোনো প্রশ্ন নেই।
-        </div>
+          {dict.commerce.noQuestionsInThisState}</div>
       ) : (
         <div className="space-y-3">
           {items.map((q) => (
@@ -120,7 +121,7 @@ export default function ProductQuestionsPage() {
                 <span className="text-xs text-slate-400">
                   {q.customerName}
                   {q.phone ? ` · ${q.phone}` : ""}
-                  {q.createdAt ? ` · ${new Date(q.createdAt).toLocaleString("bn-BD")}` : ""}
+                  {q.createdAt ? ` · ${fmtDateTime(locale, new Date(q.createdAt))}` : ""}
                 </span>
               </div>
               <p className="text-sm text-slate-700">❓ {q.question}</p>
@@ -129,7 +130,7 @@ export default function ProductQuestionsPage() {
                 <textarea
                   value={answerDrafts[q.id] ?? q.answer ?? ""}
                   onChange={(e) => setAnswerDrafts({ ...answerDrafts, [q.id]: e.target.value })}
-                  placeholder="উত্তর লিখুন — পাঠালেই প্রকাশিত হবে…"
+                  placeholder={dict.commerce.writeAnAnswerItWill}
                   rows={2}
                   className="min-w-64 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-indigo-600 focus:outline-none"
                 />
@@ -142,12 +143,11 @@ export default function ProductQuestionsPage() {
                       void act(q.id, "answer", () => apiFetch(`/organizations/${orgId}/product-questions/${q.id}/answer`, {
                         method: "POST",
                         body: JSON.stringify({ answer: (answerDrafts[q.id] ?? "").trim() }),
-                      }), "উত্তর প্রকাশিত হয়েছে");
+                      }), dict.commerce.answerPublished);
                     }}
                     className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50"
                   >
-                    উত্তর দিয়ে প্রকাশ করুন
-                  </button>
+                    {dict.commerce.answerPublish}</button>
                   <button
                     type="button"
                     disabled={busy === `vis-${q.id}`}
@@ -157,26 +157,25 @@ export default function ProductQuestionsPage() {
                       void act(q.id, "vis", () => apiFetch(`/organizations/${orgId}/product-questions/${q.id}/visibility`, {
                         method: "POST",
                         body: JSON.stringify({ hidden }),
-                      }), hidden ? "প্রশ্ন লুকানো হয়েছে" : "প্রশ্ন আবার দেখানো হচ্ছে");
+                      }), hidden ? dict.commerce.questionHidden : dict.commerce.questionShownAgain);
                     }}
                     className="rounded-lg border px-4 py-1.5 text-xs font-bold text-slate-700 disabled:opacity-50"
                   >
-                    {q.status === "hidden" ? "আনহাইড" : "লুকান"}
+                    {q.status === "hidden" ? dict.commerce.unhide : dict.commerce.hide}
                   </button>
                   <button
                     type="button"
                     disabled={busy === `del-${q.id}`}
                     onClick={async () => {
-                      if (!(await confirm({ title: "এই প্রশ্নটি মুছে ফেলবেন?", danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+                      if (!(await confirm({ title: dict.commerce.deleteThisQuestion, danger: true, confirmLabel: dict.commerce.delete2 }))) return;
                       const orgId = getOrganizationId(); if (!orgId) return;
                       void act(q.id, "del", () => apiFetch(`/organizations/${orgId}/product-questions/${q.id}`, {
                         method: "DELETE",
-                      }), "প্রশ্ন মোছা হয়েছে");
+                      }), dict.commerce.questionDeleted);
                     }}
                     className="rounded-lg border border-rose-200 px-4 py-1.5 text-xs font-bold text-rose-600 disabled:opacity-50"
                   >
-                    মুছুন
-                  </button>
+                    {dict.commerce.delete}</button>
                 </div>
               </div>
             </article>

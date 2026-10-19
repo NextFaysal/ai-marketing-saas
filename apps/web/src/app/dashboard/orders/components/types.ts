@@ -139,12 +139,12 @@ export interface RiskDetail {
   networkSignal?: FraudNetworkSignal | null;
 }
 
-export const RISK_LABEL: Record<string, { text: string; cls: string; borderCls: string; dotCls: string }> = {
-  high: { text: "ঝুঁকি: উচ্চ", cls: "bg-red-50 text-red-700", borderCls: "border-red-200", dotCls: "bg-red-500" },
-  medium: { text: "ঝুঁকি: মাঝারি", cls: "bg-amber-50 text-amber-700", borderCls: "border-amber-200", dotCls: "bg-amber-500" },
-  low: { text: "ঝুঁকি: কম", cls: "bg-emerald-50 text-emerald-700", borderCls: "border-emerald-200", dotCls: "bg-emerald-500" },
-  unknown: { text: "ঝুঁকি: তথ্য নেই", cls: "bg-slate-50 text-slate-500", borderCls: "border-slate-200", dotCls: "bg-slate-400" },
-};
+export const RISK_LABEL = {
+  high: { textKey: "riskHigh", cls: "bg-red-50 text-red-700", borderCls: "border-red-200", dotCls: "bg-red-500" },
+  medium: { textKey: "riskMedium", cls: "bg-amber-50 text-amber-700", borderCls: "border-amber-200", dotCls: "bg-amber-500" },
+  low: { textKey: "riskLow", cls: "bg-emerald-50 text-emerald-700", borderCls: "border-emerald-200", dotCls: "bg-emerald-500" },
+  unknown: { textKey: "riskNoData", cls: "bg-slate-50 text-slate-500", borderCls: "border-slate-200", dotCls: "bg-slate-400" },
+} as const satisfies Record<string, { textKey: string; cls: string; borderCls: string; dotCls: string }>;
 
 export interface Stats {
   totalOrders: number;
@@ -235,8 +235,10 @@ export const PERF_PROVIDER_LABEL: Record<string, string> = {
   steadfast: "Steadfast",
   pathao: "Pathao",
   redx: "RedX",
-  total: "মোট",
+  total: "total",
 };
+// PERF_PROVIDER_LABEL.total holds the dict.orders key "total";
+// other values are courier brand names shown as-is.
 
 // CX12b: post-delivery reviews
 export interface ReviewRow {

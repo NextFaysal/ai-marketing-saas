@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { getOrganizationId } from "@/lib/org";
 import { apiFetch } from "@/lib/api";
 import { coordsLabel, fixAgeLabel, type FleetView } from "@/lib/rider-gps";
@@ -19,6 +21,7 @@ const inputBtn =
   "rounded-xl px-3.5 py-1.5 text-xs font-bold transition disabled:opacity-50";
 
 export default function DeliveryFleetPage() {
+  const { dict, t, locale } = useLocale();
   const { toast } = useToast();
   const orgId = getOrganizationId();
   const [fleet, setFleet] = useState<FleetView | null>(null);
@@ -33,7 +36,7 @@ export default function DeliveryFleetPage() {
     try {
       setFleet(await apiFetch<FleetView>(`/organizations/${orgId}/delivery/fleet`));
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "লোড ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e instanceof Error ? e.message : dict.delivery.failedToLoad, tone: "error" });
     } finally {
       setLoading(false);
     }
@@ -52,7 +55,7 @@ export default function DeliveryFleetPage() {
       setCopied(false);
       await load();
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "লিংক তৈরি ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e instanceof Error ? e.message : dict.delivery.failedToCreateLink, tone: "error" });
     } finally {
       setBusy("");
     }
@@ -63,10 +66,10 @@ export default function DeliveryFleetPage() {
     setBusy(`revoke-${riderId}`);
     try {
       await apiFetch(`/organizations/${orgId}/delivery/riders/${riderId}/share-link`, { method: "DELETE" });
-      toast({ title: "শেয়ার লিংক বাতিল হয়েছে — আগের লিংক আর কাজ করবে না" });
+      toast({ title: dict.delivery.shareLinkRevokedThePrevious });
       await load();
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "বাতিল ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e instanceof Error ? e.message : dict.delivery.cancellationFailed, tone: "error" });
     } finally {
       setBusy("");
     }
@@ -82,70 +85,64 @@ export default function DeliveryFleetPage() {
   }
 
   if (!orgId) {
-    return <main className="p-6 text-sm text-slate-500">প্রথমে একটি অর্গানাইজেশন বেছে নিন।</main>;
+    return <main className="p-6 text-sm text-slate-500">{dict.delivery.selectAnOrganizationFirst}</main>;
   }
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black text-slate-900">🛵 রাইডার লাইভ (GPS)</h1>
+          <h1 className="text-2xl font-black text-slate-900">{dict.delivery.riderLiveGPS}</h1>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            সক্রিয় ডেলিভারিতে থাকা নিজস্ব রাইডারদের সর্বশেষ অবস্থান। রাইডার তার শেয়ার পেজটি ফোনে খোলা রাখলেই
-            কেবল লোকেশন আসে — পেজ বন্ধ থাকলে কোনো ট্র্যাকিং হয় না। ৫ মিনিটের পুরনো অবস্থানকে
-            <b> “পুরনো” </b> হিসেবে চিহ্নিত করা হয়, লাইভ বলে দেখানো হয় না।
-          </p>
+            {dict.delivery.latestLocationsOfYourOwn}<b> {dict.delivery.markedAsStale}</b> {dict.delivery.notShownAsLive}</p>
         </div>
         <button type="button" onClick={load} disabled={loading} className={`${inputBtn} bg-indigo-600 text-white hover:bg-indigo-700`}>
-          {loading ? "লোড হচ্ছে…" : "🔄 রিফ্রেশ"}
+          {loading ? dict.common.loading : dict.delivery.refresh}
         </button>
       </header>
 
       {issuedLink ? (
         <section className="space-y-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
           <p className="text-sm font-bold text-emerald-900">
-            {issuedLink.riderName}-এর শেয়ার লিংক — রাইডারকে পাঠিয়ে দিন। এই লিংকটি শুধু এখনই দেখানো হচ্ছে, পরে আর দেখা যাবে না (প্রয়োজনে নতুন লিংক তৈরি করুন)।
-          </p>
+            {issuedLink.riderName}{dict.delivery.sShareLinkSendIt}</p>
           <div className="flex items-center gap-2">
             <code className="min-w-0 flex-1 break-all rounded-lg bg-white px-3 py-2 font-mono text-xs font-bold text-slate-900">{issuedLink.link}</code>
             <button type="button" onClick={copyLink} className={`${inputBtn} shrink-0 bg-emerald-600 text-white hover:bg-emerald-700`}>
-              {copied ? "কপি হয়েছে ✅" : "কপি করুন"}
+              {copied ? dict.delivery.copied : dict.delivery.copy}
             </button>
             <button type="button" onClick={() => setIssuedLink(null)} className={`${inputBtn} shrink-0 bg-white text-slate-600 border border-slate-200`}>
-              বন্ধ করুন
-            </button>
+              {dict.delivery.close}</button>
           </div>
         </section>
       ) : null}
 
       <section className="space-y-3">
-        <h2 className="text-sm font-black text-slate-800">সক্রিয় ডেলিভারি ({fleet?.entries.length ?? 0})</h2>
-        {loading && !fleet ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+        <h2 className="text-sm font-black text-slate-800">{dict.delivery.activeDeliveries}{fleet?.entries.length ?? 0})</h2>
+        {loading && !fleet ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
         {fleet && fleet.entries.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">
-            এখন কোনো সক্রিয় ডেলিভারি অ্যাসাইনমেন্ট নেই। অর্ডার পেজ থেকে রাইডার অ্যাসাইন করলে এখানে দেখা যাবে।
-          </p>
+            {dict.delivery.thereAreNoActiveDelivery}</p>
         ) : null}
         <div className="grid gap-3 md:grid-cols-2">
           {(fleet?.entries ?? []).map((e) => (
             <article key={e.assignmentId} className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-black text-slate-900">🛵 {e.riderName ?? "রাইডার"}</p>
+                <p className="font-black text-slate-900">🛵 {e.riderName ?? dict.delivery.rider}</p>
                 <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${e.assignmentStatus === "picked_up" ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-600"}`}>
-                  {e.assignmentStatus === "picked_up" ? "পার্সেল হাতে — ডেলিভারির পথে" : "অ্যাসাইন করা হয়েছে"}
+                  {e.assignmentStatus === "picked_up" ? dict.delivery.parcelPickedUpOutFor : dict.delivery.assigned}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                অর্ডার: <b className="text-slate-700">{e.orderNumber ?? e.orderId}</b>
+                {dict.delivery.order}<b className="text-slate-700">{e.orderNumber ?? e.orderId}</b>
                 {e.riderPhone ? <> · 📞 <span className="font-mono">{e.riderPhone}</span></> : null}
               </p>
               <p className="text-xs">
                 {e.sharing.sharing ? (
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-bold text-emerald-700">📍 লোকেশন শেয়ারিং চালু</span>
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-bold text-emerald-700">{dict.delivery.locationSharingOn}</span>
                 ) : e.sharing.hasLink ? (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-700">শেয়ারিং বন্ধ{e.sharing.revoked ? " (লিংক বাতিল)" : ""}</span>
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-700">{dict.delivery.sharingOff}{e.sharing.revoked ? dict.delivery.linkRevoked : ""}</span>
                 ) : (
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-500">কোনো শেয়ার লিংক নেই — নিচে তৈরি করুন</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-500">{dict.delivery.noShareLinksCreateOne}</span>
                 )}
               </p>
               {e.location ? (
@@ -153,22 +150,21 @@ export default function DeliveryFleetPage() {
                   <p className="text-sm font-semibold text-slate-800">
                     📍 {coordsLabel(e.location)}
                     {e.location.stale ? (
-                      <span className="ml-2 rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-black text-amber-800">পুরনো অবস্থান</span>
+                      <span className="ml-2 rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-black text-amber-800">{dict.delivery.staleLocation}</span>
                     ) : (
-                      <span className="ml-2 rounded-full bg-emerald-200 px-2 py-0.5 text-[11px] font-black text-emerald-800">সর্বশেষ</span>
+                      <span className="ml-2 rounded-full bg-emerald-200 px-2 py-0.5 text-[11px] font-black text-emerald-800">{dict.delivery.lastSeen}</span>
                     )}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {fixAgeLabel(e.location.ageMs)} · {new Date(e.location.recordedAt).toLocaleString("bn-BD")}
-                    {e.location.accuracy != null ? <> · নির্ভুলতা ≈ {Math.round(e.location.accuracy)} মিটার</> : null}
+                    {fixAgeLabel(e.location.ageMs)} · {fmtDateTime(locale, new Date(e.location.recordedAt))}
+                    {e.location.accuracy != null ? <> {dict.delivery.accuracy}{Math.round(e.location.accuracy)} {dict.delivery.meters}</> : null}
                     {" · "}
-                    <a href={e.location.mapsUrl} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline">মানচিত্রে দেখুন</a>
+                    <a href={e.location.mapsUrl} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline">{dict.delivery.viewOnMap}</a>
                   </p>
                 </div>
               ) : (
                 <p className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                  এখনো কোনো লোকেশন পাওয়া যায়নি — রাইডার শেয়ার পেজ খুলে শেয়ারিং চালু করলে এখানে দেখা যাবে।
-                </p>
+                  {dict.delivery.noLocationReceivedYetOnce}</p>
               )}
             </article>
           ))}
@@ -176,16 +172,16 @@ export default function DeliveryFleetPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-black text-slate-800">রাইডারদের শেয়ার লিংক</h2>
+        <h2 className="text-sm font-black text-slate-800">{dict.delivery.riderShareLinks}</h2>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           {(fleet?.riders ?? []).map((r) => (
             <div key={r.id} className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-0">
               <div className="min-w-40 flex-1">
-                <p className="text-sm font-bold text-slate-800">{r.name} {!r.active ? <span className="text-xs font-semibold text-slate-400">(নিষ্ক্রিয়)</span> : null}</p>
+                <p className="text-sm font-bold text-slate-800">{r.name} {!r.active ? <span className="text-xs font-semibold text-slate-400">{dict.delivery.inactive}</span> : null}</p>
                 <p className="font-mono text-xs text-slate-500">{r.phone}</p>
               </div>
               <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${r.sharing.sharing ? "bg-emerald-100 text-emerald-700" : r.sharing.hasLink ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
-                {r.sharing.sharing ? "শেয়ারিং চালু" : r.sharing.revoked ? "লিংক বাতিল" : r.sharing.hasLink ? "শেয়ারিং বন্ধ" : "লিংক নেই"}
+                {r.sharing.sharing ? dict.delivery.sharingOn : r.sharing.revoked ? dict.delivery.revokeLink : r.sharing.hasLink ? dict.delivery.sharingOff : dict.delivery.noLink}
               </span>
               <button
                 type="button"
@@ -193,7 +189,7 @@ export default function DeliveryFleetPage() {
                 onClick={() => issueLink(r.id, r.name)}
                 className={`${inputBtn} bg-indigo-600 text-white hover:bg-indigo-700`}
               >
-                {r.sharing.hasLink ? "নতুন লিংক (রোটেট)" : "লিংক তৈরি করুন"}
+                {r.sharing.hasLink ? dict.delivery.newLinkRotate : dict.delivery.createLink}
               </button>
               {r.sharing.hasLink && !r.sharing.revoked ? (
                 <button
@@ -202,13 +198,12 @@ export default function DeliveryFleetPage() {
                   onClick={() => revokeLink(r.id)}
                   className={`${inputBtn} bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100`}
                 >
-                  লিংক বাতিল করুন
-                </button>
+                  {dict.delivery.revokeLink2}</button>
               ) : null}
             </div>
           ))}
           {fleet && fleet.riders.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-slate-500">কোনো রাইডার নেই — ওয়্যারহাউস / অর্ডার পেজ থেকে রাইডার যোগ করুন।</p>
+            <p className="px-4 py-6 text-sm text-slate-500">{dict.delivery.noRidersAddRidersFrom}</p>
           ) : null}
         </div>
       </section>

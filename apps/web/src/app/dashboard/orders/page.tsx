@@ -1,5 +1,6 @@
 "use client";
 import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
@@ -37,7 +38,7 @@ import { OrderAutomationPanel } from "./on8-automation";
 import { OrderAnalyticsPanel } from "./on9-analytics";
 import { OrderPrintPanel } from "./on10-print";
 import { OrderTeamPanel } from "./on12-team";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtDateTime, fmtMoney, fmtNumber, formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard, ResponsiveTable } from "@repo/ui";
 import { useConfirm, usePrompt, useToast } from "@repo/ui/client";
 import { extractedSummary, type LabelScanResultView, type LabelMatchView } from "@/lib/cx8";
@@ -183,12 +184,13 @@ interface PushState {
   recentPushes: { id: string; operation: string; status: string; lastError: string | null; createdAt: string }[];
 }
 interface RiskDetail { band: string; score: number | null; decided: number; reasons: string[]; suggestion: string | null; phone?: string | null }
-const RISK_LABEL: Record<string, { text: string; cls: string }> = {
-  high: { text: "ঝুঁকি: উচ্চ", cls: "bg-red-100 text-red-700" },
-  medium: { text: "ঝুঁকি: মাঝারি", cls: "bg-amber-100 text-amber-700" },
-  low: { text: "ঝুঁকি: কম", cls: "bg-emerald-100 text-emerald-700" },
-  unknown: { text: "ঝুঁকি: তথ্য নেই", cls: "bg-slate-100 text-slate-500" },
-};
+// ML5 i18n: textKey holds a dict.orders key, resolved at render.
+const RISK_LABEL = {
+  high: { textKey: "riskHigh", cls: "bg-red-100 text-red-700" },
+  medium: { textKey: "riskMedium", cls: "bg-amber-100 text-amber-700" },
+  low: { textKey: "riskLow", cls: "bg-emerald-100 text-emerald-700" },
+  unknown: { textKey: "riskNoData", cls: "bg-slate-100 text-slate-500" },
+} as const satisfies Record<string, { textKey: string; cls: string }>;
 
 interface Stats { totalOrders: number; codOrders: number; codSharePercent: number; deliveredRevenueMinor: string; byStatus: { status: string; count: number }[] }
 interface Shipment { id: string; orderId: string; trackingCode?: string | null; status: string; provider: string; trackingUrl?: string | null; courierRuleId?: string | null; chargeMinor?: string | null }
@@ -200,7 +202,8 @@ interface DeliveryAssignmentRow { id: string; orderId: string; orderNumber?: str
 // Sales & Data S5: row shape from GET organizations/:id/courier/performance.
 interface ProviderPerformance { provider: string; booked: number; delivered: number; returned: number; cancelled: number; inFlight: number; decided: number; deliveryRate: number | null; returnRate: number | null; avgDeliveryHours: null }
 interface CourierPerformance { days: number; deliveryTimeAvailable: boolean; providers: ProviderPerformance[]; totals: ProviderPerformance }
-const PERF_PROVIDER_LABEL: Record<string, string> = { steadfast: "Steadfast", pathao: "Pathao", redx: "RedX", ecourier: "eCourier", total: "মোট" };
+// ML5 i18n: "total" holds the dict.orders key, resolved at render.
+const PERF_PROVIDER_LABEL: Record<string, string> = { steadfast: "Steadfast", pathao: "Pathao", redx: "RedX", ecourier: "eCourier", total: "total" };
 
 const STATUSES = ["", "pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed"];
 
@@ -226,6 +229,7 @@ function transitionAllowed(from: string, to: string): boolean {
 }
 
 function OrdersPageInner() {
+  const { dict, t, locale } = useLocale();
   // ED12 (EB5): URL-driven list state — queue / status / committed
   // search are read from the query string on mount (see the mirror
   // effect near patchFilters). Absent params = today's defaults.
@@ -470,7 +474,7 @@ function OrdersPageInner() {
       const body: any = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message ?? `HTTP ${res.status}`);
       setLabelScan(body as LabelScanResultView);
-    } catch (err) { setLabelError(err instanceof Error ? err.message : "স্ক্যান ব্যর্থ"); }
+    } catch (err) { setLabelError(err instanceof Error ? err.message : dict.orders.scanFailed); }
     finally { setLabelBusy(""); }
   }
 
@@ -482,14 +486,14 @@ function OrdersPageInner() {
         method: "POST", body: JSON.stringify({ query: labelQuery.trim() }),
       });
       setLabelScan(out);
-    } catch (err) { setLabelError(err instanceof Error ? err.message : "খোঁজ ব্যর্থ"); }
+    } catch (err) { setLabelError(err instanceof Error ? err.message : dict.orders.searchFailed); }
     finally { setLabelBusy(""); }
   }
 
   function openScannedOrder(m: LabelMatchView) {
     const found = items.find((o) => o.id === m.orderId);
     if (found) { openActions(found); return; }
-    setLabelError("অর্ডারটি পাওয়া গেছে, কিন্তু বর্তমান ফিল্টারের তালিকায় নেই — স্ট্যাটাস ফিল্টার 'সব স্ট্যাটাস' করে আবার দেখুন।");
+    setLabelError(dict.orders.theOrderWasFoundBut);
   }
 
   useEffect(() => {
@@ -510,7 +514,7 @@ function OrdersPageInner() {
   }, []);
   const reviewForOrder = (orderId: string) => reviews.find((r) => r.orderId === orderId) ?? null;
   const stars = (n: number) => "★★★★★".slice(0, n) + "☆☆☆☆☆".slice(0, 5 - n);
-  const reviewStatusBn = (r: ReviewRow) => r.status === "received" ? "রিভিউ পাওয়া গেছে" : r.status === "requested" ? "রিভিউ চাওয়া হয়েছে" : "এখনো পাঠানো হয়নি";
+  const reviewStatusBn = (r: ReviewRow) => r.status === "received" ? dict.orders.reviewReceived : r.status === "requested" ? dict.orders.reviewRequested : dict.orders.notSentYet;
 
   // CX7: "To Chase" — chase records for stalled order-bot
   // sessions. Only sessions the sweep has actually considered
@@ -522,8 +526,8 @@ function OrdersPageInner() {
     const orgId = getOrganizationId(); if (!orgId) return;
     apiFetch<ChaseRow[]>(`/organizations/${orgId}/order-chases`).then(setChases).catch(() => setChases([]));
   }, []);
-  const chaseStopBn = (reason: string) => reason === "completed" ? "অর্ডার সম্পূর্ণ হয়েছে" : reason === "stop_word" ? "গ্রাহক থামতে বলেছেন" : reason === "human_took_over" ? "মানুষ দায়িত্ব নিয়েছেন" : reason === "max_attempts" ? "সর্বোচ্চ চেষ্টা শেষ" : reason === "session_ended" ? "সেশন শেষ হয়েছে" : reason;
-  const chaseStatusBn = (c: ChaseRow) => c.stoppedReason ? chaseStopBn(c.stoppedReason) : c.attempts > 0 ? `${c.attempts} বার মনে করানো হয়েছে` : c.lastEvent === "customer_replied" ? "গ্রাহক উত্তর দিয়েছেন — অপেক্ষায়" : "অনুস্মারকের অপেক্ষায়";
+  const chaseStopBn = (reason: string) => reason === "completed" ? dict.orders.orderCompleted : reason === "stop_word" ? dict.orders.customerAskedToStop : reason === "human_took_over" ? dict.orders.aPersonHasTakenResponsibility : reason === "max_attempts" ? dict.orders.maximumAttemptsReached : reason === "session_ended" ? dict.orders.sessionEnded : reason;
+  const chaseStatusBn = (c: ChaseRow) => c.stoppedReason ? chaseStopBn(c.stoppedReason) : c.attempts > 0 ? t("orders.remindedTimes", { attempts: c.attempts }) : c.lastEvent === "customer_replied" ? dict.orders.customerRepliedWaiting : dict.orders.waitingForReminder;
 
   function openActions(o: Order) {
     if (actOrder?.id === o.id) { setActOrder(null); return; }
@@ -539,7 +543,7 @@ function OrdersPageInner() {
     } catch (err) {
       // A failed load must never render as "no store / no pushes".
       setPushState(null);
-      setPushStateError(err instanceof Error ? err.message : "স্টোর সিঙ্কের তথ্য লোড ব্যর্থ হয়েছে");
+      setPushStateError(err instanceof Error ? err.message : dict.orders.storeSyncInfoLoadFailed);
     }
   }, []);
 
@@ -602,7 +606,7 @@ function OrdersPageInner() {
       setProfit(p); setProfitError("");
     } catch (e) {
       setProfit(null);
-      setProfitError(e instanceof Error ? e.message : "লাভের হিসাব লোড ব্যর্থ");
+      setProfitError(e instanceof Error ? e.message : dict.orders.profitCalculationLoadFailed);
     }
   }, []);
 
@@ -620,7 +624,7 @@ function OrdersPageInner() {
   // validation errors show instead and the stale preview clears.
   useEffect(() => {
     if (!surgery || !actOrderId) return;
-    const errs = validateDraft(drafts);
+    const errs = validateDraft(drafts, locale);
     setDraftErrors(errs);
     if (errs.length > 0) { setPreview(null); setPreviewError(""); return; }
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -632,7 +636,7 @@ function OrdersPageInner() {
         body: JSON.stringify(buildEditItemsBody(drafts, { recalculateDelivery: recalcDelivery })),
       })
         .then((out) => { if (previewSeqRef.current === seq) { setPreview(out); setPreviewError(""); } })
-        .catch((e) => { if (previewSeqRef.current === seq) { setPreview(null); setPreviewError(e instanceof Error ? e.message : "হিসাব ব্যর্থ"); } })
+        .catch((e) => { if (previewSeqRef.current === seq) { setPreview(null); setPreviewError(e instanceof Error ? e.message : dict.orders.calculationFailed); } })
         .finally(() => { if (previewSeqRef.current === seq) setPreviewBusy(false); });
     }, 600);
     return () => clearTimeout(t);
@@ -643,10 +647,10 @@ function OrdersPageInner() {
     if (!actOrder) return;
     setSurgeryNotice(""); setSurgeryError(""); setOverpaidNotice("");
     if (!actOrder.items) {
-      setSurgeryError("এই অর্ডারের আইটেম এখনো লোড হয়নি — অর্ডারটি বন্ধ করে আবার খুলুন।");
+      setSurgeryError(dict.orders.thisOrderSItemsHave);
       return;
     }
-    setDrafts(draftsFromOrderItems(actOrder.items));
+    setDrafts(draftsFromOrderItems(actOrder.items, locale));
     setRecalcDelivery(false);
     setPreview(null); setPreviewError("");
     setSurgery(true);
@@ -710,7 +714,7 @@ function OrdersPageInner() {
 
   async function saveSurgery() {
     const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
-    const errs = validateDraft(drafts);
+    const errs = validateDraft(drafts, locale);
     setDraftErrors(errs);
     if (errs.length > 0) return;
     setSurgeryBusy(true); setSurgeryError(""); setSurgeryNotice(""); setOverpaidNotice("");
@@ -728,16 +732,16 @@ function OrdersPageInner() {
       // never paraphrased. The overpaid excess gets its own
       // amber notice pointing at the return/refund process.
       const notes = [...(out.warnings ?? [])];
-      if (out.couponDropped) notes.push("কুপন বাতিল হয়েছে।");
-      if (out.referralDropped) notes.push("রেফারেল ছাড় বাতিল হয়েছে।");
-      setSurgeryNotice(["আইটেম সংরক্ষণ হয়েছে।", ...notes].join(" "));
+      if (out.couponDropped) notes.push(dict.orders.couponCancelled);
+      if (out.referralDropped) notes.push(dict.orders.referralDiscountCancelled);
+      setSurgeryNotice([dict.orders.itemsSaved, ...notes].join(" "));
       let over: string | null = null;
       try { if (BigInt(out.overpaidMinor ?? "0") > 0n) over = out.overpaidMinor; } catch { over = null; }
-      if (over) setOverpaidNotice(`অতিরিক্ত পরিশোধ হয়েছে ${fmtM(over)} — রিফান্ডের জন্য রিটার্ন/রিফান্ড প্রক্রিয়া ব্যবহার করুন`);
+      if (over) setOverpaidNotice(t("orders.overpaidByUseTheReturn", { fmtM: fmtM(over) }));
       exitSurgery();
       await load();
       void loadProfit(actOrder.id);
-    } catch (e) { setSurgeryError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setSurgeryError(e instanceof Error ? e.message : dict.orders.saveFailed); }
     finally { setSurgeryBusy(false); }
   }
 
@@ -761,9 +765,9 @@ function OrdersPageInner() {
       const q = Number(splitQty[it.id] ?? 0);
       if (Number.isInteger(q) && q > 0) lines.push({ orderItemId: it.id, quantity: Math.min(q, it.quantity) });
     }
-    if (lines.length === 0) { setSplitError("কমপক্ষে একটি আইটেম বা একটি বান্ডল গ্রুপ বেছে নিন।"); return; }
+    if (lines.length === 0) { setSplitError(dict.orders.selectAtLeastOneItem); return; }
     const delMinor = takaToMinor(splitDeliveryTaka.trim() || "0");
-    if (delMinor === null) { setSplitError("নতুন অর্ডারের ডেলিভারি চার্জ টাকায় ঠিকভাবে লিখুন (যেমন: 60 বা 60.50)।"); return; }
+    if (delMinor === null) { setSplitError(dict.orders.enterTheNewOrderS); return; }
     setSplitBusy(true); setSplitError(""); setSplitNotice("");
     try {
       const out = await apiFetch<SplitResult>(`/organizations/${orgId}/orders/${actOrder.id}/split`, {
@@ -775,10 +779,10 @@ function OrdersPageInner() {
       }
       const label = `#${out.created.externalNumber ?? out.created.id.slice(0, 8)}`;
       setSplitCreated({ id: out.created.id, label });
-      setSplitNotice(`অর্ডার ভাগ হয়েছে — নতুন অর্ডার ${label} তৈরি হয়েছে।${out.verificationsStayedOnOriginal ? " পেমেন্ট যাচাইগুলো মূল অর্ডারেই থাকলো।" : ""}`);
+      setSplitNotice(t("orders.orderSplitNewOrderCreated", { label: label, out: out.verificationsStayedOnOriginal ? dict.orders.paymentVerificationsStayedOnThe : "" }));
       setSurgery(false);
       await load();
-    } catch (e) { setSplitError(e instanceof Error ? e.message : "Split ব্যর্থ"); }
+    } catch (e) { setSplitError(e instanceof Error ? e.message : dict.orders.splitFailed); }
     finally { setSplitBusy(false); }
   }
 
@@ -815,7 +819,7 @@ function OrdersPageInner() {
       await loadDuplicates();
       await load();
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "মার্জ করতে সমস্যা হয়েছে", tone: "error" });
+      toast({ title: e instanceof Error ? e.message : dict.orders.mergeProblem, tone: "error" });
     } finally {
       setDupMergeBusy("");
     }
@@ -823,9 +827,9 @@ function OrdersPageInner() {
 
   async function doMerge() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!mergeSurvivor || !selected.includes(mergeSurvivor)) { setMergeError("আগে কোন অর্ডারটি থাকবে (survivor) বেছে নিন।"); return; }
+    if (!mergeSurvivor || !selected.includes(mergeSurvivor)) { setMergeError(dict.orders.chooseWhichOrderStaysSurvivor); return; }
     const others = selected.filter((id) => id !== mergeSurvivor);
-    if (others.length === 0) { setMergeError("মার্জ করতে কমপক্ষে ২টি অর্ডার লাগবে।"); return; }
+    if (others.length === 0) { setMergeError(dict.orders.atLeast2OrdersAre); return; }
     setMergeBusy(true); setMergeError("");
     try {
       const out = await apiFetch<MergeResult>(`/organizations/${orgId}/orders/${mergeSurvivor}/merge`, {
@@ -835,10 +839,10 @@ function OrdersPageInner() {
       setMergeOpen(false);
       setSelected([]);
       setBulkActionResult(null);
-      toast({ title: `মার্জ সম্পন্ন হয়েছে — survivor ${survivorLabel}; ${(out.cancelledOrderIds ?? others).length}টি অর্ডার বাতিল হয়েছে${out.reassignedVerifications ? `; ${out.reassignedVerifications}টি পেমেন্ট যাচাই survivor-এ সরে গেছে` : ""}।`, tone: "success" });
+      toast({ title: t("orders.mergeCompleteSurvivorOrdersCancelled", { survivorLabel: survivorLabel, length: (out.cancelledOrderIds ?? others).length, out: out.reassignedVerifications ? t("orders.paymentVerificationsMovedToThe", { reassignedVerifications: out.reassignedVerifications }) : "" }), tone: "success" });
       await load();
       void loadQueues();
-    } catch (e) { setMergeError(e instanceof Error ? e.message : "মার্জ ব্যর্থ"); }
+    } catch (e) { setMergeError(e instanceof Error ? e.message : dict.orders.mergeFailed); }
     finally { setMergeBusy(false); }
   }
 
@@ -884,7 +888,7 @@ function OrdersPageInner() {
       });
       applyInstPlan(plan);
       await load();
-    } catch (err) { setInstError(err instanceof Error ? err.message : "কিস্তি প্ল্যান তৈরি ব্যর্থ"); }
+    } catch (err) { setInstError(err instanceof Error ? err.message : dict.orders.installmentPlanCreationFailed); }
     finally { setInstBusy(""); }
   }
 
@@ -893,9 +897,9 @@ function OrdersPageInner() {
     const form = collectForms[item.id];
     if (!form) return;
     const raw = form.amount.trim();
-    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setInstError("টাকার পরিমাণ ঠিকভাবে লিখুন (যেমন: 200 বা 200.50)।"); return; }
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setInstError(dict.orders.enterTheAmountCorrectlyE); return; }
     const minor = BigInt(Math.round(Number(raw) * 100));
-    if (minor <= 0n) { setInstError("সংগ্রহের পরিমাণ ০-এর বেশি হতে হবে।"); return; }
+    if (minor <= 0n) { setInstError(dict.orders.theCollectionAmountMustBe); return; }
     setInstBusy(`collect-${item.id}`); setInstError("");
     try {
       const plan = await apiFetch<InstallmentPlan>(`/organizations/${orgId}/installment-items/${item.id}/collect`, {
@@ -909,19 +913,19 @@ function OrdersPageInner() {
       });
       applyInstPlan(plan);
       await load();
-    } catch (err) { setInstError(err instanceof Error ? err.message : "সংগ্রহ রেকর্ড ব্যর্থ"); }
+    } catch (err) { setInstError(err instanceof Error ? err.message : dict.orders.collectionRecordFailed); }
     finally { setInstBusy(""); }
   }
 
   async function cancelInstPlan() {
     const orgId = getOrganizationId(); if (!orgId || !instPlan) return;
-    if (!(await confirm({ title: "এই কিস্তি প্ল্যানটি বাতিল করবেন? ইতিমধ্যে সংগ্রহ করা টাকা সংগ্রহ হিসেবেই থাকবে।", danger: true, confirmLabel: "বাতিল করুন" }))) return;
+    if (!(await confirm({ title: dict.orders.cancelThisInstallmentPlanMoney, danger: true, confirmLabel: dict.orders.cancel2 }))) return;
     setInstBusy("cancel"); setInstError("");
     try {
       const plan = await apiFetch<InstallmentPlan>(`/organizations/${orgId}/installments/${instPlan.id}/cancel`, { method: "POST" });
       applyInstPlan(plan);
       await load();
-    } catch (err) { setInstError(err instanceof Error ? err.message : "প্ল্যান বাতিল ব্যর্থ"); }
+    } catch (err) { setInstError(err instanceof Error ? err.message : dict.orders.planCancellationFailed); }
     finally { setInstBusy(""); }
   }
 
@@ -939,9 +943,9 @@ function OrdersPageInner() {
   async function recordAdvance() {
     const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
     const raw = advAmount.trim();
-    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setAdvError("টাকার পরিমাণ ঠিকভাবে লিখুন (যেমন: 200 বা 200.50)।"); return; }
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setAdvError(dict.orders.enterTheAmountCorrectlyE); return; }
     const minor = BigInt(Math.round(Number(raw) * 100));
-    if (minor <= 0n) { setAdvError("অগ্রিমের পরিমাণ ০-এর বেশি হতে হবে।"); return; }
+    if (minor <= 0n) { setAdvError(dict.orders.theAdvanceAmountMustBe); return; }
     setAdvBusy(true); setAdvError(""); setAdvNotice("");
     try {
       const updated = await apiFetch<Order>(`/organizations/${orgId}/orders/${actOrder.id}/advance-verification`, {
@@ -956,15 +960,15 @@ function OrdersPageInner() {
       // The endpoint returns the enriched order detail.
       setActOrder((prev) => (prev ? { ...prev, ...updated } : updated));
       setAdvAmount(""); setAdvRef(""); setAdvNote("");
-      setAdvNotice("অগ্রিম পেমেন্ট রেকর্ড হয়েছে।");
+      setAdvNotice(dict.orders.advancePaymentRecorded);
       await load();
-    } catch (err) { setAdvError(err instanceof Error ? err.message : "অগ্রিম রেকর্ড ব্যর্থ"); }
+    } catch (err) { setAdvError(err instanceof Error ? err.message : dict.orders.advanceRecordFailed); }
     finally { setAdvBusy(false); }
   }
 
   async function copyText(key: string, text: string) {
     try { await navigator.clipboard.writeText(text); setCopiedKey(key); }
-    catch { setSyncError("কপি করা যায়নি — লিংকটি হাতে কপি করুন।"); }
+    catch { setSyncError(dict.orders.couldNotCopyCopyThe); }
   }
 
   async function sendStoreNote() {
@@ -974,10 +978,10 @@ function OrdersPageInner() {
       await apiFetch(`/organizations/${orgId}/orders/${actOrder.id}/store-note`, {
         method: "POST", body: JSON.stringify({ note: storeNoteText.trim() }),
       });
-      setSyncNotice("নোট স্টোরে পাঠানোর জন্য queue-তে দেওয়া হয়েছে");
+      setSyncNotice(dict.orders.noteQueuedToBeSent);
       setStoreNoteText("");
       await loadPushState(actOrder.id);
-    } catch (err) { setSyncError(err instanceof Error ? err.message : "স্টোরে নোট পাঠানো ব্যর্থ"); }
+    } catch (err) { setSyncError(err instanceof Error ? err.message : dict.orders.storeNoteSendingFailed); }
     finally { setSyncBusy(""); }
   }
 
@@ -989,10 +993,10 @@ function OrdersPageInner() {
         method: "POST", body: JSON.stringify({}),
       });
       setActOrder(updated);
-      setSyncNotice("স্টোরে Draft Order তৈরি হয়েছে।");
+      setSyncNotice(dict.orders.draftOrderCreatedInStore);
       await loadPushState(actOrder.id);
       await load();
-    } catch (err) { setSyncError(err instanceof Error ? err.message : "Draft Order তৈরি ব্যর্থ"); }
+    } catch (err) { setSyncError(err instanceof Error ? err.message : dict.orders.draftOrderCreationFailed); }
     finally { setSyncBusy(""); }
   }
 
@@ -1004,7 +1008,7 @@ function OrdersPageInner() {
         method: "POST", body: JSON.stringify({}),
       });
       setReturnUrl(`${window.location.origin}/returns/${out.token}`);
-    } catch (err) { setSyncError(err instanceof Error ? err.message : "রিটার্ন লিংক তৈরি ব্যর্থ"); }
+    } catch (err) { setSyncError(err instanceof Error ? err.message : dict.orders.returnLinkCreationFailed); }
     finally { setSyncBusy(""); }
   }
 
@@ -1016,24 +1020,24 @@ function OrdersPageInner() {
       setActOrder(updated); setActStatus(updated.status); setActNote(updated.internalNote ?? "");
       setActNotice(okMessage);
       await load();
-    } catch (err) { setActNotice(err instanceof Error ? err.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (err) { setActNotice(err instanceof Error ? err.message : dict.orders.saveFailed); }
     finally { setActBusy(""); }
   }
 
-  async function saveStatus() { if (actOrder) await patchOrder({ status: actStatus }, "স্ট্যাটাস সংরক্ষণ হয়েছে।"); }
+  async function saveStatus() { if (actOrder) await patchOrder({ status: actStatus }, dict.orders.statusSaved); }
 
   async function saveRefund() {
     if (!actOrder) return;
     const raw = actRefundTaka.trim();
-    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setActNotice("টাকার পরিমাণ ঠিকভাবে লিখুন — পয়সা ভগ্নাংশে দেওয়া যাবে না (সর্বোচ্চ ২ ঘর দশমিক)।"); return; }
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setActNotice(dict.orders.enterTheMoneyAmountCorrectly); return; }
     const minor = BigInt(Math.round(Number(raw) * 100));
-    if (minor <= 0n) { setActNotice("Refund-এর পরিমাণ ০-এর বেশি হতে হবে।"); return; }
-    await patchOrder({ refund: { amountMinor: minor.toString(), reason: actRefundReason.trim() || undefined } }, "Refund রেকর্ড হয়েছে।");
+    if (minor <= 0n) { setActNotice(dict.orders.theRefundAmountMustBe); return; }
+    await patchOrder({ refund: { amountMinor: minor.toString(), reason: actRefundReason.trim() || undefined } }, dict.orders.refundRecorded);
     setActRefundTaka(""); setActRefundReason("");
   }
 
-  async function saveNote() { await patchOrder({ internalNote: actNote }, "নোট সংরক্ষণ হয়েছে।"); }
-  async function clearNote() { await patchOrder({ internalNote: null }, "নোট মুছে ফেলা হয়েছে।"); }
+  async function saveNote() { await patchOrder({ internalNote: actNote }, dict.orders.noteSaved); }
+  async function clearNote() { await patchOrder({ internalNote: null }, dict.orders.noteDeleted); }
 
   async function showRisk(o: Order) {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -1072,9 +1076,9 @@ function OrdersPageInner() {
         reviewHold: out.reviewHold ?? out.order?.reviewHold ?? o.reviewHold,
       };
       syncOrderRow(updated);
-      setFraudNotice("ঝুঁকি আবার যাচাই হয়েছে।");
+      setFraudNotice(dict.orders.riskReChecked);
       void loadQueues();
-    } catch (e) { setFraudNotice(e instanceof Error ? e.message : "আবার যাচাই ব্যর্থ"); }
+    } catch (e) { setFraudNotice(e instanceof Error ? e.message : dict.orders.reCheckFailed); }
     finally { setFraudBusy(""); }
   }
 
@@ -1087,24 +1091,24 @@ function OrdersPageInner() {
       });
       syncOrderRow(updated);
       setHoldReason("");
-      setFraudNotice("অর্ডারটি পর্যালোচনার জন্য আটকানো হয়েছে।");
+      setFraudNotice(dict.orders.theOrderHasBeenHeld);
       void loadQueues();
-    } catch (e) { setFraudNotice(e instanceof Error ? e.message : "আটকানো ব্যর্থ"); }
+    } catch (e) { setFraudNotice(e instanceof Error ? e.message : dict.orders.holdFailed); }
     finally { setFraudBusy(""); }
   }
 
   async function releaseFraud(o: Order) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `#${o.externalNumber ?? o.id.slice(0, 8)} অর্ডারের আটকানো ছেড়ে দেবেন?` }))) return;
+    if (!(await confirm({ title: t("orders.releaseTheHoldOnOrder", { o: o.externalNumber ?? o.id.slice(0, 8) }) }))) return;
     setFraudBusy("release"); setFraudNotice("");
     try {
       const updated = await apiFetch<Order>(`/organizations/${orgId}/orders/${o.id}/release`, {
         method: "POST", body: JSON.stringify({}),
       });
       syncOrderRow(updated);
-      setFraudNotice("আটকানো ছেড়ে দেওয়া হয়েছে।");
+      setFraudNotice(dict.orders.holdReleased);
       void loadQueues();
-    } catch (e) { setFraudNotice(e instanceof Error ? e.message : "ছাড় দেওয়া ব্যর্থ"); }
+    } catch (e) { setFraudNotice(e instanceof Error ? e.message : dict.orders.releaseFailed); }
     finally { setFraudBusy(""); }
   }
 
@@ -1120,9 +1124,9 @@ function OrdersPageInner() {
         method: "POST", body: JSON.stringify({ outcome }),
       });
       syncOrderRow(updated);
-      toast({ title: `#${o.externalNumber ?? o.id.slice(0, 8)} — কল রেকর্ড হয়েছে: ${codCallOutcomeLabel(outcome)}`, tone: "success" });
+      toast({ title: t("orders.callRecorded", { o: o.externalNumber ?? o.id.slice(0, 8), codCallOutcomeLabel: codCallOutcomeLabel(outcome, locale) }), tone: "success" });
       void loadQueues();
-    } catch (e) { setRowNotice(e instanceof Error ? e.message : "কল রেকর্ড ব্যর্থ"); }
+    } catch (e) { setRowNotice(e instanceof Error ? e.message : dict.orders.callRecordFailed); }
     finally { setCodBusy(""); }
   }
 
@@ -1156,7 +1160,7 @@ function OrdersPageInner() {
       setFraudAttempts(attempts ?? []);
       setFraudRules(rules ?? []);
       await loadBlockedIdents(orgId);
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "জালিয়াতি সুরক্ষার তথ্য লোড ব্যর্থ"); }
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.fraudProtectionInfoLoadFailed); }
   }
 
   function openFraudPanel() {
@@ -1167,7 +1171,7 @@ function OrdersPageInner() {
   async function saveFraudSettings() {
     const orgId = getOrganizationId(); if (!orgId || !fraudSettings) return;
     const highMinor = fraudHighTaka.trim() ? takaToMinor(fraudHighTaka) : "0";
-    if (highMinor === null) { setFraudPanelError("বড় অর্ডারের সীমা টাকায় ঠিকভাবে লিখুন (যেমন: 5000 বা 5000.50)।"); return; }
+    if (highMinor === null) { setFraudPanelError(dict.orders.enterTheLargeOrderLimit); return; }
     setFraudPanelBusy("save"); setFraudPanelNotice(""); setFraudPanelError("");
     try {
       const updated = await apiFetch<FraudSettings>(`/organizations/${orgId}/orders/fraud-settings`, {
@@ -1196,8 +1200,8 @@ function OrdersPageInner() {
       setFraudSettings(updated);
       setTurnstileSecret("");
       setFraudHighTaka(updated?.highValueMinor ? minorToTaka(updated.highValueMinor) : "");
-      setFraudPanelNotice("জালিয়াতি সুরক্ষার সেটিংস সংরক্ষণ হয়েছে।");
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "সেটিংস সংরক্ষণ ব্যর্থ"); }
+      setFraudPanelNotice(dict.orders.fraudProtectionSettingsSaved);
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.settingsSaveFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
@@ -1210,28 +1214,28 @@ function OrdersPageInner() {
         body: JSON.stringify({ phone: blockForm.phone.trim(), ...(blockForm.reason.trim() ? { reason: blockForm.reason.trim() } : {}) }),
       });
       setBlockForm({ phone: "", reason: "" });
-      setFraudPanelNotice("নম্বরটি ব্লক তালিকায় যোগ হয়েছে।");
+      setFraudPanelNotice(dict.orders.theNumberHasBeenAdded);
       setBlockedPhones(await apiFetch<BlockedPhoneRow[]>(`/organizations/${orgId}/orders/blocked-phones`));
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "নম্বর ব্লক করা ব্যর্থ"); }
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.numberBlockingFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
   async function deleteBlockedPhone(row: BlockedPhoneRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `${row.phone} নম্বরটি ব্লক তালিকা থেকে সরাবেন?`, danger: true, confirmLabel: "সরিয়ে দিন" }))) return;
+    if (!(await confirm({ title: t("orders.removeTheNumberFromThe", { phone: row.phone }), danger: true, confirmLabel: dict.orders.remove2 }))) return;
     setFraudPanelBusy(`block-del-${row.id}`); setFraudPanelNotice(""); setFraudPanelError("");
     try {
       await apiFetch(`/organizations/${orgId}/orders/blocked-phones/${row.id}`, { method: "DELETE" });
       setBlockedPhones((prev) => prev.filter((x) => x.id !== row.id));
-      setFraudPanelNotice("নম্বরটি ব্লক তালিকা থেকে সরানো হয়েছে।");
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "নম্বর সরানো ব্যর্থ"); }
+      setFraudPanelNotice(dict.orders.theNumberHasBeenRemoved);
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.numberRemovalFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
   // ---- GB3: identifier lists (blocked email/IP + trusted) ----
   async function addBlockedIdent() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const err = validateIdentifierInput(blockedIdentForm.kind, blockedIdentForm.value, ["email", "ip", "device"]);
+    const err = validateIdentifierInput(blockedIdentForm.kind, blockedIdentForm.value, ["email", "ip", "device"], locale);
     if (err) { setFraudPanelError(err); return; }
     setFraudPanelBusy("ident-add"); setFraudPanelNotice(""); setFraudPanelError("");
     try {
@@ -1244,9 +1248,9 @@ function OrdersPageInner() {
         }),
       });
       setBlockedIdentForm({ kind: blockedIdentForm.kind, value: "", reason: "" });
-      setFraudPanelNotice("শনাক্তকারীটি ব্লক তালিকায় যোগ হয়েছে।");
+      setFraudPanelNotice(dict.orders.theIdentifierHasBeenAdded);
       await loadBlockedIdents(orgId);
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "ব্লক করা ব্যর্থ"); }
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.blockingFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
@@ -1256,14 +1260,14 @@ function OrdersPageInner() {
     try {
       await apiFetch(`/organizations/${orgId}/orders/blocked-identifiers/${row.id}`, { method: "DELETE" });
       setBlockedIdents((prev) => prev.filter((x) => x.id !== row.id));
-      setFraudPanelNotice("শনাক্তকারীটি ব্লক তালিকা থেকে সরানো হয়েছে।");
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "সরানো ব্যর্থ"); }
+      setFraudPanelNotice(dict.orders.theIdentifierHasBeenRemoved);
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.removeFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
   async function addTrustedIdent() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const err = validateIdentifierInput(trustedForm.kind, trustedForm.value, ["phone", "email", "ip"]);
+    const err = validateIdentifierInput(trustedForm.kind, trustedForm.value, ["phone", "email", "ip"], locale);
     if (err) { setFraudPanelError(err); return; }
     setFraudPanelBusy("trusted-add"); setFraudPanelNotice(""); setFraudPanelError("");
     try {
@@ -1276,9 +1280,9 @@ function OrdersPageInner() {
         }),
       });
       setTrustedForm({ kind: trustedForm.kind, value: "", reason: "" });
-      setFraudPanelNotice("শনাক্তকারীটি বিশ্বস্ত তালিকায় যোগ হয়েছে।");
+      setFraudPanelNotice(dict.orders.theIdentifierHasBeenAdded2);
       setTrustedIdents(await apiFetch<IdentifierRow[]>(`/organizations/${orgId}/orders/trusted-identifiers`));
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "যোগ করা ব্যর্থ"); }
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.addFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
@@ -1288,15 +1292,15 @@ function OrdersPageInner() {
     try {
       await apiFetch(`/organizations/${orgId}/orders/trusted-identifiers/${row.id}`, { method: "DELETE" });
       setTrustedIdents((prev) => prev.filter((x) => x.id !== row.id));
-      setFraudPanelNotice("শনাক্তকারীটি বিশ্বস্ত তালিকা থেকে সরানো হয়েছে।");
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "সরানো ব্যর্থ"); }
+      setFraudPanelNotice(dict.orders.theIdentifierHasBeenRemoved2);
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.removeFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
   // ---- GB3: fraud rules ----
   async function createFraudRule() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const { payload, errors } = buildFraudRulePayload(ruleDraft);
+    const { payload, errors } = buildFraudRulePayload(ruleDraft, locale);
     if (!payload) { setFraudPanelError(errors.join(" ")); return; }
     setFraudPanelBusy("rule-add"); setFraudPanelNotice(""); setFraudPanelError("");
     try {
@@ -1304,9 +1308,9 @@ function OrdersPageInner() {
         method: "POST", body: JSON.stringify(payload),
       });
       setRuleDraft(EMPTY_FRAUD_RULE_DRAFT);
-      setFraudPanelNotice("নিয়মটি তৈরি হয়েছে।");
+      setFraudPanelNotice(dict.orders.theRuleHasBeenCreated);
       setFraudRules(await apiFetch<FraudRuleRow[]>(`/organizations/${orgId}/orders/fraud-rules`));
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "নিয়ম তৈরি ব্যর্থ"); }
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.ruleCreationFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
@@ -1318,25 +1322,25 @@ function OrdersPageInner() {
         method: "PATCH", body: JSON.stringify({ enabled }),
       });
       setFraudRules((prev) => prev.map((x) => (x.id === row.id ? { ...x, ...(updated ?? {}), enabled } : x)));
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "নিয়ম বদলানো ব্যর্থ"); }
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.ruleChangeFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
   async function deleteFraudRule(row: FraudRuleRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${row.name}" নিয়মটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: t("orders.deleteTheRule", { name: row.name }), danger: true, confirmLabel: dict.orders.delete2 }))) return;
     setFraudPanelBusy(`rule-del-${row.id}`); setFraudPanelNotice(""); setFraudPanelError("");
     try {
       await apiFetch(`/organizations/${orgId}/orders/fraud-rules/${row.id}`, { method: "DELETE" });
       setFraudRules((prev) => prev.filter((x) => x.id !== row.id));
-      setFraudPanelNotice("নিয়মটি মুছে ফেলা হয়েছে।");
-    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : "নিয়ম মোছা ব্যর্থ"); }
+      setFraudPanelNotice(dict.orders.theRuleHasBeenDeleted2);
+    } catch (e) { setFraudPanelError(e instanceof Error ? e.message : dict.orders.ruleDeleteFailed); }
     finally { setFraudPanelBusy(""); }
   }
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
+    if (!orgId) { setError(dict.orders.noOrganizationSelected); setLoading(false); return; }
     setLoading(true);
     try {
       // ON1: queue and the legacy status filter are alternatives —
@@ -1418,7 +1422,7 @@ function OrdersPageInner() {
         feedWatermarkRef.current = adv.nextWatermark;
         if (adv.newCreated > 0) {
           setNewOrdersCount((prev) => prev + adv.newCreated);
-          setFeedToast(`${adv.newCreated}টি নতুন অর্ডার এসেছে`);
+          setFeedToast(t("orders.newOrdersHaveArrived", { newCreated: adv.newCreated }));
         }
       }
     } catch { /* feed is advisory — a failed poll changes nothing */ }
@@ -1455,7 +1459,7 @@ function OrdersPageInner() {
 
   async function saveCurrentView() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const name = await prompt({ title: "ভিউয়ের নাম লিখুন" });
+    const name = await prompt({ title: dict.orders.enterTheViewName });
     if (!name || !name.trim()) return;
     setViewNotice("");
     try {
@@ -1464,9 +1468,9 @@ function OrdersPageInner() {
         method: "POST",
         body: JSON.stringify({ name: name.trim(), ...(payload.queue ? { queue: payload.queue } : {}), filters: payload.filters }),
       });
-      toast({ title: "ভিউ সংরক্ষণ হয়েছে।", tone: "success" });
+      toast({ title: dict.orders.viewSaved, tone: "success" });
       await loadSavedViews();
-    } catch (e) { setViewNotice(e instanceof Error ? e.message : "ভিউ সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setViewNotice(e instanceof Error ? e.message : dict.orders.viewSaveFailed); }
   }
   async function deleteView(v: SavedView) {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -1474,7 +1478,7 @@ function OrdersPageInner() {
     try {
       await apiFetch(`/organizations/${orgId}/orders/saved-views/${v.id}`, { method: "DELETE" });
       await loadSavedViews();
-    } catch (e) { setViewNotice(e instanceof Error ? e.message : "ভিউ মোছা ব্যর্থ"); }
+    } catch (e) { setViewNotice(e instanceof Error ? e.message : dict.orders.viewDeleteFailed); }
   }
 
   /** ON1 bulk action via POST /orders/bulk. set_status and
@@ -1483,10 +1487,10 @@ function OrdersPageInner() {
    * until the next action. */
   async function runBulkAction(action: string) {
     const orgId = getOrganizationId(); if (!orgId || selected.length === 0) return;
-    if (action === "set_status" && !(await confirm({ title: `${selected.length}টি অর্ডারের অবস্থা "${bulkStatus}" করবেন?` }))) return;
-    if (action === "book_courier" && !(await confirm({ title: `${selected.length}টি অর্ডারের জন্য ${bulkProviderOn1} কুরিয়ার বুক করবেন?`, danger: true, confirmLabel: "বুক করুন" }))) return;
-    if ((action === "add_tag" || action === "remove_tag") && !bulkTag.trim()) { setRowNotice("আগে ট্যাগ লিখুন।"); return; }
-    if (action === "assign" && !bulkAssignee) { setRowNotice("আগে দায়িত্বপ্রাপ্ত সদস্য বেছে নিন।"); return; }
+    if (action === "set_status" && !(await confirm({ title: t("orders.changeTheStatusOfOrders", { length: selected.length, bulkStatus: bulkStatus }) }))) return;
+    if (action === "book_courier" && !(await confirm({ title: t("orders.bookCourierForOrders", { length: selected.length, bulkProviderOn1: bulkProviderOn1 }), danger: true, confirmLabel: dict.orders.book2 }))) return;
+    if ((action === "add_tag" || action === "remove_tag") && !bulkTag.trim()) { setRowNotice(dict.orders.writeATagFirst); return; }
+    if (action === "assign" && !bulkAssignee) { setRowNotice(dict.orders.chooseTheResponsibleMemberFirst); return; }
     setBulkActionBusy(action); setBulkActionResult(null); setRowNotice("");
     try {
       const params: Record<string, unknown> =
@@ -1513,7 +1517,7 @@ function OrdersPageInner() {
       if (out.succeeded > 0) setSelected([]);
       await load();
       void loadQueues();
-    } catch (e) { setRowNotice(e instanceof Error ? e.message : "বাল্ক অ্যাকশন ব্যর্থ"); }
+    } catch (e) { setRowNotice(e instanceof Error ? e.message : dict.orders.bulkActionFailed); }
     finally { setBulkActionBusy(""); }
   }
 
@@ -1524,7 +1528,7 @@ function OrdersPageInner() {
     try {
       const cfg = await apiFetch<NotifConfig>(`/organizations/${orgId}/orders/notification-settings`);
       setNotifConfig(cfg);
-    } catch (e) { setNotifPanelError(e instanceof Error ? e.message : "বিজ্ঞপ্তি সেটিংস লোড ব্যর্থ"); }
+    } catch (e) { setNotifPanelError(e instanceof Error ? e.message : dict.orders.notificationSettingsLoadFailed); }
   }
 
   function openNotifPanel() {
@@ -1556,8 +1560,8 @@ function OrdersPageInner() {
         method: "PUT", body: JSON.stringify(notifConfig),
       });
       setNotifConfig(updated);
-      setNotifPanelNotice("বিজ্ঞপ্তি সেটিংস সংরক্ষণ হয়েছে।");
-    } catch (e) { setNotifPanelError(e instanceof Error ? e.message : "সেটিংস সংরক্ষণ ব্যর্থ"); }
+      setNotifPanelNotice(dict.orders.notificationSettingsSaved);
+    } catch (e) { setNotifPanelError(e instanceof Error ? e.message : dict.orders.settingsSaveFailed); }
     finally { setNotifPanelBusy(""); }
   }
 
@@ -1574,10 +1578,10 @@ function OrdersPageInner() {
         { method: "POST", body: JSON.stringify({ orderIds: selected }) },
       );
       const failed = out.results.filter((r) => !r.ok)
-        .map((r) => ({ orderId: r.orderId, error: r.error ?? "অজানা ত্রুটি" }));
+        .map((r) => ({ orderId: r.orderId, error: r.error ?? dict.orders.unknownError }));
       setWaveResult({ added: out.results.length - failed.length, failed });
       if (failed.length < out.results.length) setSelected([]);
-    } catch (e) { setRowNotice(e instanceof Error ? e.message : "ওয়েভে যোগ ব্যর্থ"); }
+    } catch (e) { setRowNotice(e instanceof Error ? e.message : dict.orders.waveAddFailed); }
     finally { setBulkActionBusy(""); }
   }
 
@@ -1591,7 +1595,7 @@ function OrdersPageInner() {
     try {
       const detail = await apiFetch<Order>(`/organizations/${orgId}/orders/${orderId}`);
       setActOrder(detail); setActStatus(detail.status); setActNote(detail.internalNote ?? "");
-    } catch (e) { setRowNotice(e instanceof Error ? e.message : "অর্ডার খোলা ব্যর্থ"); }
+    } catch (e) { setRowNotice(e instanceof Error ? e.message : dict.orders.orderOpenFailed); }
   }
 
   /** COD confirmation quick action. The inbox contract is
@@ -1607,15 +1611,15 @@ function OrdersPageInner() {
   async function requestCodForRow(o: Order) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const conversationId = o.codConversationId ?? o.conversationId;
-    if (!conversationId) { setRowNotice("এই অর্ডারের সাথে কোনো কথোপকথন যুক্ত নেই — COD কনফার্মেশন পাঠানো যাবে না।"); return; }
+    if (!conversationId) { setRowNotice(dict.orders.noConversationIsLinkedTo); return; }
     setRowBusy(`cod-${o.id}`); setRowNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${conversationId}/cod-confirmation`, {
         method: "POST", body: JSON.stringify({ orderId: o.id }),
       });
-      toast({ title: `#${o.externalNumber ?? o.id.slice(0, 8)} — COD কনফার্মেশন বার্তা পাঠানো হয়েছে। গ্রাহকের উত্তরের অপেক্ষায়।`, tone: "success" });
+      toast({ title: t("orders.cODConfirmationMessageSentWaiting", { o: o.externalNumber ?? o.id.slice(0, 8) }), tone: "success" });
       await load();
-    } catch (e) { setRowNotice(e instanceof Error ? e.message : "COD কনফার্মেশন পাঠানো ব্যর্থ"); }
+    } catch (e) { setRowNotice(e instanceof Error ? e.message : dict.orders.cODConfirmationSendingFailed); }
     finally { setRowBusy(""); }
   }
 
@@ -1646,11 +1650,11 @@ function OrdersPageInner() {
   function ruleConditionsSummary(r: CourierRule): string {
     const c = r.conditions ?? {};
     const parts: string[] = [];
-    if (c.districts?.length) parts.push(`জেলা: ${c.districts.join(", ")}`);
-    if (c.minWeightGrams != null || c.maxWeightGrams != null) parts.push(`ওজন: ${c.minWeightGrams ?? "—"}–${c.maxWeightGrams ?? "—"} গ্রাম`);
-    if (c.minOrderMinor != null || c.maxOrderMinor != null) parts.push(`অর্ডার মূল্য: ${c.minOrderMinor != null ? formatMinor(BigInt(c.minOrderMinor)) : "—"} – ${c.maxOrderMinor != null ? formatMinor(BigInt(c.maxOrderMinor)) : "—"}`);
-    if (c.paymentType) parts.push(`পেমেন্ট: ${c.paymentType}`);
-    return parts.length ? parts.join(" · ") : "সব অর্ডারে প্রযোজ্য";
+    if (c.districts?.length) parts.push(t("orders.districts", { c: c.districts.join(", ") }));
+    if (c.minWeightGrams != null || c.maxWeightGrams != null) parts.push(t("orders.weightGrams", { c: c.minWeightGrams ?? "—", c1: c.maxWeightGrams ?? "—" }));
+    if (c.minOrderMinor != null || c.maxOrderMinor != null) parts.push(t("orders.orderValue", { c: c.minOrderMinor != null ? formatMinor(BigInt(c.minOrderMinor)) : "—", c1: c.maxOrderMinor != null ? formatMinor(BigInt(c.maxOrderMinor)) : "—" }));
+    if (c.paymentType) parts.push(t("orders.payment3", { paymentType: c.paymentType }));
+    return parts.length ? parts.join(" · ") : dict.orders.appliesToAllOrders;
   }
   async function saveRule(e: React.FormEvent) {
     e.preventDefault();
@@ -1667,18 +1671,18 @@ function OrdersPageInner() {
       const body = { name: ruleForm.name.trim(), conditions, courierAccountId: ruleForm.courierAccountId, provider: ruleForm.provider, priority: Number(ruleForm.priority) || 0, active: ruleForm.active };
       if (editingRule) await apiFetch(`/organizations/${orgId}/courier/rules/${editingRule.id}`, { method: "PATCH", body: JSON.stringify(body) });
       else await apiFetch(`/organizations/${orgId}/courier/rules`, { method: "POST", body: JSON.stringify(body) });
-      setRuleNotice("নিয়ম সংরক্ষণ হয়েছে।");
+      setRuleNotice(dict.orders.ruleSaved);
       setEditingRule(null);
       setRuleForm({ name: "", provider: "", courierAccountId: "", priority: "10", districts: "", minWeightGrams: "", maxWeightGrams: "", minOrderTaka: "", maxOrderTaka: "", paymentType: "", active: true });
       setCourierRules(await apiFetch<CourierRule[]>(`/organizations/${orgId}/courier/rules`));
-    } catch (err) { setRuleNotice(err instanceof Error ? err.message : "নিয়ম সংরক্ষণ ব্যর্থ"); }
+    } catch (err) { setRuleNotice(err instanceof Error ? err.message : dict.orders.ruleSaveFailed); }
     finally { setRuleBusy(""); }
   }
   async function deleteRule(r: CourierRule) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setRuleBusy(`del-${r.id}`);
     try { await apiFetch(`/organizations/${orgId}/courier/rules/${r.id}`, { method: "DELETE" }); setCourierRules(await apiFetch<CourierRule[]>(`/organizations/${orgId}/courier/rules`)); }
-    catch (err) { setRuleNotice(err instanceof Error ? err.message : "মুছতে ব্যর্থ"); }
+    catch (err) { setRuleNotice(err instanceof Error ? err.message : dict.orders.deleteFailed); }
     finally { setRuleBusy(""); }
   }
   async function saveTrackingTemplate(provider: string) {
@@ -1686,9 +1690,9 @@ function OrdersPageInner() {
     setRuleBusy(`tpl-${provider}`); setRuleNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/courier/tracking-template`, { method: "PATCH", body: JSON.stringify({ provider, trackingUrlTemplate: trackingTemplates[provider]?.trim() ? trackingTemplates[provider].trim() : null }) });
-      setRuleNotice("ট্র্যাকিং টেমপ্লেট সংরক্ষণ হয়েছে।");
+      setRuleNotice(dict.orders.trackingTemplateSaved);
       await loadCourier();
-    } catch (err) { setRuleNotice(err instanceof Error ? err.message : "টেমপ্লেট সংরক্ষণ ব্যর্থ"); }
+    } catch (err) { setRuleNotice(err instanceof Error ? err.message : dict.orders.templateSaveFailed2); }
     finally { setRuleBusy(""); }
   }
   async function loadSuggestion(orderId: string) {
@@ -1708,14 +1712,14 @@ function OrdersPageInner() {
     try {
       await apiFetch(`/organizations/${orgId}/delivery/assignments`, { method: "POST", body: JSON.stringify({ orderId: actOrder.id, riderId: assignRiderId }) });
       await loadOrderAssignments(actOrder.id);
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "রাইডার বরাদ্দ ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.riderAssignmentFailed); }
     finally { setRiderBusy(""); }
   }
   async function transitionAssignment(a: DeliveryAssignmentRow, status: string) {
     const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
     setRiderBusy(`tr-${a.id}`);
     try { await apiFetch(`/organizations/${orgId}/delivery/assignments/${a.id}/transition`, { method: "POST", body: JSON.stringify({ status }) }); await loadOrderAssignments(actOrder.id); }
-    catch (err) { setCourierNotice(err instanceof Error ? err.message : "অবস্থা বদল ব্যর্থ"); }
+    catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.statusChangeFailed); }
     finally { setRiderBusy(""); }
   }
 
@@ -1725,10 +1729,10 @@ function OrdersPageInner() {
     setCourierBusy("connect"); setCourierNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/courier/connect`, { method: "POST", body: JSON.stringify(courierForm) });
-      setCourierNotice("Steadfast যুক্ত হয়েছে (আসল API দিয়ে যাচাই করা)।");
+      setCourierNotice(dict.orders.steadfastConnectedVerifiedWithThe);
       setCourierForm({ apiKey: "", secretKey: "" });
       await loadCourier();
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "Connect ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.connectFailed); }
     finally { setCourierBusy(""); }
   }
   async function loadProviderLists(provider: string) {
@@ -1762,10 +1766,10 @@ function OrdersPageInner() {
     setCourierBusy("pathao"); setCourierNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/courier/connect`, { method: "POST", body: JSON.stringify({ provider: "pathao", clientId: pathaoForm.clientId, clientSecret: pathaoForm.clientSecret, username: pathaoForm.username, password: pathaoForm.password, baseUrl: pathaoForm.sandbox ? "https://courier-api-sandbox.pathao.com" : undefined }) });
-      setCourierNotice("Pathao যুক্ত হয়েছে (আসল API দিয়ে Token ও Store যাচাই করা)।");
+      setCourierNotice(dict.orders.pathaoConnectedTokenStoreVerified);
       setPathaoForm({ clientId: "", clientSecret: "", username: "", password: "", sandbox: false });
       await loadCourier();
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "Pathao connect ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.pathaoConnectFailed); }
     finally { setCourierBusy(""); }
   }
 
@@ -1775,10 +1779,10 @@ function OrdersPageInner() {
     setCourierBusy("redx"); setCourierNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/courier/connect`, { method: "POST", body: JSON.stringify({ provider: "redx", accessToken: redxForm.accessToken, baseUrl: redxForm.baseUrl || undefined }) });
-      setCourierNotice("RedX যুক্ত হয়েছে (আসল API দিয়ে Area তালিকা যাচাই করা)।");
+      setCourierNotice(dict.orders.redXConnectedAreaListVerified);
       setRedxForm({ accessToken: "", baseUrl: "" });
       await loadCourier();
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "RedX connect ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.redXConnectFailed); }
     finally { setCourierBusy(""); }
   }
 
@@ -1788,10 +1792,10 @@ function OrdersPageInner() {
     setCourierBusy("ecourier"); setCourierNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/courier/connect`, { method: "POST", body: JSON.stringify({ provider: "ecourier", apiKey: ecourierForm.apiKey, apiSecret: ecourierForm.apiSecret, userId: ecourierForm.userId, baseUrl: ecourierForm.baseUrl || undefined }) });
-      setCourierNotice("eCourier যুক্ত হয়েছে (আসল API দিয়ে Package তালিকা যাচাই করা)।");
+      setCourierNotice(dict.orders.eCourierConnectedPackageListVerified);
       setEcourierForm({ apiKey: "", apiSecret: "", userId: "", baseUrl: "" });
       await loadCourier();
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "eCourier connect ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.eCourierConnectFailed); }
     finally { setCourierBusy(""); }
   }
 
@@ -1816,11 +1820,11 @@ function OrdersPageInner() {
       const out = await apiFetch<any>(`/organizations/${orgId}/courier/shipments/${shipmentId}/manual-status`, {
         method: "POST", body: JSON.stringify({ status: manualStatus, note: manualNote || undefined }),
       });
-      setCourierNotice(out.changed ? `ম্যানুয়াল স্ট্যাটাস হালনাগাদ: ${manualStatus}` : "স্ট্যাটাস একই আছে — নোট ইতিহাসে যোগ হয়েছে।");
+      setCourierNotice(out.changed ? t("orders.manualStatusUpdate", { manualStatus: manualStatus }) : dict.orders.statusUnchangedAddedToThe);
       setManualNote("");
       await loadShipmentEvents(shipmentId);
       await loadCourier();
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "ম্যানুয়াল হালনাগাদ ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.manualUpdateFailed); }
     finally { setManualBusy(false); }
   }
 
@@ -1852,7 +1856,7 @@ function OrdersPageInner() {
         }),
       });
       setQuoteOut(q);
-    } catch (err) { setQuoteOut({ quotable: false, reason: err instanceof Error ? err.message : "চার্জ জানা যায়নি" }); }
+    } catch (err) { setQuoteOut({ quotable: false, reason: err instanceof Error ? err.message : dict.orders.chargeCouldNotBeKnown }); }
     finally { setQuoteBusy(false); }
   }
 
@@ -1889,10 +1893,10 @@ function OrdersPageInner() {
           } : undefined,
         }),
       });
-      setCourierNotice(`পার্সেল বুক হয়েছে — Tracking: ${s.trackingCode} (স্ট্যাটাস: ${s.status})`);
+      setCourierNotice(t("orders.parcelBookedTrackingStatus", { trackingCode: s.trackingCode ?? "", status: s.status ?? "" }));
       setBookingFor(null);
       await loadCourier();
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "Booking ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.bookingFailed); }
     finally { setCourierBusy(""); }
   }
   // Milestone 53: binary PDF download (apiFetch is JSON-only, so fetch the blob directly).
@@ -1904,7 +1908,7 @@ function OrdersPageInner() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "PDF ডাউনলোড ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.pDFDownloadFailed); }
   }
 
   // Sales & Data S3: CSV export — binary download, so fetch the
@@ -1924,7 +1928,7 @@ function OrdersPageInner() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "orders-export.csv"; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (err) { setError(err instanceof Error ? err.message : "এক্সপোর্ট ব্যর্থ"); }
+    } catch (err) { setError(err instanceof Error ? err.message : dict.orders.exportFailed); }
     finally { setExportBusy(false); }
   }
 
@@ -1960,24 +1964,24 @@ function OrdersPageInner() {
         }),
       });
       setBulkResults(out);
-      setCourierNotice(`বাল্ক বুকিং শেষ: ${out.booked}টি বুক হয়েছে, ${out.skipped}টি আগে থেকেই বুক ছিল, ${out.failed}টি ব্যর্থ${out.failed || out.skipped ? " (আংশিক সফল)" : ""}`);
+      setCourierNotice(t("orders.bulkBookingDoneBookedAlready", { booked: out.booked, skipped: out.skipped, failed: out.failed, out: out.failed || out.skipped ? dict.orders.partiallySuccessful : "" }));
       await loadCourier();
-    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "বাল্ক বুকিং ব্যর্থ"); }
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.bulkBookingFailed); }
     finally { setBulkBusy(false); }
   }
 
   async function bulkLabels() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const ids = selected.map((oid) => shipmentFor(oid)?.id).filter(Boolean) as string[];
-    if (ids.length === 0) { setCourierNotice("বেছে নেওয়া অর্ডারগুলোর কোনো পার্সেল এখনো বুক হয়নি"); return; }
+    if (ids.length === 0) { setCourierNotice(dict.orders.noParcelsOfTheSelected); return; }
     await downloadPdf(`/organizations/${orgId}/courier/labels.pdf?ids=${ids.join(",")}`, "labels.pdf");
   }
 
   async function syncShipment(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setCourierBusy("sync");
-    try { const s = await apiFetch<Shipment>(`/organizations/${orgId}/courier/shipments/${id}/sync`, { method: "POST" }); setCourierNotice(`স্ট্যাটাস আপডেট: ${s.status}`); await loadCourier(); }
-    catch (err) { setCourierNotice(err instanceof Error ? err.message : "Sync ব্যর্থ"); }
+    try { const s = await apiFetch<Shipment>(`/organizations/${orgId}/courier/shipments/${id}/sync`, { method: "POST" }); setCourierNotice(t("orders.statusUpdate", { status: s.status })); await loadCourier(); }
+    catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.syncFailed); }
     finally { setCourierBusy(""); }
   }
 
@@ -1985,22 +1989,22 @@ function OrdersPageInner() {
     <div className="space-y-6">
       <div>
         <h1 className="page-title">Orders</h1>
-        <p className="text-sm text-slate-500">মোট {total}টি অর্ডার (বর্তমান ফিল্টারে)। Delivered Revenue শুধুমাত্র completed অর্ডার থেকে হিসাব হয়।</p>
-        <a href="/dashboard/orders/manual" className="mt-2 inline-block text-sm font-semibold text-blue-600">+ ম্যানুয়াল অর্ডার / CSV ইমপোর্ট →</a>
-        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={openFraudPanel}>🛡️ জালিয়াতি সুরক্ষা</button>
-        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={openNotifPanel}>🔔 বিজ্ঞপ্তি সেটিংস</button>
-        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setAutomationPanelOpen(true)}>🤖 অটোমেশন</button>
-        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setAnalyticsPanelOpen(true)}>📊 অ্যানালিটিক্স</button>
-        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setPrintPanelOpen(true)}>🖨️ প্রিন্ট সেন্টার</button>
-        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setTeamPanelOpen(true)}>👥 টিম পারফরম্যান্স</button>
-        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setShowDuplicatesModal(true)}>⚠️ ডুপ্লিকেট অর্ডার{(duplicateData?.totalDuplicateOrders ?? 0) > 0 ? ` (${duplicateData?.totalDuplicateOrders})` : ""}</button>
+        <p className="text-sm text-slate-500">{dict.orders.total}{total}{dict.orders.ordersInTheCurrentFilter}</p>
+        <a href="/dashboard/orders/manual" className="mt-2 inline-block text-sm font-semibold text-blue-600">{dict.orders.manualOrderCSVImport}</a>
+        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={openFraudPanel}>{dict.orders.fraudProtection}</button>
+        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={openNotifPanel}>{dict.orders.notificationSettings}</button>
+        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setAutomationPanelOpen(true)}>{dict.orders.automation2}</button>
+        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setAnalyticsPanelOpen(true)}>{dict.orders.analytics2}</button>
+        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setPrintPanelOpen(true)}>{dict.orders.printCenter}</button>
+        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setTeamPanelOpen(true)}>{dict.orders.teamPerformance}</button>
+        <button type="button" className="btn-secondary btn-sm ml-3 mt-2" onClick={() => setShowDuplicatesModal(true)}>{dict.orders.duplicateOrders2}{(duplicateData?.totalDuplicateOrders ?? 0) > 0 ? ` (${duplicateData?.totalDuplicateOrders})` : ""}</button>
       </div>
       {stats ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <KpiCard label="মোট অর্ডার" value={String(stats.totalOrders)} />
-          <KpiCard label="COD অর্ডার" value={String(stats.codOrders)} hint={`মোটের ${stats.codSharePercent}%`} />
-          <KpiCard label="Delivered Revenue" value={formatMinor(BigInt(stats.deliveredRevenueMinor))} hint="শুধু completed" />
-          <KpiCard label="স্ট্যাটাস" value={stats.byStatus.map((s) => `${s.status}: ${s.count}`).join(" · ") || "—"} />
+          <KpiCard label={dict.orders.totalOrders} value={String(stats.totalOrders)} />
+          <KpiCard label={dict.orders.cODOrders} value={String(stats.codOrders)} hint={t("orders.ofTheTotal2", { codSharePercent: stats.codSharePercent })} />
+          <KpiCard label="Delivered Revenue" value={formatMinor(BigInt(stats.deliveredRevenueMinor))} hint={dict.orders.completedOnly} />
+          <KpiCard label={dict.orders.status} value={stats.byStatus.map((s) => `${s.status}: ${s.count}`).join(" · ") || "—"} />
         </div>
       ) : null}
       {/* ON1: Filter bar v2 — the legacy status / COD / practice
@@ -2009,129 +2013,129 @@ function OrdersPageInner() {
           status are alternatives: picking a queue ignores status. */}
       <div className="card space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <input className="input w-56" placeholder="🔍 খুঁজুন — নাম, ফোন, অর্ডার নম্বর…" aria-label="খুঁজুন" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} />
-          <select className="rounded-lg border bg-white px-3 py-2 text-sm" value={status} onChange={(e) => { setStatus(e.target.value); if (e.target.value) patchFilters({ queue: "" }); }} aria-label="স্ট্যাটাস">
-            {STATUSES.map((s) => <option key={s} value={s}>{s === "" ? "সব স্ট্যাটাস" : s}</option>)}
+          <input className="input w-56" placeholder={dict.orders.searchNamePhoneOrderNumber} aria-label={dict.orders.search} value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} />
+          <select className="rounded-lg border bg-white px-3 py-2 text-sm" value={status} onChange={(e) => { setStatus(e.target.value); if (e.target.value) patchFilters({ queue: "" }); }} aria-label={dict.orders.status}>
+            {STATUSES.map((s) => <option key={s} value={s}>{s === "" ? dict.orders.allStatuses : s}</option>)}
           </select>
-          <select className="input w-auto" value={filters.sort} onChange={(e) => patchFilters({ sort: e.target.value })} aria-label="সাজান">
-            <option value="placedAt_desc">নতুন আগে</option>
-            <option value="placedAt_asc">পুরনো আগে</option>
-            <option value="total_desc">মোট: বেশি থেকে কম</option>
-            <option value="total_asc">মোট: কম থেকে বেশি</option>
+          <select className="input w-auto" value={filters.sort} onChange={(e) => patchFilters({ sort: e.target.value })} aria-label={dict.orders.sort}>
+            <option value="placedAt_desc">{dict.orders.newestFirst}</option>
+            <option value="placedAt_asc">{dict.orders.oldestFirst}</option>
+            <option value="total_desc">{dict.orders.totalHighToLow}</option>
+            <option value="total_asc">{dict.orders.totalLowToHigh}</option>
           </select>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={codOnly} onChange={(e) => setCodOnly(e.target.checked)} /> শুধু COD</label>
-          <label className="flex items-center gap-2 text-sm" title="CX12a প্র্যাক্টিস অর্ডার — আসল তালিকায় এগুলো ডিফল্টে থাকে না"><input type="checkbox" checked={filters.practice} onChange={(e) => patchFilters({ practice: e.target.checked })} /> প্র্যাক্টিস অর্ডার দেখান</label>
-          <button className="btn-secondary btn-sm" disabled={exportBusy} onClick={downloadExport}>{exportBusy ? "ডাউনলোড হচ্ছে..." : "এক্সপোর্ট (CSV)"}</button>
-          <span className="ml-auto text-xs text-slate-500" title="তালিকা নিজে থেকে বদলায় না — নতুন অর্ডার এলে উপরে জানানো হয়, আপনি চাইলে তালিকা রিলোড হয়">স্বয়ংক্রিয় হালনাগাদ: চালু (২৫ সেকেন্ডে যাচাই)</span>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={codOnly} onChange={(e) => setCodOnly(e.target.checked)} /> {dict.orders.cODOnly}</label>
+          <label className="flex items-center gap-2 text-sm" title={dict.orders.cX12aPracticeOrdersTheseAre}><input type="checkbox" checked={filters.practice} onChange={(e) => patchFilters({ practice: e.target.checked })} /> {dict.orders.showPracticeOrders}</label>
+          <button className="btn-secondary btn-sm" disabled={exportBusy} onClick={downloadExport}>{exportBusy ? dict.orders.downloading : dict.orders.exportCSV}</button>
+          <span className="ml-auto text-xs text-slate-500" title={dict.orders.theListDoesNotChange}>{dict.orders.autoRefreshOnChecksEvery}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1.5 text-xs text-slate-500">থেকে <input type="date" className="input w-auto" value={filters.dateFrom} onChange={(e) => patchFilters({ dateFrom: e.target.value })} /></label>
-          <label className="flex items-center gap-1.5 text-xs text-slate-500">পর্যন্ত <input type="date" className="input w-auto" value={filters.dateTo} onChange={(e) => patchFilters({ dateTo: e.target.value })} /></label>
-          <input className="input w-36" placeholder="জেলা" aria-label="জেলা" value={filters.district} onChange={(e) => patchFilters({ district: e.target.value })} />
-          <select className="input w-auto" value={filters.provider} onChange={(e) => patchFilters({ provider: e.target.value })} aria-label="কুরিয়ার">
-            <option value="">কুরিয়ার: সব</option>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500">{dict.orders.from}<input type="date" className="input w-auto" value={filters.dateFrom} onChange={(e) => patchFilters({ dateFrom: e.target.value })} /></label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500">{dict.orders.to}<input type="date" className="input w-auto" value={filters.dateTo} onChange={(e) => patchFilters({ dateTo: e.target.value })} /></label>
+          <input className="input w-36" placeholder={dict.orders.district} aria-label={dict.orders.district} value={filters.district} onChange={(e) => patchFilters({ district: e.target.value })} />
+          <select className="input w-auto" value={filters.provider} onChange={(e) => patchFilters({ provider: e.target.value })} aria-label={dict.orders.courier}>
+            <option value="">{dict.orders.courierAll}</option>
             <option value="steadfast">Steadfast</option>
             <option value="pathao">Pathao</option>
             <option value="redx">RedX</option>
             <option value="ecourier">eCourier</option>
           </select>
-          <select className="input w-auto" value={filters.source} onChange={(e) => patchFilters({ source: e.target.value })} aria-label="উৎস">
-            <option value="">উৎস: সব</option>
+          <select className="input w-auto" value={filters.source} onChange={(e) => patchFilters({ source: e.target.value })} aria-label={dict.orders.source}>
+            <option value="">{dict.orders.sourceAll}</option>
             <option value="woocommerce">WooCommerce</option>
             <option value="shopify">Shopify</option>
-            <option value="native">নিজস্ব স্টোর</option>
-            <option value="manual">ম্যানুয়াল</option>
-            <option value="landing">ল্যান্ডিং পেজ</option>
+            <option value="native">{dict.orders.ownStore}</option>
+            <option value="manual">{dict.orders.manual}</option>
+            <option value="landing">{dict.orders.landingPage}</option>
             <option value="pos">POS</option>
-            <option value="subscription">সাবস্ক্রিপশন</option>
-            <option value="chat">চ্যাট</option>
+            <option value="subscription">{dict.orders.subscription}</option>
+            <option value="chat">{dict.orders.chat}</option>
           </select>
-          <select className="input w-auto" value={filters.paymentState} onChange={(e) => patchFilters({ paymentState: e.target.value })} aria-label="পেমেন্ট অবস্থা">
-            <option value="">পেমেন্ট: সব</option>
-            <option value="paid">পরিশোধিত</option>
-            <option value="partial">আংশিক</option>
-            <option value="due">বকেয়া</option>
+          <select className="input w-auto" value={filters.paymentState} onChange={(e) => patchFilters({ paymentState: e.target.value })} aria-label={dict.orders.paymentStatus}>
+            <option value="">{dict.orders.paymentAll}</option>
+            <option value="paid">{dict.orders.paid}</option>
+            <option value="partial">{dict.orders.partial}</option>
+            <option value="due">{dict.orders.due2}</option>
           </select>
-          <select className="input w-auto" value={filters.riskBand} onChange={(e) => patchFilters({ riskBand: e.target.value })} aria-label="জালিয়াতি ঝুঁকি" title="জালিয়াতি ঝুঁকি (Fraud Shield)">
-            <option value="">সব ঝুঁকি</option>
-            <option value="low">কম ঝুঁকি</option>
-            <option value="medium">মাঝারি ঝুঁকি</option>
-            <option value="high">উচ্চ ঝুঁকি</option>
+          <select className="input w-auto" value={filters.riskBand} onChange={(e) => patchFilters({ riskBand: e.target.value })} aria-label={dict.orders.fraudRisk} title={dict.orders.fraudShield}>
+            <option value="">{dict.orders.allRisks}</option>
+            <option value="low">{dict.orders.lowRisk}</option>
+            <option value="medium">{dict.orders.mediumRisk}</option>
+            <option value="high">{dict.orders.highRisk}</option>
           </select>
-          <input className="input w-28" placeholder="কমপক্ষে ৳" inputMode="decimal" aria-label="কমপক্ষে মোট (টাকা)" value={filters.minTotalTaka} onChange={(e) => patchFilters({ minTotalTaka: e.target.value })} />
-          <input className="input w-28" placeholder="সর্বোচ্চ ৳" inputMode="decimal" aria-label="সর্বোচ্চ মোট (টাকা)" value={filters.maxTotalTaka} onChange={(e) => patchFilters({ maxTotalTaka: e.target.value })} />
-          <select className="input w-auto" value={filters.assigneeId} onChange={(e) => patchFilters({ assigneeId: e.target.value })} aria-label="দায়িত্বপ্রাপ্ত">
-            <option value="">দায়িত্ব: সবাই</option>
+          <input className="input w-28" placeholder={dict.orders.atLeast2} inputMode="decimal" aria-label={dict.orders.minimumTotalTaka2} value={filters.minTotalTaka} onChange={(e) => patchFilters({ minTotalTaka: e.target.value })} />
+          <input className="input w-28" placeholder={dict.orders.atMost} inputMode="decimal" aria-label={dict.orders.maximumTotalTaka} value={filters.maxTotalTaka} onChange={(e) => patchFilters({ maxTotalTaka: e.target.value })} />
+          <select className="input w-auto" value={filters.assigneeId} onChange={(e) => patchFilters({ assigneeId: e.target.value })} aria-label={dict.orders.responsiblePerson}>
+            <option value="">{dict.orders.responsibilityEveryone}</option>
             {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email}</option>)}
           </select>
-          <input className="input w-32" placeholder="ট্যাগ" aria-label="ট্যাগ" value={filters.tag} onChange={(e) => patchFilters({ tag: e.target.value })} />
-          <button className="btn-ghost btn-sm" onClick={resetFilters}>ফিল্টার সাফ করুন</button>
+          <input className="input w-32" placeholder={dict.orders.tag} aria-label={dict.orders.tag} value={filters.tag} onChange={(e) => patchFilters({ tag: e.target.value })} />
+          <button className="btn-ghost btn-sm" onClick={resetFilters}>{dict.orders.clearFilters}</button>
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t pt-2">
-          <span className="text-xs font-semibold text-slate-500">সংরক্ষিত ভিউ:</span>
-          {savedViews.length === 0 ? <span className="text-xs text-slate-500">কোনো ভিউ নেই</span> : savedViews.map((v) => (
+          <span className="text-xs font-semibold text-slate-500">{dict.orders.savedViews}</span>
+          {savedViews.length === 0 ? <span className="text-xs text-slate-500">{dict.orders.noViews}</span> : savedViews.map((v) => (
             <span key={v.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 py-0.5 pl-3 pr-1.5 text-xs font-medium">
               <button type="button" className="hover:underline" onClick={() => applyFiltersObject(viewToFilters(v))}>{v.name}</button>
-              <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-1 text-slate-400 hover:text-red-600" title="ভিউ মুছুন" aria-label="ভিউ মুছুন" onClick={() => void deleteView(v)}>✕</button>
+              <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-1 text-slate-400 hover:text-red-600" title={dict.orders.deleteView} aria-label={dict.orders.deleteView} onClick={() => void deleteView(v)}>✕</button>
             </span>
           ))}
-          <button className="btn-secondary btn-sm" onClick={() => void saveCurrentView()}>ভিউ সংরক্ষণ</button>
+          <button className="btn-secondary btn-sm" onClick={() => void saveCurrentView()}>{dict.orders.saveView}</button>
           {viewNotice ? <span className="text-xs text-indigo-700">{viewNotice}</span> : null}
           {rowNotice ? <span className="text-xs font-medium text-indigo-700">{rowNotice}</span> : null}
         </div>
       </div>
       <div className="card space-y-3">
-        <h2 className="font-semibold">📷 প্যাকিং — লেবেল স্ক্যান</h2>
-        <p className="text-xs text-slate-500">পার্সেলের লেবেলের ছবি দিলে AI ছবি থেকে ট্র্যাকিং কোড / অর্ডার নম্বর পড়ে সংশ্লিষ্ট অর্ডারটি খুঁজে দেয়। AI শুধু ছবিতে ছাপা মানই পড়ে — মিল না পেলে যা পড়েছে তা-ই দেখানো হবে, কিছু বানিয়ে বলা হবে না।</p>
+        <h2 className="font-semibold">{dict.orders.packingLabelScan}</h2>
+        <p className="text-xs text-slate-500">{dict.orders.giveAPhotoOfThe2}</p>
         <div className="flex flex-wrap items-center gap-2">
           <label className={`btn-primary btn-sm ${labelBusy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
-            {labelBusy === "scan" ? "ছবি পড়া হচ্ছে..." : "📷 Label Scan"}
+            {labelBusy === "scan" ? dict.orders.readingImage2 : "📷 Label Scan"}
             <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={labelBusy !== ""}
               onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void runLabelScan(f); }} />
           </label>
-          <input className="input w-64" placeholder="ট্র্যাকিং কোড, অর্ডার নম্বর বা ফোনের শেষ ৪ ডিজিট" aria-label="🔢 নম্বর দিয়ে খুঁজুন" value={labelQuery}
+          <input className="input w-64" placeholder={dict.orders.trackingCodeOrderNumberOr} aria-label={dict.orders.searchByNumber} value={labelQuery}
             onChange={(e) => setLabelQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void runLabelLookup(); } }} />
-          <button className="btn-secondary btn-sm" disabled={labelBusy !== "" || !labelQuery.trim()} onClick={() => void runLabelLookup()}>{labelBusy === "lookup" ? "খোঁজা হচ্ছে..." : "🔢 নম্বর দিয়ে খুঁজুন"}</button>
-          <span className="text-[11px] text-slate-500">কীবোর্ডের মাইক (🎤) দিয়ে নম্বর বলেও লেখা যায় — এই বক্সে বললেই সংখ্যা বসবে, আলাদা কোনো ভয়েস-চেনা ফিচার নয়।</span>
+          <button className="btn-secondary btn-sm" disabled={labelBusy !== "" || !labelQuery.trim()} onClick={() => void runLabelLookup()}>{labelBusy === "lookup" ? dict.orders.searching : dict.orders.searchByNumber}</button>
+          <span className="text-[11px] text-slate-500">{dict.orders.youCanAlsoDictateThe}</span>
         </div>
         {labelError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{labelError}</p> : null}
         {labelScan && !labelScan.available ? (
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">AI ছবি পড়া এখন সেটআপ করা নেই — উপরের বক্সে নম্বর দিয়ে খুঁজুন।</p>
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{dict.orders.aIImageReadingIsNot2}</p>
         ) : null}
         {labelScan && labelScan.matched ? (
           <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            <span className="font-semibold">✓ মিলেছে:</span> অর্ডার #{labelScan.matched.orderNumber ?? labelScan.matched.orderId.slice(0, 8)}
+            <span className="font-semibold">{dict.orders.matched}</span> {dict.orders.order3}{labelScan.matched.orderNumber ?? labelScan.matched.orderId.slice(0, 8)}
             {labelScan.matched.trackingCode ? ` · Tracking: ${labelScan.matched.trackingCode}` : ""}
             {labelScan.matched.provider ? ` · ${labelScan.matched.provider}` : ""}
-            {labelScan.matched.shipmentStatus ? ` · শিপমেন্ট: ${labelScan.matched.shipmentStatus}` : ""}
-            <button className="ml-2 font-semibold text-emerald-900 underline" onClick={() => openScannedOrder(labelScan.matched!)}>অর্ডারটি খুলুন</button>
+            {labelScan.matched.shipmentStatus ? t("orders.shipment2", { shipmentStatus: labelScan.matched.shipmentStatus }) : ""}
+            <button className="ml-2 font-semibold text-emerald-900 underline" onClick={() => openScannedOrder(labelScan.matched!)}>{dict.orders.openTheOrder}</button>
           </div>
         ) : null}
         {labelScan && !labelScan.matched && labelScan.candidates.length > 0 ? (
           <div className="space-y-1">
-            <p className="text-xs font-semibold text-slate-600">ফোনের শেষ ৪ ডিজিট মিলিয়ে সম্ভাব্য পার্সেল — সঠিকটি বেছে নিন (এভাবে কখনোই নিজে থেকে কোনো অর্ডার খোলে না):</p>
+            <p className="text-xs font-semibold text-slate-600">{dict.orders.possibleParcelsMatchingTheLast2}</p>
             {labelScan.candidates.map((c) => (
               <div key={c.shipmentId ?? c.orderId} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-sm">
                 <span className="font-medium">#{c.orderNumber ?? c.orderId.slice(0, 8)}</span>
                 {c.trackingCode ? <span className="text-slate-500">Tracking: {c.trackingCode}</span> : null}
                 {c.provider ? <span className="text-slate-500">{c.provider}</span> : null}
                 {c.shipmentStatus ? <span className="badge-slate">{c.shipmentStatus}</span> : null}
-                <button className="font-semibold text-brand-600 hover:underline" onClick={() => openScannedOrder(c)}>খুলুন</button>
+                <button className="font-semibold text-brand-600 hover:underline" onClick={() => openScannedOrder(c)}>{dict.orders.open}</button>
               </div>
             ))}
           </div>
         ) : null}
         {labelScan && labelScan.available && !labelScan.matched && labelScan.candidates.length === 0 ? (
           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            কোনো মিল পাওয়া যায়নি।{extractedSummary(labelScan) ? ` ছবি/খোঁজ থেকে পড়া হয়েছে: ${extractedSummary(labelScan)} — এই মান দিয়ে হাতে খুঁজে দেখুন।` : " ছবি থেকে কোনো নম্বর পড়া যায়নি — ছবিটি আরও পরিষ্কার করে আবার চেষ্টা করুন, অথবা নম্বর দিয়ে খুঁজুন।"}
+            {dict.orders.noMatchesFound}{extractedSummary(labelScan) ? t("orders.readFromImageSearchSearch", { extractedSummary: extractedSummary(labelScan) }) : dict.orders.noNumberCouldBeRead2}
           </p>
         ) : null}
       </div>
       <div className="card space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold">🚚 কুরিয়ার — Steadfast</h2>
-          <span className={courier?.connected ? "badge-green" : "badge-slate"}>{courier?.connected ? "যুক্ত আছে" : "যুক্ত নেই"}</span>
+          <h2 className="font-semibold">{dict.orders.courierSteadfast}</h2>
+          <span className={courier?.connected ? "badge-green" : "badge-slate"}>{courier?.connected ? dict.orders.linked : dict.orders.notLinked}</span>
         </div>
         {courierNotice ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{courierNotice}</p> : null}
         {courier?.connected ? (
@@ -2139,152 +2143,151 @@ function OrdersPageInner() {
             <button className="btn-secondary btn-sm" disabled={courierBusy !== ""} onClick={async () => {
               const orgId = getOrganizationId(); if (!orgId) return;
               setCourierBusy("syncall");
-              try { const r = await apiFetch<{ checked: number; changed: number; errors: string[] }>(`/organizations/${orgId}/courier/sync-all`, { method: "POST" }); setCourierNotice(`Sync সম্পন্ন: ${r.checked}টি যাচাই, ${r.changed}টি স্ট্যাটাস বদলেছে${r.errors.length ? ` · ত্রুটি: ${r.errors[0]}` : ""}`); await loadCourier(); }
-              catch (err) { setCourierNotice(err instanceof Error ? err.message : "Sync ব্যর্থ"); }
+              try { const r = await apiFetch<{ checked: number; changed: number; errors: string[] }>(`/organizations/${orgId}/courier/sync-all`, { method: "POST" }); setCourierNotice(t("orders.syncCompleteCheckedStatusesChanged", { checked: r.checked, changed: r.changed, r: r.errors.length ? t("orders.error", { r: r.errors[0] }) : "" })); await loadCourier(); }
+              catch (err) { setCourierNotice(err instanceof Error ? err.message : dict.orders.syncFailed); }
               finally { setCourierBusy(""); }
-            }}>সব পার্সেলের স্ট্যাটাস Sync</button>
+            }}>{dict.orders.syncAllParcelStatuses2}</button>
             <button className="btn-ghost btn-sm text-red-600" onClick={async () => {
               const orgId = getOrganizationId(); if (!orgId) return;
               await apiFetch(`/organizations/${orgId}/courier/connection`, { method: "DELETE" }).catch(() => undefined);
               await loadCourier();
-            }}>সংযোগ বিচ্ছিন্ন</button>
+            }}>{dict.orders.disconnected}</button>
           </div>
         ) : (
           <form onSubmit={connectCourier} className="grid gap-2 sm:grid-cols-3">
             <input className="input" placeholder="Steadfast API Key" value={courierForm.apiKey} onChange={(e) => setCourierForm({ ...courierForm, apiKey: e.target.value })} required />
             <input className="input" placeholder="Secret Key" value={courierForm.secretKey} onChange={(e) => setCourierForm({ ...courierForm, secretKey: e.target.value })} required />
-            <button className="btn-primary" disabled={courierBusy !== ""}>{courierBusy === "connect" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-            <p className="text-xs text-slate-500 sm:col-span-3">Key Steadfast Portal থেকে পাবেন। যুক্ত করার আগে আসল API দিয়ে Balance যাচাই করা হয়; ভুল Key হলে Steadfast এর নিজের ত্রুটিই দেখাবে।</p>
+            <button className="btn-primary" disabled={courierBusy !== ""}>{courierBusy === "connect" ? dict.orders.verifying : dict.orders.verifyAndAdd}</button>
+            <p className="text-xs text-slate-500 sm:col-span-3">{dict.orders.youWillGetTheKey2}</p>
           </form>
         )}
       </div>
       <div className="card space-y-4">
-        <h2 className="font-semibold">🚚 আরও কুরিয়ার — Pathao / RedX / eCourier</h2>
+        <h2 className="font-semibold">{dict.orders.moreCouriersPathaoRedXECourier}</h2>
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2 rounded-xl bg-slate-50 p-4">
             <div className="flex items-center justify-between">
               <span className="font-medium">Pathao Courier</span>
-              <span className={conns.find((c) => c.provider === "pathao")?.connected ? "badge-green" : "badge-slate"}>{conns.find((c) => c.provider === "pathao")?.connected ? "যুক্ত আছে" : "যুক্ত নেই"}</span>
+              <span className={conns.find((c) => c.provider === "pathao")?.connected ? "badge-green" : "badge-slate"}>{conns.find((c) => c.provider === "pathao")?.connected ? dict.orders.linked : dict.orders.notLinked}</span>
             </div>
             {conns.find((c) => c.provider === "pathao")?.connected ? (
-              <button className="btn-ghost btn-sm text-red-600" onClick={() => disconnectProvider("pathao")}>সংযোগ বিচ্ছিন্ন</button>
+              <button className="btn-ghost btn-sm text-red-600" onClick={() => disconnectProvider("pathao")}>{dict.orders.disconnected}</button>
             ) : (
               <form onSubmit={connectPathao} className="grid gap-2">
                 <input className="input" placeholder="Client ID" value={pathaoForm.clientId} onChange={(e) => setPathaoForm({ ...pathaoForm, clientId: e.target.value })} required />
                 <input className="input" placeholder="Client Secret" value={pathaoForm.clientSecret} onChange={(e) => setPathaoForm({ ...pathaoForm, clientSecret: e.target.value })} required />
-                <input className="input" placeholder="Merchant ইমেইল (Username)" value={pathaoForm.username} onChange={(e) => setPathaoForm({ ...pathaoForm, username: e.target.value })} required />
-                <input className="input" type="password" placeholder="Merchant পাসওয়ার্ড" value={pathaoForm.password} onChange={(e) => setPathaoForm({ ...pathaoForm, password: e.target.value })} required />
-                <label className="flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={pathaoForm.sandbox} onChange={(e) => setPathaoForm({ ...pathaoForm, sandbox: e.target.checked })} /> Sandbox (টেস্ট) পরিবেশ</label>
-                <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "pathao" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-500">Client ID/Secret Pathao Merchant Panel এর Developer API অংশে পাবেন। যুক্ত করার আগে আসল API তে Token নিয়ে Store তালিকা যাচাই করা হয়। পাসওয়ার্ড Token নবায়নের জন্য এনক্রিপ্ট করে রাখা হয়।</p>
+                <input className="input" placeholder={dict.orders.merchantEmailUsername} value={pathaoForm.username} onChange={(e) => setPathaoForm({ ...pathaoForm, username: e.target.value })} required />
+                <input className="input" type="password" placeholder={dict.orders.merchantPassword} value={pathaoForm.password} onChange={(e) => setPathaoForm({ ...pathaoForm, password: e.target.value })} required />
+                <label className="flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={pathaoForm.sandbox} onChange={(e) => setPathaoForm({ ...pathaoForm, sandbox: e.target.checked })} /> {dict.orders.sandboxTestEnvironment}</label>
+                <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "pathao" ? dict.orders.verifying : dict.orders.verifyAndAdd}</button>
+                <p className="text-xs text-slate-500">{dict.orders.clientIDSecretAreIn}</p>
               </form>
             )}
           </div>
           <div className="space-y-2 rounded-xl bg-slate-50 p-4">
             <div className="flex items-center justify-between">
               <span className="font-medium">RedX</span>
-              <span className={conns.find((c) => c.provider === "redx")?.connected ? "badge-green" : "badge-slate"}>{conns.find((c) => c.provider === "redx")?.connected ? "যুক্ত আছে" : "যুক্ত নেই"}</span>
+              <span className={conns.find((c) => c.provider === "redx")?.connected ? "badge-green" : "badge-slate"}>{conns.find((c) => c.provider === "redx")?.connected ? dict.orders.linked : dict.orders.notLinked}</span>
             </div>
             {conns.find((c) => c.provider === "redx")?.connected ? (
-              <button className="btn-ghost btn-sm text-red-600" onClick={() => disconnectProvider("redx")}>সংযোগ বিচ্ছিন্ন</button>
+              <button className="btn-ghost btn-sm text-red-600" onClick={() => disconnectProvider("redx")}>{dict.orders.disconnected}</button>
             ) : (
               <form onSubmit={connectRedx} className="grid gap-2">
                 <input className="input" placeholder="API Access Token" value={redxForm.accessToken} onChange={(e) => setRedxForm({ ...redxForm, accessToken: e.target.value })} required />
-                <input className="input" placeholder="Base URL (ঐচ্ছিক — Legacy অ্যাকাউন্টের জন্য)" value={redxForm.baseUrl} onChange={(e) => setRedxForm({ ...redxForm, baseUrl: e.target.value })} />
-                <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "redx" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-500">Token RedX Merchant Panel এর API Settings থেকে পাবেন। যুক্ত করার আগে আসল API থেকে Delivery Area তালিকা এনে যাচাই করা হয়।</p>
+                <input className="input" placeholder={dict.orders.baseURLOptionalForLegacy} value={redxForm.baseUrl} onChange={(e) => setRedxForm({ ...redxForm, baseUrl: e.target.value })} />
+                <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "redx" ? dict.orders.verifying : dict.orders.verifyAndAdd}</button>
+                <p className="text-xs text-slate-500">{dict.orders.youWillGetTheToken}</p>
               </form>
             )}
           </div>
           <div className="space-y-2 rounded-xl bg-slate-50 p-4">
             <div className="flex items-center justify-between">
               <span className="font-medium">eCourier</span>
-              <span className={conns.find((c) => c.provider === "ecourier")?.connected ? "badge-green" : "badge-slate"}>{conns.find((c) => c.provider === "ecourier")?.connected ? "যুক্ত আছে" : "যুক্ত নেই"}</span>
+              <span className={conns.find((c) => c.provider === "ecourier")?.connected ? "badge-green" : "badge-slate"}>{conns.find((c) => c.provider === "ecourier")?.connected ? dict.orders.linked : dict.orders.notLinked}</span>
             </div>
             {conns.find((c) => c.provider === "ecourier")?.connected ? (
-              <button className="btn-ghost btn-sm text-red-600" onClick={() => disconnectProvider("ecourier")}>সংযোগ বিচ্ছিন্ন</button>
+              <button className="btn-ghost btn-sm text-red-600" onClick={() => disconnectProvider("ecourier")}>{dict.orders.disconnected}</button>
             ) : (
               <form onSubmit={connectEcourier} className="grid gap-2">
                 <input className="input" placeholder="API Key" value={ecourierForm.apiKey} onChange={(e) => setEcourierForm({ ...ecourierForm, apiKey: e.target.value })} required />
                 <input className="input" placeholder="API Secret" value={ecourierForm.apiSecret} onChange={(e) => setEcourierForm({ ...ecourierForm, apiSecret: e.target.value })} required />
                 <input className="input" placeholder="User ID" value={ecourierForm.userId} onChange={(e) => setEcourierForm({ ...ecourierForm, userId: e.target.value })} required />
-                <input className="input" placeholder="Base URL (ঐচ্ছিক — Partner অ্যাকাউন্টের জন্য)" value={ecourierForm.baseUrl} onChange={(e) => setEcourierForm({ ...ecourierForm, baseUrl: e.target.value })} />
-                <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "ecourier" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-500">তিনটি তথ্য eCourier আপনার মার্চেন্ট অ্যাকাউন্টের জন্য ইস্যু করে দেয় — তাদের কাছ থেকে সংগ্রহ করুন। যুক্ত করার আগে আসল API থেকে নির্ধারিত Package তালিকা এনে যাচাই করা হয়।</p>
+                <input className="input" placeholder={dict.orders.baseURLOptionalForPartner} value={ecourierForm.baseUrl} onChange={(e) => setEcourierForm({ ...ecourierForm, baseUrl: e.target.value })} />
+                <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "ecourier" ? dict.orders.verifying : dict.orders.verifyAndAdd}</button>
+                <p className="text-xs text-slate-500">{dict.orders.eCourierIssuesThreePiecesOf}</p>
               </form>
             )}
           </div>
         </div>
       </div>
       <div className="card space-y-3">
-        <h2 className="font-semibold">⚙️ কুরিয়ার অটো-সিলেক্ট নিয়ম</h2>
-        <p className="text-xs text-slate-500">শর্ত মিললে বুকিংয়ের সময় কুরিয়ার নিজে থেকে সাজেস্ট হবে — স্টাফ চাইলে বদলাতে পারবেন। Priority বেশি হলে সেই নিয়ম আগে যাচাই হয়।</p>
+        <h2 className="font-semibold">{dict.orders.courierAutoSelectRules}</h2>
+        <p className="text-xs text-slate-500">{dict.orders.whenConditionsMatchTheCourier}</p>
         {ruleNotice ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{ruleNotice}</p> : null}
-        {courierRules.length === 0 ? <p className="text-sm text-slate-400">কোনো নিয়ম নেই।</p> : (
+        {courierRules.length === 0 ? <p className="text-sm text-slate-400">{dict.orders.noRules}</p> : (
           <ul className="space-y-1.5">
             {[...courierRules].sort((a, b) => b.priority - a.priority).map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                <span><span className="font-medium">{r.name}</span> <span className="text-slate-500">→ {r.provider}</span> <span className="badge-slate ml-1">Priority {r.priority}</span> <span className={r.active ? "badge-green ml-1" : "badge-slate ml-1"}>{r.active ? "সক্রিয়" : "নিষ্ক্রিয়"}</span>
+                <span><span className="font-medium">{r.name}</span> <span className="text-slate-500">→ {r.provider}</span> <span className="badge-slate ml-1">Priority {r.priority}</span> <span className={r.active ? "badge-green ml-1" : "badge-slate ml-1"}>{r.active ? dict.orders.active : dict.orders.inactive}</span>
                   <span className="block text-xs text-slate-500">{ruleConditionsSummary(r)}</span></span>
                 <span className="flex gap-2">
-                  <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => { setEditingRule(r); setRuleForm({ name: r.name, provider: r.provider, courierAccountId: r.courierAccountId, priority: String(r.priority), districts: (r.conditions.districts ?? []).join(", "), minWeightGrams: r.conditions.minWeightGrams != null ? String(r.conditions.minWeightGrams) : "", maxWeightGrams: r.conditions.maxWeightGrams != null ? String(r.conditions.maxWeightGrams) : "", minOrderTaka: r.conditions.minOrderMinor != null ? String(Number(r.conditions.minOrderMinor) / 100) : "", maxOrderTaka: r.conditions.maxOrderMinor != null ? String(Number(r.conditions.maxOrderMinor) / 100) : "", paymentType: r.conditions.paymentType ?? "", active: r.active }); }}>সম্পাদনা</button>
-                  <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={ruleBusy !== ""} onClick={() => deleteRule(r)}>মুছুন</button>
+                  <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => { setEditingRule(r); setRuleForm({ name: r.name, provider: r.provider, courierAccountId: r.courierAccountId, priority: String(r.priority), districts: (r.conditions.districts ?? []).join(", "), minWeightGrams: r.conditions.minWeightGrams != null ? String(r.conditions.minWeightGrams) : "", maxWeightGrams: r.conditions.maxWeightGrams != null ? String(r.conditions.maxWeightGrams) : "", minOrderTaka: r.conditions.minOrderMinor != null ? String(Number(r.conditions.minOrderMinor) / 100) : "", maxOrderTaka: r.conditions.maxOrderMinor != null ? String(Number(r.conditions.maxOrderMinor) / 100) : "", paymentType: r.conditions.paymentType ?? "", active: r.active }); }}>{dict.orders.edit}</button>
+                  <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={ruleBusy !== ""} onClick={() => deleteRule(r)}>{dict.orders.delete}</button>
                 </span>
               </li>
             ))}
           </ul>
         )}
         <form onSubmit={saveRule} className="grid gap-2 border-t pt-3 sm:grid-cols-3">
-          <input className="input" placeholder="নিয়মের নাম *" value={ruleForm.name} onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })} required />
+          <input className="input" placeholder={dict.orders.ruleName} value={ruleForm.name} onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })} required />
           <select className="input" value={ruleForm.courierAccountId} onChange={(e) => { const c = conns.find((x) => (x.id ?? x.provider) === e.target.value); setRuleForm({ ...ruleForm, courierAccountId: e.target.value, provider: c?.provider ?? ruleForm.provider }); }} required>
-            <option value="">কুরিয়ার অ্যাকাউন্ট বেছে নিন</option>
+            <option value="">{dict.orders.chooseACourierAccount}</option>
             {conns.filter((c) => c.connected).map((c) => <option key={c.provider} value={c.id ?? c.provider}>{c.provider}</option>)}
-            {courierRules.map((r) => <option key={`rule-${r.id}`} value={r.courierAccountId}>{r.provider} (বিদ্যমান নিয়ম থেকে)</option>)}
+            {courierRules.map((r) => <option key={`rule-${r.id}`} value={r.courierAccountId}>{r.provider} {dict.orders.fromExistingRules}</option>)}
           </select>
           <input className="input" type="number" placeholder="Priority" value={ruleForm.priority} onChange={(e) => setRuleForm({ ...ruleForm, priority: e.target.value })} />
-          <input className="input" placeholder="জেলা (কমা দিয়ে, ঐচ্ছিক)" value={ruleForm.districts} onChange={(e) => setRuleForm({ ...ruleForm, districts: e.target.value })} />
-          <input className="input" type="number" placeholder="সর্বনিম্ন ওজন (গ্রাম)" value={ruleForm.minWeightGrams} onChange={(e) => setRuleForm({ ...ruleForm, minWeightGrams: e.target.value })} />
-          <input className="input" type="number" placeholder="সর্বোচ্চ ওজন (গ্রাম)" value={ruleForm.maxWeightGrams} onChange={(e) => setRuleForm({ ...ruleForm, maxWeightGrams: e.target.value })} />
-          <input className="input" inputMode="decimal" placeholder="সর্বনিম্ন অর্ডার মূল্য (৳)" value={ruleForm.minOrderTaka} onChange={(e) => setRuleForm({ ...ruleForm, minOrderTaka: e.target.value })} />
-          <input className="input" inputMode="decimal" placeholder="সর্বোচ্চ অর্ডার মূল্য (৳)" value={ruleForm.maxOrderTaka} onChange={(e) => setRuleForm({ ...ruleForm, maxOrderTaka: e.target.value })} />
+          <input className="input" placeholder={dict.orders.districtsCommaSeparatedOptional} value={ruleForm.districts} onChange={(e) => setRuleForm({ ...ruleForm, districts: e.target.value })} />
+          <input className="input" type="number" placeholder={dict.orders.minimumWeightGrams} value={ruleForm.minWeightGrams} onChange={(e) => setRuleForm({ ...ruleForm, minWeightGrams: e.target.value })} />
+          <input className="input" type="number" placeholder={dict.orders.maximumWeightGrams} value={ruleForm.maxWeightGrams} onChange={(e) => setRuleForm({ ...ruleForm, maxWeightGrams: e.target.value })} />
+          <input className="input" inputMode="decimal" placeholder={dict.orders.minimumOrderValue} value={ruleForm.minOrderTaka} onChange={(e) => setRuleForm({ ...ruleForm, minOrderTaka: e.target.value })} />
+          <input className="input" inputMode="decimal" placeholder={dict.orders.maximumOrderValue} value={ruleForm.maxOrderTaka} onChange={(e) => setRuleForm({ ...ruleForm, maxOrderTaka: e.target.value })} />
           <select className="input" value={ruleForm.paymentType} onChange={(e) => setRuleForm({ ...ruleForm, paymentType: e.target.value })}>
-            <option value="">পেমেন্ট টাইপ: যেকোনো</option>
+            <option value="">{dict.orders.paymentTypeAny}</option>
             <option value="cod">COD</option>
             <option value="prepaid">Prepaid</option>
           </select>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={ruleForm.active} onChange={(e) => setRuleForm({ ...ruleForm, active: e.target.checked })} /> সক্রিয়</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={ruleForm.active} onChange={(e) => setRuleForm({ ...ruleForm, active: e.target.checked })} /> {dict.orders.active}</label>
           <div className="flex gap-2 sm:col-span-2">
-            <button className="btn-primary btn-sm" disabled={ruleBusy !== ""}>{ruleBusy === "save" ? "হচ্ছে…" : editingRule ? "নিয়ম আপডেট করুন" : "নিয়ম যোগ করুন"}</button>
-            {editingRule ? <button type="button" className="btn-secondary btn-sm" onClick={() => { setEditingRule(null); setRuleForm({ name: "", provider: "", courierAccountId: "", priority: "10", districts: "", minWeightGrams: "", maxWeightGrams: "", minOrderTaka: "", maxOrderTaka: "", paymentType: "", active: true }); }}>বাতিল</button> : null}
+            <button className="btn-primary btn-sm" disabled={ruleBusy !== ""}>{ruleBusy === "save" ? dict.orders.ing : editingRule ? dict.orders.updateRule : dict.orders.addRule}</button>
+            {editingRule ? <button type="button" className="btn-secondary btn-sm" onClick={() => { setEditingRule(null); setRuleForm({ name: "", provider: "", courierAccountId: "", priority: "10", districts: "", minWeightGrams: "", maxWeightGrams: "", minOrderTaka: "", maxOrderTaka: "", paymentType: "", active: true }); }}>{dict.common.cancel}</button> : null}
           </div>
         </form>
         <div className="space-y-2 border-t pt-3">
-          <p className="text-sm font-medium">ট্র্যাকিং URL টেমপ্লেট</p>
-          {conns.filter((c) => c.connected).length === 0 ? <p className="text-xs text-slate-500">কোনো কুরিয়ার যুক্ত নেই।</p> : conns.filter((c) => c.connected).map((c) => (
+          <p className="text-sm font-medium">{dict.orders.trackingURLTemplate}</p>
+          {conns.filter((c) => c.connected).length === 0 ? <p className="text-xs text-slate-500">{dict.orders.noCouriersConnected}</p> : conns.filter((c) => c.connected).map((c) => (
             <div key={c.provider} className="flex flex-wrap items-center gap-2">
               <span className="w-24 text-sm font-medium">{c.provider}</span>
               <input className="input flex-1" placeholder="https://…/track/{trackingId}" value={trackingTemplates[c.provider] ?? ""} onChange={(e) => setTrackingTemplates({ ...trackingTemplates, [c.provider]: e.target.value })} />
-              <button type="button" className="btn-secondary btn-sm" disabled={ruleBusy !== ""} onClick={() => saveTrackingTemplate(c.provider)}>{ruleBusy === `tpl-${c.provider}` ? "হচ্ছে…" : "সংরক্ষণ"}</button>
+              <button type="button" className="btn-secondary btn-sm" disabled={ruleBusy !== ""} onClick={() => saveTrackingTemplate(c.provider)}>{ruleBusy === `tpl-${c.provider}` ? dict.orders.ing : dict.orders.save}</button>
             </div>
           ))}
-          <p className="text-xs text-slate-500">{"{trackingId}"} জায়গায় আসল ট্র্যাকিং কোড বসবে। খালি রাখলে আগের মতোই শুধু নম্বর দেখাবে।</p>
+          <p className="text-xs text-slate-500">{"{trackingId}"} {dict.orders.theRealTrackingCodeWill}</p>
         </div>
       </div>
       <div className="card space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold">🚚 কুরিয়ার পারফরম্যান্স</h2>
-          <label className="flex items-center gap-2 text-sm text-slate-500">সময়কাল
-            <select className="rounded-lg border bg-white px-2 py-1.5 text-sm" value={perfDays} onChange={(e) => setPerfDays(Number(e.target.value))}>
-              <option value={7}>শেষ ৭ দিন</option>
-              <option value={30}>শেষ ৩০ দিন</option>
-              <option value={90}>শেষ ৯০ দিন</option>
+          <h2 className="font-semibold">{dict.orders.courierPerformance}</h2>
+          <label className="flex items-center gap-2 text-sm text-slate-500">{dict.orders.period}<select className="rounded-lg border bg-white px-2 py-1.5 text-sm" value={perfDays} onChange={(e) => setPerfDays(Number(e.target.value))}>
+              <option value={7}>{dict.orders.last7Days}</option>
+              <option value={30}>{dict.orders.last30Days}</option>
+              <option value={90}>{dict.orders.last90Days}</option>
             </select>
           </label>
         </div>
         {!perf ? (
-          <p className="text-sm text-slate-400">পারফরম্যান্সের তথ্য পাওয়া যায়নি।</p>
+          <p className="text-sm text-slate-400">{dict.orders.performanceDataNotAvailable}</p>
         ) : perf.providers.length === 0 ? (
-          <p className="text-sm text-slate-400">এই সময়ে কোনো shipment বুক হয়নি।</p>
+          <p className="text-sm text-slate-400">{dict.orders.noShipmentsBookedInThis2}</p>
         ) : (
           <ResponsiveTable
             table={
@@ -2292,14 +2295,14 @@ function OrdersPageInner() {
             <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-2 font-semibold">কুরিয়ার</th>
-                  <th className="py-2 pr-2 font-semibold">বুকিং</th>
-                  <th className="py-2 pr-2 font-semibold">ডেলিভার্ড</th>
-                  <th className="py-2 pr-2 font-semibold">রিটার্ন</th>
-                  <th className="py-2 pr-2 font-semibold">বাতিল</th>
-                  <th className="py-2 pr-2 font-semibold">পথে আছে</th>
-                  <th className="py-2 pr-2 font-semibold">ডেলিভারি হার</th>
-                  <th className="py-2 font-semibold">রিটার্ন হার</th>
+                  <th className="py-2 pr-2 font-semibold">{dict.orders.courier}</th>
+                  <th className="py-2 pr-2 font-semibold">{dict.orders.booking}</th>
+                  <th className="py-2 pr-2 font-semibold">{dict.orders.delivered2}</th>
+                  <th className="py-2 pr-2 font-semibold">{dict.orders.return2}</th>
+                  <th className="py-2 pr-2 font-semibold">{dict.common.cancel}</th>
+                  <th className="py-2 pr-2 font-semibold">{dict.orders.inTransit}</th>
+                  <th className="py-2 pr-2 font-semibold">{dict.orders.deliveryRate}</th>
+                  <th className="py-2 font-semibold">{dict.orders.returnRate}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2308,7 +2311,7 @@ function OrdersPageInner() {
                   const rate = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
                   return (
                     <tr key={row.provider} className={isTotal ? "border-t-2 bg-slate-50 font-semibold" : "border-b last:border-0"}>
-                      <td className="py-2 pr-2">{PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</td>
+                      <td className="py-2 pr-2">{row.provider === "total" ? dict.orders.total : PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</td>
                       <td className="py-2 pr-2">{row.booked}</td>
                       <td className="py-2 pr-2">{row.delivered}</td>
                       <td className="py-2 pr-2">{row.returned}</td>
@@ -2328,35 +2331,35 @@ function OrdersPageInner() {
               const rate = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
               return (
                 <div key={row.provider} className={`rounded-xl border bg-white p-3 shadow-sm ${isTotal ? "bg-slate-50 font-semibold" : ""}`}>
-                  <div className="font-bold text-slate-900">{PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</div>
+                  <div className="font-bold text-slate-900">{row.provider === "total" ? dict.orders.total : PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</div>
                   <dl className="mt-2 space-y-1 text-xs">
-                    <div className="flex justify-between gap-2"><dt className="text-slate-500">বুকিং</dt><dd className="font-medium">{row.booked}</dd></div>
-                    <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভার্ড</dt><dd className="font-medium">{row.delivered}</dd></div>
-                    <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন</dt><dd className="font-medium">{row.returned}</dd></div>
-                    <div className="flex justify-between gap-2"><dt className="text-slate-500">বাতিল</dt><dd className="font-medium">{row.cancelled}</dd></div>
-                    <div className="flex justify-between gap-2"><dt className="text-slate-500">পথে আছে</dt><dd className="font-medium">{row.inFlight}</dd></div>
-                    <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভারি হার</dt><dd className="font-medium">{rate(row.deliveryRate)}</dd></div>
-                    <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন হার</dt><dd className="font-medium">{rate(row.returnRate)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.booking}</dt><dd className="font-medium">{row.booked}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.delivered2}</dt><dd className="font-medium">{row.delivered}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.return2}</dt><dd className="font-medium">{row.returned}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.common.cancel}</dt><dd className="font-medium">{row.cancelled}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.inTransit}</dt><dd className="font-medium">{row.inFlight}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.deliveryRate}</dt><dd className="font-medium">{rate(row.deliveryRate)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.returnRate}</dt><dd className="font-medium">{rate(row.returnRate)}</dd></div>
                   </dl>
                 </div>
               );
             })}
           />
         )}
-        <p className="text-[11px] text-slate-500">হিসাবের নিয়ম: শুধু এই সময়ে বুক করা shipment। ডেলিভার্ড = delivered + partial delivery; decided = ডেলিভার্ড + রিটার্ন + বাতিল; হার = decided-এর মধ্যে অংশ — decided 0 হলে হার দেখানো হয় না। গড় ডেলিভারি সময় এখন দেখানো যাচ্ছে না, কারণ shipment রেকর্ডে ডেলিভারির মুহূর্তের timestamp সংরক্ষিত হয় না।</p>
+        <p className="text-[11px] text-slate-500">{dict.orders.calculationRuleOnlyShipmentsBooked}</p>
       </div>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {riskDetail ? (
         <div className="card space-y-2 border-amber-200 bg-amber-50/60">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold">↩️ রিটার্ন ঝুঁকি — অর্ডার {riskDetail.orderLabel} <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${RISK_LABEL[riskDetail.band]?.cls ?? ""}`}>{RISK_LABEL[riskDetail.band]?.text ?? riskDetail.band}{riskDetail.score != null ? ` · স্কোর ${riskDetail.score}/১০০` : ""}</span></h3>
-            <button className="btn-ghost btn-sm" onClick={() => setRiskDetail(null)}>বন্ধ করুন</button>
+            <h3 className="font-semibold">{dict.orders.returnRiskOrder}{riskDetail.orderLabel} <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${RISK_LABEL[riskDetail.band as keyof typeof RISK_LABEL]?.cls ?? ""}`}>{RISK_LABEL[riskDetail.band as keyof typeof RISK_LABEL] ? dict.orders[RISK_LABEL[riskDetail.band as keyof typeof RISK_LABEL].textKey] : riskDetail.band}{riskDetail.score != null ? t("orders.score100", { score: riskDetail.score }) : ""}</span></h3>
+            <button className="btn-ghost btn-sm" onClick={() => setRiskDetail(null)}>{dict.orders.close}</button>
           </div>
           <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
             {riskDetail.reasons.map((r, i) => <li key={i}>{r}</li>)}
           </ul>
           {riskDetail.suggestion ? <p className="text-sm font-medium text-amber-800">{riskDetail.suggestion}</p> : null}
-          <p className="text-xs text-slate-500">স্কোরটি শুধু এই দোকানের নিজের অর্ডার ইতিহাস থেকে হিসাব করা (ফোন নম্বর মিলিয়ে)। এটি কোনো অর্ডার আটকায় না — সিদ্ধান্ত সবসময় আপনার।</p>
+          <p className="text-xs text-slate-500">{dict.orders.theScoreIsCalculatedOnly}</p>
         </div>
       ) : null}
       {/* ON4: Fraud Shield detail — the PERSISTED fraud
@@ -2366,22 +2369,22 @@ function OrdersPageInner() {
       {fraudOrder ? (
         <div className="card space-y-2 border-rose-200 bg-rose-50/50">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-semibold">🛡️ জালিয়াতি ঝুঁকি (Fraud Shield) — অর্ডার #{fraudOrder.externalNumber ?? fraudOrder.id.slice(0, 8)}
+            <h3 className="font-semibold">{dict.orders.fraudRiskFraudShieldOrder}{fraudOrder.externalNumber ?? fraudOrder.id.slice(0, 8)}
               {fraudOrder.riskBand ? (
-                <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${FRAUD_BAND_LABEL[fraudOrder.riskBand]?.cls ?? ""}`} title="জালিয়াতি ঝুঁকি (Fraud Shield)">
+                <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${FRAUD_BAND_LABEL[fraudOrder.riskBand]?.cls ?? ""}`} title={dict.orders.fraudShield}>
                   {FRAUD_BAND_LABEL[fraudOrder.riskBand]?.text ?? fraudOrder.riskBand}{fraudOrder.riskScore != null ? ` · ${fraudOrder.riskScore}` : ""}
                 </span>
-              ) : <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">এখনো যাচাই হয়নি</span>}
+              ) : <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">{dict.orders.notVerifiedYet}</span>}
             </h3>
-            <button className="btn-ghost btn-sm" onClick={() => setFraudOrder(null)}>বন্ধ করুন</button>
+            <button className="btn-ghost btn-sm" onClick={() => setFraudOrder(null)}>{dict.orders.close}</button>
           </div>
-          {fraudOrder.riskScore != null ? <p className="text-sm text-slate-700">স্কোর: <b>{fraudOrder.riskScore}</b>{fraudOrder.riskAssessedAt ? <span className="text-xs text-slate-500"> · যাচাই: {new Date(fraudOrder.riskAssessedAt).toLocaleString("bn-BD")}</span> : null}</p> : null}
-          {fraudOrder.deviceHashPrefix ? <p className="text-sm text-slate-700">ডিভাইস: <span className="font-mono">{fraudOrder.deviceHashPrefix}…</span> <span className="text-xs text-slate-500">(শুধু হ্যাশের শুরুটা দেখানো হয়)</span></p> : null}
+          {fraudOrder.riskScore != null ? <p className="text-sm text-slate-700">{dict.orders.score}<b>{fraudOrder.riskScore}</b>{fraudOrder.riskAssessedAt ? <span className="text-xs text-slate-500"> {dict.orders.checked}{fmtDateTime(locale, new Date(fraudOrder.riskAssessedAt))}</span> : null}</p> : null}
+          {fraudOrder.deviceHashPrefix ? <p className="text-sm text-slate-700">{dict.orders.device}<span className="font-mono">{fraudOrder.deviceHashPrefix}…</span> <span className="text-xs text-slate-500">{dict.orders.onlyTheStartOfThe}</span></p> : null}
           {(fraudOrder.riskReasons ?? []).length > 0 ? (
             <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
               {(fraudOrder.riskReasons ?? []).map((r, i) => <li key={r.key ?? i}>{r.label} <span className="font-semibold text-rose-700">(+{r.points})</span></li>)}
             </ul>
-          ) : <p className="text-sm text-slate-500">কোনো ঝুঁকির কারণ রেকর্ড নেই।</p>}
+          ) : <p className="text-sm text-slate-500">{dict.orders.noRiskReasonsRecorded}</p>}
           {/* NF13: network sibling signal — rendered ONLY when
               present (opted-in orgs), labelled as combined
               multi-shop data, never as this shop's own score. */}
@@ -2389,29 +2392,29 @@ function OrdersPageInner() {
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2">
               <p className="text-sm font-semibold text-indigo-900">{networkSignalHeading(fraudOrder.networkSignal)}</p>
               <p className="text-sm text-slate-700">{networkSignalBody(fraudOrder.networkSignal)}</p>
-              <p className="text-[11px] text-slate-500">এটি এই দোকানের নিজের স্কোর নয় — সব দোকানের সম্মিলিত তথ্য, শুধু অতিরিক্ত ধারণার জন্য।</p>
+              <p className="text-[11px] text-slate-500">{dict.orders.thisIsNotThisShop2}</p>
             </div>
           ) : null}
           {fraudOrder.reviewHold ? (
             <p className="rounded-lg bg-rose-100 px-3 py-2 text-sm font-medium text-rose-800">
-              ⛔ পর্যালোচনার জন্য আটকানো আছে{fraudOrder.reviewHoldReason ? ` — কারণ: ${fraudOrder.reviewHoldReason}` : ""}
-              {fraudOrder.reviewHeldAt ? <span className="block text-xs font-normal">আটকানো হয়েছে: {new Date(fraudOrder.reviewHeldAt).toLocaleString("bn-BD")}</span> : null}
+              {dict.orders.heldForReview}{fraudOrder.reviewHoldReason ? t("orders.reason2", { reviewHoldReason: fraudOrder.reviewHoldReason }) : ""}
+              {fraudOrder.reviewHeldAt ? <span className="block text-xs font-normal">{dict.orders.held}{fmtDateTime(locale, new Date(fraudOrder.reviewHeldAt))}</span> : null}
             </p>
-          ) : <p className="text-xs text-slate-500">এই অর্ডারটি আটকানো নেই।</p>}
+          ) : <p className="text-xs text-slate-500">{dict.orders.thisOrderIsNotHeld}</p>}
           {fraudNotice ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{fraudNotice}</p> : null}
           <div className="flex flex-wrap items-center gap-2 border-t pt-2">
             <button type="button" className="btn-secondary btn-sm" disabled={fraudBusy !== ""} onClick={() => void reassessFraud(fraudOrder)}>
-              {fraudBusy === "reassess" ? "যাচাই হচ্ছে…" : "আবার যাচাই করুন"}
+              {fraudBusy === "reassess" ? dict.orders.verifying2 : dict.orders.reCheck}
             </button>
             {fraudOrder.reviewHold ? (
               <button type="button" className="btn-primary btn-sm" disabled={fraudBusy !== ""} onClick={() => void releaseFraud(fraudOrder)}>
-                {fraudBusy === "release" ? "ছাড় হচ্ছে…" : "ছাড় দিন"}
+                {fraudBusy === "release" ? dict.orders.releasing : dict.orders.releaseHold}
               </button>
             ) : (
               <>
-                <input className="input w-56" placeholder="আটকানোর কারণ (ঐচ্ছিক)" value={holdReason} onChange={(e) => setHoldReason(e.target.value)} aria-label="আটকানোর কারণ" />
+                <input className="input w-56" placeholder={dict.orders.holdReasonOptional} value={holdReason} onChange={(e) => setHoldReason(e.target.value)} aria-label={dict.orders.holdReason} />
                 <button type="button" className="btn-primary btn-sm" disabled={fraudBusy !== ""} onClick={() => void holdFraud(fraudOrder)}>
-                  {fraudBusy === "hold" ? "আটকানো হচ্ছে…" : "আটকে দিন"}
+                  {fraudBusy === "hold" ? dict.orders.holding : dict.orders.holdIt}
                 </button>
               </>
             )}
@@ -2421,16 +2424,16 @@ function OrdersPageInner() {
       {reviews.length > 0 ? (
         <div className="card space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-semibold">⭐ গ্রাহক রিভিউ</h2>
+            <h2 className="font-semibold">{dict.orders.customerReviews}</h2>
             <select className="input w-auto" value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value)}>
-              <option value="">সব রিভিউ</option>
-              <option value="5">৫ ★</option>
-              <option value="4">৪ ★</option>
-              <option value="3">৩ ★</option>
-              <option value="2">২ ★</option>
-              <option value="1">১ ★</option>
-              <option value="pending">এখনো পাঠানো হয়নি</option>
-              <option value="requested">রিভিউ চাওয়া হয়েছে</option>
+              <option value="">{dict.orders.allReviews}</option>
+              <option value="5">{dict.orders.text1giz4}</option>
+              <option value="4">{dict.orders.text1gi8f}</option>
+              <option value="3">{dict.orders.text1ghhq}</option>
+              <option value="2">{dict.orders.text1ggr1}</option>
+              <option value="1">{dict.orders.text1gg0c}</option>
+              <option value="pending">{dict.orders.notSentYet}</option>
+              <option value="requested">{dict.orders.reviewRequested}</option>
             </select>
           </div>
           {reviews.filter((r) => reviewFilter === "" ? true : reviewFilter === "pending" ? r.status === "pending_send" : reviewFilter === "requested" ? r.status === "requested" : r.rating === Number(reviewFilter)).slice(0, 50).map((r) => (
@@ -2439,24 +2442,24 @@ function OrdersPageInner() {
               {r.customerName ? <span className="text-slate-600">{r.customerName}</span> : null}
               {r.rating != null ? <span className="text-amber-500">{stars(r.rating)}</span> : <span className="badge-slate">{reviewStatusBn(r)}</span>}
               {r.comment ? <span className="text-slate-700">“{r.comment}”</span> : null}
-              <span className="text-xs text-slate-500">{r.receivedAt ? new Date(r.receivedAt).toLocaleString("bn-BD") : r.requestedAt ? `চাওয়া: ${new Date(r.requestedAt).toLocaleString("bn-BD")}` : "চ্যানেল নেই — পাঠানো হয়নি"}</span>
+              <span className="text-xs text-slate-500">{r.receivedAt ? fmtDateTime(locale, new Date(r.receivedAt)) : r.requestedAt ? t("orders.requested2", { p0: fmtDateTime(locale, new Date(r.requestedAt)) }) : dict.orders.noChannelNotSent}</span>
             </div>
           ))}
-          {reviews.filter((r) => reviewFilter === "" ? true : reviewFilter === "pending" ? r.status === "pending_send" : reviewFilter === "requested" ? r.status === "requested" : r.rating === Number(reviewFilter)).length === 0 ? <p className="text-sm text-slate-400">এই ফিল্টারে কোনো রিভিউ নেই</p> : null}
+          {reviews.filter((r) => reviewFilter === "" ? true : reviewFilter === "pending" ? r.status === "pending_send" : reviewFilter === "requested" ? r.status === "requested" : r.rating === Number(reviewFilter)).length === 0 ? <p className="text-sm text-slate-400">{dict.orders.noReviewsInThisFilter}</p> : null}
         </div>
       ) : null}
       {chases.length > 0 ? (
         <div className="card space-y-2">
-          <h2 className="font-semibold">🎯 To Chase — থেমে যাওয়া অর্ডার সেশন</h2>
-          <p className="text-xs text-slate-500">অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া সেশনগুলোর অনুস্মারকের অবস্থা। শুধু যেসব সেশন Sweep ইতিমধ্যে বিবেচনা করেছে সেগুলোই এখানে আছে।</p>
+          <h2 className="font-semibold">{dict.orders.toChaseStalledOrderSessions}</h2>
+          <p className="text-xs text-slate-500">{dict.orders.reminderStatusesOfSessionsThat}</p>
           {chases.slice(0, 50).map((c) => (
             <div key={c.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b py-1.5 text-sm last:border-0">
-              <span className="font-medium">{c.productName ?? "পণ্য অজানা"}</span>
+              <span className="font-medium">{c.productName ?? dict.orders.productUnknown}</span>
               <span className="badge-slate">{chaseStatusBn(c)}</span>
-              {c.sessionStatus ? <span className="text-slate-500">সেশন: {c.sessionStatus}{c.sessionState ? ` (${c.sessionState})` : ""}</span> : null}
-              {c.lastChasedAt ? <span className="text-xs text-slate-500">সর্বশেষ অনুস্মারক: {new Date(c.lastChasedAt).toLocaleString("bn-BD")}</span> : null}
-              {c.lastFailedAt && (!c.lastChasedAt || c.lastFailedAt > c.lastChasedAt) ? <span className="text-xs text-red-500">সর্বশেষ পাঠানো ব্যর্থ হয়েছে — আবার চেষ্টা হবে</span> : null}
-              {!c.stoppedReason && c.lastEvent === "customer_replied" ? <span className="text-xs text-slate-500">গ্রাহক উত্তর দিয়েছেন</span> : null}
+              {c.sessionStatus ? <span className="text-slate-500">{dict.orders.sessions}{c.sessionStatus}{c.sessionState ? ` (${c.sessionState})` : ""}</span> : null}
+              {c.lastChasedAt ? <span className="text-xs text-slate-500">{dict.orders.lastReminder}{fmtDateTime(locale, new Date(c.lastChasedAt))}</span> : null}
+              {c.lastFailedAt && (!c.lastChasedAt || c.lastFailedAt > c.lastChasedAt) ? <span className="text-xs text-red-500">{dict.orders.theLastSendFailedWill}</span> : null}
+              {!c.stoppedReason && c.lastEvent === "customer_replied" ? <span className="text-xs text-slate-500">{dict.orders.customerReplied}</span> : null}
             </div>
           ))}
         </div>
@@ -2472,7 +2475,7 @@ function OrdersPageInner() {
                 count rides on this button instead. */}
             <button type="button" onClick={() => selectQueue("")}
               className={`flex min-h-[44px] shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === "" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
-              <span>সব অর্ডার</span>
+              <span>{dict.orders.allOrders}</span>
               {queues.find((q) => q.key === "all") ? (
                 <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${filters.queue === "" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>{queues.find((q) => q.key === "all")!.count}</span>
               ) : null}
@@ -2484,7 +2487,7 @@ function OrdersPageInner() {
                 <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${filters.queue === q.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>{q.count}</span>
               </button>
             ))}
-            {queues.length === 0 ? <span className="px-1 text-xs text-slate-500">কিউ লোড হয়নি</span> : null}
+            {queues.length === 0 ? <span className="px-1 text-xs text-slate-500">{dict.orders.queueDidNotLoad}</span> : null}
           </div>
         </aside>
         <div className="min-w-0 flex-1 space-y-4">
@@ -2492,55 +2495,54 @@ function OrdersPageInner() {
         {newOrdersCount > 0 ? (
           <button type="button" className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700"
             onClick={() => { setNewOrdersCount(0); void load(); void loadQueues(); }}>
-            {newOrdersCount}টি নতুন অর্ডার এসেছে — দেখুন
-          </button>
+            {newOrdersCount}{dict.orders.newOrdersHaveArrivedView}</button>
         ) : null}
         {/* ON1: sticky bulk bar (the legacy courier bulk-booking
             card further down is unchanged and coexists). */}
         {selected.length > 0 ? (
           <div className="sticky bottom-2 z-30 space-y-2 rounded-2xl border border-indigo-200 bg-white/95 p-3 shadow-lg backdrop-blur">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold">{selected.length}টি বেছে নেওয়া</span>
-              <select className="input w-auto" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} aria-label="নতুন অবস্থা">
+              <span className="text-sm font-semibold">{selected.length}{dict.orders.selected}</span>
+              <select className="input w-auto" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} aria-label={dict.orders.newStatus}>
                 {PATCH_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              <button className="btn-primary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("set_status")}>অবস্থা বদল</button>
-              <input className="input w-32" placeholder="ট্যাগ" value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} aria-label="বাল্ক ট্যাগ" />
-              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("add_tag")}>ট্যাগ যোগ</button>
-              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("remove_tag")}>ট্যাগ মুছুন</button>
-              <select className="input w-auto" value={bulkAssignee} onChange={(e) => setBulkAssignee(e.target.value)} aria-label="বাল্ক দায়িত্ব">
-                <option value="">সদস্য বেছে নিন</option>
-                <option value="__none__">দায়িত্ব তুলে নিন</option>
+              <button className="btn-primary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("set_status")}>{dict.orders.changeStatus}</button>
+              <input className="input w-32" placeholder={dict.orders.tag} value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} aria-label={dict.orders.bulkTags} />
+              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("add_tag")}>{dict.orders.addTag}</button>
+              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("remove_tag")}>{dict.orders.deleteTags}</button>
+              <select className="input w-auto" value={bulkAssignee} onChange={(e) => setBulkAssignee(e.target.value)} aria-label={dict.orders.bulkResponsibility}>
+                <option value="">{dict.orders.chooseAMember}</option>
+                <option value="__none__">{dict.orders.removeResponsibility}</option>
                 {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email}</option>)}
               </select>
-              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("assign")}>দায়িত্ব দিন</button>
-              <select className="input w-auto" value={bulkProviderOn1} onChange={(e) => setBulkProviderOn1(e.target.value)} aria-label="বাল্ক কুরিয়ার">
+              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("assign")}>{dict.orders.assignResponsibility}</button>
+              <select className="input w-auto" value={bulkProviderOn1} onChange={(e) => setBulkProviderOn1(e.target.value)} aria-label={dict.orders.bulkCourier}>
                 <option value="steadfast">Steadfast</option>
                 <option value="pathao">Pathao</option>
                 <option value="redx">RedX</option>
                 <option value="ecourier">eCourier</option>
               </select>
-              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("book_courier")}>কুরিয়ার বুক</button>
-              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("print_labels")}>লেবেল প্রিন্ট</button>
-              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("print_invoices")}>ইনভয়েস প্রিন্ট</button>
-              <button className="btn-secondary btn-sm" onClick={() => setPrintPanelOpen(true)}>🖨️ প্রিন্ট সেন্টার</button>
-              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void addSelectedToWave()}>ওয়েভে যোগ</button>
+              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("book_courier")}>{dict.orders.bookCourier2}</button>
+              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("print_labels")}>{dict.orders.printLabel}</button>
+              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void runBulkAction("print_invoices")}>{dict.orders.printInvoice3}</button>
+              <button className="btn-secondary btn-sm" onClick={() => setPrintPanelOpen(true)}>{dict.orders.printCenter}</button>
+              <button className="btn-secondary btn-sm" disabled={bulkActionBusy !== ""} onClick={() => void addSelectedToWave()}>{dict.orders.addToWave}</button>
               {selected.length >= 2 && selected.length <= 5 ? (
-                <button className="btn-secondary btn-sm" disabled={mergeBusy} onClick={openMerge}>মার্জ করুন</button>
+                <button className="btn-secondary btn-sm" disabled={mergeBusy} onClick={openMerge}>{dict.orders.merge}</button>
               ) : null}
-              <button className="btn-ghost btn-sm" onClick={() => { setSelected([]); setBulkActionResult(null); setWaveResult(null); }}>সিলেকশন মুছুন</button>
-              {bulkActionBusy ? <span className="text-xs text-slate-500">চলছে… ({bulkActionBusy})</span> : null}
+              <button className="btn-ghost btn-sm" onClick={() => { setSelected([]); setBulkActionResult(null); setWaveResult(null); }}>{dict.orders.clearSelection}</button>
+              {bulkActionBusy ? <span className="text-xs text-slate-500">{dict.orders.running}{bulkActionBusy})</span> : null}
             </div>
             {bulkActionResult ? (
               <div className="text-sm">
-                <p className="font-medium">ফলাফল: {bulkActionResult.succeeded}টি সফল · {bulkActionResult.failed}টি ব্যর্থ</p>
+                <p className="font-medium">{dict.orders.result}{bulkActionResult.succeeded}{dict.orders.successful}{bulkActionResult.failed}{dict.orders.failed2}</p>
                 {bulkActionResult.failed > 0 ? (
                   <details className="mt-1">
-                    <summary className="cursor-pointer text-xs font-semibold text-red-600">ব্যর্থগুলোর কারণ দেখুন</summary>
+                    <summary className="cursor-pointer text-xs font-semibold text-red-600">{dict.orders.viewFailureReasons}</summary>
                     <ul className="mt-1 space-y-0.5 text-xs text-red-600">
                       {bulkActionResult.results.filter((r) => !r.ok).map((r) => {
                         const o = items.find((x) => x.id === r.orderId);
-                        return <li key={r.orderId}>✗ #{o?.externalNumber ?? r.orderId.slice(0, 8)} — {r.error ?? "অজানা ত্রুটি"}</li>;
+                        return <li key={r.orderId}>✗ #{o?.externalNumber ?? r.orderId.slice(0, 8)} — {r.error ?? dict.orders.unknownError}</li>;
                       })}
                     </ul>
                   </details>
@@ -2549,7 +2551,7 @@ function OrdersPageInner() {
             ) : null}
             {waveResult ? (
               <div className="text-sm">
-                <p className="font-medium">পিক ওয়েভ: {waveResult.added}টি অর্ডার যোগ হয়েছে{waveResult.failed.length > 0 ? ` · ${waveResult.failed.length}টি যোগ হয়নি` : ""}</p>
+                <p className="font-medium">{dict.orders.pickWave}{waveResult.added}{dict.orders.ordersAdded}{waveResult.failed.length > 0 ? t("orders.notAdded", { length: waveResult.failed.length }) : ""}</p>
                 {waveResult.failed.length > 0 ? (
                   <ul className="mt-1 space-y-0.5 text-xs text-red-600">
                     {waveResult.failed.map((r) => {
@@ -2568,53 +2570,53 @@ function OrdersPageInner() {
           doesn't render. */}
       {codBoard ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
-          <span>🚚 courier-এর কাছে আটকে: <b>{fmtM(codBoard.totals.inTransitCodMinor)}</b></span>
+          <span>{dict.orders.stuckAtCourier}<b>{fmtM(codBoard.totals.inTransitCodMinor)}</b></span>
           <span aria-hidden="true">·</span>
-          <span>ডেলিভারি হয়েছে, টাকা আসেনি: <b>{fmtM(codBoard.totals.deliveredUncollectedMinor)}</b></span>
+          <span>{dict.orders.deliveredMoneyNotReceived}<b>{fmtM(codBoard.totals.deliveredUncollectedMinor)}</b></span>
           {codBoard.unassigned.orders > 0 ? (
-            <><span aria-hidden="true">·</span><span>এখনো courier-এ যায়নি: <b>{codBoard.unassigned.orders}টি</b> (বকেয়া {fmtM(codBoard.unassigned.dueMinor)})</span></>
+            <><span aria-hidden="true">·</span><span>{dict.orders.notYetSentToCourier}<b>{codBoard.unassigned.orders}{dict.orders.items}</b> {dict.orders.due6}{fmtM(codBoard.unassigned.dueMinor)})</span></>
           ) : null}
-          <a className="ml-auto font-semibold text-amber-900 underline" href="/dashboard/commerce/accounting">বিস্তারিত</a>
+          <a className="ml-auto font-semibold text-amber-900 underline" href="/dashboard/commerce/accounting">{dict.orders.details}</a>
         </div>
       ) : null}
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : items.length === 0 ? (
-        <EmptyState title="কোনো অর্ডার নেই" description="Stores & Integrations থেকে WooCommerce কানেক্ট করে Sync Orders চালান। অর্ডার Sync হলে এখানে দেখা যাবে।" />
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : items.length === 0 ? (
+        <EmptyState title={dict.orders.noOrders} description={dict.orders.connectWooCommerceFromStoresIntegrations} />
       ) : (
         <>
         {selected.length > 0 ? (
           <div className="card space-y-3 border-indigo-200 bg-indigo-50/60">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold">{selected.length}টি অর্ডার বেছে নেওয়া হয়েছে (সর্বোচ্চ ৫০)</span>
+              <span className="text-sm font-semibold">{selected.length}{dict.orders.ordersSelectedMax502}</span>
               <select className="input w-auto" value={bulkProvider} onChange={async (e) => { setBulkProvider(e.target.value); await loadProviderLists(e.target.value); }}>
                 {(["steadfast", "pathao", "redx", "ecourier"] as const).map((p) => {
                   const c = conns.find((x) => x.provider === p);
                   const connected = c ? c.connected : p === "steadfast" ? !!courier?.connected : false;
-                  return <option key={p} value={p} disabled={!connected}>{p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : p === "redx" ? "RedX" : "eCourier"}{connected ? "" : " (যুক্ত নেই)"}</option>;
+                  return <option key={p} value={p} disabled={!connected}>{p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : p === "redx" ? "RedX" : "eCourier"}{connected ? "" : dict.orders.notLinked2}</option>;
                 })}
               </select>
               {bulkProvider === "redx" ? (
                 <select className="input w-auto" value={bookForm.rAreaId} onChange={(e) => { const area = rAreas.find((a: any) => String(a.id) === e.target.value); setBookForm({ ...bookForm, rAreaId: e.target.value, rAreaName: area?.name ?? "" }); }}>
-                  <option value="">RedX ডেলিভারি এলাকা বেছে নিন</option>
+                  <option value="">{dict.orders.selectARedXDeliveryArea}</option>
                   {rAreas.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               ) : null}
               {bulkProvider === "ecourier" ? (
                 <>
-                  <input className="input w-32" placeholder="শহর (City)" value={bookForm.eCity} onChange={(e) => setBookForm({ ...bookForm, eCity: e.target.value })} />
-                  <input className="input w-32" placeholder="থানা" value={bookForm.eThana} onChange={(e) => setBookForm({ ...bookForm, eThana: e.target.value })} />
-                  <input className="input w-32" placeholder="এলাকা (Area)" value={bookForm.eArea} onChange={(e) => setBookForm({ ...bookForm, eArea: e.target.value })} />
-                  <input className="input w-28" placeholder="পোস্টকোড" value={bookForm.eZip} onChange={(e) => setBookForm({ ...bookForm, eZip: e.target.value })} />
+                  <input className="input w-32" placeholder={dict.orders.city} value={bookForm.eCity} onChange={(e) => setBookForm({ ...bookForm, eCity: e.target.value })} />
+                  <input className="input w-32" placeholder={dict.orders.thana2} value={bookForm.eThana} onChange={(e) => setBookForm({ ...bookForm, eThana: e.target.value })} />
+                  <input className="input w-32" placeholder={dict.orders.area} value={bookForm.eArea} onChange={(e) => setBookForm({ ...bookForm, eArea: e.target.value })} />
+                  <input className="input w-28" placeholder={dict.orders.postcode} value={bookForm.eZip} onChange={(e) => setBookForm({ ...bookForm, eZip: e.target.value })} />
                   <input className="input w-32" placeholder="Package Code" value={bookForm.ePackage} onChange={(e) => setBookForm({ ...bookForm, ePackage: e.target.value })} />
                 </>
               ) : null}
-              <button className="btn-primary btn-sm" disabled={bulkBusy} onClick={bulkBook}>{bulkBusy ? "বুক হচ্ছে..." : `🚚 একসাথে বুক করুন (${selected.length}টি)`}</button>
-              <button className="btn-secondary btn-sm" onClick={bulkLabels}>🏷️ সব লেবেল এক PDF এ</button>
-              <button className="btn-ghost btn-sm" onClick={() => { setSelected([]); setBulkResults(null); }}>সিলেকশন মুছুন</button>
+              <button className="btn-primary btn-sm" disabled={bulkBusy} onClick={bulkBook}>{bulkBusy ? dict.orders.booking2 : t("orders.bookTogether2", { length: selected.length })}</button>
+              <button className="btn-secondary btn-sm" onClick={bulkLabels}>{dict.orders.allLabelsInOnePDF}</button>
+              <button className="btn-ghost btn-sm" onClick={() => { setSelected([]); setBulkResults(null); }}>{dict.orders.clearSelection}</button>
             </div>
-            <p className="text-xs text-slate-500">ঠিকানা প্রতিটি অর্ডারের নিজের সংরক্ষিত ঠিকানা থেকে নেওয়া হয়। যেটি আগে থেকেই বুক করা, সেটি আবার বুক হবে না — ফলাফলে আলাদা করে দেখানো হবে। একটি ব্যর্থ হলেও বাকিগুলো চলতে থাকবে।</p>
+            <p className="text-xs text-slate-500">{dict.orders.theAddressIsTakenFrom}</p>
             {bulkResults ? (
               <div className="space-y-1 text-sm">
-                <p className="font-medium">ফলাফল: {bulkResults.booked}টি বুক হয়েছে · {bulkResults.skipped}টি আগে থেকেই বুক ছিল · {bulkResults.failed}টি ব্যর্থ</p>
+                <p className="font-medium">{dict.orders.result}{bulkResults.booked}{dict.orders.booked2}{bulkResults.skipped}{dict.orders.wereAlreadyBooked}{bulkResults.failed}{dict.orders.failed2}</p>
                 <ul className="space-y-0.5">
                   {bulkResults.results.map((r) => { const o = items.find((x) => x.id === r.orderId); return (
                     <li key={r.orderId} className={r.ok ? "text-emerald-700" : r.skipped ? "text-amber-700" : "text-red-600"}>
@@ -2645,33 +2647,33 @@ function OrdersPageInner() {
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
                 <span>{o.isCod ? <b className="text-amber-600">COD</b> : (o.paymentMethod ?? "—")}</span>
                 <span className="font-semibold">{formatMinor(BigInt(o.totalMinor))}</span>
-                {due > 0n ? <span className="font-semibold text-red-600">বকেয়া {formatMinor(due)}</span> : null}
-                <span className="text-xs text-slate-500">দায়িত্ব: {memberName(members, o.assigneeId)}</span>
-                <span className="text-xs text-slate-500">{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</span>
+                {due > 0n ? <span className="font-semibold text-red-600">{dict.orders.due2}{formatMinor(due)}</span> : null}
+                <span className="text-xs text-slate-500">{dict.orders.responsibility2}{memberName(members, o.assigneeId, dict.orders.teamMember)}</span>
+                <span className="text-xs text-slate-500">{o.placedAt ? fmtDate(locale, new Date(o.placedAt)) : "—"}</span>
                 {sh ? <span className="badge-indigo">🚚 {sh.status}</span> : null}
-                {o.risk ? <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${RISK_LABEL[o.risk.band]?.cls ?? RISK_LABEL.unknown.cls}`}>{RISK_LABEL[o.risk.band]?.text ?? "ঝুঁকি"}</span> : null}
+                {o.risk ? <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL]?.cls ?? RISK_LABEL.unknown.cls}`}>{RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL] ? dict.orders[RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL].textKey] : dict.orders.risk}</span> : null}
                 {o.riskBand ? (
                   <button type="button" className={`rounded px-2 py-0.5 text-[11px] font-semibold ${FRAUD_BAND_LABEL[o.riskBand]?.cls ?? ""}`}
-                    title="জালিয়াতি ঝুঁকি (Fraud Shield)" onClick={() => openFraudDetail(o)}>
+                    title={dict.orders.fraudShield} onClick={() => openFraudDetail(o)}>
                     🛡️ {FRAUD_BAND_LABEL[o.riskBand]?.text ?? o.riskBand}{o.riskScore != null ? ` · ${o.riskScore}` : ""}
                   </button>
                 ) : null}
-                {o.reviewHold ? <span className="rounded bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white" title={o.reviewHoldReason ?? undefined}>⛔ আটকানো</span> : null}
+                {o.reviewHold ? <span className="rounded bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white" title={o.reviewHoldReason ?? undefined}>{dict.orders.held2}</span> : null}
               </div>
               {o.deliverySlot ? <span className="inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">🕐 {o.deliverySlot.label} · {o.deliverySlot.date}</span> : null}
-              {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">📍 পিকআপ: {o.pickupPoint.name}</span> : null}
+              {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{dict.orders.pickup}{o.pickupPoint.name}</span> : null}
               {filters.queue === "needs_confirmation" && o.isCod && o.codConfirmationStatus === "awaiting" ? (
                 <CodCallChips order={o} busy={codBusy === o.id} onCall={(ord, outcome) => void recordCodCall(ord, outcome)} />
               ) : (o.codCallAttempts ?? 0) > 0 ? (
-                <p className="text-[11px] text-slate-500">কল: {o.codCallAttempts}বার{o.codLastCallOutcome ? ` · সর্বশেষ: ${codCallOutcomeLabel(o.codLastCallOutcome)}` : ""}</p>
+                <p className="text-[11px] text-slate-500">{dict.orders.call}{o.codCallAttempts}{dict.orders.times}{o.codLastCallOutcome ? t("orders.last", { codCallOutcomeLabel: codCallOutcomeLabel(o.codLastCallOutcome, locale) }) : ""}</p>
               ) : null}
               <div className="flex flex-wrap items-center gap-3 border-t pt-2 text-base">
-                {o.customer?.phone ? <a href={`tel:${o.customer.phone}`} title="কল করুন" aria-label="কল করুন">📞</a> : null}
-                {(o.conversationId ?? o.codConversationId) ? <a href="/dashboard/inbox" title="কথোপকথন খুলুন (ইনবক্স)" aria-label="কথোপকথন">💬</a> : null}
-                {o.isCod && (o.codConversationId ?? o.conversationId) && o.codConfirmationStatus === "awaiting" ? <a href="/dashboard/inbox" title="COD কনফার্ম অপেক্ষমাণ" aria-label="COD কনফার্ম অপেক্ষমাণ">⏳</a> : null}
-                {sh ? <button type="button" title="লেবেল প্রিন্ট" aria-label="লেবেল প্রিন্ট" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️</button> : null}
-                <Link href={`/dashboard/orders/${o.id}`} className="ml-auto text-sm font-semibold text-brand-600 hover:underline">বিস্তারিত →</Link>
-                <button type="button" className="text-sm font-semibold text-brand-600" onClick={() => { openActions(o); setTimeout(() => document.getElementById("orders-table-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}>⚙️ অ্যাকশন</button>
+                {o.customer?.phone ? <a href={`tel:${o.customer.phone}`} title={dict.orders.call2} aria-label={dict.orders.call2}>📞</a> : null}
+                {(o.conversationId ?? o.codConversationId) ? <a href="/dashboard/inbox" title={dict.orders.openConversationInbox} aria-label={dict.orders.conversation}>💬</a> : null}
+                {o.isCod && (o.codConversationId ?? o.conversationId) && o.codConfirmationStatus === "awaiting" ? <a href="/dashboard/inbox" title={dict.orders.cODConfirmationPending} aria-label={dict.orders.cODConfirmationPending}>⏳</a> : null}
+                {sh ? <button type="button" title={dict.orders.printLabel} aria-label={dict.orders.printLabel} onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️</button> : null}
+                <Link href={`/dashboard/orders/${o.id}`} className="ml-auto text-sm font-semibold text-brand-600 hover:underline">{dict.orders.details2}</Link>
+                <button type="button" className="text-sm font-semibold text-brand-600" onClick={() => { openActions(o); setTimeout(() => document.getElementById("orders-table-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}>{dict.orders.actions}</button>
               </div>
             </div>
           ); })}
@@ -2680,35 +2682,35 @@ function OrdersPageInner() {
           <table className="w-full min-w-[1180px] text-left text-sm">
             <thead className="bg-slate-50 text-slate-500"><tr>
               <th className="px-4 py-3"><input type="checkbox" checked={items.length > 0 && items.every((o) => selected.includes(o.id))} onChange={(e) => setSelected(e.target.checked ? items.slice(0, 50).map((o) => o.id) : [])} /></th>
-              <th className="px-4 py-3">অর্ডার</th><th className="px-4 py-3">কাস্টমার</th><th className="px-4 py-3">আইটেম</th>
-              <th className="px-4 py-3">স্ট্যাটাস</th><th className="px-4 py-3">ট্যাগ</th><th className="px-4 py-3">পেমেন্ট</th><th className="px-4 py-3">মোট</th><th className="px-4 py-3">বকেয়া</th><th className="px-4 py-3">দায়িত্ব</th><th className="px-4 py-3">তারিখ</th><th className="px-4 py-3">কুরিয়ার</th><th className="px-4 py-3">দ্রুত অ্যাকশন</th>
+              <th className="px-4 py-3">{dict.orders.order}</th><th className="px-4 py-3">{dict.orders.customer2}</th><th className="px-4 py-3">{dict.orders.item}</th>
+              <th className="px-4 py-3">{dict.orders.status}</th><th className="px-4 py-3">{dict.orders.tag}</th><th className="px-4 py-3">{dict.orders.payment}</th><th className="px-4 py-3">{dict.orders.total}</th><th className="px-4 py-3">{dict.orders.due2}</th><th className="px-4 py-3">{dict.orders.responsibility3}</th><th className="px-4 py-3">{dict.orders.date}</th><th className="px-4 py-3">{dict.orders.courier}</th><th className="px-4 py-3">{dict.orders.quickActions}</th>
             </tr></thead>
             <tbody>
               {items.map((o) => (
                 <tr key={o.id} className="border-t">
                   <td className="px-4 py-3"><input type="checkbox" checked={selected.includes(o.id)} disabled={!selected.includes(o.id) && selected.length >= 50} onChange={(e) => toggleSelect(o.id, e.target.checked)} /></td>
-                  <td className="px-4 py-3 font-medium"><Link href={`/dashboard/orders/${o.id}`} className="hover:underline" title="সম্পূর্ণ বিবরণ">#{o.externalNumber ?? o.id.slice(0, 8)}</Link><button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button>
+                  <td className="px-4 py-3 font-medium"><Link href={`/dashboard/orders/${o.id}`} className="hover:underline" title={dict.orders.fullDetails2}>#{o.externalNumber ?? o.id.slice(0, 8)}</Link><button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>{dict.orders.invoicePDF}</button>
                     {o.deliverySlot ? <span className="mt-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">🕐 {o.deliverySlot.label} · {o.deliverySlot.date}</span> : null}
-                    {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="mt-1 ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">📍 পিকআপ: {o.pickupPoint.name}</span> : null}
+                    {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="mt-1 ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{dict.orders.pickup}{o.pickupPoint.name}</span> : null}
                   </td>
                   <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-500">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
                   <td className="px-4 py-3">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</td>
                   <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
                     {o.risk ? (
-                      <button className={`mt-1 block rounded px-2 py-0.5 text-[11px] font-semibold ${RISK_LABEL[o.risk.band]?.cls ?? RISK_LABEL.unknown.cls}`}
-                        title="রিটার্ন ঝুঁকির কারণ দেখুন" onClick={() => showRisk(o)}>
-                        {RISK_LABEL[o.risk.band]?.text ?? "ঝুঁকি"}{o.risk.score != null ? ` · ${o.risk.score}` : ""}
+                      <button className={`mt-1 block rounded px-2 py-0.5 text-[11px] font-semibold ${RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL]?.cls ?? RISK_LABEL.unknown.cls}`}
+                        title={dict.orders.viewReturnRiskReasons} onClick={() => showRisk(o)}>
+                        {RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL] ? dict.orders[RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL].textKey] : dict.orders.risk}{o.risk.score != null ? ` · ${o.risk.score}` : ""}
                       </button>
                     ) : null}
                     {o.riskBand ? (
                       <button className={`mt-1 block rounded px-2 py-0.5 text-[11px] font-semibold ${FRAUD_BAND_LABEL[o.riskBand]?.cls ?? ""}`}
-                        title="জালিয়াতি ঝুঁকি (Fraud Shield)" onClick={() => openFraudDetail(o)}>
+                        title={dict.orders.fraudShield} onClick={() => openFraudDetail(o)}>
                         🛡️ {FRAUD_BAND_LABEL[o.riskBand]?.text ?? o.riskBand}{o.riskScore != null ? ` · ${o.riskScore}` : ""}
                       </button>
                     ) : null}
-                    {o.reviewHold ? <span className="mt-1 inline-block rounded bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white" title={o.reviewHoldReason ?? undefined}>⛔ আটকানো</span> : null}
-                    <button className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => openActions(o)}>⚙️ অ্যাকশন</button>
-                    <Link href={`/dashboard/orders/${o.id}`} className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline">বিস্তারিত →</Link>
+                    {o.reviewHold ? <span className="mt-1 inline-block rounded bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white" title={o.reviewHoldReason ?? undefined}>{dict.orders.held2}</span> : null}
+                    <button className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => openActions(o)}>{dict.orders.actions}</button>
+                    <Link href={`/dashboard/orders/${o.id}`} className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline">{dict.orders.details2}</Link>
                   </td>
                   <td className="px-4 py-3">{(o.tags ?? []).length > 0 ? (
                     <span className="flex flex-wrap gap-1">{(o.tags ?? []).map((t) => <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{t}</span>)}</span>
@@ -2718,22 +2720,22 @@ function OrdersPageInner() {
                   <td className="px-4 py-3">{(() => { let due = 0n; try { due = BigInt(o.amountDueMinor ?? "0"); } catch { due = 0n; } return due > 0n
                     ? <span className="rounded bg-red-50 px-2 py-0.5 font-semibold text-red-600">{formatMinor(due)}</span>
                     : <span className="text-xs text-slate-400">—</span>; })()}</td>
-                  <td className="px-4 py-3 text-xs">{memberName(members, o.assigneeId)}</td>
-                  <td className="px-4 py-3">{o.placedAt ? new Date(o.placedAt).toLocaleDateString() : "—"}</td>
+                  <td className="px-4 py-3 text-xs">{memberName(members, o.assigneeId, dict.orders.teamMember)}</td>
+                  <td className="px-4 py-3">{o.placedAt ? fmtDate(locale, new Date(o.placedAt)) : "—"}</td>
                   <td className="px-4 py-3">
                     {(() => { const sh = shipmentFor(o.id); return sh ? (
                       <span className="inline-flex flex-wrap items-center gap-1" title={sh.provider}>
                         <span className="badge-indigo" title={sh.trackingCode ?? ""}>🚚 {sh.status}</span>
                         {sh.trackingUrl ? (
-                          <a className="text-xs font-semibold text-brand-600 hover:underline" href={sh.trackingUrl} target="_blank" rel="noreferrer">🔗 ট্র্যাক করুন{sh.trackingCode ? ` (${sh.trackingCode})` : ""}</a>
+                          <a className="text-xs font-semibold text-brand-600 hover:underline" href={sh.trackingUrl} target="_blank" rel="noreferrer">{dict.orders.track}{sh.trackingCode ? ` (${sh.trackingCode})` : ""}</a>
                         ) : sh.trackingCode ? <span className="text-xs text-slate-500">{sh.trackingCode}</span> : null}
                         {sh.courierRuleId ? (
-                          <span className="badge-slate" title={sh.courierRuleId}>নিয়ম অনুযায়ী নির্বাচিত{courierRules.find((r) => r.id === sh.courierRuleId) ? `: ${courierRules.find((r) => r.id === sh.courierRuleId)?.name}` : ""}</span>
+                          <span className="badge-slate" title={sh.courierRuleId}>{dict.orders.selectedByRule}{courierRules.find((r) => r.id === sh.courierRuleId) ? `: ${courierRules.find((r) => r.id === sh.courierRuleId)?.name}` : ""}</span>
                         ) : null}
-                        <button className="text-xs font-semibold text-brand-600 hover:underline" disabled={courierBusy !== ""} onClick={() => syncShipment(sh.id)}>স্ট্যাটাস যাচাই</button>
-                        <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️ লেবেল</button>
-                        {sh.chargeMinor ? <span className="text-xs text-slate-500" title="বুকিংয়ের সময় কুরিয়ার নিজে যে চার্জ ফেরত দিয়েছিল (আনুমানিক নয়)">বুকিং চার্জ: {(() => { try { return formatMinor(BigInt(sh.chargeMinor)); } catch { return sh.chargeMinor; } })()}</span> : null}
-                        <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={() => void toggleShipmentDetail(sh.id)}>📜 ইতিহাস ও ম্যানুয়াল স্ট্যাটাস</button>
+                        <button className="text-xs font-semibold text-brand-600 hover:underline" disabled={courierBusy !== ""} onClick={() => syncShipment(sh.id)}>{dict.orders.verifyStatus}</button>
+                        <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>{dict.orders.label}</button>
+                        {sh.chargeMinor ? <span className="text-xs text-slate-500" title={dict.orders.theChargeTheCourierItself}>{dict.orders.bookingCharge}{(() => { try { return formatMinor(BigInt(sh.chargeMinor)); } catch { return sh.chargeMinor; } })()}</span> : null}
+                        <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={() => void toggleShipmentDetail(sh.id)}>{dict.orders.historyManualStatus}</button>
                       </span>
                     ) : courier?.connected ? (
                       <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={async () => {
@@ -2744,7 +2746,7 @@ function OrdersPageInner() {
                         setBookForm({ name: [o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" "), phone: o.customer?.phone ?? "", address: "", note: "", provider: firstConnected, pStoreId: "", pCityId: "", pZoneId: "", pAreaId: "", weightKg: "0.5", rAreaId: "", rAreaName: "", rStoreId: "", eCity: "", eThana: "", eArea: "", eZip: "", ePackage: "", ePayMethod: "" });
                         setBookSuggestion(null);
                         if (opening) { await loadProviderLists(firstConnected); void loadSuggestion(o.id); }
-                      }}>পার্সেল বুক করুন</button>
+                      }}>{dict.orders.bookParcel}</button>
                     ) : <span className="text-xs text-slate-400">—</span>; })()}
                   </td>
                   {/* ON1 quick actions — each renders ONLY when its
@@ -2752,15 +2754,15 @@ function OrdersPageInner() {
                       COD state / shipment), never as a dead icon. */}
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-1.5 text-base">
-                      {o.customer?.phone ? <a href={`tel:${o.customer.phone}`} title={`কল করুন: ${o.customer.phone}`} aria-label="কল করুন">📞</a> : null}
-                      {(o.conversationId ?? o.codConversationId) ? <a href="/dashboard/inbox" title="কথোপকথন খুলুন (ইনবক্স)" aria-label="কথোপকথন">💬</a> : null}
+                      {o.customer?.phone ? <a href={`tel:${o.customer.phone}`} title={t("orders.call3", { phone: o.customer.phone })} aria-label={dict.orders.call2}>📞</a> : null}
+                      {(o.conversationId ?? o.codConversationId) ? <a href="/dashboard/inbox" title={dict.orders.openConversationInbox} aria-label={dict.orders.conversation}>💬</a> : null}
                       {o.isCod && (o.codConversationId ?? o.conversationId) && o.codConfirmationStatus === "awaiting" ? (
-                        <a href="/dashboard/inbox" title="COD কনফার্ম অপেক্ষমাণ — ইনবক্সে গ্রাহকের উত্তর দেখুন" aria-label="COD কনফার্ম অপেক্ষমাণ">⏳</a>
+                        <a href="/dashboard/inbox" title={dict.orders.cODConfirmationPendingSeeThe} aria-label={dict.orders.cODConfirmationPending}>⏳</a>
                       ) : o.isCod && (o.codConversationId ?? o.conversationId) && o.codConfirmationStatus !== "confirmed" && o.codConfirmationStatus !== "declined" && ["pending", "on-hold", "processing"].includes(o.status) ? (
-                        <button type="button" title="COD কনফার্মেশন পাঠান" aria-label="COD কনফার্মেশন পাঠান" disabled={rowBusy !== ""} onClick={() => void requestCodForRow(o)}>✅</button>
+                        <button type="button" title={dict.orders.sendCODConfirmation} aria-label={dict.orders.sendCODConfirmation} disabled={rowBusy !== ""} onClick={() => void requestCodForRow(o)}>✅</button>
                       ) : null}
                       {!shipmentFor(o.id) && courier?.connected ? (
-                        <button type="button" title="কুরিয়ার বুক করুন" aria-label="কুরিয়ার বুক করুন" onClick={async () => {
+                        <button type="button" title={dict.orders.bookCourier} aria-label={dict.orders.bookCourier} onClick={async () => {
                           const opening = bookingFor !== o.id;
                           setBookingFor(opening ? o.id : null);
                           setQuoteOut(null);
@@ -2771,7 +2773,7 @@ function OrdersPageInner() {
                         }}>🚚</button>
                       ) : null}
                       {shipmentFor(o.id) ? (
-                        <button type="button" title="লেবেল প্রিন্ট" aria-label="লেবেল প্রিন্ট" onClick={() => { const orgId = getOrganizationId(); const sh = shipmentFor(o.id); if (orgId && sh) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️</button>
+                        <button type="button" title={dict.orders.printLabel} aria-label={dict.orders.printLabel} onClick={() => { const orgId = getOrganizationId(); const sh = shipmentFor(o.id); if (orgId && sh) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️</button>
                       ) : null}
                     </span>
                     {/* ON4: COD call chips live in this same
@@ -2781,7 +2783,7 @@ function OrdersPageInner() {
                     {filters.queue === "needs_confirmation" && o.isCod && o.codConfirmationStatus === "awaiting" ? (
                       <CodCallChips order={o} busy={codBusy === o.id} onCall={(ord, outcome) => void recordCodCall(ord, outcome)} />
                     ) : (o.codCallAttempts ?? 0) > 0 ? (
-                      <span className="mt-1 block text-[11px] text-slate-500">কল: {o.codCallAttempts}বার{o.codLastCallOutcome ? ` · সর্বশেষ: ${codCallOutcomeLabel(o.codLastCallOutcome)}` : ""}</span>
+                      <span className="mt-1 block text-[11px] text-slate-500">{dict.orders.call}{o.codCallAttempts}{dict.orders.times}{o.codLastCallOutcome ? t("orders.last", { codCallOutcomeLabel: codCallOutcomeLabel(o.codLastCallOutcome, locale) }) : ""}</span>
                     ) : null}
                   </td>
                 </tr>
@@ -2789,23 +2791,23 @@ function OrdersPageInner() {
               {bookingFor ? (() => { const order = items.find((x) => x.id === bookingFor); if (!order) return null; return (
                 <tr className="border-t bg-indigo-50/60"><td colSpan={13} className="px-4 py-3">
                   {bookSuggestion?.ruleId ? (
-                    <p className="mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">নিয়ম অনুযায়ী সাজেশন: {bookSuggestion.ruleName ?? "নিয়ম"} — {bookSuggestion.reason ?? ""} (কুরিয়ার আগেই বেছে দেওয়া হয়েছে; চাইলে বদলাতে পারবেন)</p>
+                    <p className="mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{dict.orders.suggestionByRule}{bookSuggestion.ruleName ?? dict.orders.rule} — {bookSuggestion.reason ?? ""} {dict.orders.courierAlreadySelectedByRule}</p>
                   ) : null}
                   <div className="grid gap-2 sm:grid-cols-4">
                     <select className="input" value={bookForm.provider} onChange={async (e) => { setBookForm({ ...bookForm, provider: e.target.value }); setQuoteOut(null); await loadProviderLists(e.target.value); }}>
                       {(["steadfast", "pathao", "redx", "ecourier"] as const).map((p) => {
                         const c = conns.find((x) => x.provider === p);
-                        return <option key={p} value={p} disabled={c ? !c.connected : p !== "steadfast" ? true : !(courier?.connected)}>{p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : p === "redx" ? "RedX" : "eCourier"}{c && !c.connected ? " (যুক্ত নেই)" : ""}</option>;
+                        return <option key={p} value={p} disabled={c ? !c.connected : p !== "steadfast" ? true : !(courier?.connected)}>{p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : p === "redx" ? "RedX" : "eCourier"}{c && !c.connected ? dict.orders.notLinked2 : ""}</option>;
                       })}
                     </select>
-                    <input className="input" placeholder="প্রাপকের নাম" value={bookForm.name} onChange={(e) => setBookForm({ ...bookForm, name: e.target.value })} />
-                    <input className="input" placeholder="ফোন" value={bookForm.phone} onChange={(e) => setBookForm({ ...bookForm, phone: e.target.value })} />
-                    <input className="input" placeholder="ওজন (কেজি)" type="number" step="0.5" min="0.5" value={bookForm.weightKg} onChange={(e) => setBookForm({ ...bookForm, weightKg: e.target.value })} />
-                    <input className="input sm:col-span-2" placeholder="পূর্ণ ঠিকানা (বাসা, রোড, এলাকা, জেলা)" value={bookForm.address} onChange={(e) => setBookForm({ ...bookForm, address: e.target.value })} />
-                    <input className="input sm:col-span-2" placeholder="নোট (ঐচ্ছিক)" value={bookForm.note} onChange={(e) => setBookForm({ ...bookForm, note: e.target.value })} />
+                    <input className="input" placeholder={dict.orders.recipientName} value={bookForm.name} onChange={(e) => setBookForm({ ...bookForm, name: e.target.value })} />
+                    <input className="input" placeholder={dict.orders.phone} value={bookForm.phone} onChange={(e) => setBookForm({ ...bookForm, phone: e.target.value })} />
+                    <input className="input" placeholder={dict.orders.weightKg} type="number" step="0.5" min="0.5" value={bookForm.weightKg} onChange={(e) => setBookForm({ ...bookForm, weightKg: e.target.value })} />
+                    <input className="input sm:col-span-2" placeholder={dict.orders.fullAddressHouseRoadArea} value={bookForm.address} onChange={(e) => setBookForm({ ...bookForm, address: e.target.value })} />
+                    <input className="input sm:col-span-2" placeholder={dict.orders.noteOptional} value={bookForm.note} onChange={(e) => setBookForm({ ...bookForm, note: e.target.value })} />
                     {bookForm.provider === "pathao" ? (<>
                       <select className="input" value={bookForm.pStoreId} onChange={(e) => setBookForm({ ...bookForm, pStoreId: e.target.value })}>
-                        <option value="">স্টোর: স্বয়ংক্রিয় (প্রথম সক্রিয়)</option>
+                        <option value="">{dict.orders.storeAutomaticFirstActive}</option>
                         {pStores.map((s: any) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
                       </select>
                       <select className="input" value={bookForm.pCityId} onChange={async (e) => {
@@ -2813,7 +2815,7 @@ function OrdersPageInner() {
                         setBookForm({ ...bookForm, pCityId: cityId, pZoneId: "", pAreaId: "" }); setPZones([]); setPAreas([]);
                         if (cityId) { const orgId = getOrganizationId(); if (orgId) setPZones(await apiFetch<any[]>(`/organizations/${orgId}/courier/pathao/zones/${cityId}`).catch(() => [])); }
                       }}>
-                        <option value="">শহর: ঠিকানা থেকে অনুমান (ঐচ্ছিক)</option>
+                        <option value="">{dict.orders.cityGuessFromAddressOptional}</option>
                         {pCities.map((c: any) => <option key={c.city_id} value={c.city_id}>{c.city_name}</option>)}
                       </select>
                       <select className="input" value={bookForm.pZoneId} onChange={async (e) => {
@@ -2821,11 +2823,11 @@ function OrdersPageInner() {
                         setBookForm({ ...bookForm, pZoneId: zoneId, pAreaId: "" }); setPAreas([]);
                         if (zoneId) { const orgId = getOrganizationId(); if (orgId) setPAreas(await apiFetch<any[]>(`/organizations/${orgId}/courier/pathao/areas/${zoneId}`).catch(() => [])); }
                       }}>
-                        <option value="">জোন (ঐচ্ছিক)</option>
+                        <option value="">{dict.orders.zoneOptional}</option>
                         {pZones.map((z: any) => <option key={z.zone_id} value={z.zone_id}>{z.zone_name}</option>)}
                       </select>
                       <select className="input" value={bookForm.pAreaId} onChange={(e) => setBookForm({ ...bookForm, pAreaId: e.target.value })}>
-                        <option value="">এলাকা (ঐচ্ছিক)</option>
+                        <option value="">{dict.orders.areaOptional}</option>
                         {pAreas.map((a: any) => <option key={a.area_id} value={a.area_id}>{a.area_name}</option>)}
                       </select>
                     </>) : null}
@@ -2834,11 +2836,11 @@ function OrdersPageInner() {
                         const area = rAreas.find((a: any) => String(a.id) === e.target.value);
                         setBookForm({ ...bookForm, rAreaId: e.target.value, rAreaName: area?.name ?? "" });
                       }}>
-                        <option value="">ডেলিভারি এলাকা বেছে নিন (আবশ্যক)</option>
+                        <option value="">{dict.orders.selectDeliveryAreaRequired}</option>
                         {rAreas.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
                       </select>
                       <select className="input" value={bookForm.rStoreId} onChange={(e) => setBookForm({ ...bookForm, rStoreId: e.target.value })}>
-                        <option value="">পিকআপ স্টোর: ডিফল্ট</option>
+                        <option value="">{dict.orders.pickupStoreDefault}</option>
                         {rStores.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                     </>) : null}
@@ -2854,32 +2856,32 @@ function OrdersPageInner() {
                           setBookForm({ ...bookForm, eCity: city, eThana: "" }); setEThanas([]);
                           if (city) { const orgId = getOrganizationId(); if (orgId) setEThanas(await apiFetch<any[]>(`/organizations/${orgId}/courier/ecourier/thanas?city=${encodeURIComponent(city)}`).catch(() => [])); }
                         }}>
-                          <option value="">শহর (City) বেছে নিন (আবশ্যক)</option>
+                          <option value="">{dict.orders.selectCityRequired}</option>
                           {eCities.map((c: any, i: number) => { const name = typeof c === "string" ? c : (c.city_name ?? c.name ?? c.city ?? ""); return <option key={`${name}-${i}`} value={name}>{name}</option>; })}
                         </select>
                       ) : (
-                        <input className="input" placeholder="শহর (City) — যেমন Dhaka (আবশ্যক)" value={bookForm.eCity} onChange={(e) => setBookForm({ ...bookForm, eCity: e.target.value })} />
+                        <input className="input" placeholder={dict.orders.cityEGDhakaRequired} value={bookForm.eCity} onChange={(e) => setBookForm({ ...bookForm, eCity: e.target.value })} />
                       )}
                       {eThanas.length > 0 ? (
                         <select className="input" value={bookForm.eThana} onChange={(e) => setBookForm({ ...bookForm, eThana: e.target.value })}>
-                          <option value="">থানা বেছে নিন (আবশ্যক)</option>
+                          <option value="">{dict.orders.selectThanaRequired}</option>
                           {eThanas.map((t: any, i: number) => { const name = typeof t === "string" ? t : (t.thana_name ?? t.name ?? t.thana ?? ""); return <option key={`${name}-${i}`} value={name}>{name}</option>; })}
                         </select>
                       ) : (
-                        <input className="input" placeholder="থানা — যেমন Dhanmondi (আবশ্যক)" value={bookForm.eThana} onChange={(e) => setBookForm({ ...bookForm, eThana: e.target.value })} />
+                        <input className="input" placeholder={dict.orders.thanaEGDhanmondiRequired} value={bookForm.eThana} onChange={(e) => setBookForm({ ...bookForm, eThana: e.target.value })} />
                       )}
-                      <input className="input" placeholder="এলাকা (Area) — যেমন Dhanmondi (আবশ্যক)" value={bookForm.eArea} onChange={(e) => setBookForm({ ...bookForm, eArea: e.target.value })} />
-                      <input className="input" placeholder="পোস্টকোড (Zip) — যেমন 1205 (আবশ্যক)" value={bookForm.eZip} onChange={(e) => setBookForm({ ...bookForm, eZip: e.target.value })} />
+                      <input className="input" placeholder={dict.orders.areaEGDhanmondiRequired} value={bookForm.eArea} onChange={(e) => setBookForm({ ...bookForm, eArea: e.target.value })} />
+                      <input className="input" placeholder={dict.orders.postcodeZipEG1205} value={bookForm.eZip} onChange={(e) => setBookForm({ ...bookForm, eZip: e.target.value })} />
                       {ePackages.length > 0 ? (
                         <select className="input" value={bookForm.ePackage} onChange={(e) => setBookForm({ ...bookForm, ePackage: e.target.value })}>
-                          <option value="">Package বেছে নিন (আবশ্যক — ওজন প্যাকেজেই থাকে)</option>
-                          {ePackages.map((pk: any, i: number) => { const code = typeof pk === "string" ? pk : (pk.package_code ?? pk.code ?? ""); const label = typeof pk === "string" ? pk : `${pk.package_name ?? code}${pk.weight ? ` · ${pk.weight}` : ""}${pk.shipping_charge != null ? ` · চার্জ ৳${pk.shipping_charge}` : ""}`; return <option key={`${code}-${i}`} value={code}>{label}</option>; })}
+                          <option value="">{dict.orders.chooseAPackageRequiredWeight}</option>
+                          {ePackages.map((pk: any, i: number) => { const code = typeof pk === "string" ? pk : (pk.package_code ?? pk.code ?? ""); const label = typeof pk === "string" ? pk : `${pk.package_name ?? code}${pk.weight ? ` · ${pk.weight}` : ""}${pk.shipping_charge != null ? t("orders.charge", { shipping_charge: fmtMoney(locale, pk.shipping_charge) }) : ""}`; return <option key={`${code}-${i}`} value={code}>{label}</option>; })}
                         </select>
                       ) : (
-                        <input className="input" placeholder="Package Code (আবশ্যক)" value={bookForm.ePackage} onChange={(e) => setBookForm({ ...bookForm, ePackage: e.target.value })} />
+                        <input className="input" placeholder={dict.orders.packageCodeRequired} value={bookForm.ePackage} onChange={(e) => setBookForm({ ...bookForm, ePackage: e.target.value })} />
                       )}
                       <select className="input" value={bookForm.ePayMethod} onChange={(e) => setBookForm({ ...bookForm, ePayMethod: e.target.value })}>
-                        <option value="">পেমেন্ট মেথড: {order.isCod ? "স্বয়ংক্রিয় (COD)" : "বেছে নিন (আবশ্যক)"}</option>
+                        <option value="">{dict.orders.paymentMethod}{order.isCod ? dict.orders.automaticCOD : dict.orders.chooseRequired}</option>
                         <option value="COD">COD</option>
                         <option value="POS">POS</option>
                         <option value="MPAY">MPAY</option>
@@ -2887,14 +2889,14 @@ function OrdersPageInner() {
                       </select>
                     </>) : null}
                     <div className="flex flex-wrap items-center gap-2 sm:col-span-4">
-                      <button className="btn-secondary btn-sm" disabled={quoteBusy} onClick={() => fetchQuote(order)}>{quoteBusy ? "হিসাব হচ্ছে..." : "💰 ডেলিভারি চার্জ দেখুন"}</button>
+                      <button className="btn-secondary btn-sm" disabled={quoteBusy} onClick={() => fetchQuote(order)}>{quoteBusy ? dict.orders.calculating2 : dict.orders.viewDeliveryCharge}</button>
                       {quoteOut ? (quoteOut.quotable ? (
-                        <span className="text-xs font-semibold text-emerald-700">ডেলিভারি চার্জ: {formatMinor(BigInt(quoteOut.chargeMinor ?? 0))} <span className="font-normal text-slate-500">({quoteOut.provider === "pathao" ? "Pathao" : quoteOut.provider === "ecourier" ? "eCourier" : "RedX"} এর নিজের প্রাইস API থেকে — বুকিংয়ের আগে)</span></span>
+                        <span className="text-xs font-semibold text-emerald-700">{dict.orders.deliveryCharge2}{formatMinor(BigInt(quoteOut.chargeMinor ?? 0))} <span className="font-normal text-slate-500">({quoteOut.provider === "pathao" ? "Pathao" : quoteOut.provider === "ecourier" ? "eCourier" : "RedX"} {dict.orders.fromItsOwnPriceAPI}</span></span>
                       ) : (
                         <span className="text-xs text-amber-700">{quoteOut.reason}</span>
                       )) : null}
                     </div>
-                    <button className="btn-primary" disabled={courierBusy !== "" || bookForm.address.trim().length < 8 || (bookForm.provider === "redx" && !bookForm.rAreaId) || (bookForm.provider === "ecourier" && (!bookForm.eCity.trim() || !bookForm.eThana.trim() || !bookForm.eArea.trim() || !bookForm.eZip.trim() || !bookForm.ePackage.trim()))} onClick={() => bookShipment(order)}>{courierBusy === "book" ? "বুক হচ্ছে..." : `${bookForm.provider === "pathao" ? "Pathao" : bookForm.provider === "redx" ? "RedX" : bookForm.provider === "ecourier" ? "eCourier" : "Steadfast"} এ বুক করুন${order.isCod ? ` (COD ${formatMinor(BigInt(order.totalMinor))})` : ""}`}</button>
+                    <button className="btn-primary" disabled={courierBusy !== "" || bookForm.address.trim().length < 8 || (bookForm.provider === "redx" && !bookForm.rAreaId) || (bookForm.provider === "ecourier" && (!bookForm.eCity.trim() || !bookForm.eThana.trim() || !bookForm.eArea.trim() || !bookForm.eZip.trim() || !bookForm.ePackage.trim()))} onClick={() => bookShipment(order)}>{courierBusy === "book" ? dict.orders.booking2 : t("orders.bookOn2", { bookForm: bookForm.provider === "pathao" ? "Pathao" : bookForm.provider === "redx" ? "RedX" : bookForm.provider === "ecourier" ? "eCourier" : "Steadfast", order: order.isCod ? ` (COD ${formatMinor(BigInt(order.totalMinor))})` : "" })}</button>
                   </div>
                 </td></tr>
               ); })() : null}
@@ -2902,22 +2904,22 @@ function OrdersPageInner() {
                 <tr className="border-t bg-amber-50/50"><td colSpan={13} className="px-4 py-3">
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold">📦 পার্সেল বিস্তারিত — {sh.provider} · {sh.trackingCode ?? sh.id} · বর্তমান স্ট্যাটাস: {sh.status}</h3>
-                      <button className="btn-ghost btn-sm" onClick={() => setDetailShipmentId(null)}>বন্ধ করুন</button>
+                      <h3 className="text-sm font-semibold">{dict.orders.parcelDetails}{sh.provider} · {sh.trackingCode ?? sh.id} {dict.orders.currentStatus2}{sh.status}</h3>
+                      <button className="btn-ghost btn-sm" onClick={() => setDetailShipmentId(null)}>{dict.orders.close}</button>
                     </div>
-                    {sh.chargeMinor ? <p className="text-xs text-slate-600">বুকিং চার্জ (কুরিয়ারের ফেরত দেওয়া): <b>{(() => { try { return formatMinor(BigInt(sh.chargeMinor)); } catch { return sh.chargeMinor; } })()}</b></p> : null}
+                    {sh.chargeMinor ? <p className="text-xs text-slate-600">{dict.orders.bookingChargeReturnedByThe}<b>{(() => { try { return formatMinor(BigInt(sh.chargeMinor)); } catch { return sh.chargeMinor; } })()}</b></p> : null}
                     <div className="grid gap-3 lg:grid-cols-2">
                       <div>
-                        <h4 className="mb-1 text-xs font-semibold text-slate-600">ঘটনার ইতিহাস</h4>
+                        <h4 className="mb-1 text-xs font-semibold text-slate-600">{dict.orders.eventHistory}</h4>
                         {shipmentEvents.length === 0 ? (
-                          <p className="text-xs text-slate-500">এই পার্সেলের কোনো ঘটনা লগ হয়নি। ঘটনার লগ GC14 থেকে শুরু হয়েছে — তার আগের পার্সেলের ইতিহাস এখানে দেখানো হয় না (আগের স্ট্যাটাস বানিয়ে দেখানো হয় না)।</p>
+                          <p className="text-xs text-slate-500">{dict.orders.noEventLogForThis}</p>
                         ) : (
                           <ul className="space-y-1">
                             {shipmentEvents.map((ev: any) => (
                               <li key={ev.id} className="rounded-lg bg-white px-3 py-2 text-xs text-slate-700">
-                                <span className="font-semibold">{ev.kind === "error" ? "⚠️ ত্রুটি" : ev.kind === "note" ? "📝 নোট" : `স্ট্যাটাস: ${ev.status ?? "—"}`}</span>
-                                {ev.rawStatus ? <span className="text-slate-500"> (কুরিয়ারের ভাষায়: {ev.rawStatus})</span> : null}
-                                <span className="text-slate-500"> · {ev.source === "manual" ? "ম্যানুয়াল" : ev.source === "booking" ? "বুকিং" : ev.source === "api_sync" ? "API সিঙ্ক" : ev.source} · {ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ""}</span>
+                                <span className="font-semibold">{ev.kind === "error" ? dict.orders.error2 : ev.kind === "note" ? dict.orders.note2 : t("orders.status2", { ev: ev.status ?? "—" })}</span>
+                                {ev.rawStatus ? <span className="text-slate-500"> {dict.orders.inTheCourierSWords}{ev.rawStatus})</span> : null}
+                                <span className="text-slate-500"> · {ev.source === "manual" ? dict.orders.manual : ev.source === "booking" ? dict.orders.booking : ev.source === "api_sync" ? dict.orders.aPISync : ev.source} · {ev.createdAt ? fmtDateTime(locale, new Date(ev.createdAt)) : ""}</span>
                                 {ev.message ? <span className="block text-slate-500">{ev.message}</span> : null}
                               </li>
                             ))}
@@ -2925,14 +2927,14 @@ function OrdersPageInner() {
                         )}
                       </div>
                       <div>
-                        <h4 className="mb-1 text-xs font-semibold text-slate-600">ম্যানুয়াল স্ট্যাটাস হালনাগাদ</h4>
-                        <p className="mb-2 text-xs text-slate-500">কুরিয়ারের API বন্ধ থাকলে বা হাতে-কলমে কুরিয়ারের ক্ষেত্রে এখান থেকে স্ট্যাটাস দিন — সিঙ্কের মতোই সব প্রভাব (নোটিফিকেশন, রিটার্নে স্টক ফেরত) কাজ করবে এবং ঘটনাটি &quot;ম্যানুয়াল&quot; হিসেবে লগ হবে।</p>
+                        <h4 className="mb-1 text-xs font-semibold text-slate-600">{dict.orders.manualStatusUpdate2}</h4>
+                        <p className="mb-2 text-xs text-slate-500">{dict.orders.ifTheCourierAPIIs}</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <select className="input w-auto" value={manualStatus} onChange={(e) => setManualStatus(e.target.value)}>
                             {["in_review", "pending", "picked_up", "in_transit", "out_for_delivery", "delivered", "partial_delivered", "cancelled", "returned", "delivery_failed"].map((s) => <option key={s} value={s}>{s}</option>)}
                           </select>
-                          <input className="input w-64" placeholder="নোট (ঐচ্ছিক)" value={manualNote} onChange={(e) => setManualNote(e.target.value)} />
-                          <button className="btn-primary btn-sm" disabled={manualBusy} onClick={() => void submitManualStatus(sh.id)}>{manualBusy ? "হচ্ছে..." : "হালনাগাদ করুন"}</button>
+                          <input className="input w-64" placeholder={dict.orders.noteOptional} value={manualNote} onChange={(e) => setManualNote(e.target.value)} />
+                          <button className="btn-primary btn-sm" disabled={manualBusy} onClick={() => void submitManualStatus(sh.id)}>{manualBusy ? dict.orders.processing : dict.orders.update}</button>
                         </div>
                       </div>
                     </div>
@@ -3171,8 +3173,9 @@ function OrdersPageInner() {
 // Suspense boundary in Next 15 — same wrapper pattern as
 // dashboard/commerce/print and dashboard/commerce/warehouse/labels.
 export default function OrdersPage() {
+  const { dict, t, locale } = useLocale();
   return (
-    <Suspense fallback={<p className="p-6 text-sm text-slate-500">লোড হচ্ছে…</p>}>
+    <Suspense fallback={<p className="p-6 text-sm text-slate-500">{dict.common.loading}</p>}>
       <OrdersPageInner />
     </Suspense>
   );

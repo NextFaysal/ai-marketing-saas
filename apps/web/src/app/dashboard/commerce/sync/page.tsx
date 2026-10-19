@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -39,10 +41,10 @@ interface StoreLocation { id: string; name: string; externalLocationId: string |
 
 const PAGE_SIZE = 20;
 
-const SYNC_MODES: { value: string; label: string; desc: string }[] = [
-  { value: "mirror", label: "Mirror", desc: "শুধু স্টোর থেকে আসবে, এখানকার পরিবর্তন স্টোরে যাবে না" },
-  { value: "co-manage", label: "Co-manage", desc: "অর্ডারের স্ট্যাটাস/ফুলফিলমেন্ট/রিফান্ড স্টোরে যাবে" },
-  { value: "full-manage", label: "Full-manage", desc: "প্রোডাক্ট/দাম/স্টকসহ সব যাবে" },
+const SYNC_MODES: { value: string; label: string; descKey: string }[] = [
+  { value: "mirror", label: "Mirror", descKey: "willOnlyComeFromThe" },
+  { value: "co-manage", label: "Co-manage", descKey: "orderStatusFulfillmentRefundWill" },
+  { value: "full-manage", label: "Full-manage", descKey: "everythingIncludingProductsPricesStock" },
 ];
 
 function outboxBadge(status: string): string {
@@ -67,6 +69,7 @@ function listingBadge(status: string): string {
 }
 
 export default function SyncCenterPage() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [stores, setStores] = useState<Store[]>([]);
@@ -102,7 +105,7 @@ export default function SyncCenterPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setError(dict.commerce.noOrganizationSelected); return; }
     try {
       const qs = storeId ? `?storeId=${encodeURIComponent(storeId)}` : "";
       const [s, l, o, c] = await Promise.all([
@@ -117,7 +120,7 @@ export default function SyncCenterPage() {
         ),
         apiFetch<Conflict[]>(`/organizations/${orgId}/commerce/conflicts`).then((rows) => { setConflictsError(""); return rows; }).catch((e) => {
           // A failed load must never render as "no conflicts".
-          setConflictsError(e instanceof Error ? e.message : "Conflict তালিকা লোড ব্যর্থ হয়েছে");
+          setConflictsError(e instanceof Error ? e.message : dict.commerce.conflictListLoadingFailed);
           return [] as Conflict[];
         }),
       ]);
@@ -149,9 +152,9 @@ export default function SyncCenterPage() {
       await apiFetch(`/organizations/${orgId}/commerce/stores/${selectedStore.id}/sync-mode`, {
         method: "PATCH", body: JSON.stringify({ syncMode }),
       });
-      toast({ title: `"${selectedStore.name}" স্টোরের Sync মোড এখন ${syncMode}।`, tone: "success" });
+      toast({ title: t("commerce.theSyncModeOfThe", { name: selectedStore.name, syncMode: syncMode }), tone: "success" });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Sync মোড বদলানো ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.syncModeChangeFailed); }
     finally { setBusy(""); }
   }
 
@@ -165,11 +168,11 @@ export default function SyncCenterPage() {
         method: "PATCH", body: JSON.stringify({ enabled }),
       });
       setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
-      toast({ title: updated.refundPushEnabled ? `"${selectedStore.name}" স্টোরে Refund Push চালু হয়েছে।` : `"${selectedStore.name}" স্টোরে Refund Push বন্ধ হয়েছে।`, tone: "success" });
+      toast({ title: updated.refundPushEnabled ? t("commerce.refundPushEnabledForThe", { name: selectedStore.name }) : t("commerce.refundPushDisabledForThe", { name: selectedStore.name }), tone: "success" });
     } catch (e) {
       // Non-owners get the RolesGuard error here — show it verbatim,
       // honestly, rather than hiding the toggle's failure.
-      setRefundError(e instanceof Error ? e.message : "Refund Push বদলানো ব্যর্থ");
+      setRefundError(e instanceof Error ? e.message : dict.commerce.refundPushChangeFailed);
     } finally { setRefundBusy(false); }
   }
 
@@ -187,9 +190,9 @@ export default function SyncCenterPage() {
         method: "PATCH", body: JSON.stringify({ enabled }),
       });
       setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
-      toast({ title: updated.refundToCreditEnabled ? `"${selectedStore.name}" স্টোরে Refund-to-Credit চালু হয়েছে।` : `"${selectedStore.name}" স্টোরে Refund-to-Credit বন্ধ হয়েছে।`, tone: "success" });
+      toast({ title: updated.refundToCreditEnabled ? t("commerce.refundToCreditEnabledFor", { name: selectedStore.name }) : t("commerce.refundToCreditDisabledFor", { name: selectedStore.name }), tone: "success" });
     } catch (e) {
-      setCreditError(e instanceof Error ? e.message : "Refund-to-Credit বদলানো ব্যর্থ");
+      setCreditError(e instanceof Error ? e.message : dict.commerce.refundToCreditChangeFailed);
     } finally { setCreditBusy(false); }
   }
 
@@ -201,8 +204,8 @@ export default function SyncCenterPage() {
         method: "PATCH", body: JSON.stringify({ weightUnit: unit === "" ? null : unit }),
       });
       setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
-      toast({ title: `"${selectedStore.name}" স্টোরের ওজনের একক এখন ${updated.weightUnit ?? "kg (ডিফল্ট)"}।`, tone: "success" });
-    } catch (e) { setWeightError(e instanceof Error ? e.message : "ওজনের একক বদলানো ব্যর্থ"); }
+      toast({ title: t("commerce.theWeightUnitOfThe", { name: selectedStore.name, updated: updated.weightUnit ?? dict.commerce.kgDefault }), tone: "success" });
+    } catch (e) { setWeightError(e instanceof Error ? e.message : dict.commerce.weightUnitChangeFailed); }
     finally { setWeightBusy(false); }
   }
 
@@ -216,8 +219,8 @@ export default function SyncCenterPage() {
       });
       setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
       setTrackingKey(updated.courierTrackingMetaKey ?? "");
-      toast({ title: "Tracking Meta Key সংরক্ষণ হয়েছে।", tone: "success" });
-    } catch (e) { setTrackingError(e instanceof Error ? e.message : "Tracking Meta Key সংরক্ষণ ব্যর্থ"); }
+      toast({ title: dict.commerce.trackingMetaKeySaved, tone: "success" });
+    } catch (e) { setTrackingError(e instanceof Error ? e.message : dict.commerce.trackingMetaKeySaveFailed); }
     finally { setTrackingBusy(false); }
   }
 
@@ -230,7 +233,7 @@ export default function SyncCenterPage() {
     } catch (e) {
       // A failed load must never render as "no locations".
       setLocations([]);
-      setLocationsError(e instanceof Error ? e.message : "Location তালিকা লোড ব্যর্থ হয়েছে");
+      setLocationsError(e instanceof Error ? e.message : dict.commerce.locationListLoadingFailed);
     }
   }, []);
 
@@ -247,10 +250,10 @@ export default function SyncCenterPage() {
       await apiFetch(`/organizations/${orgId}/commerce/conflicts/${id}/resolve`, {
         method: "POST", body: JSON.stringify({ choice }),
       });
-      toast({ title: choice === "keep_local" ? "Conflict নিষ্পত্তি হয়েছে — লোকাল মান রাখা হয়েছে।" : "Conflict নিষ্পত্তি হয়েছে — স্টোরের মান নেওয়া হয়েছে।", tone: "success" });
+      toast({ title: choice === "keep_local" ? dict.commerce.conflictResolvedLocalValueKept : dict.commerce.conflictResolvedStoreValueTaken, tone: "success" });
       setConfirmConflict(null);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Conflict নিষ্পত্তি ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.conflictResolutionFailed); }
     finally { setBusy(""); }
   }
 
@@ -262,10 +265,10 @@ export default function SyncCenterPage() {
       await apiFetch(`/organizations/${orgId}/commerce/conflicts/${c.id}/resolve`, {
         method: "POST", body: JSON.stringify({ choice: "per_field", choices }),
       });
-      toast({ title: "Conflict নিষ্পত্তি হয়েছে — ফিল্ড অনুযায়ী বেছে নেওয়া মানগুলো প্রয়োগ হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.conflictResolvedThePerField, tone: "success" });
       setExpandedConflictId("");
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Conflict নিষ্পত্তি ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.conflictResolutionFailed); }
     finally { setBusy(""); }
   }
 
@@ -276,8 +279,8 @@ export default function SyncCenterPage() {
       const res = await apiFetch<{ locations: StoreLocation[]; imported: number }>(
         `/organizations/${orgId}/commerce/stores/${storeId}/locations/refresh`, { method: "POST" });
       setLocations(res.locations);
-      toast({ title: `Shopify থেকে ${res.imported}টি নতুন Location আনা হয়েছে।`, tone: "success" });
-    } catch (e) { setLocationsError(e instanceof Error ? e.message : "Location আনতে ব্যর্থ হয়েছে"); }
+      toast({ title: t("commerce.newLocationsImportedFromShopify", { imported: res.imported }), tone: "success" });
+    } catch (e) { setLocationsError(e instanceof Error ? e.message : dict.commerce.locationImportFailed); }
     finally { setLocationsBusy(""); }
   }
 
@@ -295,9 +298,9 @@ export default function SyncCenterPage() {
         }),
       });
       setLocForm({ name: "", externalLocationId: "", isDefault: false });
-      toast({ title: "Location যোগ হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.locationAdded, tone: "success" });
       await loadLocations(storeId);
-    } catch (e) { setLocationsError(e instanceof Error ? e.message : "Location যোগ ব্যর্থ হয়েছে"); }
+    } catch (e) { setLocationsError(e instanceof Error ? e.message : dict.commerce.locationAddFailed); }
     finally { setLocationsBusy(""); }
   }
 
@@ -308,21 +311,21 @@ export default function SyncCenterPage() {
       await apiFetch(`/organizations/${orgId}/commerce/locations/${loc.id}`, {
         method: "PATCH", body: JSON.stringify({ isDefault: true }),
       });
-      toast({ title: `"${loc.name}" এখন ডিফল্ট Location।`, tone: "success" });
+      toast({ title: t("commerce.isNowTheDefaultLocation", { name: loc.name }), tone: "success" });
       if (storeId) await loadLocations(storeId);
-    } catch (e) { setLocationsError(e instanceof Error ? e.message : "ডিফল্ট সেট ব্যর্থ হয়েছে"); }
+    } catch (e) { setLocationsError(e instanceof Error ? e.message : dict.commerce.defaultSetFailed); }
     finally { setLocationsBusy(""); }
   }
 
   async function deleteLocation(loc: StoreLocation) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `Location "${loc.name}" মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: t("commerce.deleteTheLocation", { name: loc.name }), danger: true, confirmLabel: dict.commerce.delete2 }))) return;
     setLocationsBusy(`delete-${loc.id}`); setLocationsError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/locations/${loc.id}`, { method: "DELETE" });
-      toast({ title: `Location "${loc.name}" মোছা হয়েছে।`, tone: "success" });
+      toast({ title: t("commerce.locationDeleted", { name: loc.name }), tone: "success" });
       if (storeId) await loadLocations(storeId);
-    } catch (e) { setLocationsError(e instanceof Error ? e.message : "Location মোছা ব্যর্থ হয়েছে"); }
+    } catch (e) { setLocationsError(e instanceof Error ? e.message : dict.commerce.locationDeleteFailed); }
     finally { setLocationsBusy(""); }
   }
 
@@ -331,9 +334,9 @@ export default function SyncCenterPage() {
     setError(""); setBusy(`replay-${item.id}`);
     try {
       await apiFetch(`/organizations/${orgId}/commerce/outbox/${item.id}/replay`, { method: "POST" });
-      toast({ title: "আইটেমটি আবার চেষ্টার জন্য Outbox এ ফেরত দেওয়া হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.theItemHasBeenReturned, tone: "success" });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Replay ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.replayFailed); }
     finally { setBusy(""); }
   }
 
@@ -347,7 +350,7 @@ export default function SyncCenterPage() {
         disabled={busy !== ""}
         onClick={() => replay(o)}
       >
-        {busy === `replay-${o.id}` ? "পাঠানো হচ্ছে…" : "আবার চেষ্টা"}
+        {busy === `replay-${o.id}` ? dict.commerce.sending : dict.commerce.retry2}
       </button>
     ) : null
   );
@@ -358,31 +361,29 @@ export default function SyncCenterPage() {
         <div className="space-y-1.5">
           <p className="text-xs text-slate-600">
             {confirmConflict.choice === "keep_local"
-              ? "লোকাল মানটিই রাখা হবে — নিশ্চিত তো?"
-              : "স্টোরের মানটি নেওয়া হবে, লোকাল মান বদলে যাবে — নিশ্চিত তো?"}
+              ? dict.commerce.theLocalValueWillBe
+              : dict.commerce.theStoreValueWillBe}
           </p>
           <div className="flex gap-2">
             <button className="inline-flex min-h-[44px] items-center rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
               disabled={busy !== ""} onClick={resolveConflict}>
-              {busy === `conflict-${c.id}` ? "হচ্ছে…" : "নিশ্চিত করুন"}
+              {busy === `conflict-${c.id}` ? dict.commerce.ing : dict.commerce.confirm}
             </button>
-            <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs" onClick={() => setConfirmConflict(null)}>বাতিল</button>
+            <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs" onClick={() => setConfirmConflict(null)}>{dict.common.cancel}</button>
           </div>
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
           <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
             onClick={() => setConfirmConflict({ id: c.id, choice: "keep_local" })}>
-            লোকাল রাখুন
-          </button>
+            {dict.commerce.keepLocal}</button>
           <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
             onClick={() => setConfirmConflict({ id: c.id, choice: "take_remote" })}>
-            স্টোরেরটা নিন
-          </button>
+            {dict.commerce.takeTheStoreS}</button>
           {diffs.length > 0 ? (
             <button className="inline-flex min-h-[44px] items-center rounded-lg border border-purple-300 px-3 py-1.5 text-xs font-semibold text-purple-700 disabled:opacity-50" disabled={busy !== ""}
               onClick={() => setExpandedConflictId(expanded ? "" : c.id)}>
-              {expanded ? "বিস্তারিত লুকান" : "ফিল্ড অনুযায়ী বেছে নিন"}
+              {expanded ? dict.commerce.hideDetails : dict.commerce.choosePerField}
             </button>
           ) : null}
         </div>
@@ -395,27 +396,27 @@ export default function SyncCenterPage() {
     const allPicked = diffs.length > 0 && diffs.every((d) => picks[d.field] === "local" || picks[d.field] === "remote");
     return (
       <div className="space-y-2">
-        <p className="text-xs font-semibold text-slate-600">প্রতিটি ফিল্ডের জন্য কোন পক্ষের মান থাকবে বেছে নিন:</p>
+        <p className="text-xs font-semibold text-slate-600">{dict.commerce.chooseWhichSideSValue}</p>
         {diffs.map((d) => (
           <div key={d.field} className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-3 py-2 text-xs">
             <span className="w-28 font-mono font-semibold">{d.field}</span>
             <label className="flex items-center gap-1.5">
               <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "local"}
                 onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "local" } }))} />
-              লোকাল: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.localValue)}</span>
+              {dict.commerce.local}<span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.localValue)}</span>
             </label>
             <label className="flex items-center gap-1.5">
               <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "remote"}
                 onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "remote" } }))} />
-              স্টোরের: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.remoteValue)}</span>
+              {dict.commerce.storeS}<span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.remoteValue)}</span>
             </label>
           </div>
         ))}
         <button className="inline-flex min-h-[44px] items-center rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
           disabled={busy !== "" || !allPicked} onClick={() => applyPerField(c)}>
-          {busy === `conflict-${c.id}` ? "হচ্ছে…" : "ফিল্ড অনুযায়ী প্রয়োগ করুন"}
+          {busy === `conflict-${c.id}` ? dict.commerce.ing : dict.commerce.applyPerField}
         </button>
-        {!allPicked ? <span className="ml-2 text-xs text-slate-500">সব ফিল্ড বেছে নিলে বোতামটি সক্রিয় হবে।</span> : null}
+        {!allPicked ? <span className="ml-2 text-xs text-slate-500">{dict.commerce.theButtonWillActivateWhen}</span> : null}
       </div>
     );
   };
@@ -423,31 +424,27 @@ export default function SyncCenterPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="page-title">Sync Center — স্টোর সিঙ্ক কেন্দ্র</h1>
+        <h1 className="page-title">{dict.commerce.syncCenterStoreSyncCenter}</h1>
         <p className="text-sm text-slate-500">
-          এখান থেকে স্টোরে পাঠানো প্রতিটি পরিবর্তন প্রথমে Outbox এ জমা হয়, তারপর প্ল্যাটফর্মে যায়।
-          কোনো আইটেম ব্যর্থ হলে প্ল্যাটফর্মের দেওয়া আসল (verbatim) এরর এখানেই দেখানো হয়।
-          প্ল্যাটফর্ম যে অপারেশন সমর্থন করে না, তা সফল বলে দেখানো হয় না — সেটি failed হিসেবেই চিহ্নিত থাকে।
-        </p>
+          {dict.commerce.everyChangeSentToThe}</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Link href="/dashboard/commerce" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📊 Commerce Hub</Link>
-          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏷️ Discounts / কুপন</Link>
+          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.commerce.discountsCoupons}</Link>
           <Link href="/dashboard/commerce/abandoned" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🛒 Abandoned Carts</Link>
           <Link href="/dashboard/commerce/dispatch" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📦 Dispatch Board</Link>
-          <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏪 Storefront / দোকান</Link>
+          <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.commerce.storefrontShop3}</Link>
         </div>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
       <div className="card p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="block text-sm">স্টোর
-            <select
+          <label className="block text-sm">{dict.commerce.store}<select
               className="input mt-1"
               value={storeId}
               onChange={(e) => { setStoreId(e.target.value); setPage(1); }}
             >
-              <option value="">সব স্টোর</option>
+              <option value="">{dict.commerce.allStores}</option>
               {stores.map((s) => <option key={s.id} value={s.id}>{s.name}{s.platform ? ` (${s.platform})` : ""}</option>)}
             </select>
           </label>
@@ -455,7 +452,7 @@ export default function SyncCenterPage() {
 
         {selectedStore ? (
           <div>
-            <div className="font-semibold text-sm">Sync মোড — {selectedStore.name}</div>
+            <div className="font-semibold text-sm">{dict.commerce.syncMode}{selectedStore.name}</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {SYNC_MODES.map((m) => {
                 const active = (selectedStore.syncMode ?? "mirror") === m.value;
@@ -468,30 +465,29 @@ export default function SyncCenterPage() {
                     className={`rounded-lg border px-3 py-2 text-left text-sm disabled:opacity-50 ${active ? "border-blue-600 bg-blue-50" : "border-slate-200 bg-white"}`}
                   >
                     <span className="font-semibold">{active ? "● " : "○ "}{m.label}</span>
-                    <span className="block text-xs text-slate-500">{m.desc}</span>
+                    <span className="block text-xs text-slate-500">{dict.commerce[m.descKey as keyof typeof dict.commerce]}</span>
                   </button>
                 );
               })}
             </div>
-            <p className="mt-2 text-xs text-slate-500">মোড বদলানো শুধু Owner/Admin করতে পারেন।</p>
+            <p className="mt-2 text-xs text-slate-500">{dict.commerce.onlyOwnerAdminCanChange}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="block text-sm">ওজনের একক (WooCommerce)
-                <select
+              <label className="block text-sm">{dict.commerce.weightUnitWooCommerce}<select
                   className="input mt-1"
                   value={selectedStore.weightUnit ?? ""}
                   disabled={weightBusy}
                   onChange={(e) => saveWeightUnit(e.target.value)}
                 >
-                  <option value="">ডিফল্ট (kg)</option>
-                  <option value="g">g (গ্রাম)</option>
-                  <option value="kg">kg (কিলোগ্রাম)</option>
-                  <option value="lb">lb (পাউন্ড)</option>
-                  <option value="oz">oz (আউন্স)</option>
+                  <option value="">{dict.commerce.defaultKg}</option>
+                  <option value="g">{dict.commerce.gGrams}</option>
+                  <option value="kg">{dict.commerce.kgKilograms}</option>
+                  <option value="lb">{dict.commerce.lbPounds}</option>
+                  <option value="oz">{dict.commerce.ozOunces}</option>
                 </select>
               </label>
-              {weightBusy ? <span className="pt-5 text-xs text-slate-500">সংরক্ষণ হচ্ছে…</span> : null}
+              {weightBusy ? <span className="pt-5 text-xs text-slate-500">{dict.commerce.saving}</span> : null}
             </div>
-            <p className="text-xs text-slate-500">স্টোরের আসল একক Health Check-এ Woo Settings থেকে পড়ে সংরক্ষণ করা হয়; এখান থেকে হাতে বদলানো যায়। পণ্যের ওজন গ্রামে সংরক্ষিত থাকে, পাঠানোর সময় এই এককে রূপান্তর হয়।</p>
+            <p className="text-xs text-slate-500">{dict.commerce.theStoreSRealUnit}</p>
             {weightError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{weightError}</p> : null}
             <div className="mt-4 space-y-3 border-t pt-4">
               <label className="flex items-start gap-2 text-sm">
@@ -503,11 +499,11 @@ export default function SyncCenterPage() {
                   onChange={(e) => toggleRefundPush(e.target.checked)}
                 />
                 <span>
-                  <span className="font-semibold">স্টোরে Refund Push</span>
-                  <span className="block text-xs text-slate-500">বন্ধ থাকলে refund শুধু SaaS-এ রেকর্ড হবে, স্টোরে যাবে না। শুধু OWNER বদলাতে পারেন।</span>
+                  <span className="font-semibold">{dict.commerce.refundPushToStore}</span>
+                  <span className="block text-xs text-slate-500">{dict.commerce.ifOffRefundsWillOnly}</span>
                 </span>
               </label>
-              {refundBusy ? <p className="text-xs text-slate-500">বদলানো হচ্ছে…</p> : null}
+              {refundBusy ? <p className="text-xs text-slate-500">{dict.commerce.changing}</p> : null}
               {refundError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{refundError}</p> : null}
               <label className="flex items-start gap-2 text-sm">
                 <input
@@ -518,11 +514,11 @@ export default function SyncCenterPage() {
                   onChange={(e) => toggleRefundToCredit(e.target.checked)}
                 />
                 <span>
-                  <span className="font-semibold">Refund → স্টোর ক্রেডিট (NF7)</span>
-                  <span className="block text-xs text-slate-500">বন্ধ থাকলে অর্ডারের Refund অংশে স্টোর ক্রেডিটের অপশনই দেখা যাবে না এবং API-ও ক্রেডিটে রিফান্ড নেবে না। চালু থাকলে refund কাস্টমারের স্টোর ক্রেডিট লেজারে জমা হবে। শুধু OWNER বদলাতে পারেন।</span>
+                  <span className="font-semibold">{dict.commerce.refundStoreCreditNF7}</span>
+                  <span className="block text-xs text-slate-500">{dict.commerce.ifOffTheStoreCredit}</span>
                 </span>
               </label>
-              {creditBusy ? <p className="text-xs text-slate-500">বদলানো হচ্ছে…</p> : null}
+              {creditBusy ? <p className="text-xs text-slate-500">{dict.commerce.changing}</p> : null}
               {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
               <div className="space-y-1">
                 <label className="block text-sm font-medium">Courier Tracking Meta Key
@@ -531,7 +527,7 @@ export default function SyncCenterPage() {
                       className="input w-72"
                       value={trackingKey}
                       onChange={(e) => setTrackingKey(e.target.value)}
-                      placeholder="যেমন: _tracking_number (ঐচ্ছিক)"
+                      placeholder={dict.commerce.eGTrackingNumberOptional}
                     />
                     <button
                       type="button"
@@ -539,11 +535,11 @@ export default function SyncCenterPage() {
                       disabled={trackingBusy}
                       onClick={saveTrackingMetaKey}
                     >
-                      {trackingBusy ? "সংরক্ষণ হচ্ছে…" : "সংরক্ষণ করুন"}
+                      {trackingBusy ? dict.commerce.saving : dict.common.save}
                     </button>
                   </div>
                 </label>
-                <p className="text-xs text-slate-500">WooCommerce shipment plugin-এর tracking meta key (ঐচ্ছিক)। খালি রেখে সংরক্ষণ করলে মুছে যাবে।</p>
+                <p className="text-xs text-slate-500">{dict.commerce.wooCommerceShipmentPluginSTracking}</p>
                 {trackingError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{trackingError}</p> : null}
               </div>
             </div>
@@ -552,16 +548,16 @@ export default function SyncCenterPage() {
       </div>
 
       <div className="card p-5">
-        <div className="font-semibold">Listing অবস্থা</div>
+        <div className="font-semibold">{dict.commerce.listingStatus}</div>
         {summary ? (
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <div className="rounded-lg bg-slate-50 p-3 text-center"><div className="text-2xl font-bold">{summary.total}</div><div className="text-xs text-slate-500">মোট</div></div>
+            <div className="rounded-lg bg-slate-50 p-3 text-center"><div className="text-2xl font-bold">{summary.total}</div><div className="text-xs text-slate-500">{dict.commerce.total}</div></div>
             <div className="rounded-lg bg-green-50 p-3 text-center"><div className="text-2xl font-bold text-green-700">{summary.synced}</div><div className="text-xs text-slate-500">Synced</div></div>
             <div className="rounded-lg bg-amber-50 p-3 text-center"><div className="text-2xl font-bold text-amber-700">{summary.pending}</div><div className="text-xs text-slate-500">Pending</div></div>
             <div className="rounded-lg bg-red-50 p-3 text-center"><div className="text-2xl font-bold text-red-700">{summary.failed}</div><div className="text-xs text-slate-500">Failed</div></div>
             <div className="rounded-lg bg-purple-50 p-3 text-center"><div className="text-2xl font-bold text-purple-700">{summary.conflict}</div><div className="text-xs text-slate-500">Conflict</div></div>
           </div>
-        ) : <p className="mt-2 text-sm text-slate-500">লোড হচ্ছে…</p>}
+        ) : <p className="mt-2 text-sm text-slate-500">{dict.common.loading}</p>}
         {listings.length > 0 ? (
           <ResponsiveTable
             className="mt-4"
@@ -570,12 +566,12 @@ export default function SyncCenterPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-3">প্রোডাক্ট</th>
-                  <th className="py-2 pr-3">স্টোর</th>
+                  <th className="py-2 pr-3">{dict.commerce.product3}</th>
+                  <th className="py-2 pr-3">{dict.commerce.store}</th>
                   <th className="py-2 pr-3">External ID</th>
-                  <th className="py-2 pr-3">অবস্থা</th>
-                  <th className="py-2 pr-3">শেষ রিমোট আপডেট</th>
-                  <th className="py-2">এরর</th>
+                  <th className="py-2 pr-3">{dict.commerce.status}</th>
+                  <th className="py-2 pr-3">{dict.commerce.lastRemoteUpdate}</th>
+                  <th className="py-2">{dict.commerce.error}</th>
                 </tr>
               </thead>
               <tbody>
@@ -588,7 +584,7 @@ export default function SyncCenterPage() {
                     <td className="py-2 pr-3">{l.store?.name ?? "—"}{l.store?.platform ? <span className="text-slate-400"> ({l.store.platform})</span> : null}</td>
                     <td className="py-2 pr-3 font-mono text-xs">{l.externalId ?? "—"}</td>
                     <td className="py-2 pr-3"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${listingBadge(l.syncStatus)}`}>{l.syncStatus}</span></td>
-                    <td className="py-2 pr-3 text-xs text-slate-500">{l.lastRemoteUpdatedAt ? new Date(l.lastRemoteUpdatedAt).toLocaleString() : "—"}</td>
+                    <td className="py-2 pr-3 text-xs text-slate-500">{l.lastRemoteUpdatedAt ? fmtDateTime(locale, new Date(l.lastRemoteUpdatedAt)) : "—"}</td>
                     <td className="py-2 text-xs text-red-600">{l.lastSyncError ?? ""}</td>
                   </tr>
                 ))}
@@ -599,29 +595,28 @@ export default function SyncCenterPage() {
             cards={listings.map((l) => (
               <div key={l.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                 <dl className="space-y-1.5">
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">প্রোডাক্ট</dt><dd className="text-right"><span className="font-medium">{l.product?.name ?? "—"}</span>{l.product?.sku ? <span className="block text-xs text-slate-500">SKU: {l.product.sku}</span> : null}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টোর</dt><dd className="text-right">{l.store?.name ?? "—"}{l.store?.platform ? <span className="text-slate-400"> ({l.store.platform})</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.product3}</dt><dd className="text-right"><span className="font-medium">{l.product?.name ?? "—"}</span>{l.product?.sku ? <span className="block text-xs text-slate-500">SKU: {l.product.sku}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.store}</dt><dd className="text-right">{l.store?.name ?? "—"}{l.store?.platform ? <span className="text-slate-400"> ({l.store.platform})</span> : null}</dd></div>
                   <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">External ID</dt><dd className="text-right font-mono text-xs">{l.externalId ?? "—"}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${listingBadge(l.syncStatus)}`}>{l.syncStatus}</span></dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শেষ রিমোট আপডেট</dt><dd className="text-right text-xs text-slate-500">{l.lastRemoteUpdatedAt ? new Date(l.lastRemoteUpdatedAt).toLocaleString() : "—"}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">এরর</dt><dd className="text-right text-xs text-red-600">{l.lastSyncError ?? ""}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.status}</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${listingBadge(l.syncStatus)}`}>{l.syncStatus}</span></dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.lastRemoteUpdate}</dt><dd className="text-right text-xs text-slate-500">{l.lastRemoteUpdatedAt ? fmtDateTime(locale, new Date(l.lastRemoteUpdatedAt)) : "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.error}</dt><dd className="text-right text-xs text-red-600">{l.lastSyncError ?? ""}</dd></div>
                 </dl>
               </div>
             ))}
           />
-        ) : <p className="mt-3 text-sm text-slate-500">এখনো কোনো Listing নেই।</p>}
+        ) : <p className="mt-3 text-sm text-slate-500">{dict.commerce.noListingsYet}</p>}
       </div>
 
       <div className="card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="font-semibold">Outbox — স্টোরে পাঠানোর সারি</div>
-          <label className="block text-sm">অবস্থা
-            <select
+          <div className="font-semibold">{dict.commerce.outboxQueueToSendTo}</div>
+          <label className="block text-sm">{dict.commerce.status}<select
               className="input mt-1"
               value={statusFilter}
               onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
             >
-              <option value="">সব</option>
+              <option value="">{dict.commerce.all}</option>
               <option value="pending">pending</option>
               <option value="processing">processing</option>
               <option value="done">done</option>
@@ -630,7 +625,7 @@ export default function SyncCenterPage() {
             </select>
           </label>
         </div>
-        {outbox.length === 0 ? <p className="mt-3 text-sm text-slate-500">এই ফিল্টারে কোনো Outbox আইটেম নেই।</p> : (
+        {outbox.length === 0 ? <p className="mt-3 text-sm text-slate-500">{dict.commerce.noOutboxItemsInThis}</p> : (
           <ResponsiveTable
             className="mt-3"
             table={
@@ -640,11 +635,11 @@ export default function SyncCenterPage() {
                 <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 pr-3">Entity</th>
                   <th className="py-2 pr-3">Operation</th>
-                  <th className="py-2 pr-3">অবস্থা</th>
-                  <th className="py-2 pr-3">চেষ্টা</th>
-                  <th className="py-2 pr-3">পরের চেষ্টা</th>
-                  <th className="py-2 pr-3">এরর</th>
-                  <th className="py-2">অ্যাকশন</th>
+                  <th className="py-2 pr-3">{dict.commerce.status}</th>
+                  <th className="py-2 pr-3">{dict.commerce.attempt}</th>
+                  <th className="py-2 pr-3">{dict.commerce.nextAttempt}</th>
+                  <th className="py-2 pr-3">{dict.commerce.error}</th>
+                  <th className="py-2">{dict.commerce.action}</th>
                 </tr>
               </thead>
               <tbody>
@@ -657,7 +652,7 @@ export default function SyncCenterPage() {
                     <td className="py-2 pr-3">{o.operation}</td>
                     <td className="py-2 pr-3"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${outboxBadge(o.status)}`}>{o.status}</span></td>
                     <td className="py-2 pr-3">{o.attempts}</td>
-                    <td className="py-2 pr-3 text-xs text-slate-500">{o.nextRetryAt ? new Date(o.nextRetryAt).toLocaleString() : "—"}</td>
+                    <td className="py-2 pr-3 text-xs text-slate-500">{o.nextRetryAt ? fmtDateTime(locale, new Date(o.nextRetryAt)) : "—"}</td>
                     <td className="py-2 pr-3 max-w-xs truncate text-xs text-red-600" title={o.lastError ?? undefined}>{o.lastError ?? ""}</td>
                     <td className="py-2">
                       {renderOutboxAction(o)}
@@ -673,10 +668,10 @@ export default function SyncCenterPage() {
                 <dl className="space-y-1.5">
                   <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Entity</dt><dd className="text-right"><span className="font-medium">{o.entityType}</span><span className="block font-mono text-xs text-slate-500" title={o.entityId}>{o.entityId.slice(0, 8)}…</span></dd></div>
                   <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Operation</dt><dd className="text-right">{o.operation}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${outboxBadge(o.status)}`}>{o.status}</span></dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">চেষ্টা</dt><dd className="text-right">{o.attempts}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরের চেষ্টা</dt><dd className="text-right text-xs text-slate-500">{o.nextRetryAt ? new Date(o.nextRetryAt).toLocaleString() : "—"}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">এরর</dt><dd className="break-words text-right text-xs text-red-600">{o.lastError ?? ""}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.status}</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${outboxBadge(o.status)}`}>{o.status}</span></dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.attempt}</dt><dd className="text-right">{o.attempts}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.nextAttempt}</dt><dd className="text-right text-xs text-slate-500">{o.nextRetryAt ? fmtDateTime(locale, new Date(o.nextRetryAt)) : "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.error}</dt><dd className="break-words text-right text-xs text-red-600">{o.lastError ?? ""}</dd></div>
                 </dl>
                 {renderOutboxAction(o) ? <div className="mt-2">{renderOutboxAction(o)}</div> : null}
               </div>
@@ -684,18 +679,18 @@ export default function SyncCenterPage() {
           />
         )}
         <div className="mt-3 flex items-center gap-3 text-sm">
-          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page <= 1 || busy !== ""} onClick={() => setPage((p) => Math.max(1, p - 1))}>আগের পেজ</button>
-          <span className="text-slate-500">পেজ {page} / {totalPages} · মোট {outboxTotal}টি</span>
-          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page >= totalPages || busy !== ""} onClick={() => setPage((p) => p + 1)}>পরের পেজ</button>
+          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page <= 1 || busy !== ""} onClick={() => setPage((p) => Math.max(1, p - 1))}>{dict.commerce.previousPage}</button>
+          <span className="text-slate-500">{dict.commerce.page}{page} / {totalPages} {dict.commerce.total2}{outboxTotal}{dict.commerce.text1ou8}</span>
+          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page >= totalPages || busy !== ""} onClick={() => setPage((p) => p + 1)}>{dict.commerce.nextPage}</button>
         </div>
       </div>
 
       <div className="card p-5">
         <div className="font-semibold">Conflicts</div>
         {conflictsError ? (
-          <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">Conflict তালিকা লোড করা যায়নি: {conflictsError}</p>
+          <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">{dict.commerce.couldNotLoadTheConflict}{conflictsError}</p>
         ) : conflicts.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500">কোনো খোলা Conflict নেই।</p>
+          <p className="mt-2 text-sm text-slate-500">{dict.commerce.noOpenConflicts}</p>
         ) : (
           <ResponsiveTable
             className="mt-3"
@@ -705,12 +700,12 @@ export default function SyncCenterPage() {
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 pr-3">Field</th>
-                  <th className="py-2 pr-3">পণ্য / স্টোর</th>
-                  <th className="py-2 pr-3">লোকাল মান</th>
-                  <th className="py-2 pr-3">স্টোরের মান</th>
-                  <th className="py-2 pr-3">অবস্থা</th>
-                  <th className="py-2 pr-3">তৈরি হয়েছে</th>
-                  <th className="py-2">অ্যাকশন</th>
+                  <th className="py-2 pr-3">{dict.commerce.productStore}</th>
+                  <th className="py-2 pr-3">{dict.commerce.localValue}</th>
+                  <th className="py-2 pr-3">{dict.commerce.storeValue}</th>
+                  <th className="py-2 pr-3">{dict.commerce.status}</th>
+                  <th className="py-2 pr-3">{dict.commerce.created2}</th>
+                  <th className="py-2">{dict.commerce.action}</th>
                 </tr>
               </thead>
               <tbody>
@@ -731,7 +726,7 @@ export default function SyncCenterPage() {
                       <td className="py-2 pr-3 max-w-xs break-words text-xs">{c.localValue == null ? "—" : String(typeof c.localValue === "object" ? JSON.stringify(c.localValue) : c.localValue)}</td>
                       <td className="py-2 pr-3 max-w-xs break-words text-xs">{c.remoteValue == null ? "—" : String(typeof c.remoteValue === "object" ? JSON.stringify(c.remoteValue) : c.remoteValue)}</td>
                       <td className="py-2 pr-3"><span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">{c.status}</span></td>
-                      <td className="py-2 pr-3 text-xs text-slate-500">{new Date(c.createdAt).toLocaleString()}</td>
+                      <td className="py-2 pr-3 text-xs text-slate-500">{fmtDateTime(locale, new Date(c.createdAt))}</td>
                       <td className="py-2">
                         {renderConflictActions(c, isOpen, diffs, expanded)}
                       </td>
@@ -760,11 +755,11 @@ export default function SyncCenterPage() {
                 <div key={c.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                   <dl className="space-y-1.5">
                     <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Field</dt><dd className="text-right">{c.field}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পণ্য / স্টোর</dt><dd className="text-right">{productName ?? "—"}{storeName ? <span className="block text-xs text-slate-500">{storeName}</span> : null}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">লোকাল মান</dt><dd className="break-words text-right text-xs">{c.localValue == null ? "—" : String(typeof c.localValue === "object" ? JSON.stringify(c.localValue) : c.localValue)}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টোরের মান</dt><dd className="break-words text-right text-xs">{c.remoteValue == null ? "—" : String(typeof c.remoteValue === "object" ? JSON.stringify(c.remoteValue) : c.remoteValue)}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">{c.status}</span></dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">তৈরি হয়েছে</dt><dd className="text-right text-xs text-slate-500">{new Date(c.createdAt).toLocaleString()}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.productStore}</dt><dd className="text-right">{productName ?? "—"}{storeName ? <span className="block text-xs text-slate-500">{storeName}</span> : null}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.localValue}</dt><dd className="break-words text-right text-xs">{c.localValue == null ? "—" : String(typeof c.localValue === "object" ? JSON.stringify(c.localValue) : c.localValue)}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.storeValue}</dt><dd className="break-words text-right text-xs">{c.remoteValue == null ? "—" : String(typeof c.remoteValue === "object" ? JSON.stringify(c.remoteValue) : c.remoteValue)}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.status}</dt><dd className="text-right"><span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">{c.status}</span></dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.created2}</dt><dd className="text-right text-xs text-slate-500">{fmtDateTime(locale, new Date(c.createdAt))}</dd></div>
                   </dl>
                   {renderConflictActions(c, isOpen, diffs, expanded) ? <div className="mt-2">{renderConflictActions(c, isOpen, diffs, expanded)}</div> : null}
                   {isOpen && expanded && diffs.length > 0 ? (
@@ -786,52 +781,48 @@ export default function SyncCenterPage() {
             {selectedStore.platform === "SHOPIFY" ? (
               <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 disabled={locationsBusy !== ""} onClick={refreshLocations}>
-                {locationsBusy === "refresh" ? "আনা হচ্ছে…" : "Shopify থেকে আনুন"}
+                {locationsBusy === "refresh" ? dict.commerce.fetching : dict.commerce.fetchFromShopify}
               </button>
             ) : null}
           </div>
           {locationsError ? (
             <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">{locationsError}</p>
           ) : locations.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-500">এই স্টোরের কোনো Location নেই।</p>
+            <p className="mt-2 text-sm text-slate-500">{dict.commerce.thisStoreHasNoLocations}</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {locations.map((loc) => (
                 <li key={loc.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2.5 text-sm">
                   <span>
                     <span className="font-medium">{loc.name}</span>
-                    {loc.isDefault ? <span className="ml-2 rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">ডিফল্ট</span> : null}
+                    {loc.isDefault ? <span className="ml-2 rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">{dict.commerce.default}</span> : null}
                     <span className="block text-xs text-slate-500">External ID: {loc.externalLocationId ?? "—"}</span>
                   </span>
                   <span className="flex gap-2">
                     {!loc.isDefault ? (
                       <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2.5 py-1 text-xs disabled:opacity-50" disabled={locationsBusy !== ""}
                         onClick={() => setDefaultLocation(loc)}>
-                        ডিফল্ট করুন
-                      </button>
+                        {dict.commerce.makeDefault}</button>
                     ) : null}
                     <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2.5 py-1 text-xs text-red-600 disabled:opacity-50" disabled={locationsBusy !== ""}
                       onClick={() => deleteLocation(loc)}>
-                      মুছুন
-                    </button>
+                      {dict.commerce.delete}</button>
                   </span>
                 </li>
               ))}
             </ul>
           )}
           <form onSubmit={addLocation} className="mt-4 flex flex-wrap items-end gap-2 border-t pt-3">
-            <label className="block text-sm">নাম *
-              <input className="input mt-1" value={locForm.name} onChange={(e) => setLocForm({ ...locForm, name: e.target.value })} required placeholder="যেমন: ঢাকা গুদাম" />
+            <label className="block text-sm">{dict.commerce.name2}<input className="input mt-1" value={locForm.name} onChange={(e) => setLocForm({ ...locForm, name: e.target.value })} required placeholder={dict.commerce.eGDhakaWarehouse} />
             </label>
             <label className="block text-sm">External ID
-              <input className="input mt-1" value={locForm.externalLocationId} onChange={(e) => setLocForm({ ...locForm, externalLocationId: e.target.value })} placeholder="ঐচ্ছিক" />
+              <input className="input mt-1" value={locForm.externalLocationId} onChange={(e) => setLocForm({ ...locForm, externalLocationId: e.target.value })} placeholder={dict.commerce.optional} />
             </label>
             <label className="flex items-center gap-1.5 pb-2 text-sm">
               <input type="checkbox" checked={locForm.isDefault} onChange={(e) => setLocForm({ ...locForm, isDefault: e.target.checked })} />
-              ডিফল্ট
-            </label>
+              {dict.commerce.default}</label>
             <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={locationsBusy !== ""}>
-              {locationsBusy === "add" ? "যোগ হচ্ছে…" : "Location যোগ করুন"}
+              {locationsBusy === "add" ? dict.commerce.adding : dict.commerce.addLocation}
             </button>
           </form>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
-import { formatMinor } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtDateTime, fmtNumber, formatMinor } from "@repo/contracts";
 import { ResponsiveTable } from "@repo/ui";
 import type {
   Order,
@@ -220,6 +221,7 @@ export function OrderDrawer({
   onTransitionAssignment,
   review,
 }: OrderDrawerProps) {
+  const { dict, t, locale } = useLocale();
   if (!order) return null;
 
   const refunded = BigInt(order.refundedMinor ?? "0");
@@ -241,7 +243,7 @@ export function OrderDrawer({
       <div className="flex items-center gap-1">
         <input
           className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs"
-          aria-label="সংগ্রহের পরিমাণ (টাকা)"
+          aria-label={dict.orders.collectionAmountTaka}
           value={form.amount}
           onChange={(e) =>
             onCollectFormChange(item.id, "amount", e.target.value)
@@ -253,8 +255,7 @@ export function OrderDrawer({
           onClick={() => onCollectInstItem(item)}
           className="inline-flex min-h-[44px] items-center rounded bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-indigo-700"
         >
-          কালেক্ট
-        </button>
+          {dict.orders.collect3}</button>
       </div>
     ) : (
       "—"
@@ -271,14 +272,14 @@ export function OrderDrawer({
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-lg font-bold text-slate-900">
-                    অর্ডার #{order.externalNumber ?? order.id.slice(0, 8)}
+                    {dict.orders.order3}{order.externalNumber ?? order.id.slice(0, 8)}
                   </span>
                   <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700">
                     {order.status}
                   </span>
                 </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  কাস্টমার: {[order.customer?.firstName, order.customer?.lastName].filter(Boolean).join(" ") || "—"} ·{" "}
+                  {dict.orders.customer3}{[order.customer?.firstName, order.customer?.lastName].filter(Boolean).join(" ") || "—"} ·{" "}
                   {order.customer?.phone ?? order.customer?.email ?? "—"}
                 </div>
               </div>
@@ -287,7 +288,7 @@ export function OrderDrawer({
                 type="button"
                 onClick={onClose}
                 className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-sm transition hover:bg-slate-100 hover:text-slate-700 active:scale-95"
-                aria-label="বন্ধ করুন"
+                aria-label={dict.orders.close}
               >
                 ✕
               </button>
@@ -304,8 +305,7 @@ export function OrderDrawer({
                     : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                📋 ওভারভিউ ও স্ট্যাটাস
-              </button>
+                {dict.orders.overviewStatus}</button>
               <button
                 type="button"
                 onClick={() => onTabChange("courier")}
@@ -315,8 +315,7 @@ export function OrderDrawer({
                     : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                🚚 কুরিয়ার বুকিং
-              </button>
+                {dict.orders.courierBooking}</button>
               <button
                 type="button"
                 onClick={() => onTabChange("payment")}
@@ -326,8 +325,7 @@ export function OrderDrawer({
                     : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                💳 পেমেন্ট ও কিস্তি
-              </button>
+                {dict.orders.paymentInstallments}</button>
               <button
                 type="button"
                 onClick={() => onTabChange("store")}
@@ -337,8 +335,7 @@ export function OrderDrawer({
                     : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                🏬 স্টোর সিঙ্ক
-              </button>
+                {dict.orders.storeSync}</button>
               <button
                 type="button"
                 onClick={() => onTabChange("rider")}
@@ -348,8 +345,7 @@ export function OrderDrawer({
                     : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                🛵 রাইডার ফ্লিট
-              </button>
+                {dict.orders.riderFleet}</button>
             </div>
           </div>
 
@@ -368,9 +364,8 @@ export function OrderDrawer({
                 <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      অর্ডার স্ট্যাটাস আপডেট
-                    </span>
-                    <span className="text-xs font-semibold text-indigo-600">বর্তমান: {order.status}</span>
+                      {dict.orders.updateOrderStatus}</span>
+                    <span className="text-xs font-semibold text-indigo-600">{dict.orders.current2}{order.status}</span>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <select
@@ -379,12 +374,12 @@ export function OrderDrawer({
                       onChange={(e) => onActStatusChange(e.target.value)}
                     >
                       {!PATCH_STATUSES.includes(order.status) && (
-                        <option value={order.status}>{order.status} (বর্তমান)</option>
+                        <option value={order.status}>{order.status} {dict.orders.current}</option>
                       )}
                       {PATCH_STATUSES.map((s) => (
                         <option key={s} value={s} disabled={!transitionAllowed(order.status, s)}>
-                          {s} {s === order.status ? "(বর্তমান)" : ""}{" "}
-                          {!transitionAllowed(order.status, s) ? "— যাওয়া যাবে না" : ""}
+                          {s} {s === order.status ? dict.orders.current : ""}{" "}
+                          {!transitionAllowed(order.status, s) ? dict.orders.cannotGo2 : ""}
                         </option>
                       ))}
                     </select>
@@ -394,12 +389,11 @@ export function OrderDrawer({
                       onClick={onSaveStatus}
                       className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                     >
-                      {actBusy === "save" ? "সংরক্ষণ হচ্ছে..." : "স্ট্যাটাস পরিবর্তন"}
+                      {actBusy === "save" ? dict.orders.saving2 : dict.orders.statusChange}
                     </button>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Cancelled/Failed হলে স্টক ফেরত হয়; Completed হলে order.delivered ইভেন্ট পুশ হয়।
-                  </p>
+                    {dict.orders.whenCancelledFailedStockIs2}</p>
                 </div>
 
                 {/* AI Voice Call Confirmation for COD */}
@@ -417,8 +411,7 @@ export function OrderDrawer({
                 {/* Ordered Items */}
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    অর্ডারের আইটেমসমূহ
-                  </span>
+                    {dict.orders.orderItems2}</span>
                   <div className="divide-y divide-slate-100">
                     {(order.items ?? []).map((it) => (
                       <div key={it.id} className="flex items-center justify-between py-2 text-xs">
@@ -429,19 +422,18 @@ export function OrderDrawer({
                           <div className="flex items-center gap-1.5 mt-0.5">
                             {it.isGift && (
                               <span className="rounded bg-pink-100 px-1.5 py-0.2 text-[10px] font-bold text-pink-700">
-                                🎁 উপহার
-                              </span>
+                                {dict.orders.gift}</span>
                             )}
                             {it.bundleName && (
                               <span className="rounded bg-amber-100 px-1.5 py-0.2 text-[10px] font-bold text-amber-800">
-                                বান্ডল: {it.bundleName}
+                                {dict.orders.bundle}{it.bundleName}
                               </span>
                             )}
                           </div>
                         </div>
                         <div className="font-bold text-slate-900">
                           {it.isGift
-                            ? "৳০"
+                            ? dict.orders.text1qvn
                             : (() => {
                                 try {
                                   return formatMinor(BigInt(it.totalMinor));
@@ -456,19 +448,19 @@ export function OrderDrawer({
 
                   {order.giftWrapMinor && Number(order.giftWrapMinor) > 0 && (
                     <div className="flex justify-between border-t border-slate-100 pt-2 text-xs text-pink-700 font-semibold">
-                      <span>🎁 গিফট র‍্যাপ ফি</span>
+                      <span>{dict.orders.giftWrapFee}</span>
                       <span>{formatMinor(BigInt(order.giftWrapMinor))}</span>
                     </div>
                   )}
 
                   {order.giftMessage && (
                     <div className="rounded-xl border border-pink-200 bg-pink-50/70 p-3 text-xs font-semibold text-pink-900">
-                      🎁 গিফট বার্তা: “{order.giftMessage}”
+                      {dict.orders.giftMessage2}{order.giftMessage}”
                     </div>
                   )}
 
                   <div className="flex justify-between border-t border-slate-100 pt-3 text-sm font-bold text-slate-900">
-                    <span>সর্বমোট</span>
+                    <span>{dict.orders.grandTotal}</span>
                     <span>{formatMinor(BigInt(order.totalMinor))}</span>
                   </div>
                 </div>
@@ -476,26 +468,25 @@ export function OrderDrawer({
                 {/* Refund Record */}
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    টাকা রিফান্ড রেকর্ড
-                  </span>
+                    {dict.orders.recordMoneyRefund}</span>
                   <div className="flex items-center justify-between text-xs text-slate-600">
-                    <span>মোট ফেরত: {formatMinor(refunded)}</span>
+                    <span>{dict.orders.totalRefunded}{formatMinor(refunded)}</span>
                     <span className="font-semibold text-slate-900">
-                      আরও ফেরতযোগ্য: {formatMinor(totalAmt - refunded)}
+                      {dict.orders.moreRefundable2}{formatMinor(totalAmt - refunded)}
                     </span>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       type="text"
                       className="rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="পরিমাণ (টাকায়, যেমন: 250 বা 250.50)"
+                      placeholder={dict.orders.amountInTakaEG}
                       value={actRefundTaka}
                       onChange={(e) => onActRefundTakaChange(e.target.value)}
                     />
                     <input
                       type="text"
                       className="rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="কারণ (ঐচ্ছিক)"
+                      placeholder={dict.orders.reasonOptional}
                       value={actRefundReason}
                       onChange={(e) => onActRefundReasonChange(e.target.value)}
                     />
@@ -506,19 +497,17 @@ export function OrderDrawer({
                     onClick={onSaveRefund}
                     className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
                   >
-                    রিফান্ড রেকর্ড করুন
-                  </button>
+                    {dict.orders.recordRefund2}</button>
                 </div>
 
                 {/* Internal Team Note */}
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    টিম ইন্টারনাল নোট (গোপনীয়)
-                  </span>
+                    {dict.orders.teamInternalNotePrivate}</span>
                   <textarea
                     rows={2}
                     className="w-full rounded-xl border border-slate-200 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="যেমন: কাস্টমার ফোনে ঠিকানা বদলেছেন বা বিশেষ ডেলিভারি নির্দেশনা..."
+                    placeholder={dict.orders.eGTheCustomerChanged}
                     value={actNote}
                     onChange={(e) => onActNoteChange(e.target.value)}
                   />
@@ -529,16 +518,14 @@ export function OrderDrawer({
                       onClick={onSaveNote}
                       className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                     >
-                      নোট সংরক্ষণ
-                    </button>
+                      {dict.orders.saveNote}</button>
                     <button
                       type="button"
                       disabled={actBusy !== ""}
                       onClick={onClearNote}
                       className="rounded-xl px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
                     >
-                      মুছুন
-                    </button>
+                      {dict.orders.delete}</button>
                   </div>
                 </div>
 
@@ -554,24 +541,21 @@ export function OrderDrawer({
                     }
                     className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                   >
-                    🧾 ইনভয়েস PDF
-                  </button>
+                    {dict.orders.invoicePDF}</button>
                   <a
                     className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                     href={`/dashboard/commerce/print?orderId=${order.id}&kind=invoice`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    🖨️ ইনভয়েস প্রিন্ট
-                  </a>
+                    {dict.orders.printInvoice2}</a>
                   <a
                     className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                     href={`/dashboard/commerce/print?orderId=${order.id}&kind=slip`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    🏷️ প্যাকিং স্লিপ প্রিন্ট
-                  </a>
+                    {dict.orders.printPackingSlip}</a>
                 </div>
               </div>
             )}
@@ -590,14 +574,13 @@ export function OrderDrawer({
                   <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold uppercase tracking-wider text-indigo-700">
-                        সক্রিয় পার্সেল ট্র্যাকিং
-                      </span>
+                        {dict.orders.activeParcelTracking}</span>
                       <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-xs font-bold text-white">
                         {sh.status}
                       </span>
                     </div>
                     <div className="text-sm font-semibold text-slate-800">
-                      কুরিয়ার: {sh.provider} · ট্র্যাকিং: {sh.trackingCode ?? "অপেক্ষমাণ"}
+                      {dict.orders.courier3}{sh.provider} {dict.orders.tracking}{sh.trackingCode ?? dict.orders.pending}
                     </div>
                     {sh.trackingUrl && (
                       <a
@@ -606,8 +589,7 @@ export function OrderDrawer({
                         rel="noreferrer"
                         className="inline-block text-xs font-semibold text-indigo-600 hover:underline"
                       >
-                        🔗 লাইভ ট্র্যাকিং পেজ দেখুন ↗
-                      </a>
+                        {dict.orders.viewLiveTrackingPage}</a>
                     )}
                     <div className="flex items-center gap-2 pt-2">
                       <button
@@ -616,7 +598,7 @@ export function OrderDrawer({
                         onClick={() => onSyncShipment(sh.id)}
                         className="rounded-xl bg-white border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm hover:bg-indigo-50"
                       >
-                        {courierBusy === "sync" ? "যাচাই হচ্ছে..." : "স্ট্যাটাস যাচাই"}
+                        {courierBusy === "sync" ? dict.orders.verifying : dict.orders.verifyStatus}
                       </button>
                       <button
                         type="button"
@@ -628,8 +610,7 @@ export function OrderDrawer({
                         }
                         className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
                       >
-                        🏷️ লেবেল ডাউনলোড
-                      </button>
+                        {dict.orders.downloadLabel}</button>
                     </div>
                   </div>
                 )}
@@ -638,11 +619,10 @@ export function OrderDrawer({
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      নতুন পার্সেল বুকিং
-                    </span>
+                      {dict.orders.newParcelBooking}</span>
                     {bookSuggestion?.ruleId && (
                       <span className="rounded-lg bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
-                        সাজেশন: {bookSuggestion.ruleName}
+                        {dict.orders.suggestion}{bookSuggestion.ruleName}
                       </span>
                     )}
                   </div>
@@ -659,7 +639,7 @@ export function OrderDrawer({
 
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>
-                      <label className="text-[11px] font-medium text-slate-500">কুরিয়ার প্রোভাইডার</label>
+                      <label className="text-[11px] font-medium text-slate-500">{dict.orders.courierProvider}</label>
                       <select
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         value={bookForm.provider}
@@ -674,7 +654,7 @@ export function OrderDrawer({
                           return (
                             <option key={p} value={p} disabled={!connected}>
                               {p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : "RedX"}
-                              {connected ? "" : " (যুক্ত নেই)"}
+                              {connected ? "" : dict.orders.notLinked2}
                             </option>
                           );
                         })}
@@ -682,7 +662,7 @@ export function OrderDrawer({
                     </div>
 
                     <div>
-                      <label className="text-[11px] font-medium text-slate-500">ওজন (কেজি)</label>
+                      <label className="text-[11px] font-medium text-slate-500">{dict.orders.weightKg}</label>
                       <input
                         type="number"
                         step="0.5"
@@ -694,7 +674,7 @@ export function OrderDrawer({
                     </div>
 
                     <div>
-                      <label className="text-[11px] font-medium text-slate-500">প্রাপকের নাম</label>
+                      <label className="text-[11px] font-medium text-slate-500">{dict.orders.recipientName}</label>
                       <input
                         type="text"
                         className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -704,7 +684,7 @@ export function OrderDrawer({
                     </div>
 
                     <div>
-                      <label className="text-[11px] font-medium text-slate-500">ফোন নম্বর</label>
+                      <label className="text-[11px] font-medium text-slate-500">{dict.orders.phoneNumber}</label>
                       <input
                         type="text"
                         className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -715,19 +695,18 @@ export function OrderDrawer({
 
                     <div className="sm:col-span-2">
                       <label className="text-[11px] font-medium text-slate-500">
-                        পূর্ণ ডেলিভারি ঠিকানা (বাসা, রোড, থানা, জেলা)
-                      </label>
+                        {dict.orders.fullDeliveryAddressHouseRoad}</label>
                       <input
                         type="text"
                         className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        placeholder="কমপক্ষে ৮ অক্ষর আবশ্যক"
+                        placeholder={dict.orders.atLeast8CharactersRequired}
                         value={bookForm.address}
                         onChange={(e) => onBookFormChange({ ...bookForm, address: e.target.value })}
                       />
                     </div>
 
                     <div className="sm:col-span-2">
-                      <label className="text-[11px] font-medium text-slate-500">নোট (ঐচ্ছিক)</label>
+                      <label className="text-[11px] font-medium text-slate-500">{dict.orders.noteOptional}</label>
                       <input
                         type="text"
                         className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -740,13 +719,13 @@ export function OrderDrawer({
                     {bookForm.provider === "pathao" && (
                       <>
                         <div>
-                          <label className="text-[11px] font-medium text-slate-500">Pathao পিকআপ স্টোর</label>
+                          <label className="text-[11px] font-medium text-slate-500">{dict.orders.pathaoPickupStore}</label>
                           <select
                             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                             value={bookForm.pStoreId}
                             onChange={(e) => onBookFormChange({ ...bookForm, pStoreId: e.target.value })}
                           >
-                            <option value="">স্বয়ংক্রিয় (প্রথম সক্রিয়)</option>
+                            <option value="">{dict.orders.automaticFirstActive}</option>
                             {pStores.map((s: any) => (
                               <option key={s.store_id} value={s.store_id}>
                                 {s.store_name}
@@ -756,13 +735,13 @@ export function OrderDrawer({
                         </div>
 
                         <div>
-                          <label className="text-[11px] font-medium text-slate-500">শহর (City)</label>
+                          <label className="text-[11px] font-medium text-slate-500">{dict.orders.city}</label>
                           <select
                             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                             value={bookForm.pCityId}
                             onChange={(e) => onCityChange(e.target.value)}
                           >
-                            <option value="">ঠিকানা থেকে অনুমান (ঐচ্ছিক)</option>
+                            <option value="">{dict.orders.guessFromAddressOptional}</option>
                             {pCities.map((c: any) => (
                               <option key={c.city_id} value={c.city_id}>
                                 {c.city_name}
@@ -772,13 +751,13 @@ export function OrderDrawer({
                         </div>
 
                         <div>
-                          <label className="text-[11px] font-medium text-slate-500">জোন (Zone)</label>
+                          <label className="text-[11px] font-medium text-slate-500">{dict.orders.zone}</label>
                           <select
                             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                             value={bookForm.pZoneId}
                             onChange={(e) => onZoneChange(e.target.value)}
                           >
-                            <option value="">জোন (ঐচ্ছিক)</option>
+                            <option value="">{dict.orders.zoneOptional}</option>
                             {pZones.map((z: any) => (
                               <option key={z.zone_id} value={z.zone_id}>
                                 {z.zone_name}
@@ -788,13 +767,13 @@ export function OrderDrawer({
                         </div>
 
                         <div>
-                          <label className="text-[11px] font-medium text-slate-500">এলাকা (Area)</label>
+                          <label className="text-[11px] font-medium text-slate-500">{dict.orders.area}</label>
                           <select
                             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                             value={bookForm.pAreaId}
                             onChange={(e) => onBookFormChange({ ...bookForm, pAreaId: e.target.value })}
                           >
-                            <option value="">এলাকা (ঐচ্ছিক)</option>
+                            <option value="">{dict.orders.areaOptional}</option>
                             {pAreas.map((a: any) => (
                               <option key={a.area_id} value={a.area_id}>
                                 {a.area_name}
@@ -809,8 +788,7 @@ export function OrderDrawer({
                     {bookForm.provider === "redx" && (
                       <div className="sm:col-span-2">
                         <label className="text-[11px] font-medium text-slate-500">
-                          RedX ডেলিভারি এলাকা (আবশ্যক)
-                        </label>
+                          {dict.orders.redXDeliveryAreaRequired}</label>
                         <select
                           className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
                           value={bookForm.rAreaId}
@@ -823,7 +801,7 @@ export function OrderDrawer({
                             });
                           }}
                         >
-                          <option value="">ডেলিভারি এলাকা বেছে নিন</option>
+                          <option value="">{dict.orders.selectDeliveryArea}</option>
                           {rAreas.map((a: any) => (
                             <option key={a.id} value={a.id}>
                               {a.name}
@@ -842,14 +820,14 @@ export function OrderDrawer({
                       onClick={() => onFetchQuote(order)}
                       className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                     >
-                      {quoteBusy ? "হিসাব হচ্ছে..." : "💰 ডেলিভারি চার্জ যাচাই"}
+                      {quoteBusy ? dict.orders.calculating2 : dict.orders.verifyDeliveryCharge}
                     </button>
 
                     {quoteOut && (
                       <div className="text-xs font-semibold">
                         {quoteOut.quotable ? (
                           <span className="text-emerald-700">
-                            আনুমানিক চার্জ: {formatMinor(BigInt(quoteOut.chargeMinor ?? 0))}
+                            {dict.orders.estimatedCharge}{formatMinor(BigInt(quoteOut.chargeMinor ?? 0))}
                           </span>
                         ) : (
                           <span className="text-amber-700">{quoteOut.reason}</span>
@@ -868,14 +846,12 @@ export function OrderDrawer({
                       className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 active:scale-95 disabled:opacity-50"
                     >
                       {courierBusy === "book"
-                        ? "বুক হচ্ছে..."
-                        : `${
-                            bookForm.provider === "pathao"
+                        ? dict.orders.booking2
+                        : t("orders.bookOn", { bookForm: bookForm.provider === "pathao"
                               ? "Pathao"
                               : bookForm.provider === "redx"
                                 ? "RedX"
-                                : "Steadfast"
-                          } এ বুক করুন`}
+                                : "Steadfast" })}
                     </button>
                   </div>
                 </div>
@@ -888,23 +864,23 @@ export function OrderDrawer({
                 {/* Financial Summary */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3">
-                    <span className="text-[11px] font-semibold text-slate-500">মোট মূল্য</span>
+                    <span className="text-[11px] font-semibold text-slate-500">{dict.orders.totalPrice}</span>
                     <div className="mt-1 text-base font-bold text-slate-900">
                       {formatMinor(BigInt(order.totalMinor))}
                     </div>
                   </div>
 
                   <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3">
-                    <span className="text-[11px] font-semibold text-slate-500">অগ্রিম পরিশোধ</span>
+                    <span className="text-[11px] font-semibold text-slate-500">{dict.orders.advancePayment}</span>
                     <div className="mt-1 text-base font-bold text-emerald-700">
                       {order.advancePaidMinor !== undefined
                         ? formatMinor(BigInt(order.advancePaidMinor))
-                        : "৳০.০০"}
+                        : dict.orders.text145goqj}
                     </div>
                   </div>
 
                   <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3 col-span-2 sm:col-span-1">
-                    <span className="text-[11px] font-semibold text-slate-500">বকেয়া (Amount Due)</span>
+                    <span className="text-[11px] font-semibold text-slate-500">{dict.orders.dueAmountDue}</span>
                     <div className="mt-1 text-base font-bold text-slate-900">
                       {order.amountDueMinor !== undefined
                         ? formatMinor(BigInt(order.amountDueMinor))
@@ -916,8 +892,7 @@ export function OrderDrawer({
                 {/* Record Advance Payment */}
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    অগ্রিম পেমেন্ট রেকর্ড করুন
-                  </span>
+                    {dict.orders.recordAdvancePayment}</span>
                   {advError && <p className="text-xs text-red-600">{advError}</p>}
                   {advNotice && <p className="text-xs text-emerald-700">{advNotice}</p>}
 
@@ -925,7 +900,7 @@ export function OrderDrawer({
                     <input
                       type="text"
                       className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
-                      placeholder="পরিমাণ (টাকা)"
+                      placeholder={dict.orders.amountTaka}
                       value={advAmount}
                       onChange={(e) => onAdvAmountChange(e.target.value)}
                     />
@@ -934,24 +909,24 @@ export function OrderDrawer({
                       value={advMethod}
                       onChange={(e) => onAdvMethodChange(e.target.value)}
                     >
-                      <option value="bkash">বিকাশ</option>
-                      <option value="nagad">নগদ</option>
-                      <option value="rocket">রকেট</option>
-                      <option value="cash">ক্যাশ</option>
-                      <option value="bank">ব্যাংক</option>
-                      <option value="other">অন্যান্য</option>
+                      <option value="bkash">{dict.orders.bKash}</option>
+                      <option value="nagad">{dict.orders.cash}</option>
+                      <option value="rocket">{dict.orders.rocket}</option>
+                      <option value="cash">{dict.orders.cash2}</option>
+                      <option value="bank">{dict.orders.bank}</option>
+                      <option value="other">{dict.orders.other}</option>
                     </select>
                     <input
                       type="text"
                       className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
-                      placeholder="TrxID / রেফারেন্স"
+                      placeholder={dict.orders.trxIDReference}
                       value={advRef}
                       onChange={(e) => onAdvRefChange(e.target.value)}
                     />
                     <input
                       type="text"
                       className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
-                      placeholder="নোট (ঐচ্ছিক)"
+                      placeholder={dict.orders.noteOptional}
                       value={advNote}
                       onChange={(e) => onAdvNoteChange(e.target.value)}
                     />
@@ -962,7 +937,7 @@ export function OrderDrawer({
                     onClick={onRecordAdvance}
                     className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
                   >
-                    {advBusy ? "রেকর্ড হচ্ছে..." : "অগ্রিম রেকর্ড ও ভেরিফাই"}
+                    {advBusy ? dict.orders.recording2 : dict.orders.recordAdvanceVerify}
                   </button>
                 </div>
 
@@ -970,8 +945,7 @@ export function OrderDrawer({
                 {(order.paymentVerifications ?? []).length > 0 && (
                   <div className="rounded-2xl border border-slate-200/80 p-4 space-y-2">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      পেমেন্ট যাচাইয়ের ইতিহাস
-                    </span>
+                      {dict.orders.paymentVerificationHistory}</span>
                     <div className="divide-y divide-slate-100">
                       {(order.paymentVerifications ?? []).map((pv) => (
                         <div key={pv.id} className="flex items-center justify-between py-2 text-xs">
@@ -983,7 +957,7 @@ export function OrderDrawer({
                               </span>
                             )}
                             <div className="text-[10px] text-slate-400">
-                              {new Date(pv.createdAt).toLocaleString("bn-BD")}
+                              {fmtDateTime(locale, new Date(pv.createdAt))}
                             </div>
                           </div>
                           <div className="text-right">
@@ -1002,8 +976,7 @@ export function OrderDrawer({
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      💰 কিস্তি প্ল্যান (Installment)
-                    </span>
+                      {dict.orders.installmentPlan2}</span>
                     {instPlan && (
                       <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
                         {instPlan.status}
@@ -1014,7 +987,7 @@ export function OrderDrawer({
                   {instError && <p className="text-xs text-red-600">{instError}</p>}
 
                   {!instLoaded ? (
-                    <p className="text-xs text-slate-500">লোড হচ্ছে...</p>
+                    <p className="text-xs text-slate-500">{dict.common.loading}</p>
                   ) : !instPlan ? (
                     (() => {
                       let due = 0n;
@@ -1026,12 +999,10 @@ export function OrderDrawer({
                       return due > 0n ? (
                         <div className="space-y-3">
                           <p className="text-xs text-slate-600">
-                            বকেয়া {formatMinor(due)} কিস্তিতে ভাগ করার জন্য প্ল্যান তৈরি করুন:
-                          </p>
+                            {dict.orders.due5}{formatMinor(due)} {dict.orders.createAPlanToSplit}</p>
                           <div className="grid gap-2 sm:grid-cols-3">
                             <label className="text-[11px] text-slate-500">
-                              কিস্তির সংখ্যা
-                              <input
+                              {dict.orders.numberOfInstallments}<input
                                 type="number"
                                 min={2}
                                 max={24}
@@ -1041,8 +1012,7 @@ export function OrderDrawer({
                               />
                             </label>
                             <label className="text-[11px] text-slate-500">
-                              ব্যবধান (দিন)
-                              <input
+                              {dict.orders.intervalDays}<input
                                 type="number"
                                 min={1}
                                 max={90}
@@ -1052,8 +1022,7 @@ export function OrderDrawer({
                               />
                             </label>
                             <label className="text-[11px] text-slate-500">
-                              শুরুর তারিখ
-                              <input
+                              {dict.orders.startDate}<input
                                 type="date"
                                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-1.5 text-xs"
                                 value={instStart}
@@ -1067,19 +1036,19 @@ export function OrderDrawer({
                             onClick={onCreateInstPlan}
                             className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                           >
-                            {instBusy === "create" ? "তৈরি হচ্ছে..." : "কিস্তি প্ল্যান তৈরি করুন"}
+                            {instBusy === "create" ? dict.orders.creating2 : dict.orders.createInstallmentPlan}
                           </button>
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-500">এই অর্ডারে কোনো বকেয়া নেই।</p>
+                        <p className="text-xs text-slate-500">{dict.orders.noDueOnThisOrder2}</p>
                       );
                     })()
                   ) : (
                     <div className="space-y-3">
                       <div className="flex flex-wrap gap-3 text-xs">
-                        <span>মোট: <b>{formatMinor(BigInt(instPlan.totalMinor))}</b></span>
-                        <span className="text-emerald-700">পরিশোধ: <b>{formatMinor(BigInt(instPlan.paidMinor))}</b></span>
-                        <span>বাকি: <b>{formatMinor(BigInt(instPlan.remainingMinor))}</b></span>
+                        <span>{dict.orders.total3}<b>{formatMinor(BigInt(instPlan.totalMinor))}</b></span>
+                        <span className="text-emerald-700">{dict.orders.payment2}<b>{formatMinor(BigInt(instPlan.paidMinor))}</b></span>
+                        <span>{dict.orders.due3}<b>{formatMinor(BigInt(instPlan.remainingMinor))}</b></span>
                       </div>
 
                       <ResponsiveTable
@@ -1088,12 +1057,12 @@ export function OrderDrawer({
                         <table className="w-full text-left text-xs">
                           <thead className="border-b border-slate-100 text-slate-500">
                             <tr>
-                              <th className="py-1">ক্রম</th>
-                              <th className="py-1">তারিখ</th>
-                              <th className="py-1">পরিমাণ</th>
-                              <th className="py-1">পরিশোধিত</th>
-                              <th className="py-1">অবস্থা</th>
-                              {instPlan.status === "active" && <th className="py-1">সংগ্রহ</th>}
+                              <th className="py-1">{dict.orders.order2}</th>
+                              <th className="py-1">{dict.orders.date}</th>
+                              <th className="py-1">{dict.orders.quantity}</th>
+                              <th className="py-1">{dict.orders.paid}</th>
+                              <th className="py-1">{dict.orders.condition}</th>
+                              {instPlan.status === "active" && <th className="py-1">{dict.orders.collect}</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
@@ -1118,7 +1087,7 @@ export function OrderDrawer({
                                             : "bg-slate-100 text-slate-700"
                                       }`}
                                     >
-                                      {item.fullyPaid ? "সম্পূর্ণ" : item.overdue ? "অতিবাহিত" : "বাকি"}
+                                      {item.fullyPaid ? dict.orders.complete : item.overdue ? dict.orders.overdue : dict.orders.due}
                                     </span>
                                   </td>
                                   {instPlan.status === "active" && (
@@ -1136,7 +1105,7 @@ export function OrderDrawer({
                         cards={instPlan.items.map((item) => (
                           <div key={item.id} className="rounded-xl border bg-white p-3 shadow-sm">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-bold text-slate-900">ক্রম {item.seq}</span>
+                              <span className="font-bold text-slate-900">{dict.orders.order2}{item.seq}</span>
                               <span
                                 className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
                                   item.fullyPaid
@@ -1146,17 +1115,17 @@ export function OrderDrawer({
                                       : "bg-slate-100 text-slate-700"
                                 }`}
                               >
-                                {item.fullyPaid ? "সম্পূর্ণ" : item.overdue ? "অতিবাহিত" : "বাকি"}
+                                {item.fullyPaid ? dict.orders.complete : item.overdue ? dict.orders.overdue : dict.orders.due}
                               </span>
                             </div>
                             <dl className="mt-2 space-y-1 text-xs">
-                              <div className="flex justify-between gap-2"><dt className="text-slate-500">তারিখ</dt><dd className="font-medium">{item.dueDay}</dd></div>
-                              <div className="flex justify-between gap-2"><dt className="text-slate-500">পরিমাণ</dt><dd className="font-semibold">{formatMinor(BigInt(item.amountMinor))}</dd></div>
-                              <div className="flex justify-between gap-2"><dt className="text-slate-500">পরিশোধিত</dt><dd className="font-semibold text-emerald-700">{formatMinor(BigInt(item.paidMinor))}</dd></div>
+                              <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.date}</dt><dd className="font-medium">{item.dueDay}</dd></div>
+                              <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.quantity}</dt><dd className="font-semibold">{formatMinor(BigInt(item.amountMinor))}</dd></div>
+                              <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.paid}</dt><dd className="font-semibold text-emerald-700">{formatMinor(BigInt(item.paidMinor))}</dd></div>
                             </dl>
                             {instPlan.status === "active" && (
                               <div className="mt-2 border-t pt-2">
-                                <div className="mb-1 text-xs font-semibold text-slate-500">সংগ্রহ</div>
+                                <div className="mb-1 text-xs font-semibold text-slate-500">{dict.orders.collect}</div>
                                 {renderInstCollect(item)}
                               </div>
                             )}
@@ -1171,8 +1140,7 @@ export function OrderDrawer({
                           onClick={onCancelInstPlan}
                           className="text-xs font-semibold text-rose-600 hover:underline"
                         >
-                          কিস্তি প্ল্যান বাতিল করুন
-                        </button>
+                          {dict.orders.cancelInstallmentPlan}</button>
                       )}
                     </div>
                   )}
@@ -1186,11 +1154,11 @@ export function OrderDrawer({
                 {syncNotice && <p className="text-xs text-emerald-700">{syncNotice}</p>}
                 {syncError && <p className="text-xs text-red-600">{syncError}</p>}
                 {pushStateError ? (
-                  <p className="text-xs text-red-600">লোড করা যায়নি: {pushStateError}</p>
+                  <p className="text-xs text-red-600">{dict.orders.couldNotLoad}{pushStateError}</p>
                 ) : !pushState ? (
-                  <p className="text-xs text-slate-500">লোড হচ্ছে...</p>
+                  <p className="text-xs text-slate-500">{dict.common.loading}</p>
                 ) : !pushState.store ? (
-                  <p className="text-xs text-slate-500">এই অর্ডারের কোনো সংযুক্ত স্টোর নেই</p>
+                  <p className="text-xs text-slate-500">{dict.orders.thisOrderHasNoLinked}</p>
                 ) : (
                   <div className="space-y-4">
                     <div className="rounded-2xl border border-slate-200/80 p-4 space-y-2">
@@ -1201,19 +1169,18 @@ export function OrderDrawer({
                         </span>
                       </div>
                       <p className="text-xs text-slate-500">
-                        সর্বশেষ Push অবস্থা: <b>{pushState.storeSyncStatus ?? "—"}</b>
+                        {dict.orders.lastPushStatus}<b>{pushState.storeSyncStatus ?? "—"}</b>
                       </p>
                     </div>
 
                     {/* Customer note to store */}
                     <div className="rounded-2xl border border-slate-200/80 p-4 space-y-2">
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                        স্টোরে কাস্টমার-নোট পাঠান
-                      </span>
+                        {dict.orders.sendCustomerNoteToStore}</span>
                       <textarea
                         rows={2}
                         className="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:ring-2 focus:ring-indigo-500"
-                        placeholder="গ্রাহকের কাছে পাঠানোর জন্য নোট..."
+                        placeholder={dict.orders.noteToSendToThe}
                         value={storeNoteText}
                         onChange={(e) => onStoreNoteTextChange(e.target.value)}
                       />
@@ -1223,15 +1190,13 @@ export function OrderDrawer({
                         onClick={onSendStoreNote}
                         className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                       >
-                        স্টোরে নোট পাঠান
-                      </button>
+                        {dict.orders.sendNoteToStore}</button>
                     </div>
 
                     {/* Return link generator */}
                     <div className="rounded-2xl border border-slate-200/80 p-4 space-y-2">
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                        কাস্টমার রিটার্ন লিংক
-                      </span>
+                        {dict.orders.customerReturnLink}</span>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -1239,7 +1204,7 @@ export function OrderDrawer({
                           onClick={onCreateReturnLink}
                           className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                         >
-                          {syncBusy === "return-link" ? "তৈরি হচ্ছে..." : "রিটার্ন লিংক তৈরি করুন"}
+                          {syncBusy === "return-link" ? dict.orders.creating2 : dict.orders.createReturnLink}
                         </button>
                         {returnUrl && (
                           <button
@@ -1247,7 +1212,7 @@ export function OrderDrawer({
                             onClick={() => onCopyText("return", returnUrl)}
                             className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
                           >
-                            {copiedKey === "return" ? "কপি হয়েছে ✓" : "লিংক কপি করুন"}
+                            {copiedKey === "return" ? dict.orders.copied3 : dict.orders.copyLink}
                           </button>
                         )}
                       </div>
@@ -1266,8 +1231,7 @@ export function OrderDrawer({
                 {/* Rider Assignment */}
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    🛵 নিজস্ব রাইডার অ্যাসাইনমেন্ট
-                  </span>
+                    {dict.orders.ownRiderAssignment}</span>
 
                   {(() => {
                     const active =
@@ -1289,8 +1253,7 @@ export function OrderDrawer({
                               onClick={() => onTransitionAssignment(active, "picked_up")}
                               className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white"
                             >
-                              তোলা হয়েছে
-                            </button>
+                              {dict.orders.collected2}</button>
                           )}
                           {active.status === "picked_up" && (
                             <>
@@ -1300,16 +1263,14 @@ export function OrderDrawer({
                                 onClick={() => onTransitionAssignment(active, "delivered")}
                                 className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
                               >
-                                ডেলিভারি সম্পন্ন
-                              </button>
+                                {dict.orders.delivered}</button>
                               <button
                                 type="button"
                                 disabled={riderBusy !== ""}
                                 onClick={() => onTransitionAssignment(active, "returned")}
                                 className="rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
                               >
-                                ফেরত
-                              </button>
+                                {dict.orders.return}</button>
                             </>
                           )}
                         </div>
@@ -1321,7 +1282,7 @@ export function OrderDrawer({
                           value={assignRiderId}
                           onChange={(e) => onAssignRiderIdChange(e.target.value)}
                         >
-                          <option value="">রাইডার বেছে নিন</option>
+                          <option value="">{dict.orders.chooseARider}</option>
                           {riders
                             .filter((r) => r.active)
                             .map((r) => (
@@ -1336,7 +1297,7 @@ export function OrderDrawer({
                           onClick={onAssignRider}
                           className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                         >
-                          {riderBusy === "assign" ? "হচ্ছে..." : "রাইডার বরাদ্দ"}
+                          {riderBusy === "assign" ? dict.orders.processing : dict.orders.riderAssignment}
                         </button>
                       </div>
                     );
@@ -1347,19 +1308,18 @@ export function OrderDrawer({
                 {review && (
                   <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 space-y-2">
                     <span className="text-xs font-bold uppercase tracking-wider text-amber-800">
-                      ⭐ কাস্টমার রিভিউ
-                    </span>
+                      {dict.orders.customerReview2}</span>
                     <div className="text-base text-amber-500 font-bold">
                       {"★★★★★".slice(0, review.rating ?? 5)}
-                      <span className="ml-2 text-xs text-slate-700">({review.rating}/৫)</span>
+                      <span className="ml-2 text-xs text-slate-700">({review.rating}{dict.orders.text2nm5}</span>
                     </div>
                     {review.comment && (
                       <p className="text-xs text-slate-700 font-medium italic">“{review.comment}”</p>
                     )}
                     <div className="text-[10px] text-slate-400">
                       {review.receivedAt
-                        ? new Date(review.receivedAt).toLocaleString("bn-BD")
-                        : "অপেক্ষমাণ"}
+                        ? fmtDateTime(locale, new Date(review.receivedAt))
+                        : dict.orders.pending}
                     </div>
                   </div>
                 )}

@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { STATUSES, type Stats } from "./types";
 
 interface OrdersFilterBarProps {
@@ -12,16 +13,17 @@ interface OrdersFilterBarProps {
   stats: Stats | null;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  "": "সব অর্ডার",
-  pending: "পেন্ডিং",
-  processing: "প্রসেসিং",
-  "on-hold": "অন-হোল্ড",
-  completed: "সম্পূর্ণ",
-  cancelled: "বাতিল",
-  refunded: "রিফান্ড",
-  failed: "ব্যর্থ",
-};
+// ML5 i18n: values are dict.orders keys, resolved at render.
+const STATUS_LABELS = {
+  "": "allOrders",
+  pending: "pending2",
+  processing: "processing2",
+  "on-hold": "onHold",
+  completed: "complete",
+  cancelled: "cancel",
+  refunded: "refund",
+  failed: "failed",
+} as const satisfies Record<string, string>;
 
 export function OrdersFilterBar({
   status,
@@ -32,6 +34,7 @@ export function OrdersFilterBar({
   onSearchQueryChange,
   stats,
 }: OrdersFilterBarProps) {
+  const { dict, t, locale } = useLocale();
   // Find count for each status from stats
   const getCount = (s: string) => {
     if (!stats) return null;
@@ -50,9 +53,9 @@ export function OrdersFilterBar({
           </span>
           <input
             type="text"
-            aria-label="অর্ডার খুঁজুন (অর্ডার নম্বর, কাস্টমার নাম, ফোন নম্বর বা পণ্য দিয়ে)"
+            aria-label={dict.orders.searchOrdersByOrderNumber}
             className="w-full rounded-xl border border-slate-200 bg-slate-50/60 py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 transition hover:bg-white focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10"
-            placeholder="অর্ডার নম্বর, কাস্টমার নাম, ফোন নম্বর বা পণ্য দিয়ে রিয়েল-টাইম খুঁজুন..."
+            placeholder={dict.orders.searchInRealTimeBy}
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
           />
@@ -61,7 +64,7 @@ export function OrdersFilterBar({
               type="button"
               onClick={() => onSearchQueryChange("")}
               className="absolute inset-y-0 right-0 flex min-w-[44px] items-center justify-center pr-3 text-xs text-slate-500 hover:text-slate-600"
-              aria-label="খোঁজ মুছুন"
+              aria-label={dict.orders.clearSearch}
             >
               ✕
             </button>
@@ -76,7 +79,7 @@ export function OrdersFilterBar({
               checked={codOnly}
               onChange={(e) => onCodOnlyChange(e.target.checked)}
             />
-            <span>শুধু COD অর্ডার</span>
+            <span>{dict.orders.cODOrdersOnly}</span>
           </label>
         </div>
       </div>
@@ -97,7 +100,7 @@ export function OrdersFilterBar({
                   : "bg-slate-100/70 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <span>{STATUS_LABELS[s] ?? s}</span>
+              <span>{STATUS_LABELS[s as keyof typeof STATUS_LABELS] ? dict.orders[STATUS_LABELS[s as keyof typeof STATUS_LABELS]] : s}</span>
               {count !== null && (
                 <span
                   className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${

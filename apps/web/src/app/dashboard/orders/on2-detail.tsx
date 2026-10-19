@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
@@ -8,7 +9,7 @@ import {
   DEFAULT_TEMPLATES, renderNotificationTemplate, generateWhatsAppTrackingShareUrl,
   type NotificationEventKey,
 } from "@/lib/orders-on5";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtDateTime, fmtNumber, formatMinor } from "@repo/contracts";
 import {
   formatPointsDelta, loyaltyEntryLabel, loyaltyEntryNote, type OrderLoyalty,
 } from "@/lib/loyalty";
@@ -24,10 +25,10 @@ export type { OrderAllocation };
  * everywhere in the dashboard is the USER id (m.user.id), never
  * the membership row id. */
 export interface MemberRow { id: string; role: string; user: { id: string; name?: string | null; email: string } }
-export const memberName = (members: MemberRow[], userId?: string | null): string => {
+export const memberName = (members: MemberRow[], userId?: string | null, fallbackLabel = "টিম সদস্য"): string => {
   if (!userId) return "—";
   const m = members.find((x) => x.user.id === userId);
-  return m ? (m.user.name ?? m.user.email) : "টিম সদস্য";
+  return m ? (m.user.name ?? m.user.email) : fallbackLabel;
 };
 
 interface TimelineEntry { at: string; kind: string; title: string; detail?: string | null; actor?: string | null }
@@ -64,13 +65,14 @@ interface PaymentAttemptRow {
   failureReason: string | null; feeMinor: string | null; netMinor: string | null; createdAt: string;
 }
 
-const ATTEMPT_STATUS_LABEL: Record<string, string> = {
-  verified_paid: "যাচাইকৃত পেমেন্ট হয়েছে",
-  initiated: "শুরু হয়েছে",
-  expired: "মেয়াদোত্তীর্ণ (initiated)",
-  failed: "ব্যর্থ",
-  cancelled: "বাতিল",
-};
+// ML5 i18n: values are dict.orders keys, resolved at render.
+const ATTEMPT_STATUS_LABEL = {
+  verified_paid: "verifiedPaymentReceived",
+  initiated: "started",
+  expired: "expiredInitiated",
+  failed: "failed",
+  cancelled: "cancel",
+} as const satisfies Record<string, string>;
 
 /**
  * GC12 — compact online-payment section for the order detail:
@@ -81,6 +83,7 @@ const ATTEMPT_STATUS_LABEL: Record<string, string> = {
  * detail page.
  */
 export function OnlinePaymentSection({ orderId }: { orderId: string }) {
+  const { dict, t, locale } = useLocale();
   const [items, setItems] = useState<PaymentAttemptRow[] | null>(null);
   const [hidden, setHidden] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
@@ -101,7 +104,8 @@ export function OnlinePaymentSection({ orderId }: { orderId: string }) {
   if (hidden || items === null || items.length === 0) return null;
   const latest = items[0];
   const paid = items.some((i) => i.status === "verified_paid");
-  const label = ATTEMPT_STATUS_LABEL[latest.displayStatus] ?? ATTEMPT_STATUS_LABEL[latest.status] ?? latest.status;
+  const labelKey = ATTEMPT_STATUS_LABEL[latest.displayStatus as keyof typeof ATTEMPT_STATUS_LABEL] ?? ATTEMPT_STATUS_LABEL[latest.status as keyof typeof ATTEMPT_STATUS_LABEL];
+  const label = labelKey ? dict.orders[labelKey] : latest.status;
 
   async function resend() {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -115,24 +119,24 @@ export function OnlinePaymentSection({ orderId }: { orderId: string }) {
       setResendNote(out.sendNote);
       await load();
     } catch (e) {
-      setResendError(e instanceof Error ? e.message : "আবার পাঠানো যায়নি");
+      setResendError(e instanceof Error ? e.message : dict.orders.couldNotResend);
     } finally { setResendBusy(false); }
   }
 
   return (
     <div className="space-y-2 rounded-xl border bg-white p-3">
-      <h4 className="text-sm font-semibold">💳 অনলাইন পেমেন্ট</h4>
+      <h4 className="text-sm font-semibold">{dict.orders.onlinePayment}</h4>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${latest.status === "verified_paid" ? "bg-green-100 text-green-700" : latest.status === "failed" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{label}</span>
-        <span>{latest.provider} · {latest.source === "platform" ? "প্ল্যাটফর্ম গেটওয়ে" : "নিজের গেটওয়ে"}</span>
+        <span>{latest.provider} · {latest.source === "platform" ? dict.orders.platformGateway : dict.orders.ownGateway}</span>
         <span className="font-semibold">{money(latest.amountMinor)}</span>
-        <span className="text-xs text-slate-400">{new Date(latest.createdAt).toLocaleString("bn-BD")}</span>
+        <span className="text-xs text-slate-400">{fmtDateTime(locale, new Date(latest.createdAt))}</span>
       </div>
-      {latest.failureReason ? <p className="text-xs font-medium text-red-600">ব্যর্থতার কারণ: {latest.failureReason}</p> : null}
+      {latest.failureReason ? <p className="text-xs font-medium text-red-600">{dict.orders.failureReason2}{latest.failureReason}</p> : null}
       {!paid ? (
         <div className="space-y-1.5">
           <button type="button" disabled={resendBusy} onClick={() => void resend()} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-            {resendBusy ? "পাঠানো হচ্ছে…" : "পেমেন্ট লিংক আবার পাঠান"}
+            {resendBusy ? dict.orders.sending : dict.orders.resendPaymentLink}
           </button>
           {resendError ? <p className="text-xs font-medium text-red-600">{resendError}</p> : null}
           {resendNote ? (
@@ -156,6 +160,7 @@ export function OnlinePaymentSection({ orderId }: { orderId: string }) {
  * orders have none, so the panel stays uncluttered.
  */
 export function OrderLoyaltySection({ orderId }: { orderId: string }) {
+  const { dict, t, locale } = useLocale();
   const [data, setData] = useState<OrderLoyalty | null>(null);
 
   useEffect(() => {
@@ -169,28 +174,28 @@ export function OrderLoyaltySection({ orderId }: { orderId: string }) {
   }, [orderId]);
 
   if (!data) return null;
-  const t = data.totals;
-  const hasTotals = t.earned !== 0 || t.redeemed !== 0 || t.referralReward !== 0 || t.clawedBack !== 0;
+  const totals = data.totals;
+  const hasTotals = totals.earned !== 0 || totals.redeemed !== 0 || totals.referralReward !== 0 || totals.clawedBack !== 0;
   if (!hasTotals && data.entries.length === 0) return null;
 
   return (
     <div className="space-y-2 rounded-xl border bg-white p-3">
-      <h4 className="text-sm font-semibold">⭐ লয়্যালটি পয়েন্ট — এই অর্ডারে</h4>
+      <h4 className="text-sm font-semibold">{dict.orders.loyaltyPointsOnThisOrder}</h4>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
-        <span>অর্জন: <b className="text-emerald-700">{t.earned}</b></span>
-        <span>খরচ: <b className="text-red-600">{t.redeemed}</b></span>
-        <span>রেফারেল পুরস্কার: <b>{t.referralReward}</b></span>
-        <span>কর্তন (ক্লব্যাক): <b className="text-red-600">{t.clawedBack}</b></span>
+        <span>{dict.orders.earned}<b className="text-emerald-700">{totals.earned}</b></span>
+        <span>{dict.orders.spent}<b className="text-red-600">{totals.redeemed}</b></span>
+        <span>{dict.orders.referralReward}<b>{totals.referralReward}</b></span>
+        <span>{dict.orders.deductionClawback}<b className="text-red-600">{totals.clawedBack}</b></span>
       </div>
       {data.entries.length > 0 ? (
         <ul className="space-y-1 border-t pt-2">
           {data.entries.map((en) => (
             <li key={en.id} className="flex flex-wrap items-baseline gap-x-2 text-sm">
-              <span className="font-medium">{loyaltyEntryLabel(en)}</span>
-              <span className={`font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)} পয়েন্ট</span>
-              <span className="text-xs text-slate-500">ব্যালেন্স (পরে): {en.balanceAfter}</span>
+              <span className="font-medium">{loyaltyEntryLabel(en, locale)}</span>
+              <span className={`font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)} {dict.orders.points}</span>
+              <span className="text-xs text-slate-500">{dict.orders.balanceAfter}{en.balanceAfter}</span>
               {loyaltyEntryNote(en) ? <span className="text-xs text-slate-500">{loyaltyEntryNote(en)}</span> : null}
-              <span className="ml-auto text-[11px] text-slate-400">{new Date(en.createdAt).toLocaleString("bn-BD")}</span>
+              <span className="ml-auto text-[11px] text-slate-400">{fmtDateTime(locale, new Date(en.createdAt))}</span>
             </li>
           ))}
         </ul>
@@ -219,6 +224,7 @@ export function OrderAllocationsSection({ orderId, allocations, items, onRefresh
   items?: { id: string; name: string }[] | null;
   onRefresh: () => void | Promise<void>;
 }) {
+  const { dict, t, locale } = useLocale();
   const [warehouses, setWarehouses] = useState<{ id: string; name: string; active: boolean }[]>([]);
   const [targetWh, setTargetWh] = useState("");
   const [busy, setBusy] = useState(false);
@@ -248,24 +254,24 @@ export function OrderAllocationsSection({ orderId, allocations, items, onRefresh
       const out = await apiFetch<{ moved: number }>(`/organizations/${orgId}/commerce/orders/${orderId}/reallocate`, {
         method: "POST", body: JSON.stringify({ warehouseId: targetWh }),
       });
-      setNotice(`অ্যালোকেশন সরানো হয়েছে — ${out.moved}টি ইউনিট নতুন গুদামে বরাদ্দ হয়েছে।`);
+      setNotice(t("orders.allocationRemovedUnitsHaveBeen", { moved: out.moved }));
       setTargetWh("");
       await onRefresh();
-    } catch (e) { setError(e instanceof Error ? e.message : "অ্যালোকেশন সরানো যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.orders.allocationCouldNotBeRemoved); }
     finally { setBusy(false); }
   }
 
   return (
     <div className="space-y-2 rounded-xl border bg-white p-3">
-      <h4 className="text-sm font-semibold">📦 অ্যালোকেশন — কোন গুদাম/বিন থেকে স্টক ধরা হয়েছে</h4>
+      <h4 className="text-sm font-semibold">{dict.orders.allocationWhichWarehouseBinThe}</h4>
       <div className="space-y-2">
         {groups.map((g) => (
           <div key={g.key} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-            <p className="font-medium">{g.orderItemId ? (itemName(g.orderItemId) ?? "আইটেম") : "বান্ডল উপাদান"} <span className="text-xs text-slate-400">· মোট ×{g.totalQty}</span></p>
+            <p className="font-medium">{g.orderItemId ? (itemName(g.orderItemId) ?? dict.orders.item) : dict.orders.bundleComponent} <span className="text-xs text-slate-400">{dict.orders.total4}{g.totalQty}</span></p>
             <ul className="mt-1 space-y-1">
               {g.allocations.map((a) => (
                 <li key={a.id} className={`flex flex-wrap items-center gap-x-2 text-xs ${a.status === "settled" ? "text-slate-400" : "text-slate-600"}`}>
-                  <span>{a.warehouseName ?? "গুদাম অজানা"}</span>
+                  <span>{a.warehouseName ?? dict.orders.warehouseUnknown}</span>
                   <span className="font-mono">{a.binCode ?? "—"}</span>
                   <span className="font-semibold">×{a.qty}</span>
                   {a.status === "settled" ? <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-500">{allocationStatusLabel(a.status)}</span> : null}
@@ -278,20 +284,20 @@ export function OrderAllocationsSection({ orderId, allocations, items, onRefresh
       {active ? (
         <div className="space-y-1.5 border-t pt-2">
           <div className="flex flex-wrap items-center gap-2">
-            <select className="input w-auto" value={targetWh} onChange={(e) => setTargetWh(e.target.value)} aria-label="লক্ষ্য গুদাম">
-              <option value="">গুদাম বেছে নিন</option>
+            <select className="input w-auto" value={targetWh} onChange={(e) => setTargetWh(e.target.value)} aria-label={dict.orders.targetWarehouse}>
+              <option value="">{dict.orders.chooseAWarehouse}</option>
               {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
             <button type="button" className="btn-primary btn-sm" disabled={busy || !targetWh} onClick={() => void reallocate()}>
-              {busy ? "সরানো হচ্ছে…" : "অ্যালোকেশন সরান"}
+              {busy ? dict.orders.removing : dict.orders.removeAllocation}
             </button>
           </div>
-          <p className="text-[11px] text-slate-400">সক্রিয় অ্যালোকেশনগুলো বেছে নেওয়া গুদামে সরে যাবে — নতুন করে স্টক কাটা হবে না।</p>
+          <p className="text-[11px] text-slate-400">{dict.orders.activeAllocationsWillMoveTo}</p>
           {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p> : null}
           {notice ? <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">{notice}</p> : null}
         </div>
       ) : (
-        <p className="text-xs text-slate-400">সব অ্যালোকেশন নিষ্পত্তি হয়ে গেছে — পুনঃবরাদ্দের কিছু নেই।</p>
+        <p className="text-xs text-slate-400">{dict.orders.allAllocationsAreSettledNothing}</p>
       )}
     </div>
   );
@@ -315,6 +321,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
   onPatch: (patch: { assigneeId?: string | null; tags?: string[] }) => void;
   onOpenOrder: (orderId: string) => void;
 }) {
+  const { dict, t, locale } = useLocale();
   const [timeline, setTimeline] = useState<{ entries: TimelineEntry[]; truncated: boolean } | null>(null);
   const [timelineError, setTimelineError] = useState("");
   const [c360, setC360] = useState<Customer360 | null>(null);
@@ -355,23 +362,23 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
     setTimeline(null); setTimelineError("");
     apiFetch<{ entries: TimelineEntry[]; truncated: boolean }>(`/organizations/${orgId}/orders/${orderId}/timeline`)
       .then((t) => { if (alive) setTimeline(t); })
-      .catch((e) => { if (alive) setTimelineError(e instanceof Error ? e.message : "টাইমলাইন লোড ব্যর্থ"); });
+      .catch((e) => { if (alive) setTimelineError(e instanceof Error ? e.message : dict.orders.timelineLoadFailed); });
     setC360(null); setC360Error("");
     apiFetch<Customer360>(`/organizations/${orgId}/orders/${orderId}/customer-360`)
       .then((c) => { if (alive) setC360(c); })
-      .catch((e) => { if (alive) setC360Error(e instanceof Error ? e.message : "গ্রাহকের তথ্য লোড ব্যর্থ"); });
+      .catch((e) => { if (alive) setC360Error(e instanceof Error ? e.message : dict.orders.customerInfoLoadFailed); });
     setComments([]); setCommentsError("");
     apiFetch<OrderComment[]>(`/organizations/${orgId}/orders/${orderId}/comments`)
       .then((c) => { if (alive) setComments(c ?? []); })
-      .catch((e) => { if (alive) setCommentsError(e instanceof Error ? e.message : "মন্তব্য লোড ব্যর্থ"); });
+      .catch((e) => { if (alive) setCommentsError(e instanceof Error ? e.message : dict.orders.commentLoadFailed); });
     setAttempts(null); setAttemptsError("");
     apiFetch<DeliveryAttempt[]>(`/organizations/${orgId}/orders/${orderId}/delivery-attempts`)
       .then((a) => { if (alive) setAttempts(a ?? []); })
-      .catch((e) => { if (alive) setAttemptsError(e instanceof Error ? e.message : "ডেলিভারি চেষ্টা লোড ব্যর্থ"); });
+      .catch((e) => { if (alive) setAttemptsError(e instanceof Error ? e.message : dict.orders.deliveryAttemptLoadFailed); });
     setLogs(null); setLogsError("");
     apiFetch<NotificationLog[]>(`/organizations/${orgId}/orders/${orderId}/notification-logs`)
       .then((l) => { if (alive) setLogs(l ?? []); })
-      .catch((e) => { if (alive) setLogsError(e instanceof Error ? e.message : "বিজ্ঞপ্তি লগ লোড ব্যর্থ"); });
+      .catch((e) => { if (alive) setLogsError(e instanceof Error ? e.message : dict.orders.notificationLogLoadFailed); });
     return () => { alive = false; };
   }, [orderId]);
 
@@ -382,7 +389,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
   async function recordAttempt() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (attemptOutcome === "rescheduled" && !attemptDate) {
-      setAttemptsError("পুনঃনির্ধারিত হলে নতুন তারিখ দিতে হবে।");
+      setAttemptsError(dict.orders.aNewDateIsRequired);
       return;
     }
     setBusy("attempt"); setAttemptsError("");
@@ -397,7 +404,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
       });
       setAttempts((prev) => [created, ...(prev ?? [])]);
       setAttemptNote(""); setAttemptDate("");
-    } catch (e) { setAttemptsError(e instanceof Error ? e.message : "ডেলিভারি চেষ্টা রেকর্ড ব্যর্থ"); }
+    } catch (e) { setAttemptsError(e instanceof Error ? e.message : dict.orders.deliveryAttemptRecordFailed); }
     finally { setBusy(""); }
   }
 
@@ -409,7 +416,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
         method: "PATCH", body: JSON.stringify({ assigneeId: userId || null }),
       });
       onPatch({ assigneeId: userId || null });
-    } catch (e) { setCommentsError(e instanceof Error ? e.message : "দায়িত্ব দেওয়া ব্যর্থ"); }
+    } catch (e) { setCommentsError(e instanceof Error ? e.message : dict.orders.responsibilityAssignmentFailed); }
     finally { setBusy(""); }
   }
 
@@ -422,7 +429,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
         method: "POST", body: JSON.stringify({ tags: next }),
       });
       onPatch({ tags: next });
-    } catch (e) { setCommentsError(e instanceof Error ? e.message : "ট্যাগ সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setCommentsError(e instanceof Error ? e.message : dict.orders.tagSaveFailed); }
     finally { setBusy(""); }
   }
 
@@ -435,7 +442,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
       });
       setComments((prev) => [...prev, created]);
       setDraft("");
-    } catch (e) { setCommentsError(e instanceof Error ? e.message : "মন্তব্য পাঠানো ব্যর্থ"); }
+    } catch (e) { setCommentsError(e instanceof Error ? e.message : dict.orders.commentSendingFailed); }
     finally { setBusy(""); }
   }
 
@@ -445,7 +452,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
     try {
       await apiFetch(`/organizations/${orgId}/orders/${orderId}/comments/${c.id}`, { method: "DELETE" });
       setComments((prev) => prev.filter((x) => x.id !== c.id));
-    } catch (e) { setCommentsError(e instanceof Error ? e.message : "মন্তব্য মোছা ব্যর্থ"); }
+    } catch (e) { setCommentsError(e instanceof Error ? e.message : dict.orders.commentDeleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -460,30 +467,30 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
       <div className="grid gap-3 lg:grid-cols-2">
         {/* Customer 360 */}
         <div className="space-y-2 rounded-xl border bg-white p-3">
-          <h4 className="text-sm font-semibold">👤 গ্রাহক ৩৬০ — অর্ডার {orderLabel}</h4>
+          <h4 className="text-sm font-semibold">{dict.orders.customer360Order}{orderLabel}</h4>
           {c360Error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{c360Error}</p> : !c360 ? (
-            <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+            <p className="text-xs text-slate-400">{dict.common.loading}</p>
           ) : !c360.customer ? (
-            <p className="text-sm text-slate-500">অতিথি গ্রাহক — এই অর্ডারের সাথে কোনো গ্রাহক রেকর্ড যুক্ত নেই।</p>
+            <p className="text-sm text-slate-500">{dict.orders.guestCustomerNoCustomerRecord}</p>
           ) : (
             <div className="space-y-2 text-sm">
-              <p className="font-medium">{c360.customer.name ?? "নাম নেই"}
+              <p className="font-medium">{c360.customer.name ?? dict.orders.noName}
                 {c360.customer.phone ? <span className="ml-2 font-mono text-xs text-slate-500">{c360.customer.phone}</span> : null}
                 {c360.customer.email ? <span className="ml-2 text-xs text-slate-500">{c360.customer.email}</span> : null}
               </p>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
-                <span>মোট অর্ডার: <b>{c360.orderCount}</b></span>
-                <span>ডেলিভার্ড: <b>{c360.deliveredCount}</b></span>
-                <span>বাতিল: <b>{c360.cancelledCount}</b></span>
-                <span>রিটার্ন: <b>{c360.returnedCount}</b></span>
-                <span>সর্বমোট কেনাকাটা: <b>{money(c360.lifetimeValueMinor)}</b></span>
-                <span>নির্ভরযোগ্যতা: <b>{c360.reliabilityPercent == null ? "—" : `${c360.reliabilityPercent}%`}</b></span>
-                <span>খোলা বকেয়া: <b className={c360.openDueMinor && c360.openDueMinor !== "0" ? "text-red-600" : ""}>{money(c360.openDueMinor)}</b></span>
-                <span>খোলা রিটার্ন: <b>{c360.openReturns}</b></span>
+                <span>{dict.orders.totalOrders2}<b>{c360.orderCount}</b></span>
+                <span>{dict.orders.delivered3}<b>{c360.deliveredCount}</b></span>
+                <span>{dict.orders.cancelled}<b>{c360.cancelledCount}</b></span>
+                <span>{dict.orders.returns}<b>{c360.returnedCount}</b></span>
+                <span>{dict.orders.totalPurchases}<b>{money(c360.lifetimeValueMinor)}</b></span>
+                <span>{dict.orders.reliability}<b>{c360.reliabilityPercent == null ? "—" : `${c360.reliabilityPercent}%`}</b></span>
+                <span>{dict.orders.openDue}<b className={c360.openDueMinor && c360.openDueMinor !== "0" ? "text-red-600" : ""}>{money(c360.openDueMinor)}</b></span>
+                <span>{dict.orders.openReturns}<b>{c360.openReturns}</b></span>
               </div>
               {c360.lastOrders.length > 0 ? (
                 <div className="space-y-1 border-t pt-2">
-                  <p className="text-xs font-semibold text-slate-600">সাম্প্রতিক অর্ডার</p>
+                  <p className="text-xs font-semibold text-slate-600">{dict.orders.recentOrders}</p>
                   {c360.lastOrders.map((lo) => (
                     <button key={lo.id} type="button" disabled={lo.id === orderId}
                       className="flex w-full flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-left text-xs hover:bg-slate-100 disabled:opacity-60"
@@ -491,8 +498,8 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
                       <span className="font-medium">#{lo.externalNumber ?? lo.id.slice(0, 8)}</span>
                       <span className="rounded bg-slate-200 px-1.5 py-0.5">{lo.status}</span>
                       <span className="font-semibold">{money(lo.totalMinor)}</span>
-                      {lo.placedAt ? <span className="text-slate-400">{new Date(lo.placedAt).toLocaleDateString("bn-BD")}</span> : null}
-                      {lo.id === orderId ? <span className="text-slate-400">(এই অর্ডার)</span> : null}
+                      {lo.placedAt ? <span className="text-slate-400">{fmtDate(locale, new Date(lo.placedAt))}</span> : null}
+                      {lo.id === orderId ? <span className="text-slate-400">{dict.orders.thisOrder}</span> : null}
                     </button>
                   ))}
                 </div>
@@ -504,24 +511,24 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
         {/* Assignee + tags */}
         <div className="space-y-3 rounded-xl border bg-white p-3">
           <div className="space-y-1.5">
-            <label className="text-sm font-semibold">👤 দায়িত্ব</label>
+            <label className="text-sm font-semibold">{dict.orders.responsibility}</label>
             <div className="flex flex-wrap items-center gap-2">
               <select className="input w-auto" value={assigneeId ?? ""} disabled={busy !== ""} onChange={(e) => void assign(e.target.value)}>
-                <option value="">কেউ নয়</option>
+                <option value="">{dict.orders.nobody}</option>
                 {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
               </select>
-              <span className="text-xs text-slate-500">বর্তমান: {memberName(members, assigneeId)}</span>
+              <span className="text-xs text-slate-500">{dict.orders.current2}{memberName(members, assigneeId, dict.orders.teamMember)}</span>
             </div>
           </div>
           <div className="space-y-1.5 border-t pt-3">
-            <label className="text-sm font-semibold">🏷️ ট্যাগ</label>
+            <label className="text-sm font-semibold">{dict.orders.tags}</label>
             <div className="flex flex-wrap items-center gap-2">
-              <input className="input flex-1" placeholder="কমা দিয়ে ট্যাগ (যেমন: vip, জরুরি)" value={tagDraft} onChange={(e) => setTagDraft(e.target.value)} />
-              <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void saveTags()}>{busy === "tags" ? "হচ্ছে…" : "ট্যাগ সংরক্ষণ"}</button>
+              <input className="input flex-1" placeholder={dict.orders.tagsCommaSeparatedEG} value={tagDraft} onChange={(e) => setTagDraft(e.target.value)} />
+              <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void saveTags()}>{busy === "tags" ? dict.orders.ing : dict.orders.saveTags}</button>
             </div>
             {(tags ?? []).length > 0 ? (
               <div className="flex flex-wrap gap-1">{(tags ?? []).map((t) => <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{t}</span>)}</div>
-            ) : <p className="text-xs text-slate-400">কোনো ট্যাগ নেই।</p>}
+            ) : <p className="text-xs text-slate-400">{dict.orders.noTags}</p>}
           </div>
           {commentsError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{commentsError}</p> : null}
         </div>
@@ -530,11 +537,11 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
       <div className="grid gap-3 lg:grid-cols-2">
         {/* Timeline */}
         <div className="space-y-2 rounded-xl border bg-white p-3">
-          <h4 className="text-sm font-semibold">🕘 টাইমলাইন — অর্ডারের পুরো ইতিহাস</h4>
+          <h4 className="text-sm font-semibold">{dict.orders.timelineTheOrderSFull}</h4>
           {timelineError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{timelineError}</p> : !timeline ? (
-            <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+            <p className="text-xs text-slate-400">{dict.common.loading}</p>
           ) : timeline.entries.length === 0 ? (
-            <p className="text-xs text-slate-400">এখনো কোনো ঘটনা রেকর্ড হয়নি।</p>
+            <p className="text-xs text-slate-400">{dict.orders.noEventsRecordedYet}</p>
           ) : (
             <>
               <ul className="space-y-0">
@@ -548,29 +555,29 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
                       <span className="font-medium">{e.title}</span>
                       {e.detail ? <span className="block text-xs text-slate-600">{e.detail}</span> : null}
                       <span className="block text-[11px] text-slate-400">
-                        {new Date(e.at).toLocaleString("bn-BD")}{e.actor ? ` · ${e.actor}` : ""}
+                        {fmtDateTime(locale, new Date(e.at))}{e.actor ? ` · ${e.actor}` : ""}
                       </span>
                     </span>
                   </li>
                 ))}
               </ul>
-              {timeline.truncated ? <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">আরও ছিল — সর্বশেষ ২০০টি দেখানো হচ্ছে</p> : null}
+              {timeline.truncated ? <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{dict.orders.thereWereMoreShowingThe}</p> : null}
             </>
           )}
         </div>
 
         {/* Internal comments */}
         <div className="space-y-2 rounded-xl border bg-white p-3">
-          <h4 className="text-sm font-semibold">💬 অভ্যন্তরীণ মন্তব্য — গ্রাহক এটি দেখবে না</h4>
+          <h4 className="text-sm font-semibold">{dict.orders.internalCommentsTheCustomerWon}</h4>
           {comments.length === 0 ? (
-            <p className="text-xs text-slate-400">এখনো কোনো মন্তব্য নেই।</p>
+            <p className="text-xs text-slate-400">{dict.orders.noCommentsYet}</p>
           ) : (
             <ul className="space-y-2">
               {comments.map((c) => (
                 <li key={c.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
                   <span className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="text-xs font-semibold text-slate-700">{c.authorName ?? memberName(members, c.authorId)}</span>
-                    <span className="text-[11px] text-slate-400">{new Date(c.createdAt).toLocaleString("bn-BD")}</span>
+                    <span className="text-xs font-semibold text-slate-700">{c.authorName ?? memberName(members, c.authorId, dict.orders.teamMember)}</span>
+                    <span className="text-[11px] text-slate-400">{fmtDateTime(locale, new Date(c.createdAt))}</span>
                   </span>
                   <span className="mt-0.5 block whitespace-pre-wrap text-slate-700">{c.body}</span>
                   {/* Delete is shown for the author's own comments
@@ -578,7 +585,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
                       admins and its error is shown verbatim. */}
                   {(myId === null || c.authorId === myId) ? (
                     <button type="button" className="mt-1 text-[11px] font-semibold text-red-600 hover:underline" disabled={busy !== ""} onClick={() => void deleteComment(c)}>
-                      {busy === `del-${c.id}` ? "মুছছে…" : "মুছুন"}
+                      {busy === `del-${c.id}` ? dict.orders.deleting2 : dict.orders.delete}
                     </button>
                   ) : null}
                 </li>
@@ -586,11 +593,11 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
             </ul>
           )}
           <div className="flex gap-2 border-t pt-2">
-            <input className="input flex-1" placeholder="টিমের জন্য মন্তব্য লিখুন…" value={draft} maxLength={2000}
+            <input className="input flex-1" placeholder={dict.orders.writeACommentForThe} value={draft} maxLength={2000}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void postComment(); } }} />
             <button type="button" className="btn-primary btn-sm" disabled={busy !== "" || !draft.trim()} onClick={() => void postComment()}>
-              {busy === "comment" ? "পাঠাচ্ছে…" : "যোগ করুন"}
+              {busy === "comment" ? dict.orders.sending3 : dict.orders.add}
             </button>
           </div>
         </div>
@@ -599,22 +606,22 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
       <div className="grid gap-3 lg:grid-cols-2">
         {/* ON6: delivery attempts — staff records of courier reports */}
         <div className="space-y-2 rounded-xl border bg-white p-3">
-          <h4 className="text-sm font-semibold">🏠 ডেলিভারি চেষ্টা</h4>
-          <p className="text-[11px] text-slate-400">কুরিয়ার যা জানিয়েছে তার রেকর্ড — কুরিয়ার সিস্টেমে পাঠানো হয় না।</p>
+          <h4 className="text-sm font-semibold">{dict.orders.deliveryAttempts}</h4>
+          <p className="text-[11px] text-slate-400">{dict.orders.aRecordOfWhatThe}</p>
           {attemptsError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{attemptsError}</p> : null}
           {attempts === null && !attemptsError ? (
-            <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+            <p className="text-xs text-slate-400">{dict.common.loading}</p>
           ) : (attempts ?? []).length === 0 ? (
-            <p className="text-xs text-slate-400">এখনো কোনো ডেলিভারি চেষ্টা রেকর্ড হয়নি।</p>
+            <p className="text-xs text-slate-400">{dict.orders.noDeliveryAttemptsRecordedYet}</p>
           ) : (
             <ul className="space-y-1.5">
               {(attempts ?? []).map((a) => (
                 <li key={a.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
                   <span className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="font-medium">{deliveryAttemptOutcomeLabel(a.outcome)}</span>
-                    <span className="text-[11px] text-slate-400">{new Date(a.attemptedAt ?? a.createdAt).toLocaleString("bn-BD")}</span>
+                    <span className="font-medium">{deliveryAttemptOutcomeLabel(a.outcome, locale)}</span>
+                    <span className="text-[11px] text-slate-400">{fmtDateTime(locale, new Date(a.attemptedAt ?? a.createdAt))}</span>
                   </span>
-                  {a.rescheduleDate ? <span className="block text-xs text-slate-600">নতুন তারিখ: {a.rescheduleDate}</span> : null}
+                  {a.rescheduleDate ? <span className="block text-xs text-slate-600">{dict.orders.newDate}{a.rescheduleDate}</span> : null}
                   {a.note ? <span className="block whitespace-pre-wrap text-xs text-slate-600">{a.note}</span> : null}
                 </li>
               ))}
@@ -622,18 +629,18 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
           )}
           <div className="space-y-2 border-t pt-2">
             <div className="flex flex-wrap items-center gap-2">
-              <select className="input w-auto" value={attemptOutcome} onChange={(e) => setAttemptOutcome(e.target.value)} aria-label="ডেলিভারি চেষ্টার ফলাফল">
+              <select className="input w-auto" value={attemptOutcome} onChange={(e) => setAttemptOutcome(e.target.value)} aria-label={dict.orders.deliveryAttemptOutcome}>
                 {DELIVERY_ATTEMPT_OUTCOMES.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
               </select>
               {attemptOutcome === "rescheduled" ? (
-                <input className="input w-auto" type="date" value={attemptDate} onChange={(e) => setAttemptDate(e.target.value)} aria-label="পুনঃনির্ধারিত তারিখ" required />
+                <input className="input w-auto" type="date" value={attemptDate} onChange={(e) => setAttemptDate(e.target.value)} aria-label={dict.orders.rescheduledDate} required />
               ) : null}
             </div>
             <div className="flex gap-2">
-              <input className="input flex-1" placeholder="নোট (ঐচ্ছিক) — কুরিয়ার যা বলেছে" value={attemptNote} maxLength={1000}
+              <input className="input flex-1" placeholder={dict.orders.noteOptionalWhatTheCourier} value={attemptNote} maxLength={1000}
                 onChange={(e) => setAttemptNote(e.target.value)} />
               <button type="button" className="btn-primary btn-sm" disabled={busy !== ""} onClick={() => void recordAttempt()}>
-                {busy === "attempt" ? "রেকর্ড হচ্ছে…" : "রেকর্ড করুন"}
+                {busy === "attempt" ? dict.orders.recording : dict.orders.record}
               </button>
             </div>
           </div>
@@ -642,7 +649,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
         {/* ON5: notification log for this order */}
         <div className="space-y-2 rounded-xl border bg-white p-3">
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold">🔔 বিজ্ঞপ্তি লগ — গ্রাহককে পাঠানো বার্তা</h4>
+            <h4 className="text-sm font-semibold">{dict.orders.notificationLogMessagesSentTo}</h4>
             <button
               type="button"
               onClick={() => {
@@ -651,24 +658,23 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
               }}
               className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-emerald-700 shadow-xs transition"
             >
-              📲 WhatsApp / SMS পাঠান
-            </button>
+              {dict.orders.sendWhatsAppSMS}</button>
           </div>
 
           {logsError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{logsError}</p> : logs === null ? (
-            <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+            <p className="text-xs text-slate-400">{dict.common.loading}</p>
           ) : logs.length === 0 ? (
-            <p className="text-xs text-slate-400">এই অর্ডারের জন্য এখনো কোনো বিজ্ঞপ্তি লগ নেই।</p>
+            <p className="text-xs text-slate-400">{dict.orders.noNotificationLogForThis}</p>
           ) : (
             <ul className="space-y-1.5">
               {logs.map((l, i) => (
                 <li key={l.id ?? i} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
                   <span className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="font-medium">{notificationEventLabel(l.event)}</span>
-                    <span className="text-[11px] text-slate-400">{new Date(l.createdAt).toLocaleString("bn-BD")}</span>
+                    <span className="font-medium">{notificationEventLabel(l.event, locale)}</span>
+                    <span className="text-[11px] text-slate-400">{fmtDateTime(locale, new Date(l.createdAt))}</span>
                   </span>
                   <span className="block text-xs text-slate-600">
-                    {notificationChannelLabel(l.channel)} · {notificationStatusLabel(l.status)}
+                    {notificationChannelLabel(l.channel, locale)} · {notificationStatusLabel(l.status, locale)}
                     {l.providerMessageId ? <span className="ml-1 font-mono text-[11px] text-slate-400">{l.providerMessageId}</span> : null}
                   </span>
                   {l.error ? <span className="block text-xs text-red-600">{l.error}</span> : null}
@@ -688,23 +694,22 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
             <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl space-y-4">
               <div className="flex items-center justify-between border-b pb-2">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                  <span>📲 গ্রাহককে ট্র্যাকিং মেসেজ পাঠান</span>
+                  <span>{dict.orders.sendTrackingMessageToThe}</span>
                 </h3>
                 <button
                   type="button"
                   onClick={() => setNotifModalOpen(false)}
                   className="text-xs text-slate-400 hover:text-slate-600 font-bold"
                 >
-                  ✕ বন্ধ করুন
-                </button>
+                  {dict.orders.close2}</button>
               </div>
 
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                   <div>
-                    <span className="text-slate-400 block text-[10px]">গ্রাহকের নাম ও ফোন:</span>
+                    <span className="text-slate-400 block text-[10px]">{dict.orders.customerNamePhone2}</span>
                     <strong className="text-slate-800">
-                      {c360?.customer?.name || "গ্রাহক"} ({c360?.customer?.phone || "ফোন নম্বর নেই"})
+                      {c360?.customer?.name || dict.orders.customer} ({c360?.customer?.phone || dict.orders.noPhoneNumber})
                     </strong>
                   </div>
                   <span className="font-mono font-bold text-slate-600">{orderLabel}</span>
@@ -712,8 +717,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    মেসেজ ইভেন্ট বেছে নিন:
-                  </label>
+                    {dict.orders.chooseAMessageEvent}</label>
                   <select
                     value={selectedNotifEvent}
                     onChange={(e) => {
@@ -722,34 +726,33 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
                     }}
                     className="w-full rounded-xl border border-slate-300 p-2 text-xs bg-white text-slate-800"
                   >
-                    <option value="handed_to_courier">🚚 কুরিয়ারে হস্তান্তর ও ট্র্যাকিং কোড</option>
-                    <option value="out_for_delivery">🛵 ডেলিভারির পথে (রাইডার বের হয়েছে)</option>
-                    <option value="order_placed">📦 অর্ডার গ্রহণ ও কনফার্মেশন</option>
-                    <option value="delivered">🎉 সফল ডেলিভারি সম্পন্ন</option>
-                    <option value="delivery_failed">⚠️ ডেলিভারি ব্যর্থ / কাস্টমার নট রিসিভড</option>
-                    <option value="delivery_rescheduled">🔄 ডেলিভারি পুনঃনির্ধারিত</option>
+                    <option value="handed_to_courier">{dict.orders.handedToCourierTrackingCode}</option>
+                    <option value="out_for_delivery">{dict.orders.outForDeliveryRiderHas}</option>
+                    <option value="order_placed">{dict.orders.orderReceivedConfirmation}</option>
+                    <option value="delivered">{dict.orders.successfulDeliveryComplete}</option>
+                    <option value="delivery_failed">{dict.orders.deliveryFailedCustomerNotReceived}</option>
+                    <option value="delivery_rescheduled">{dict.orders.deliveryRescheduled}</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    পাঠানোর মেসেজ প্রিভিউ:
-                  </label>
+                    {dict.orders.messagePreviewToSend}</label>
                   <textarea
                     rows={4}
                     value={
                       customMsgText.trim()
                         ? customMsgText
                         : renderNotificationTemplate(DEFAULT_TEMPLATES[selectedNotifEvent], {
-                            customerName: c360?.customer?.name || "গ্রাহক",
+                            customerName: c360?.customer?.name || dict.orders.customer,
                             orderNumber: orderLabel,
-                            total: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
-                            due: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                            total: c360?.openDueMinor ? money(c360.openDueMinor) : dict.orders.text1oyl,
+                            due: c360?.openDueMinor ? money(c360.openDueMinor) : dict.orders.text1oyl,
                             trackingUrl: `https://shop.com/track/${orderId.slice(0, 8)}`,
-                            shopName: "আমাদের শপ",
-                            courierName: "কুরিয়ার",
+                            shopName: dict.orders.ourShop,
+                            courierName: dict.orders.courier,
                             trackingCode: orderId.slice(0, 8).toUpperCase(),
-                            rescheduleDate: "আগামীকাল",
+                            rescheduleDate: dict.orders.tomorrow,
                           })
                     }
                     onChange={(e) => setCustomMsgText(e.target.value)}
@@ -765,23 +768,22 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
                     customMsgText.trim()
                       ? customMsgText
                       : renderNotificationTemplate(DEFAULT_TEMPLATES[selectedNotifEvent], {
-                          customerName: c360?.customer?.name || "গ্রাহক",
+                          customerName: c360?.customer?.name || dict.orders.customer,
                           orderNumber: orderLabel,
-                          total: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
-                          due: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                          total: c360?.openDueMinor ? money(c360.openDueMinor) : dict.orders.text1oyl,
+                          due: c360?.openDueMinor ? money(c360.openDueMinor) : dict.orders.text1oyl,
                           trackingUrl: `https://shop.com/track/${orderId.slice(0, 8)}`,
-                          shopName: "আমাদের শপ",
-                          courierName: "কুরিয়ার",
+                          shopName: dict.orders.ourShop,
+                          courierName: dict.orders.courier,
                           trackingCode: orderId.slice(0, 8).toUpperCase(),
-                          rescheduleDate: "আগামীকাল",
+                          rescheduleDate: dict.orders.tomorrow,
                         })
                   )}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="rounded-xl bg-[#25D366] p-2.5 text-center text-xs font-bold text-white shadow hover:bg-[#20ba5a] transition"
                 >
-                  WhatsApp-এ পাঠান ↗
-                </a>
+                  {dict.orders.sendOnWhatsApp}</a>
 
                 <button
                   type="button"
@@ -789,15 +791,15 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
                     const txt = customMsgText.trim()
                       ? customMsgText
                       : renderNotificationTemplate(DEFAULT_TEMPLATES[selectedNotifEvent], {
-                          customerName: c360?.customer?.name || "গ্রাহক",
+                          customerName: c360?.customer?.name || dict.orders.customer,
                           orderNumber: orderLabel,
-                          total: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
-                          due: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                          total: c360?.openDueMinor ? money(c360.openDueMinor) : dict.orders.text1oyl,
+                          due: c360?.openDueMinor ? money(c360.openDueMinor) : dict.orders.text1oyl,
                           trackingUrl: `https://shop.com/track/${orderId.slice(0, 8)}`,
-                          shopName: "আমাদের শপ",
-                          courierName: "কুরিয়ার",
+                          shopName: dict.orders.ourShop,
+                          courierName: dict.orders.courier,
                           trackingCode: orderId.slice(0, 8).toUpperCase(),
-                          rescheduleDate: "আগামীকাল",
+                          rescheduleDate: dict.orders.tomorrow,
                         });
                     await navigator.clipboard.writeText(txt);
                     setNotifCopied(true);
@@ -805,7 +807,7 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
                   }}
                   className="rounded-xl border border-slate-300 bg-white p-2.5 text-center text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
                 >
-                  {notifCopied ? "✓ কপি হয়েছে!" : "📋 কপি করুন"}
+                  {notifCopied ? dict.orders.copied2 : dict.orders.copy2}
                 </button>
               </div>
             </div>

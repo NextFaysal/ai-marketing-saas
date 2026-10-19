@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -37,6 +38,7 @@ function parseList(text: string): string[] {
 }
 
 export default function StorefrontSearchPage() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [analytics, setAnalytics] = useState<SearchAnalytics | null>(null);
@@ -51,7 +53,7 @@ export default function StorefrontSearchPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setLoading(false); setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setLoading(false); setError(dict.commerce.noOrganizationSelected); return; }
     setLoading(true);
     try {
       const [a, s] = await Promise.all([
@@ -62,7 +64,7 @@ export default function StorefrontSearchPage() {
       setSynonyms((Array.isArray(s) ? s : s?.synonyms ?? s?.items ?? []) as Synonym[]);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "লোড ব্যর্থ");
+      setError(e instanceof Error ? e.message : dict.commerce.loadingFailed);
     } finally {
       setLoading(false);
     }
@@ -81,7 +83,7 @@ export default function StorefrontSearchPage() {
 
   async function saveSynonym() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!term.trim()) { setError("শব্দ (term) দিন।"); return; }
+    if (!term.trim()) { setError(dict.commerce.giveATerm); return; }
     setBusy("synonym"); setError("");
     const body = { term: term.trim(), expansions: parseList(expansions) };
     try {
@@ -89,29 +91,29 @@ export default function StorefrontSearchPage() {
         await apiFetch(`/organizations/${orgId}/storefront/search/synonyms/${editingId}`, {
           method: "PATCH", body: JSON.stringify(body),
         });
-        toast({ title: "সমার্থক শব্দ আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.synonymUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/search/synonyms`, {
           method: "POST", body: JSON.stringify(body),
         });
-        toast({ title: "নতুন সমার্থক শব্দ যোগ হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.newSynonymAdded, tone: "success" });
       }
       resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed); }
     finally { setBusy(""); }
   }
 
   async function deleteSynonym(s: Synonym) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${s.term}" সমার্থক শব্দটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: t("commerce.deleteTheSynonym", { term: s.term }), danger: true, confirmLabel: dict.commerce.delete2 }))) return;
     setBusy(`del-${s.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/search/synonyms/${s.id}`, { method: "DELETE" });
-      toast({ title: "সমার্থক শব্দ মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.synonymDeleted, tone: "success" });
       if (editingId === s.id) resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -120,8 +122,8 @@ export default function StorefrontSearchPage() {
     setBusy("reindex"); setError("");
     try {
       const out = await apiFetch<{ updated: number }>(`/organizations/${orgId}/storefront/search/reindex`, { method: "POST" });
-      toast({ title: `সার্চ পুনঃসূচী সম্পন্ন — ${out.updated ?? 0}টি পণ্য আপডেট হয়েছে।`, tone: "success" });
-    } catch (e) { setError(e instanceof Error ? e.message : "পুনঃসূচী ব্যর্থ"); }
+      toast({ title: t("commerce.searchReindexCompleteProductsUpdated", { out: out.updated ?? 0 }), tone: "success" });
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.reindexFailed); }
     finally { setBusy(""); }
   }
 
@@ -135,8 +137,8 @@ export default function StorefrontSearchPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-xs text-slate-500">
-                <th className="py-2 pr-3 font-semibold">শব্দ</th>
-                <th className="py-2 text-right font-semibold">বার</th>
+                <th className="py-2 pr-3 font-semibold">{dict.commerce.term}</th>
+                <th className="py-2 text-right font-semibold">{dict.commerce.times}</th>
               </tr>
             </thead>
             <tbody>
@@ -157,47 +159,43 @@ export default function StorefrontSearchPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">দোকানের সার্চ — বিশ্লেষণ ও সমার্থক শব্দ</h1>
+          <h1 className="page-title">{dict.commerce.shopSearchAnalyticsSynonyms}</h1>
           <p className="text-sm text-slate-500">
-            দোকানের সার্চ কীওয়ার্ড / পূর্ণ-টেক্সট অনুসন্ধান (FTS) ভিত্তিক — এখানে &ldquo;স্মার্ট সার্চ&rdquo; বলতে
-            পূর্ণ-টেক্সট অনুসন্ধানই বোঝানো হয়েছে। ক্রেতারা কী খুঁজছেন এবং কোন খোঁজে কোনো ফল আসছে না, তা এখানে দেখুন।
-          </p>
+            {dict.commerce.theShopSSearchIs}</p>
         </div>
-        <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">← Storefront সেটিংস</Link>
+        <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.commerce.storefrontSettings}</Link>
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
-      {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+      {loading ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : null}
 
       {analytics ? (
         <>
           <div className="card flex flex-wrap items-center gap-3 p-5">
             <div className="min-w-0 flex-1">
-              <div className="font-semibold">সার্চ বিশ্লেষণ (শেষ {analytics.windowDays} দিন)</div>
-              <p className="text-sm text-slate-500">মোট সার্চ: <b>{analytics.totalSearches}</b></p>
+              <div className="font-semibold">{dict.commerce.searchAnalyticsLast}{analytics.windowDays} {dict.commerce.days5}</div>
+              <p className="text-sm text-slate-500">{dict.commerce.totalSearches}<b>{analytics.totalSearches}</b></p>
             </div>
             <button type="button" onClick={reindex} disabled={busy !== ""} className="btn-primary disabled:opacity-50">
-              {busy === "reindex" ? "পুনঃসূচী হচ্ছে…" : "সার্চ পুনঃসূচী"}
+              {busy === "reindex" ? dict.commerce.reindexing : dict.commerce.reindexSearch}
             </button>
           </div>
           <div className="grid items-start gap-6 lg:grid-cols-2">
-            {termsTable("শীর্ষ সার্চ", analytics.topTerms ?? [], "এই সময়ে কোনো সার্চ হয়নি।")}
-            {termsTable("শূন্য-ফলাফলের সার্চ", analytics.zeroResultTerms ?? [], "কোনো শূন্য-ফলাফলের সার্চ নেই — ভালো খবর!")}
+            {termsTable(dict.commerce.topSearches, analytics.topTerms ?? [], dict.commerce.noSearchesInThisPeriod)}
+            {termsTable(dict.commerce.zeroResultSearches, analytics.zeroResultTerms ?? [], dict.commerce.noZeroResultSearchesGood)}
           </div>
         </>
       ) : null}
 
       <section className="card space-y-4 p-5">
         <div>
-          <div className="font-semibold">সমার্থক শব্দ (synonyms)</div>
+          <div className="font-semibold">{dict.commerce.synonyms}</div>
           <p className="text-sm text-slate-500">
-            একটি শব্দের সাথে বিকল্প শব্দ যোগ করলে, ক্রেতা যেকোনো একটি দিয়ে খুঁজলেই সংশ্লিষ্ট পণ্য পাওয়া যাবে।
-            যেমন: term &ldquo;শাড়ি&rdquo;, বিস্তার &ldquo;saree, শাড়ী&rdquo;।
-          </p>
+            {dict.commerce.whenAlternativeWordsAreAdded}</p>
         </div>
         {synonyms.length === 0 ? (
-          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">এখনো কোনো সমার্থক শব্দ নেই — নিচে যোগ করুন।</p>
+          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">{dict.commerce.noSynonymsYetAddBelow}</p>
         ) : (
           <ul className="space-y-2">
             {synonyms.map((s) => (
@@ -205,27 +203,25 @@ export default function StorefrontSearchPage() {
                 <span className="font-semibold">{s.term}</span>
                 <span className="text-sm text-slate-500">→ {expansionsOf(s).join(", ") || "—"}</span>
                 <span className="ml-auto flex gap-1.5">
-                  <button type="button" onClick={() => startEdit(s)} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">সম্পাদনা</button>
-                  <button type="button" disabled={busy !== ""} onClick={() => void deleteSynonym(s)} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                  <button type="button" onClick={() => startEdit(s)} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.edit}</button>
+                  <button type="button" disabled={busy !== ""} onClick={() => void deleteSynonym(s)} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">{dict.commerce.delete}</button>
                 </span>
               </li>
             ))}
           </ul>
         )}
         <div className="grid gap-3 border-t pt-4 md:grid-cols-2">
-          <label className="block text-sm">শব্দ (term) *
-            <input className="input mt-1" value={term} onChange={(e) => setTerm(e.target.value)} placeholder="যেমন: শাড়ি" />
+          <label className="block text-sm">{dict.commerce.term2}<input className="input mt-1" value={term} onChange={(e) => setTerm(e.target.value)} placeholder={dict.commerce.eGSaree} />
           </label>
-          <label className="block text-sm">বিস্তার (expansions — কমা দিয়ে আলাদা করুন)
-            <input className="input mt-1" value={expansions} onChange={(e) => setExpansions(e.target.value)} placeholder="saree, শাড়ী" />
+          <label className="block text-sm">{dict.commerce.expansionsSeparateWithCommas}<input className="input mt-1" value={expansions} onChange={(e) => setExpansions(e.target.value)} placeholder={dict.commerce.sareeSari} />
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={saveSynonym} disabled={busy === "synonym" || !term.trim()} className="btn-primary disabled:opacity-50">
-            {busy === "synonym" ? "সংরক্ষণ হচ্ছে…" : editingId ? "সমার্থক শব্দ আপডেট করুন" : "সমার্থক শব্দ যোগ করুন"}
+            {busy === "synonym" ? dict.commerce.saving : editingId ? dict.commerce.updateSynonym : dict.commerce.addSynonym}
           </button>
           {editingId ? (
-            <button type="button" onClick={resetForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button>
+            <button type="button" onClick={resetForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.common.cancel}</button>
           ) : null}
         </div>
       </section>

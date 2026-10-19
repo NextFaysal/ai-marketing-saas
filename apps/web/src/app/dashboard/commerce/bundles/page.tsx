@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -52,6 +53,7 @@ interface ComponentRow { productId: string; variantSku: string; qty: string }
 interface SlotRow { label: string; chooseQty: string; sourceType: "category" | "products"; categoryId: string; productIds: string[] }
 
 export default function BundlesPage() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [bundles, setBundles] = useState<Bundle[]>([]);
@@ -89,7 +91,7 @@ export default function BundlesPage() {
       setProducts(p.items ?? []);
       setCategories(Array.isArray(cats) ? cats : []);
       setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.loadingFailed); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -141,12 +143,12 @@ export default function BundlesPage() {
         qty: Math.max(1, parseInt(r.qty || "1", 10) || 1),
       }));
     if (components.length < 2 || components.length > 10) {
-      setError("বান্ডলে ২–১০টি কম্পোনেন্ট পণ্য থাকতে হবে।");
+      setError(dict.commerce.aBundleMustHave2);
       return;
     }
     const bundlePriceMinor = takaToMinorString(bundlePrice);
     if (bundlePriceMinor === null) {
-      setError("বান্ডলের দাম টাকায় সঠিক সংখ্যা দিন (যেমন: 999 অথবা 999.50)।");
+      setError(dict.commerce.giveTheBundlePriceIn);
       return;
     }
     // AB5 (AX8): slots — the form manages the full set, so the
@@ -155,16 +157,16 @@ export default function BundlesPage() {
     const slots: { label: string; chooseQty: number; sourceType: "category" | "products"; sourceRef: { categoryId: string } | { productIds: string[] } }[] = [];
     for (const s of slotRows) {
       const label = s.label.trim();
-      if (!label) { setError("প্রতিটি স্লটের লেবেল দিন।"); return; }
+      if (!label) { setError(dict.commerce.giveALabelForEvery); return; }
       const chooseQty = parseInt(s.chooseQty || "0", 10);
       if (!Number.isInteger(chooseQty) || chooseQty < 1 || chooseQty > 20) {
-        setError(`"${label}" স্লটে বেছে নেওয়ার সংখ্যা ১–২০ হতে হবে।`); return;
+        setError(t("commerce.thePickCountForThe", { label: label })); return;
       }
       if (s.sourceType === "category") {
-        if (!s.categoryId) { setError(`"${label}" স্লটের জন্য ক্যাটাগরি বেছে নিন।`); return; }
+        if (!s.categoryId) { setError(t("commerce.selectACategoryForThe", { label: label })); return; }
         slots.push({ label, chooseQty, sourceType: "category", sourceRef: { categoryId: s.categoryId } });
       } else {
-        if (s.productIds.length === 0) { setError(`"${label}" স্লটে কমপক্ষে একটি পণ্য বেছে নিন।`); return; }
+        if (s.productIds.length === 0) { setError(t("commerce.selectAtLeastOneProduct", { label: label })); return; }
         slots.push({ label, chooseQty, sourceType: "products", sourceRef: { productIds: s.productIds } });
       }
     }
@@ -183,14 +185,14 @@ export default function BundlesPage() {
     try {
       if (editingId) {
         await apiFetch(`/organizations/${orgId}/commerce/bundles/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "বান্ডল আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.bundleUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/bundles`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "বান্ডল তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.bundleCreated, tone: "success" });
       }
       resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed3); }
     finally { setBusy(""); }
   }
 
@@ -202,19 +204,19 @@ export default function BundlesPage() {
         method: "POST", body: JSON.stringify({ active: !b.active }),
       });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.failed); }
     finally { setBusy(""); }
   }
 
   async function remove(b: Bundle) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${b.name}" বান্ডলটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: t("commerce.deleteTheBundle", { name: b.name }), danger: true, confirmLabel: dict.commerce.delete2 }))) return;
     setBusy(`del-${b.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/bundles/${b.id}`, { method: "DELETE" });
       if (editingId === b.id) resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -230,19 +232,18 @@ export default function BundlesPage() {
       ))}
       {(b.slots ?? []).map((s) => (
         <div key={s.id ?? s.label} className="mt-0.5 rounded bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700">
-          🎛️ {s.label}: {s.chooseQty}টি বেছে নেবেন · পুলে {(s.options ?? []).length}টি পণ্য
-        </div>
+          🎛️ {s.label}: {s.chooseQty}{dict.commerce.willPickInThePool}{(s.options ?? []).length}{dict.commerce.products}</div>
       ))}
     </>
   );
   const renderBundleStatus = (b: Bundle) => (
-    b.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">সক্রিয়</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">বন্ধ</span>
+    b.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">{dict.commerce.active}</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{dict.commerce.closed}</span>
   );
   const renderBundleActions = (b: Bundle) => (
     <div className="flex gap-2">
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(b)}>সম্পাদনা</button>
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(b)}>{b.active ? "বন্ধ করুন" : "চালু করুন"}</button>
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(b)}>মুছুন</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(b)}>{dict.commerce.edit}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(b)}>{b.active ? dict.commerce.close : dict.commerce.enable}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(b)}>{dict.commerce.delete}</button>
     </div>
   );
 
@@ -250,113 +251,97 @@ export default function BundlesPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">Bundles — বান্ডল অফার</h1>
+          <h1 className="page-title">{dict.commerce.bundlesBundleOffers}</h1>
           <p className="text-sm text-slate-500">
-            ২–১০টি পণ্য একসাথে একটি বান্ডল দামে বিক্রি করুন — দোকানের হোম পেজে বান্ডল স্ট্রিপে দেখাবে,
-            ক্রেতা এক ক্লিকে কার্টে যোগ করতে পারবে। নিচের &ldquo;আলাদা মোট&rdquo; সার্ভার থেকে আসে।
-          </p>
+            {dict.commerce.sell210ProductsTogether}</p>
         </div>
         <Link href="/dashboard/commerce" className="btn-primary">← Commerce Hub</Link>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
       <div className="card p-5 space-y-4">
-        <div className="font-semibold">{editingId ? "বান্ডল সম্পাদনা" : "নতুন বান্ডল"}</div>
+        <div className="font-semibold">{editingId ? dict.commerce.editBundle : dict.commerce.newBundle}</div>
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="block text-sm">নাম
-            <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="যেমন: ঈদ কম্বো প্যাক" />
+          <label className="block text-sm">{dict.commerce.name}<input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder={dict.commerce.eGEidComboPack} />
           </label>
-          <label className="block text-sm">ছবির URL (ঐচ্ছিক)
-            <input className="input mt-1" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://…" />
+          <label className="block text-sm">{dict.commerce.imageURLOptional}<input className="input mt-1" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://…" />
           </label>
-          <label className="block text-sm md:col-span-2">বর্ণনা (ঐচ্ছিক)
-            <textarea className="input mt-1" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="বান্ডলে যা যা থাকছে…" />
+          <label className="block text-sm md:col-span-2">{dict.commerce.descriptionOptional2}<textarea className="input mt-1" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={dict.commerce.whatIsIncludedInThe} />
           </label>
-          <label className="block text-sm">বান্ডলের দাম (টাকা)
-            <input className="input mt-1" inputMode="decimal" value={bundlePrice} onChange={(e) => setBundlePrice(e.target.value)} placeholder="যেমন: 999" />
+          <label className="block text-sm">{dict.commerce.bundlePriceTaka}<input className="input mt-1" inputMode="decimal" value={bundlePrice} onChange={(e) => setBundlePrice(e.target.value)} placeholder={dict.commerce.eG999} />
           </label>
-          <label className="block text-sm">ক্রম (sortOrder — ছোট = আগে)
-            <input className="input mt-1" type="number" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.orderSortOrderSmallerEarlier}<input className="input mt-1" type="number" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
           </label>
           <label className="flex items-end gap-2 pb-2 text-sm">
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> সক্রিয় (দোকানে দেখাবে)
-          </label>
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> {dict.commerce.activeShownInTheShop}</label>
         </div>
 
         <div className="space-y-2 border-t pt-4">
-          <div className="font-semibold">কম্পোনেন্ট পণ্য ({rows.filter((r) => r.productId).length}টি বাছাই — ২–১০টি হতে হবে)</div>
+          <div className="font-semibold">{dict.commerce.componentProducts}{rows.filter((r) => r.productId).length}{dict.commerce.selectedMustBe210}</div>
           {rows.map((r, i) => (
             <div key={i} className="flex flex-wrap items-end gap-2">
-              <label className="block flex-1 text-sm">পণ্য
-                <select className="input mt-1" value={r.productId} onChange={(e) => {
+              <label className="block flex-1 text-sm">{dict.commerce.product}<select className="input mt-1" value={r.productId} onChange={(e) => {
                   const next = [...rows]; next[i] = { ...r, productId: e.target.value }; setRows(next);
                 }}>
-                  <option value="">— বেছে নিন —</option>
+                  <option value="">{dict.commerce.select}</option>
                   {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
-              <label className="block text-sm">ভ্যারিয়েন্ট SKU (ঐচ্ছিক)
-                <input className="input mt-1 w-40" value={r.variantSku} onChange={(e) => {
+              <label className="block text-sm">{dict.commerce.variantSKUOptional}<input className="input mt-1 w-40" value={r.variantSku} onChange={(e) => {
                   const next = [...rows]; next[i] = { ...r, variantSku: e.target.value }; setRows(next);
-                }} placeholder="যেমন: RED-L" />
+                }} placeholder={dict.commerce.eGREDL} />
               </label>
-              <label className="block text-sm">পরিমাণ
-                <input className="input mt-1 w-24" type="number" min="1" value={r.qty} onChange={(e) => {
+              <label className="block text-sm">{dict.commerce.quantity}<input className="input mt-1 w-24" type="number" min="1" value={r.qty} onChange={(e) => {
                   const next = [...rows]; next[i] = { ...r, qty: e.target.value }; setRows(next);
                 }} />
               </label>
               <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                 disabled={rows.length <= 2}
-                onClick={() => setRows(rows.filter((_, x) => x !== i))}>সারি মুছুন</button>
+                onClick={() => setRows(rows.filter((_, x) => x !== i))}>{dict.commerce.deleteRow}</button>
             </div>
           ))}
           <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
             disabled={rows.length >= 10}
             onClick={() => setRows([...rows, { productId: "", variantSku: "", qty: "1" }])}>
-            + আরও পণ্য যোগ করুন
-          </button>
-          <p className="text-xs text-slate-500">ভ্যারিয়েন্ট SKU দিলে বান্ডলটি ওই নির্দিষ্ট ভ্যারিয়েন্টই বিক্রি করবে; খালি রাখলে পণ্যের ডিফল্ট/মূল এন্ট্রি।</p>
+            {dict.commerce.addMoreProducts}</button>
+          <p className="text-xs text-slate-500">{dict.commerce.ifAVariantSKUIs}</p>
         </div>
 
         {/* AB5 (AX8): mix-and-match slots — the buyer picks
             chooseQty products from each slot's pool; the bundle
             price does not change with the picks. */}
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">🎛️ স্লট (Mix-and-Match) — ক্রেতা নিজে বেছে নেবেন ({slotRows.length}টি স্লট, সর্বোচ্চ ৬টি)</div>
-          <p className="text-xs text-slate-500">স্লট থাকলে ক্রেতাকে প্রতিটি স্লট থেকে ঠিক নির্দিষ্ট সংখ্যক পণ্য বেছে নিতে হবে — বান্ডলের দাম পিক অনুযায়ী বদলায় না। স্লট না রাখলে বান্ডলটি আগের মতোই শুধু নির্দিষ্ট পণ্যে বিক্রি হবে।</p>
+          <div className="font-semibold">{dict.commerce.slotsMixAndMatchBuyers}{slotRows.length}{dict.commerce.slotsMaximum6}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.ifThereAreSlotsThe}</p>
           {slotRows.map((s, i) => (
             <div key={i} className="space-y-2 rounded-xl bg-slate-50 p-3">
               <div className="flex flex-wrap items-end gap-2">
-                <label className="block flex-1 text-sm">স্লটের লেবেল
-                  <input className="input mt-1" value={s.label} placeholder="যেমন: একটি পানীয় বেছে নিন"
+                <label className="block flex-1 text-sm">{dict.commerce.slotLabel}<input className="input mt-1" value={s.label} placeholder={dict.commerce.eGPickADrink}
                     onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, label: e.target.value }; setSlotRows(n); }} />
                 </label>
-                <label className="block text-sm">কয়টি বেছে নেবেন
-                  <input className="input mt-1 w-28" type="number" min="1" max="20" value={s.chooseQty}
+                <label className="block text-sm">{dict.commerce.howManyToPick}<input className="input mt-1 w-28" type="number" min="1" max="20" value={s.chooseQty}
                     onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, chooseQty: e.target.value }; setSlotRows(n); }} />
                 </label>
-                <label className="block text-sm">পণ্যের উৎস
-                  <select className="input mt-1 w-44" value={s.sourceType}
+                <label className="block text-sm">{dict.commerce.productSource}<select className="input mt-1 w-44" value={s.sourceType}
                     onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, sourceType: e.target.value as SlotRow["sourceType"] }; setSlotRows(n); }}>
-                    <option value="category">ক্যাটাগরি</option>
-                    <option value="products">নির্দিষ্ট পণ্য</option>
+                    <option value="category">{dict.commerce.category}</option>
+                    <option value="products">{dict.commerce.specificProducts}</option>
                   </select>
                 </label>
                 <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600"
-                  onClick={() => setSlotRows(slotRows.filter((_, x) => x !== i))}>স্লট মুছুন</button>
+                  onClick={() => setSlotRows(slotRows.filter((_, x) => x !== i))}>{dict.commerce.deleteSlot}</button>
               </div>
               {s.sourceType === "category" ? (
-                <label className="block text-sm">ক্যাটাগরি
-                  <select className="input mt-1 w-72" value={s.categoryId}
+                <label className="block text-sm">{dict.commerce.category}<select className="input mt-1 w-72" value={s.categoryId}
                     onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, categoryId: e.target.value }; setSlotRows(n); }}>
-                    <option value="">— ক্যাটাগরি বেছে নিন —</option>
+                    <option value="">{dict.commerce.selectACategory2}</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
-                  <span className="mt-1 block text-xs font-normal text-slate-500">ওই ক্যাটাগরির সব সক্রিয় পণ্যই ক্রেতার পছন্দের তালিকায় থাকবে।</span>
+                  <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.allActiveProductsOfThat}</span>
                 </label>
               ) : (
                 <div>
-                  <div className="mb-1 text-sm">পণ্য বেছে নিন ({s.productIds.length}টি নির্বাচিত)</div>
+                  <div className="mb-1 text-sm">{dict.commerce.selectProducts}{s.productIds.length}{dict.commerce.selected}</div>
                   <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
                     {products.map((p) => {
                       const on = s.productIds.includes(p.id);
@@ -372,7 +357,7 @@ export default function BundlesPage() {
                         </button>
                       );
                     })}
-                    {products.length === 0 ? <span className="text-xs text-slate-500">কোনো পণ্য লোড হয়নি</span> : null}
+                    {products.length === 0 ? <span className="text-xs text-slate-500">{dict.commerce.noProductsLoaded}</span> : null}
                   </div>
                 </div>
               )}
@@ -381,22 +366,21 @@ export default function BundlesPage() {
           <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
             disabled={slotRows.length >= 6}
             onClick={() => setSlotRows([...slotRows, { label: "", chooseQty: "1", sourceType: "category", categoryId: "", productIds: [] }])}>
-            + স্লট যোগ করুন
-          </button>
+            {dict.commerce.addSlot}</button>
         </div>
 
         <div className="flex gap-2">
           <button className="btn-primary" disabled={busy !== "" || !name.trim() || !bundlePrice.trim()} onClick={save}>
-            {busy === "save" ? "সেভ হচ্ছে…" : editingId ? "আপডেট করুন" : "তৈরি করুন"}
+            {busy === "save" ? dict.commerce.saving2 : editingId ? dict.commerce.update : dict.commerce.create}
           </button>
-          {editingId ? <button className="rounded-lg border px-3 py-2 text-sm" onClick={resetForm}>বাতিল</button> : null}
+          {editingId ? <button className="rounded-lg border px-3 py-2 text-sm" onClick={resetForm}>{dict.common.cancel}</button> : null}
         </div>
       </div>
 
       <div className="card p-5 space-y-3">
-        <div className="font-semibold">সব বান্ডল ({bundles.length})</div>
-        {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : bundles.length === 0 ? (
-          <p className="text-sm text-slate-500">এখনো কোনো বান্ডল নেই।</p>
+        <div className="font-semibold">{dict.commerce.allBundles}{bundles.length})</div>
+        {loading ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : bundles.length === 0 ? (
+          <p className="text-sm text-slate-500">{dict.commerce.noBundlesYet}</p>
         ) : (
           <ResponsiveTable
             table={
@@ -404,10 +388,10 @@ export default function BundlesPage() {
                 <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 font-medium">নাম</th><th className="py-2 font-medium">কম্পোনেন্ট</th>
-                  <th className="py-2 font-medium">বান্ডল দাম</th><th className="py-2 font-medium">আলাদা মোট</th>
-                  <th className="py-2 font-medium">সাশ্রয়</th><th className="py-2 font-medium">ক্রম</th>
-                  <th className="py-2 font-medium">অবস্থা</th><th className="py-2 font-medium">অ্যাকশন</th>
+                  <th className="py-2 font-medium">{dict.commerce.name}</th><th className="py-2 font-medium">{dict.commerce.component}</th>
+                  <th className="py-2 font-medium">{dict.commerce.bundlePrice}</th><th className="py-2 font-medium">{dict.commerce.separateTotal}</th>
+                  <th className="py-2 font-medium">{dict.commerce.savings}</th><th className="py-2 font-medium">{dict.commerce.order2}</th>
+                  <th className="py-2 font-medium">{dict.commerce.status}</th><th className="py-2 font-medium">{dict.commerce.action}</th>
                 </tr>
               </thead>
               <tbody>
@@ -439,23 +423,23 @@ export default function BundlesPage() {
                 </div>
                 <dl className="mt-2 space-y-1.5 text-sm">
                   <div className="flex gap-2">
-                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">কম্পোনেন্ট</dt>
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.component}</dt>
                     <dd className="text-xs text-slate-600">{renderBundleContents(b)}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">বান্ডল দাম</dt>
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.bundlePrice}</dt>
                     <dd className="font-semibold">{formatMinorTaka(b.bundlePriceMinor)}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">আলাদা মোট</dt>
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.separateTotal}</dt>
                     <dd>{formatMinorTaka(b.regularTotalMinor)}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">সাশ্রয়</dt>
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.savings}</dt>
                     <dd className="text-emerald-700">{b.savingsMinor && Number(b.savingsMinor) > 0 ? formatMinorTaka(b.savingsMinor) : "—"}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">ক্রম</dt>
+                    <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.order2}</dt>
                     <dd>{b.sortOrder}</dd>
                   </div>
                 </dl>

@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
-import { formatMinor } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtDateTime, fmtNumber, formatMinor } from "@repo/contracts";
 
 interface DuplicatesModalProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ export function DuplicatesModal({
   mergeBusy,
   onMergeGroup,
 }: DuplicatesModalProps) {
+  const { dict, t, locale } = useLocale();
   if (!isOpen || !duplicateData) return null;
 
   return (
@@ -30,11 +32,9 @@ export function DuplicatesModal({
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div>
             <h3 className="text-base font-bold text-slate-900">
-              ⚠️ ডুপ্লিকেট অর্ডার শনাক্ত ও ১-ক্লিক মার্জ হাব
-            </h3>
+              {dict.orders.duplicateOrderDetection1Click}</h3>
             <p className="text-xs text-slate-500">
-              একই কাস্টমার কর্তৃক একাধিকবার সাবমিট করা অর্ডার মার্জ করুন, যাতে ডাবল পার্সেল ডেলিভারি ও রিটার্ন ক্ষতি বন্ধ হয়।
-            </p>
+              {dict.orders.mergeOrdersSubmittedMultipleTimes}</p>
           </div>
           <button
             type="button"
@@ -48,7 +48,7 @@ export function DuplicatesModal({
         {/* Groups List */}
         <div className="flex-1 overflow-y-auto space-y-4 pr-1">
           {duplicateData.groups.length === 0 ? (
-            <p className="p-6 text-center text-xs text-slate-500">কোনো সক্রিয় ডুপ্লিকেট অর্ডার নেই।</p>
+            <p className="p-6 text-center text-xs text-slate-500">{dict.orders.noActiveDuplicateOrders}</p>
           ) : (
             duplicateData.groups.map((group: any, idx: number) => {
               const primaryOrder = group.orders[0];
@@ -64,8 +64,7 @@ export function DuplicatesModal({
                       <span className="font-bold text-slate-900 text-xs">{group.customerName}</span>
                       <span className="ml-2 font-mono text-[11px] text-slate-500">📱 {group.phoneKey}</span>
                       <span className="ml-2 rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900">
-                        {group.count}টি অর্ডার
-                      </span>
+                        {group.count}{dict.orders.orders}</span>
                     </div>
 
                     <button
@@ -75,8 +74,8 @@ export function DuplicatesModal({
                       className="rounded-xl bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
                     >
                       {mergeBusy === primaryOrder.id
-                        ? "মার্জ হচ্ছে..."
-                        : `সবগুলো #${primaryOrder.externalNumber ?? primaryOrder.id.slice(0, 8)}-এ মার্জ করুন`}
+                        ? dict.orders.merging
+                        : t("orders.mergeAllInto", { primaryOrder: primaryOrder.externalNumber ?? primaryOrder.id.slice(0, 8) })}
                     </button>
                   </div>
 
@@ -93,10 +92,10 @@ export function DuplicatesModal({
                           </span>
                         </div>
                         <div className="text-[11px] text-slate-400 mt-0.5">
-                          {new Date(ord.placedAt).toLocaleString("bn-BD")}
+                          {fmtDateTime(locale, new Date(ord.placedAt))}
                         </div>
                         <div className="mt-1 text-[11px] text-slate-600 line-clamp-1">
-                          আইটেম: {ord.items.map((i: any) => `${i.name} ×${i.quantity}`).join(", ")}
+                          {dict.orders.items3}{ord.items.map((i: any) => `${i.name} ×${i.quantity}`).join(", ")}
                         </div>
                       </div>
                     ))}

@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -41,6 +42,7 @@ function parseTags(text: string): string[] {
 }
 
 export default function StorefrontBlogManager() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [posts, setPosts] = useState<BlogPost[]>([]);
@@ -66,7 +68,7 @@ export default function StorefrontBlogManager() {
 
   const load = useCallback(async (): Promise<BlogPost[]> => {
     const orgId = getOrganizationId();
-    if (!orgId) { setLoading(false); setError("কোনো Organization নির্বাচিত নেই।"); return []; }
+    if (!orgId) { setLoading(false); setError(dict.commerce.noOrganizationSelected); return []; }
     setLoading(true);
     try {
       const [b, s] = await Promise.all([
@@ -79,7 +81,7 @@ export default function StorefrontBlogManager() {
       setError("");
       return list;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "লোড ব্যর্থ");
+      setError(e instanceof Error ? e.message : dict.commerce.loadingFailed);
       return [];
     } finally {
       setLoading(false);
@@ -117,7 +119,7 @@ export default function StorefrontBlogManager() {
 
   async function save() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!eTitle.trim()) { setError("পোস্টের শিরোনাম দিন।"); return; }
+    if (!eTitle.trim()) { setError(dict.commerce.giveThePostATitle); return; }
     setBusy("save"); setError("");
     const body: Record<string, any> = {
       title: eTitle.trim(),
@@ -138,18 +140,18 @@ export default function StorefrontBlogManager() {
           method: "PATCH", body: JSON.stringify(body),
         });
         savedId = out?.post?.id ?? out?.id ?? selectedId;
-        toast({ title: "ব্লগ পোস্ট আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.blogPostUpdated, tone: "success" });
       } else {
         const out = await apiFetch<any>(`/organizations/${orgId}/storefront/blog`, {
           method: "POST", body: JSON.stringify(body),
         });
         savedId = out?.post?.id ?? out?.id ?? null;
-        toast({ title: "নতুন ব্লগ পোস্ট তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.newBlogPostCreated, tone: "success" });
       }
       const list = await load();
       const saved = list.find((p) => p.id === savedId);
       if (saved) selectPost(saved);
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed); }
     finally { setBusy(""); }
   }
 
@@ -160,23 +162,23 @@ export default function StorefrontBlogManager() {
       await apiFetch(`/organizations/${orgId}/storefront/blog/${p.id}`, {
         method: "PATCH", body: JSON.stringify({ status }),
       });
-      toast({ title: status === "published" ? `"${p.title}" প্রকাশিত হয়েছে।` : `"${p.title}" খসড়ায় ফিরিয়ে নেওয়া হয়েছে।`, tone: "success" });
+      toast({ title: status === "published" ? t("commerce.published2", { title: p.title }) : t("commerce.movedBackToDraft", { title: p.title }), tone: "success" });
       if (selectedId === p.id) setEStatus(status);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "স্ট্যাটাস বদল ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.statusChangeFailed2); }
     finally { setBusy(""); }
   }
 
   async function deletePost(p: BlogPost) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${p.title}" পোস্টটি মুছে ফেলবেন?`, body: `পাবলিক লিংকটি বন্ধ হয়ে যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: t("commerce.deleteThePost", { title: p.title }), body: dict.commerce.thePublicLinkWillBe, danger: true, confirmLabel: dict.commerce.delete2 }))) return;
     setBusy(`del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/blog/${p.id}`, { method: "DELETE" });
-      toast({ title: "ব্লগ পোস্ট মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.blogPostDeleted, tone: "success" });
       if (selectedId === p.id) { setSelectedId(null); setEditorOpen(false); }
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -193,13 +195,11 @@ export default function StorefrontBlogManager() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">ব্লগ — দোকানের ব্লগ পোস্ট</h1>
+          <h1 className="page-title">{dict.commerce.blogTheShopSBlog}</h1>
           <p className="text-sm text-slate-500">
-            পণ্য-গাইড, টিপস ও ঘোষণার পোস্ট ব্লক দিয়ে সাজান। প্রকাশিত পোস্ট দোকানের ব্লগ পেজে দেখা যাবে;
-            খসড়া পোস্ট পাবলিক লিংকে 404 দেখাবে।
-          </p>
+            {dict.commerce.arrangeProductGuideTipsAnnouncement}</p>
         </div>
-        <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">← Storefront সেটিংস</Link>
+        <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.commerce.storefrontSettings}</Link>
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
@@ -207,19 +207,19 @@ export default function StorefrontBlogManager() {
       <div className="grid items-start gap-6 lg:grid-cols-[320px_1fr]">
         <div className="card space-y-3 p-5">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold">সব পোস্ট ({posts.length})</div>
-            <button type="button" onClick={startNew} className="btn-primary">+ নতুন পোস্ট</button>
+            <div className="font-semibold">{dict.commerce.allPosts}{posts.length})</div>
+            <button type="button" onClick={startNew} className="btn-primary">{dict.commerce.newPost}</button>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {([["all", "সব"], ["draft", "খসড়া"], ["published", "প্রকাশিত"]] as [StatusFilter, string][]).map(([v, label]) => (
+            {([["all", dict.commerce.all], ["draft", dict.commerce.draft], ["published", dict.commerce.published]] as [StatusFilter, string][]).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setFilter(v)}
                 className={`rounded-full px-3 py-1 text-xs font-bold ${filter === v ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                 {label}
               </button>
             ))}
           </div>
-          {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : visible.length === 0 ? (
-            <p className="text-sm text-slate-500">এই ফিল্টারে কোনো পোস্ট নেই।</p>
+          {loading ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : visible.length === 0 ? (
+            <p className="text-sm text-slate-500">{dict.commerce.noPostsInThisFilter}</p>
           ) : (
             <ul className="space-y-2">
               {visible.map((p) => (
@@ -228,16 +228,16 @@ export default function StorefrontBlogManager() {
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-semibold">{p.title}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${p.status === "published" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                        {p.status === "published" ? "প্রকাশিত" : "খসড়া"}
+                        {p.status === "published" ? dict.commerce.published : dict.commerce.draft}
                       </span>
                     </div>
                     <div className="mt-1 font-mono text-xs text-slate-400">/blog/{p.slug}</div>
                   </button>
                   <div className="mt-2 flex gap-1.5">
                     {p.status === "published" ? (
-                      <button type="button" disabled={busy !== ""} onClick={() => void setStatus(p, "draft")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-50">অপ্রকাশিত করুন</button>
+                      <button type="button" disabled={busy !== ""} onClick={() => void setStatus(p, "draft")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-50">{dict.commerce.unpublish}</button>
                     ) : (
-                      <button type="button" disabled={busy !== ""} onClick={() => void setStatus(p, "published")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-50">প্রকাশ করুন</button>
+                      <button type="button" disabled={busy !== ""} onClick={() => void setStatus(p, "published")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-50">{dict.commerce.publish}</button>
                     )}
                   </div>
                 </li>
@@ -248,71 +248,61 @@ export default function StorefrontBlogManager() {
 
         {editorOpen ? (
           <div className="card space-y-4 p-5">
-            <div className="font-semibold">{selectedId ? `সম্পাদনা — ${eTitle || "পোস্ট"}` : "নতুন পোস্ট"}</div>
+            <div className="font-semibold">{selectedId ? t("commerce.edit2", { p0: eTitle || dict.commerce.post }) : dict.commerce.newPost2}</div>
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="block text-sm">শিরোনাম *
-                <input className="input mt-1" value={eTitle} onChange={(e) => {
+              <label className="block text-sm">{dict.commerce.title2}<input className="input mt-1" value={eTitle} onChange={(e) => {
                   setETitle(e.target.value);
                   if (!slugTouched) setESlug(slugify(e.target.value));
-                }} placeholder="যেমন: সঠিক সাইজ বেছে নেওয়ার গাইড" />
+                }} placeholder={dict.commerce.eGAGuideTo} />
               </label>
-              <label className="block text-sm">স্লাগ (URL)
-                <input className="input mt-1 font-mono" value={eSlug}
+              <label className="block text-sm">{dict.commerce.slugURL}<input className="input mt-1 font-mono" value={eSlug}
                   onChange={(e) => { setESlug(e.target.value); setSlugTouched(true); }} placeholder="size-guide" />
               </label>
-              <label className="block text-sm">লেখক (authorName)
-                <input className="input mt-1" value={eAuthorName} onChange={(e) => setEAuthorName(e.target.value)} placeholder="যেমন: দোকানের টিম" />
+              <label className="block text-sm">{dict.commerce.authorAuthorName}<input className="input mt-1" value={eAuthorName} onChange={(e) => setEAuthorName(e.target.value)} placeholder={dict.commerce.eGTheShopTeam} />
               </label>
-              <label className="block text-sm">স্ট্যাটাস
-                <select className="input mt-1" value={eStatus} onChange={(e) => setEStatus(e.target.value as "draft" | "published")}>
-                  <option value="draft">খসড়া</option>
-                  <option value="published">প্রকাশিত</option>
+              <label className="block text-sm">{dict.commerce.status2}<select className="input mt-1" value={eStatus} onChange={(e) => setEStatus(e.target.value as "draft" | "published")}>
+                  <option value="draft">{dict.commerce.draft}</option>
+                  <option value="published">{dict.commerce.published}</option>
                 </select>
               </label>
-              <label className="block text-sm md:col-span-2">সারসংক্ষেপ (excerpt)
-                <textarea className="input mt-1" rows={2} value={eExcerpt} onChange={(e) => setEExcerpt(e.target.value)} placeholder="ব্লগ তালিকায় দেখানোর সংক্ষিপ্ত বর্ণনা…" />
+              <label className="block text-sm md:col-span-2">{dict.commerce.summaryExcerpt}<textarea className="input mt-1" rows={2} value={eExcerpt} onChange={(e) => setEExcerpt(e.target.value)} placeholder={dict.commerce.aShortDescriptionShownIn} />
               </label>
-              <label className="block text-sm md:col-span-2">কভার ছবির URL (coverImageUrl)
-                <input className="input mt-1" value={eCoverImageUrl} onChange={(e) => setECoverImageUrl(e.target.value)} placeholder="https://…" />
+              <label className="block text-sm md:col-span-2">{dict.commerce.coverImageURLCoverImageUrl}<input className="input mt-1" value={eCoverImageUrl} onChange={(e) => setECoverImageUrl(e.target.value)} placeholder="https://…" />
               </label>
-              <label className="block text-sm md:col-span-2">ট্যাগ (কমা দিয়ে আলাদা করুন)
-                <input className="input mt-1" value={eTags} onChange={(e) => setETags(e.target.value)} placeholder="গাইড, টিপস, অফার" />
+              <label className="block text-sm md:col-span-2">{dict.commerce.tagsSeparateWithCommas}<input className="input mt-1" value={eTags} onChange={(e) => setETags(e.target.value)} placeholder={dict.commerce.guidesTipsOffers} />
               </label>
-              <label className="block text-sm">SEO টাইটেল
-                <input className="input mt-1" value={eSeoTitle} onChange={(e) => setESeoTitle(e.target.value)} placeholder="খালি = পোস্টের শিরোনাম" />
+              <label className="block text-sm">{dict.commerce.sEOTitle}<input className="input mt-1" value={eSeoTitle} onChange={(e) => setESeoTitle(e.target.value)} placeholder={dict.commerce.emptyThePostTitle} />
               </label>
-              <label className="block text-sm">SEO বিবরণ
-                <input className="input mt-1" value={eSeoDescription} onChange={(e) => setESeoDescription(e.target.value)} placeholder="খালি = সারসংক্ষেপ" />
+              <label className="block text-sm">{dict.commerce.sEODescription}<input className="input mt-1" value={eSeoDescription} onChange={(e) => setESeoDescription(e.target.value)} placeholder={dict.commerce.emptyTheSummary} />
               </label>
             </div>
             {editorLink ? (
               <p className="text-xs text-slate-500">
-                পাবলিক লিংক:{" "}
+                {dict.commerce.publicLink2}{" "}
                 <Link href={editorLink} target="_blank" className="font-mono font-semibold text-indigo-700">{editorLink} ↗</Link>
-                {eStatus !== "published" ? <span> (খসড়া অবস্থায় লিংকটি ক্রেতার জন্য খুলবে না)</span> : null}
+                {eStatus !== "published" ? <span> {dict.commerce.inDraftStateTheLink}</span> : null}
               </p>
             ) : null}
 
             <div className="space-y-3 border-t pt-4">
-              <div className="font-semibold">ব্লকসমূহ (টেনে অথবা ↑/↓ দিয়ে সাজান)</div>
+              <div className="font-semibold">{dict.commerce.blocksRearrangeByDraggingOr}</div>
               <BlocksEditor blocks={blocks} onChange={setBlocks} />
             </div>
 
             <div className="flex flex-wrap gap-2 border-t pt-4">
               <button type="button" onClick={save} disabled={busy === "save" || !eTitle.trim()} className="btn-primary disabled:opacity-50">
-                {busy === "save" ? "সংরক্ষণ হচ্ছে…" : selectedId ? "পোস্ট আপডেট করুন" : "পোস্ট তৈরি করুন"}
+                {busy === "save" ? dict.commerce.saving : selectedId ? dict.commerce.updatePost : dict.commerce.createPost}
               </button>
               {selectedId ? (
                 <button type="button" onClick={() => { const p = posts.find((x) => x.id === selectedId); if (p) void deletePost(p); }}
                   disabled={busy !== ""} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold text-rose-600 disabled:opacity-50">
-                  পোস্ট মুছুন
-                </button>
+                  {dict.commerce.deletePost}</button>
               ) : null}
             </div>
           </div>
         ) : (
           <div className="card p-5">
-            <p className="text-sm text-slate-500">বামে তালিকা থেকে একটি পোস্ট বেছে নিন, অথবা &ldquo;+ নতুন পোস্ট&rdquo; দিয়ে নতুন পোস্ট শুরু করুন।</p>
+            <p className="text-sm text-slate-500">{dict.commerce.selectAPostFromThe}</p>
           </div>
         )}
       </div>

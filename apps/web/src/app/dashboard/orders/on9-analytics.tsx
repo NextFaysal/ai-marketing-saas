@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { ResponsiveTable } from "@repo/ui";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -22,6 +24,7 @@ import type { SourcesPayload } from "@/lib/ab7";
  * sends today's digest now. Bengali-first.
  */
 export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
+  const { dict, t, locale } = useLocale();
   const orgId = getOrganizationId() ?? "";
   const base = `/organizations/${orgId}/orders`;
   const [preset, setPreset] = useState<"7" | "30" | "custom">("30");
@@ -45,7 +48,7 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
       ]);
       setData(a); setDigest(d); setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "অ্যানালিটিক্স লোড ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.orders.analyticsLoadFailed);
     }
     try {
       const s = await apiFetch<SourcesPayload>(`/organizations/${orgId}/commerce/analytics/sources`);
@@ -71,34 +74,32 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
       const d = await apiFetch<DigestStatus>(`${base}/digest/status`);
       setDigest(d);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ডাইজেস্ট পাঠানো যায়নি");
+      setError(e instanceof Error ? e.message : dict.orders.digestCouldNotBeSent);
     } finally { setBusy(""); }
   }
 
   const maxDistrictOrders = data?.topDistricts[0]?.orders ?? 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="অর্ডার অ্যানালিটিক্স">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label={dict.orders.orderAnalytics}>
       <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold">📊 অর্ডার অ্যানালিটিক্স</h2>
-          <button type="button" className="btn-ghost btn-sm" onClick={onClose}>বন্ধ করুন</button>
+          <h2 className="text-lg font-semibold">{dict.orders.orderAnalytics2}</h2>
+          <button type="button" className="btn-ghost btn-sm" onClick={onClose}>{dict.orders.close}</button>
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          সব হিসাব Asia/Dhaka ক্যালেন্ডার দিনে। বিক্রি = ডেলিভারি-প্রমাণিত (EC33 sold) অর্ডার; প্র্যাকটিস অর্ডার সব হিসাবের বাইরে।
-          বাতিলের কোনো কারণ-ফিল্ড নেই বলে বাতিলের ভাঙন উৎস অনুযায়ী দেখানো হয়েছে।
-        </p>
+          {dict.orders.allCalculationsAreByAsia2}</p>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" className={preset === "7" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("7")}>শেষ ৭ দিন</button>
-          <button type="button" className={preset === "30" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("30")}>শেষ ৩০ দিন</button>
-          <button type="button" className={preset === "custom" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("custom")}>কাস্টম</button>
+          <button type="button" className={preset === "7" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("7")}>{dict.orders.last7Days}</button>
+          <button type="button" className={preset === "30" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("30")}>{dict.orders.last30Days}</button>
+          <button type="button" className={preset === "custom" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => applyPreset("custom")}>{dict.orders.custom}</button>
           {preset === "custom" ? (
             <>
-              <input type="date" className="input input-sm" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="শুরুর তারিখ" />
-              <span className="text-sm text-slate-500">থেকে</span>
-              <input type="date" className="input input-sm" value={to} onChange={(e) => setTo(e.target.value)} aria-label="শেষ তারিখ" />
-              <button type="button" className="btn-secondary btn-sm" onClick={() => void load(from, to)}>দেখুন</button>
+              <input type="date" className="input input-sm" value={from} onChange={(e) => setFrom(e.target.value)} aria-label={dict.orders.startDate} />
+              <span className="text-sm text-slate-500">{dict.orders.from}</span>
+              <input type="date" className="input input-sm" value={to} onChange={(e) => setTo(e.target.value)} aria-label={dict.orders.endDate} />
+              <button type="button" className="btn-secondary btn-sm" onClick={() => void load(from, to)}>{dict.orders.view}</button>
             </>
           ) : null}
           {data ? <span className="text-xs text-slate-500">{data.from} → {data.to}</span> : null}
@@ -109,27 +110,27 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
         {data ? (
           <>
             <div className="mt-4 flex flex-wrap gap-2">
-              <span className="rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-700">🚚 কুরিয়ারে আটকে থাকা পার্সেল এখন: {data.stuckNow}টি</span>
-              <span className="rounded-full bg-red-50 px-3 py-1 text-sm text-red-700">⏱️ SLA ভঙ্গ হয়েছে এমন খোলা অর্ডার এখন: {data.slaBreachesNow}টি</span>
+              <span className="rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-700">{dict.orders.parcelsNowStuckAtCourier}{data.stuckNow}{dict.orders.items}</span>
+              <span className="rounded-full bg-red-50 px-3 py-1 text-sm text-red-700">{dict.orders.openOrdersWithBreachedSLA}{data.slaBreachesNow}{dict.orders.items}</span>
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
-              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">মোট অর্ডার</p><p className="text-xl font-semibold">{data.ordersCount}</p></div>
-              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">বিক্রি (ডেলিভারি-প্রমাণিত {data.soldCount}টি)</p><p className="text-xl font-semibold">{formatMoneyMinor(data.revenueMinor)}</p></div>
-              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">গড় অর্ডার মূল্য (AOV)</p><p className="text-xl font-semibold">{formatMoneyMinor(data.aovMinor)}</p></div>
-              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">পুনরাবৃত্ত গ্রাহকের হার</p><p className="text-xl font-semibold">{formatPct(data.repeatCustomerRate)}</p></div>
-              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">বাতিলের হার</p><p className="text-xl font-semibold">{formatPct(data.cancellationRate)}</p></div>
-              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">ফেরতের হার</p><p className="text-xl font-semibold">{formatPct(data.returnRate)}</p></div>
+              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">{dict.orders.totalOrders}</p><p className="text-xl font-semibold">{data.ordersCount}</p></div>
+              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">{dict.orders.salesDeliveryProven}{data.soldCount}{dict.orders.items2}</p><p className="text-xl font-semibold">{formatMoneyMinor(data.revenueMinor, locale)}</p></div>
+              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">{dict.orders.averageOrderValueAOV}</p><p className="text-xl font-semibold">{formatMoneyMinor(data.aovMinor, locale)}</p></div>
+              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">{dict.orders.repeatCustomerRate}</p><p className="text-xl font-semibold">{formatPct(data.repeatCustomerRate)}</p></div>
+              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">{dict.orders.cancellationRate}</p><p className="text-xl font-semibold">{formatPct(data.cancellationRate)}</p></div>
+              <div className="rounded-xl border p-3"><p className="text-xs text-slate-500">{dict.orders.returnRate3}</p><p className="text-xl font-semibold">{formatPct(data.returnRate)}</p></div>
             </div>
 
             {data.cancelBreakdown.length ? (
               <p className="mt-3 text-sm text-slate-600">
-                বাতিলের ভাঙন (উৎস অনুযায়ী): {data.cancelBreakdown.map((c) => `${c.source}: ${c.count}টি`).join(" · ")}
+                {dict.orders.cancellationBreakdownBySource}{data.cancelBreakdown.map((c) => t("orders.text1mmyp3w", { source: c.source, count: c.count })).join(" · ")}
               </p>
             ) : null}
 
-            <h3 className="mt-5 font-semibold">কুরিয়ার স্কোরকার্ড</h3>
-            <p className="text-xs text-slate-500">হার = নিষ্পত্তি হওয়া (ডেলিভারি+ফেরত+বাতিল) শিপমেন্টের মধ্যে। গড় ট্রানজিট দিনের ভিত্তি শিপমেন্টের সর্বশেষ স্ট্যাটাস-আপডেটের সময় — জোড়ার সংখ্যা (n) পাশে দেওয়া আছে; জোড়া না থাকলে "—"।</p>
+            <h3 className="mt-5 font-semibold">{dict.orders.courierScorecard}</h3>
+            <p className="text-xs text-slate-500">{dict.orders.rateShareAmongSettledShipments}</p>
             {data.courierScorecard.length ? (
               <ResponsiveTable
                 className="mt-2"
@@ -137,8 +138,8 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                   <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead><tr className="text-left text-slate-500">
-                    <th className="py-1 pr-2">কুরিয়ার</th><th className="py-1 pr-2">শিপমেন্ট</th><th className="py-1 pr-2">ডেলিভারি %</th>
-                    <th className="py-1 pr-2">ফেরত %</th><th className="py-1 pr-2">গড় ট্রানজিট (দিন)</th><th className="py-1">COD আদায়ের গড় ব্যবধান (দিন)</th>
+                    <th className="py-1 pr-2">{dict.orders.courier}</th><th className="py-1 pr-2">{dict.orders.shipment}</th><th className="py-1 pr-2">{dict.orders.delivery}</th>
+                    <th className="py-1 pr-2">{dict.orders.return3}</th><th className="py-1 pr-2">{dict.orders.averageTransitDays}</th><th className="py-1">{dict.orders.averageCODCollectionGapDays}</th>
                   </tr></thead>
                   <tbody>
                     {data.courierScorecard.map((c) => (
@@ -159,25 +160,25 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                   <div key={c.provider} className="rounded-xl border bg-white p-3 shadow-sm">
                     <div className="font-bold text-slate-900">{c.provider}</div>
                     <dl className="mt-2 space-y-1 text-xs">
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">শিপমেন্ট</dt><dd className="font-medium">{c.shipments}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভারি %</dt><dd className="font-medium">{formatPct(c.deliveredPct)}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">ফেরত %</dt><dd className="font-medium">{formatPct(c.returnedPct)}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">গড় ট্রানজিট (দিন)</dt><dd className="font-medium">{c.avgTransitDays === null ? "—" : `${c.avgTransitDays} (n=${c.transitPairs})`}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">COD আদায়ের গড় ব্যবধান (দিন)</dt><dd className="font-medium">{c.avgCodCollectLagDays === null ? "—" : `${c.avgCodCollectLagDays} (n=${c.codPairs})`}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.shipment}</dt><dd className="font-medium">{c.shipments}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.delivery}</dt><dd className="font-medium">{formatPct(c.deliveredPct)}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.return3}</dt><dd className="font-medium">{formatPct(c.returnedPct)}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.averageTransitDays}</dt><dd className="font-medium">{c.avgTransitDays === null ? "—" : `${c.avgTransitDays} (n=${c.transitPairs})`}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.averageCODCollectionGapDays}</dt><dd className="font-medium">{c.avgCodCollectLagDays === null ? "—" : `${c.avgCodCollectLagDays} (n=${c.codPairs})`}</dd></div>
                     </dl>
                   </div>
                 ))}
               />
-            ) : <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো শিপমেন্ট বুক হয়নি।</p>}
+            ) : <p className="mt-2 text-sm text-slate-500">{dict.orders.noShipmentsBookedInThis}</p>}
 
-            <h3 className="mt-5 font-semibold">শীর্ষ জেলা (বিক্রি অনুযায়ী)</h3>
+            <h3 className="mt-5 font-semibold">{dict.orders.topDistrictsBySales}</h3>
             {data.topDistricts.length ? (
               <div className="mt-2 space-y-2">
                 {data.topDistricts.map((d) => (
                   <div key={d.district}>
                     <div className="flex items-center justify-between text-sm">
                       <span className="font-medium">{d.district}</span>
-                      <span className="text-slate-600">{d.orders}টি অর্ডার · {formatMoneyMinor(d.revenueMinor)}</span>
+                      <span className="text-slate-600">{d.orders}{dict.orders.orders2}{formatMoneyMinor(d.revenueMinor, locale)}</span>
                     </div>
                     <div className="h-2 rounded bg-slate-100">
                       <div className="h-2 rounded bg-blue-500" style={{ width: `${districtBarPct(d.orders, maxDistrictOrders)}%` }} />
@@ -185,17 +186,17 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                   </div>
                 ))}
               </div>
-            ) : <p className="mt-2 text-sm text-slate-500">এই সময়ে জেলা শনাক্ত হওয়া কোনো বিক্রি নেই।</p>}
+            ) : <p className="mt-2 text-sm text-slate-500">{dict.orders.noDistrictIdentifiedSalesIn}</p>}
 
-            <h3 className="mt-5 font-semibold">বেশি-ফেরত পণ্যের সতর্কতা</h3>
-            <p className="text-xs text-slate-500">ফেরতের হার ≥ ২৫% এবং কমপক্ষে ১০টি অর্ডার থাকলেই সতর্কতা দেখায়।</p>
+            <h3 className="mt-5 font-semibold">{dict.orders.highReturnProductAlerts}</h3>
+            <p className="text-xs text-slate-500">{dict.orders.theAlertShowsOnlyWhen}</p>
             {data.productReturnWarnings.length ? (
               <ResponsiveTable
                 className="mt-2"
                 table={
                   <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2">পণ্য</th><th className="py-1 pr-2">অর্ডার</th><th className="py-1 pr-2">ফেরত</th><th className="py-1">হার</th></tr></thead>
+                  <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2">{dict.orders.product}</th><th className="py-1 pr-2">{dict.orders.order}</th><th className="py-1 pr-2">{dict.orders.return}</th><th className="py-1">{dict.orders.rate}</th></tr></thead>
                   <tbody>
                     {data.productReturnWarnings.map((w) => (
                       <tr key={w.productId} className="border-t">
@@ -213,21 +214,19 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                   <div key={w.productId} className="rounded-xl border bg-white p-3 shadow-sm">
                     <div className="font-bold text-slate-900">{w.productName || w.productId}</div>
                     <dl className="mt-2 space-y-1 text-xs">
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">অর্ডার</dt><dd className="font-medium">{w.orders}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">ফেরত</dt><dd className="font-medium">{w.returns}</dd></div>
-                      <div className="flex justify-between gap-2"><dt className="text-slate-500">হার</dt><dd className="font-medium text-red-600">{w.ratePct}%</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.order}</dt><dd className="font-medium">{w.orders}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.return}</dt><dd className="font-medium">{w.returns}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.rate}</dt><dd className="font-medium text-red-600">{w.ratePct}%</dd></div>
                     </dl>
                   </div>
                 ))}
               />
-            ) : <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো পণ্য সতর্কতার সীমা ছাড়ায়নি।</p>}
+            ) : <p className="mt-2 text-sm text-slate-500">{dict.orders.noProductsCrossedTheAlert}</p>}
 
             {/* AB7 (AX19): বিক্রির উৎস */}
-            <h3 className="mt-5 font-semibold">বিক্রির উৎস</h3>
+            <h3 className="mt-5 font-semibold">{dict.orders.salesSources}</h3>
             <p className="text-xs text-slate-500">
-              শুধু এই দোকানের নিজের চেকআউট থেকে আসা অর্ডারে উৎসের ছাপ থাকে; POS/বাইরের দোকানের অর্ডার
-              &lsquo;সরাসরি/অজানা&rsquo;-তে গণনা হয়।
-            </p>
+              {dict.orders.onlyOrdersFromThisShop}</p>
             {sources && sources.rows.length ? (
               <>
                 <ResponsiveTable
@@ -236,14 +235,14 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                     <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead><tr className="text-left text-slate-500">
-                      <th className="py-1 pr-2">উৎস</th><th className="py-1 pr-2">অর্ডার</th><th className="py-1">রেভিনিউ</th>
+                      <th className="py-1 pr-2">{dict.orders.source}</th><th className="py-1 pr-2">{dict.orders.order}</th><th className="py-1">{dict.orders.revenue2}</th>
                     </tr></thead>
                     <tbody>
                       {sources.rows.map((r) => (
                         <tr key={r.source} className="border-t">
                           <td className="py-1 pr-2 font-medium">{r.source}</td>
-                          <td className="py-1 pr-2">{r.orders}টি</td>
-                          <td className="py-1">{formatMoneyMinor(r.revenueMinor)}</td>
+                          <td className="py-1 pr-2">{r.orders}{dict.orders.items}</td>
+                          <td className="py-1">{formatMoneyMinor(r.revenueMinor, locale)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -254,47 +253,42 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                     <div key={r.source} className="rounded-xl border bg-white p-3 shadow-sm">
                       <div className="font-bold text-slate-900">{r.source}</div>
                       <dl className="mt-2 space-y-1 text-xs">
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">অর্ডার</dt><dd className="font-medium">{r.orders}টি</dd></div>
-                        <div className="flex justify-between gap-2"><dt className="text-slate-500">রেভিনিউ</dt><dd className="font-medium">{formatMoneyMinor(r.revenueMinor)}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.order}</dt><dd className="font-medium">{r.orders}{dict.orders.items}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">{dict.orders.revenue2}</dt><dd className="font-medium">{formatMoneyMinor(r.revenueMinor, locale)}</dd></div>
                       </dl>
                     </div>
                   ))}
                 />
                 <p className="mt-2 text-sm text-slate-600">
-                  মোট: {sources.totals.orders}টি অর্ডার · {formatMoneyMinor(sources.totals.revenueMinor)} ·
-                  Click ID-সহ {sources.totals.withClickId}টি · উৎসের ছাপ আছে {sources.totals.stampedOrders}টিতে
-                </p>
+                  {dict.orders.total3}{sources.totals.orders}{dict.orders.orders2}{formatMoneyMinor(sources.totals.revenueMinor, locale)} {dict.orders.withClickID}{sources.totals.withClickId}{dict.orders.withSourceImprint}{sources.totals.stampedOrders}{dict.orders.ofThem}</p>
               </>
-            ) : <p className="mt-2 text-sm text-slate-500">উৎস অনুযায়ী কোনো অর্ডারের তথ্য পাওয়া যায়নি।</p>}
+            ) : <p className="mt-2 text-sm text-slate-500">{dict.orders.noOrderDataFoundBy}</p>}
           </>
-        ) : <p className="mt-4 text-sm text-slate-500">লোড হচ্ছে…</p>}
+        ) : <p className="mt-4 text-sm text-slate-500">{dict.common.loading}</p>}
 
         <div className="mt-6 rounded-xl border p-4">
-          <h3 className="font-semibold">📬 মালিকের দৈনিক ডাইজেস্ট</h3>
+          <h3 className="font-semibold">{dict.orders.ownerSDailyDigest}</h3>
           <p className="mt-1 text-xs text-slate-500">
-            প্রতিদিনের স্বয়ংক্রিয় পাঠানো চালু/বন্ধ হয় Jobs / স্বয়ংক্রিয় কাজ সেটিংসে `owner_order_digest` কাজটি দিয়ে
-            (বর্তমানে: {digest ? (digest.jobInstalled ? (digest.jobEnabled ? "চালু আছে" : "বসানো আছে, বন্ধ") : "বসানো হয়নি") : "…"} )।
-            SMS শুধুমাত্র মালিকের ফোন নম্বর রেকর্ডে থাকলেই যায়।
-          </p>
+            {dict.orders.dailyAutomaticSendingIsTurned}{digest ? (digest.jobInstalled ? (digest.jobEnabled ? dict.orders.active2 : dict.orders.setButOff) : dict.orders.notSet) : "…"} {dict.orders.sMSGoesOnlyIfThe}</p>
           <p className="mt-2 text-sm text-slate-600">
-            প্রাপক (মালিকদের ইমেইল): {digest && digest.ownerEmails.length ? digest.ownerEmails.join(", ") : "কোনো সক্রিয় মালিক পাওয়া যায়নি"}
+            {dict.orders.recipientsOwnersEmails}{digest && digest.ownerEmails.length ? digest.ownerEmails.join(", ") : dict.orders.noActiveOwnerFound}
           </p>
           {digest?.lastRun ? (
             <div className="mt-2 text-sm text-slate-600">
-              <p>সর্বশেষ পাঠানো: {digest.lastRun.day ?? "—"} ({digest.lastRun.period === "yesterday" ? "গতকালের" : "আজকের"} সারাংশ) · {digest.lastRun.at ? new Date(digest.lastRun.at).toLocaleString("bn-BD") : ""}</p>
+              <p>{dict.orders.lastSent}{digest.lastRun.day ?? "—"} ({digest.lastRun.period === "yesterday" ? dict.orders.yesterdayS : dict.orders.todayS} {dict.orders.summary}{digest.lastRun.at ? fmtDateTime(locale, new Date(digest.lastRun.at)) : ""}</p>
               <ul className="mt-1 list-inside list-disc">
-                {digest.lastRun.results.map((r, i) => <li key={i}>{digestResultLabel(r)}</li>)}
+                {digest.lastRun.results.map((r, i) => <li key={i}>{digestResultLabel(r, locale)}</li>)}
               </ul>
             </div>
-          ) : <p className="mt-2 text-sm text-slate-500">এখনো কোনো ডাইজেস্ট পাঠানো হয়নি।</p>}
+          ) : <p className="mt-2 text-sm text-slate-500">{dict.orders.noDigestSentYet}</p>}
           <button type="button" className="btn-primary btn-sm mt-3" disabled={busy === "digest"} onClick={() => void sendNow()}>
-            {busy === "digest" ? "পাঠানো হচ্ছে…" : "এখনই পাঠান (আজকের সারাংশ)"}
+            {busy === "digest" ? dict.orders.sending : dict.orders.sendNowTodaySSummary}
           </button>
           {runResult ? (
             <div className="mt-2 text-sm">
-              <p>এই রানের ফল: পাঠানো হয়েছে {runResult.sentCount}টি · ব্যর্থ {runResult.failedCount}টি · বাদ {runResult.skippedCount}টি</p>
+              <p>{dict.orders.thisRunSResultSent}{runResult.sentCount}{dict.orders.failed3}{runResult.failedCount}{dict.orders.skipped}{runResult.skippedCount}{dict.orders.items}</p>
               <ul className="mt-1 list-inside list-disc">
-                {runResult.recipients.map((r, i) => <li key={i}>{digestResultLabel(r)}</li>)}
+                {runResult.recipients.map((r, i) => <li key={i}>{digestResultLabel(r, locale)}</li>)}
               </ul>
             </div>
           ) : null}

@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -78,12 +80,12 @@ interface StaffStateLite {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  active: "সক্রিয়",
-  paused: "স্থগিত",
-  pending: "অপেক্ষমাণ",
-  approved: "অনুমোদিত",
-  paid: "পরিশোধিত",
-  voided: "বাতিল",
+  active: "active",
+  paused: "suspended",
+  pending: "pending",
+  approved: "approved",
+  paid: "paid",
+  voided: "cancel",
 };
 const STATUS_CLS: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700",
@@ -94,11 +96,11 @@ const STATUS_CLS: Record<string, string> = {
   voided: "bg-rose-100 text-rose-700",
 };
 const METHOD_LABEL: Record<string, string> = {
-  bkash: "বিকাশ",
-  nagad: "নগদ",
-  bank: "ব্যাংক",
-  cash: "নগদ টাকা",
-  other: "অন্যান্য",
+  bkash: "bKash",
+  nagad: "cash",
+  bank: "bank",
+  cash: "cash2",
+  other: "other",
 };
 
 /** Outstanding summary from the list aggregates, using the
@@ -115,6 +117,7 @@ function outstandingOf(p: Partner): string {
 }
 
 export default function AffiliatesPage() {
+  const { dict, t, locale } = useLocale();
   const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -150,7 +153,7 @@ export default function AffiliatesPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
+    if (!orgId) { setError(dict.commerce.noOrganizationSelected); setLoading(false); return; }
     setLoading(true);
     try {
       const [list, state] = await Promise.all([
@@ -168,7 +171,7 @@ export default function AffiliatesPage() {
       }
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "অ্যাফিলিয়েট তথ্য লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadAffiliateInformation);
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -187,7 +190,7 @@ export default function AffiliatesPage() {
       setDetail(d);
       setEntries(es.items ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পার্টনারের বিস্তারিত লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadPartnerDetails);
     } finally { setDetailLoading(false); }
   }, [entryStatus]);
 
@@ -199,11 +202,11 @@ export default function AffiliatesPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const pct = defaultPercent.trim() ? Number(defaultPercent) : null;
     if (pct !== null && (!Number.isInteger(pct) || pct < 0 || pct > 50)) {
-      setError("ডিফল্ট কমিশনের হার ০ থেকে ৫০-এর মধ্যে হতে হবে।"); return;
+      setError(dict.commerce.defaultCommissionRateMustBe); return;
     }
     const days = Number(attributionDays);
     if (!Number.isInteger(days) || days < 1 || days > 365) {
-      setError("অ্যাট্রিবিউশন window ১ থেকে ৩৬৫ দিনের মধ্যে হতে হবে।"); return;
+      setError(dict.commerce.attributionWindowMustBeBetween); return;
     }
     setBusy("settings"); setError(""); setNotice("");
     try {
@@ -215,9 +218,9 @@ export default function AffiliatesPage() {
           affiliateAttributionDays: days,
         }),
       });
-      setNotice("অ্যাফিলিয়েট সেটিংস সংরক্ষণ করা হয়েছে।");
+      setNotice(dict.commerce.affiliateSettingsSaved);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সেটিংস সংরক্ষণ করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotSaveSettings);
     } finally { setBusy(""); }
   }
 
@@ -231,7 +234,7 @@ export default function AffiliatesPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const pct = fPercent.trim() ? Number(fPercent) : undefined;
     if (pct !== undefined && (!Number.isInteger(pct) || pct < 0 || pct > 50)) {
-      setError("কমিশনের হার ০ থেকে ৫০-এর মধ্যে হতে হবে।"); return;
+      setError(dict.commerce.commissionRateMustBeBetween); return;
     }
     setBusy("partner"); setError(""); setNotice("");
     try {
@@ -246,7 +249,7 @@ export default function AffiliatesPage() {
             note: fNote.trim() || null,
           }),
         });
-        setNotice("পার্টনার হালনাগাদ করা হয়েছে।");
+        setNotice(dict.commerce.partnerUpdated);
       } else {
         await apiFetch(`/organizations/${orgId}/affiliates/partners`, {
           method: "POST",
@@ -258,13 +261,13 @@ export default function AffiliatesPage() {
             ...(fNote.trim() ? { note: fNote.trim() } : {}),
           }),
         });
-        setNotice("নতুন পার্টনার যোগ করা হয়েছে।");
+        setNotice(dict.commerce.newPartnerAdded);
       }
       resetForm();
       await load();
       if (selectedId) void loadDetail(selectedId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "পার্টনার সংরক্ষণ করা যায়নি");
+      setError(err instanceof Error ? err.message : dict.commerce.couldNotSavePartner);
     } finally { setBusy(""); }
   }
 
@@ -285,7 +288,7 @@ export default function AffiliatesPage() {
       await load();
       if (selectedId === p.id) void loadDetail(p.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "অবস্থা বদলানো যায়নি");
+      setError(err instanceof Error ? err.message : dict.commerce.couldNotChangeStatus);
     } finally { setBusy(""); }
   }
 
@@ -294,10 +297,10 @@ export default function AffiliatesPage() {
     const link = typeof window !== "undefined" ? `${window.location.origin}${path}` : path;
     try {
       await navigator.clipboard.writeText(link);
-      setNotice(`শেয়ার লিংক কপি হয়েছে: ${link}`);
+      setNotice(t("commerce.shareLinkCopied", { link: link }));
       setError("");
     } catch {
-      setError(`কপি করা যায়নি — লিংকটি হাতে কপি করুন: ${link}`);
+      setError(t("commerce.couldNotCopyCopyThe2", { link: link }));
     }
   }
 
@@ -306,7 +309,7 @@ export default function AffiliatesPage() {
     const orgId = getOrganizationId(); if (!orgId || !selectedId) return;
     const amountMinor = takaToMinorString(payAmount);
     if (!amountMinor || amountMinor === "0") {
-      setError("পেআউটের পরিমাণ টাকায় সঠিক সংখ্যা দিন (যেমন: 1500)।"); return;
+      setError(dict.commerce.giveThePayoutAmountIn); return;
     }
     setBusy("payout"); setError(""); setNotice("");
     try {
@@ -320,12 +323,12 @@ export default function AffiliatesPage() {
       });
       // Language discipline: the payout was RECORDED here; the
       // money itself is paid by the merchant outside the system.
-      setNotice("পেআউট রেকর্ড করা হয়েছে। (টাকা মার্চেন্ট নিজে সিস্টেমের বাইরে পাঠিয়েছেন — এখানে শুধু হিসাব রাখা হয়।)");
+      setNotice(dict.commerce.payoutRecordedTheMerchantSent);
       setPayAmount(""); setPayReference(""); setPayNote("");
       await load();
       void loadDetail(selectedId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "পেআউট রেকর্ড করা যায়নি");
+      setError(err instanceof Error ? err.message : dict.commerce.couldNotRecordPayout);
     } finally { setBusy(""); }
   }
 
@@ -334,11 +337,11 @@ export default function AffiliatesPage() {
     setBusy(`approve-${entry.id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/affiliates/entries/${entry.id}/approve`, { method: "POST" });
-      setNotice("কমিশন অনুমোদন করা হয়েছে।");
+      setNotice(dict.commerce.commissionApproved);
       await load();
       if (selectedId) void loadDetail(selectedId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "অনুমোদন করা যায়নি");
+      setError(err instanceof Error ? err.message : dict.commerce.couldNotApprove);
     } finally { setBusy(""); }
   }
 
@@ -346,15 +349,14 @@ export default function AffiliatesPage() {
   // tables and the ResponsiveTable mobile cards — same handlers.
   const renderCopyLink = (p: Partner) => (
     <button type="button" onClick={() => void copyLink(p)} className="mt-1 inline-flex min-h-[44px] items-center rounded-md border bg-white px-2 py-1 text-xs font-semibold text-indigo-700">
-      🔗 লিংক কপি
-    </button>
+      {dict.commerce.copyLink2}</button>
   );
   const renderPartnerActions = (p: Partner) => (
     <div className="flex flex-wrap gap-1">
-      <button type="button" onClick={() => setSelectedId(p.id)} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold">বিস্তারিত</button>
-      <button type="button" onClick={() => startEdit(p)} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold">সম্পাদনা</button>
+      <button type="button" onClick={() => setSelectedId(p.id)} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.details}</button>
+      <button type="button" onClick={() => startEdit(p)} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.edit}</button>
       <button type="button" onClick={() => void toggleStatus(p)} disabled={busy === `status-${p.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-50">
-        {p.status === "active" ? "স্থগিত করুন" : "সক্রিয় করুন"}
+        {p.status === "active" ? dict.commerce.suspend : dict.commerce.activate}
       </button>
     </div>
   );
@@ -366,8 +368,7 @@ export default function AffiliatesPage() {
         disabled={busy === `approve-${en.id}`}
         className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-emerald-600 px-2 py-1 text-xs font-bold text-white disabled:opacity-50"
       >
-        অনুমোদন
-      </button>
+        {dict.commerce.approve}</button>
     ) : null
   );
 
@@ -377,11 +378,9 @@ export default function AffiliatesPage() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-black text-slate-900">🤝 অ্যাফিলিয়েট প্রোগ্রাম</h1>
+          <h1 className="text-xl font-black text-slate-900">{dict.commerce.affiliateProgram}</h1>
           <p className="text-sm text-slate-500">
-            পার্টনারের শেয়ার লিংক (<span className="font-mono">/shop/…?ref=কোড</span>) থেকে আসা অর্ডার বিক্রি
-            (ডেলিভারি) হলেই কমিশন এন্ট্রি তৈরি হয়। পেআউট এখানে শুধু <b>রেকর্ড</b> করা হয় — সিস্টেম কোনো টাকা পাঠায় না।
-          </p>
+            {dict.commerce.partnerSShareLink}<span className="font-mono">{dict.commerce.shopRefCode}</span>{dict.commerce.generatesACommissionEntryWhen}<b>{dict.commerce.isRecorded}</b> {dict.commerce.theSystemDoesNotSend}</p>
         </div>
         <Link href="/dashboard/commerce" className="text-sm font-semibold text-indigo-700 hover:underline">← Commerce Hub</Link>
       </div>
@@ -391,63 +390,62 @@ export default function AffiliatesPage() {
 
       {/* Settings */}
       <section className="rounded-2xl border bg-white p-5">
-        <h2 className="font-bold text-slate-900">প্রোগ্রাম সেটিংস</h2>
+        <h2 className="font-bold text-slate-900">{dict.commerce.programSettings}</h2>
         <div className="mt-3 grid gap-4 sm:grid-cols-3">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
             <input type="checkbox" checked={affiliateEnabled} onChange={(e) => setAffiliateEnabled(e.target.checked)} />
-            অ্যাফিলিয়েট প্রোগ্রাম চালু
-          </label>
+            {dict.commerce.affiliateProgramOn}</label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">ডিফল্ট কমিশন (%) <span className="text-slate-400">(খালি = ১০%)</span></span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.defaultCommission}<span className="text-slate-400">{dict.commerce.empty10}</span></span>
             <input value={defaultPercent} onChange={(e) => setDefaultPercent(e.target.value)} inputMode="numeric" placeholder="10" className={inputCls} />
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">অ্যাট্রিবিউশন window (দিন)</span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.attributionWindowDays}</span>
             <input value={attributionDays} onChange={(e) => setAttributionDays(e.target.value)} inputMode="numeric" className={inputCls} />
           </label>
         </div>
         <button type="button" onClick={saveSettings} disabled={busy === "settings"} className="btn-primary mt-4 disabled:opacity-50">
-          {busy === "settings" ? "সংরক্ষণ হচ্ছে…" : "সেটিংস সংরক্ষণ করুন"}
+          {busy === "settings" ? dict.commerce.saving : dict.commerce.saveSettings}
         </button>
         {!affiliateEnabled ? (
-          <p className="mt-3 text-sm text-amber-700">প্রোগ্রাম বন্ধ থাকলে checkout-এ দেওয়া অ্যাফিলিয়েট কোড সম্পূর্ণ উপেক্ষা করা হয় — কোনো stamp বা কমিশন হয় না।</p>
+          <p className="mt-3 text-sm text-amber-700">{dict.commerce.whenTheProgramIsOff}</p>
         ) : null}
       </section>
 
       {/* Partner form */}
       <section className="rounded-2xl border bg-white p-5">
-        <h2 className="font-bold text-slate-900">{editingId ? "পার্টনার সম্পাদনা" : "নতুন পার্টনার"}</h2>
+        <h2 className="font-bold text-slate-900">{editingId ? dict.commerce.editPartner : dict.commerce.newPartner}</h2>
         <form onSubmit={submitPartner} className="mt-3 grid gap-3 sm:grid-cols-3">
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">নাম *</span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.name2}</span>
             <input value={fName} onChange={(e) => setFName(e.target.value)} required className={inputCls} />
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">ফোন *</span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.phone3}</span>
             <input value={fPhone} onChange={(e) => setFPhone(e.target.value)} required className={inputCls} />
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">ইমেইল</span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.email}</span>
             <input value={fEmail} onChange={(e) => setFEmail(e.target.value)} className={inputCls} />
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">কোড <span className="text-slate-400">(খালি রাখলে নিজে তৈরি হবে)</span></span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.code}<span className="text-slate-400">{dict.commerce.leaveEmptyToAutoGenerate}</span></span>
             <input value={fCode} onChange={(e) => setFCode(e.target.value)} className={`${inputCls} font-mono`} />
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">কমিশন (%) <span className="text-slate-400">(০–৫০)</span></span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.commission2}<span className="text-slate-400">{dict.commerce.text1pq8fzt}</span></span>
             <input value={fPercent} onChange={(e) => setFPercent(e.target.value)} inputMode="numeric" className={inputCls} />
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">নোট</span>
+            <span className="text-sm font-medium text-slate-700">{dict.commerce.note}</span>
             <input value={fNote} onChange={(e) => setFNote(e.target.value)} className={inputCls} />
           </label>
           <div className="flex items-end gap-2">
             <button type="submit" disabled={busy === "partner"} className="btn-primary disabled:opacity-50">
-              {busy === "partner" ? "সংরক্ষণ হচ্ছে…" : editingId ? "হালনাগাদ করুন" : "পার্টনার যোগ করুন"}
+              {busy === "partner" ? dict.commerce.saving : editingId ? dict.commerce.update2 : dict.commerce.addPartner}
             </button>
             {editingId ? (
-              <button type="button" onClick={resetForm} className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold">বাতিল</button>
+              <button type="button" onClick={resetForm} className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold">{dict.common.cancel}</button>
             ) : null}
           </div>
         </form>
@@ -460,22 +458,22 @@ export default function AffiliatesPage() {
             <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b bg-slate-50 text-xs text-slate-600">
-              <th className="p-3">পার্টনার</th>
-              <th className="p-3">কোড ও শেয়ার লিংক</th>
-              <th className="p-3">কমিশন</th>
-              <th className="p-3">অবস্থা</th>
-              <th className="p-3">অপেক্ষমাণ</th>
-              <th className="p-3">অনুমোদিত</th>
-              <th className="p-3">পরিশোধিত</th>
-              <th className="p-3">বকেয়া (অনুমোদিত)</th>
-              <th className="p-3">অ্যাকশন</th>
+              <th className="p-3">{dict.commerce.partner}</th>
+              <th className="p-3">{dict.commerce.codeShareLink}</th>
+              <th className="p-3">{dict.commerce.commission}</th>
+              <th className="p-3">{dict.commerce.status}</th>
+              <th className="p-3">{dict.commerce.pending}</th>
+              <th className="p-3">{dict.commerce.approved}</th>
+              <th className="p-3">{dict.commerce.paid}</th>
+              <th className="p-3">{dict.commerce.dueApproved}</th>
+              <th className="p-3">{dict.commerce.action}</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="p-4 text-slate-500">লোড হচ্ছে…</td></tr>
+              <tr><td colSpan={9} className="p-4 text-slate-500">{dict.common.loading}</td></tr>
             ) : partners.length === 0 ? (
-              <tr><td colSpan={9} className="p-4 text-slate-500">এখনো কোনো পার্টনার নেই — উপরের ফর্ম থেকে প্রথম পার্টনার যোগ করুন।</td></tr>
+              <tr><td colSpan={9} className="p-4 text-slate-500">{dict.commerce.noPartnersYetAddThe}</td></tr>
             ) : partners.map((p) => (
               <tr key={p.id} className={`border-b last:border-0 ${selectedId === p.id ? "bg-indigo-50/50" : ""}`}>
                 <td className="p-3">
@@ -489,7 +487,7 @@ export default function AffiliatesPage() {
                 <td className="p-3">{p.commissionPercent}%</td>
                 <td className="p-3">
                   <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_CLS[p.status] ?? "bg-slate-200 text-slate-600"}`}>
-                    {STATUS_LABEL[p.status] ?? p.status}
+                    {STATUS_LABEL[p.status] ? dict.commerce[STATUS_LABEL[p.status] as keyof typeof dict.commerce] : p.status}
                   </span>
                 </td>
                 <td className="p-3">{formatMinorTaka(p.aggregates?.entries.pending.commissionMinor ?? "0")}</td>
@@ -506,9 +504,9 @@ export default function AffiliatesPage() {
           </section>
         }
         cards={loading ? (
-          <p className="rounded-2xl border bg-white p-4 text-slate-500">লোড হচ্ছে…</p>
+          <p className="rounded-2xl border bg-white p-4 text-slate-500">{dict.common.loading}</p>
         ) : partners.length === 0 ? (
-          <p className="rounded-2xl border bg-white p-4 text-slate-500">এখনো কোনো পার্টনার নেই — উপরের ফর্ম থেকে প্রথম পার্টনার যোগ করুন।</p>
+          <p className="rounded-2xl border bg-white p-4 text-slate-500">{dict.commerce.noPartnersYetAddThe}</p>
         ) : partners.map((p) => (
           <div key={p.id} className={`rounded-2xl border bg-white p-3 ${selectedId === p.id ? "bg-indigo-50/50" : ""}`}>
             <div className="flex items-start justify-between gap-2">
@@ -517,35 +515,35 @@ export default function AffiliatesPage() {
                 <div className="text-xs text-slate-500">{p.phone}</div>
               </div>
               <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_CLS[p.status] ?? "bg-slate-200 text-slate-600"}`}>
-                {STATUS_LABEL[p.status] ?? p.status}
+                {STATUS_LABEL[p.status] ? dict.commerce[STATUS_LABEL[p.status] as keyof typeof dict.commerce] : p.status}
               </span>
             </div>
             <dl className="mt-2 space-y-1.5 text-sm">
               <div className="flex gap-2">
-                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">কোড ও শেয়ার লিংক</dt>
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.codeShareLink}</dt>
                 <dd>
                   <div className="font-mono text-xs font-bold">{p.code}</div>
                   {renderCopyLink(p)}
                 </dd>
               </div>
               <div className="flex gap-2">
-                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">কমিশন</dt>
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.commission}</dt>
                 <dd>{p.commissionPercent}%</dd>
               </div>
               <div className="flex gap-2">
-                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">অপেক্ষমাণ</dt>
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.pending}</dt>
                 <dd>{formatMinorTaka(p.aggregates?.entries.pending.commissionMinor ?? "0")}</dd>
               </div>
               <div className="flex gap-2">
-                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">অনুমোদিত</dt>
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.approved}</dt>
                 <dd>{formatMinorTaka(p.aggregates?.entries.approved.commissionMinor ?? "0")}</dd>
               </div>
               <div className="flex gap-2">
-                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধিত</dt>
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.paid}</dt>
                 <dd>{formatMinorTaka(p.aggregates?.entries.paid.commissionMinor ?? "0")}</dd>
               </div>
               <div className="flex gap-2">
-                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">বকেয়া (অনুমোদিত)</dt>
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.dueApproved}</dt>
                 <dd className="font-semibold">{formatMinorTaka(outstandingOf(p))}</dd>
               </div>
             </dl>
@@ -558,19 +556,19 @@ export default function AffiliatesPage() {
       {selectedId ? (
         <section className="rounded-2xl border bg-white p-5">
           <h2 className="font-bold text-slate-900">
-            পার্টনারের বিস্তারিত {detail ? `— ${detail.name}` : ""}
+            {dict.commerce.partnerDetails}{detail ? `— ${detail.name}` : ""}
           </h2>
           {detailLoading || !detail ? (
-            <p className="mt-3 text-sm text-slate-500">লোড হচ্ছে…</p>
+            <p className="mt-3 text-sm text-slate-500">{dict.common.loading}</p>
           ) : (
             <div className="mt-4 space-y-5">
               <div className="grid gap-3 sm:grid-cols-5">
                 {[
-                  ["অপেক্ষমাণ কমিশন", detail.balances.pendingMinor],
-                  ["অনুমোদিত কমিশন", detail.balances.approvedMinor],
-                  ["পরিশোধিত কমিশন", detail.balances.paidMinor],
-                  ["মোট পেআউট রেকর্ড", detail.balances.paidOutMinor],
-                  ["বকেয়া (অনুমোদিত)", detail.balances.outstandingApprovedMinor],
+                  [dict.commerce.pendingCommission, detail.balances.pendingMinor],
+                  [dict.commerce.approvedCommission, detail.balances.approvedMinor],
+                  [dict.commerce.paidCommission, detail.balances.paidMinor],
+                  [dict.commerce.totalPayoutRecords, detail.balances.paidOutMinor],
+                  [dict.commerce.dueApproved, detail.balances.outstandingApprovedMinor],
                 ].map(([label, v]) => (
                   <div key={label} className="rounded-xl bg-slate-50 p-3">
                     <div className="text-xs font-medium text-slate-500">{label}</div>
@@ -581,58 +579,54 @@ export default function AffiliatesPage() {
 
               {detail.paidOnRefundedOrders > 0 ? (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
-                  ⚠️ {detail.paidOnRefundedOrders}টি পরিশোধিত কমিশনের অর্ডার পরে refund/cancel হয়েছে — পরিশোধিত এন্ট্রি
-                  স্বয়ংক্রিয়ভাবে বাতিল হয় না; পার্টনারের সঙ্গে নিজে মিলিয়ে নিন।
-                </p>
+                  ⚠️ {detail.paidOnRefundedOrders}{dict.commerce.paidCommissionsOrdersWereLater}</p>
               ) : null}
 
               {/* Payout record form */}
               <form onSubmit={submitPayout} className="grid gap-3 rounded-xl border border-dashed p-4 sm:grid-cols-5">
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">পেআউটের পরিমাণ (টাকা)</span>
+                  <span className="text-sm font-medium text-slate-700">{dict.commerce.payoutAmountTaka}</span>
                   <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" placeholder="1500" className={inputCls} />
                 </label>
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">মাধ্যম</span>
+                  <span className="text-sm font-medium text-slate-700">{dict.commerce.method2}</span>
                   <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className={inputCls}>
                     {Object.entries(METHOD_LABEL).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
+                      <option key={k} value={k}>{dict.commerce[v as keyof typeof dict.commerce]}</option>
                     ))}
                   </select>
                 </label>
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">রেফারেন্স / TrxID</span>
+                  <span className="text-sm font-medium text-slate-700">{dict.commerce.referenceTrxID}</span>
                   <input value={payReference} onChange={(e) => setPayReference(e.target.value)} className={inputCls} />
                 </label>
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">নোট</span>
+                  <span className="text-sm font-medium text-slate-700">{dict.commerce.note}</span>
                   <input value={payNote} onChange={(e) => setPayNote(e.target.value)} className={inputCls} />
                 </label>
                 <div className="flex items-end">
                   <button type="submit" disabled={busy === "payout"} className="btn-primary disabled:opacity-50">
-                    {busy === "payout" ? "রেকর্ড হচ্ছে…" : "পেআউট রেকর্ড করুন"}
+                    {busy === "payout" ? dict.commerce.recording : dict.commerce.recordPayout}
                   </button>
                 </div>
                 <p className="text-xs text-slate-500 sm:col-span-5">
-                  এই রেকর্ড শুধু হিসাব রাখে — টাকা মার্চেন্ট নিজে সিস্টেমের বাইরে পাঠান। রেকর্ড হলেই অনুমোদিত এন্ট্রি
-                  পুরনো থেকে নতুন ক্রমে (FIFO) পরিশোধিত হিসেবে চিহ্নিত হয়।
-                </p>
+                  {dict.commerce.thisRecordOnlyKeepsAccounts}</p>
               </form>
 
               {/* Payout history */}
               <div>
-                <h3 className="text-sm font-bold text-slate-800">পেআউট ইতিহাস</h3>
+                <h3 className="text-sm font-bold text-slate-800">{dict.commerce.payoutHistory}</h3>
                 {detail.payouts.length === 0 ? (
-                  <p className="mt-1 text-sm text-slate-500">এখনো কোনো পেআউট রেকর্ড নেই।</p>
+                  <p className="mt-1 text-sm text-slate-500">{dict.commerce.noPayoutRecordsYet}</p>
                 ) : (
                   <ul className="mt-2 space-y-1 text-sm">
                     {detail.payouts.map((po) => (
                       <li key={po.id} className="flex flex-wrap gap-x-3 rounded-lg bg-slate-50 px-3 py-2">
                         <span className="font-bold">{formatMinorTaka(po.amountMinor)}</span>
-                        <span>{METHOD_LABEL[po.method] ?? po.method}</span>
+                        <span>{METHOD_LABEL[po.method] ? dict.commerce[METHOD_LABEL[po.method] as keyof typeof dict.commerce] : po.method}</span>
                         {po.reference ? <span className="font-mono text-xs">{po.reference}</span> : null}
                         <span className="text-slate-500">
-                          {po.createdAt ? new Date(po.createdAt).toLocaleString("bn-BD") : ""}
+                          {po.createdAt ? fmtDateTime(locale, new Date(po.createdAt)) : ""}
                         </span>
                         {po.note ? <span className="text-slate-500">{po.note}</span> : null}
                       </li>
@@ -644,13 +638,13 @@ export default function AffiliatesPage() {
               {/* Entries */}
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-bold text-slate-800">কমিশন এন্ট্রি</h3>
+                  <h3 className="text-sm font-bold text-slate-800">{dict.commerce.commissionEntries}</h3>
                   <select value={entryStatus} onChange={(e) => setEntryStatus(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1 text-sm">
-                    <option value="">সব অবস্থা</option>
-                    <option value="pending">অপেক্ষমাণ</option>
-                    <option value="approved">অনুমোদিত</option>
-                    <option value="paid">পরিশোধিত</option>
-                    <option value="voided">বাতিল</option>
+                    <option value="">{dict.commerce.allStatuses}</option>
+                    <option value="pending">{dict.commerce.pending}</option>
+                    <option value="approved">{dict.commerce.approved}</option>
+                    <option value="paid">{dict.commerce.paid}</option>
+                    <option value="voided">{dict.common.cancel}</option>
                   </select>
                 </div>
                 <ResponsiveTable
@@ -660,18 +654,18 @@ export default function AffiliatesPage() {
                       <table className="w-full text-left text-sm">
                     <thead>
                       <tr className="border-b bg-slate-50 text-xs text-slate-600">
-                        <th className="p-3">অর্ডার</th>
-                        <th className="p-3">বেস</th>
-                        <th className="p-3">হার</th>
-                        <th className="p-3">কমিশন</th>
-                        <th className="p-3">অবস্থা</th>
-                        <th className="p-3">তারিখ</th>
-                        <th className="p-3">অ্যাকশন</th>
+                        <th className="p-3">{dict.commerce.order}</th>
+                        <th className="p-3">{dict.commerce.base}</th>
+                        <th className="p-3">{dict.commerce.rate}</th>
+                        <th className="p-3">{dict.commerce.commission}</th>
+                        <th className="p-3">{dict.commerce.status}</th>
+                        <th className="p-3">{dict.commerce.date}</th>
+                        <th className="p-3">{dict.commerce.action}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {entries.length === 0 ? (
-                        <tr><td colSpan={7} className="p-4 text-slate-500">কোনো এন্ট্রি নেই।</td></tr>
+                        <tr><td colSpan={7} className="p-4 text-slate-500">{dict.commerce.noEntries}</td></tr>
                       ) : entries.map((en) => (
                         <tr key={en.id} className="border-b last:border-0">
                           <td className="p-3 font-mono text-xs">{en.orderNumber ?? en.orderId}</td>
@@ -680,14 +674,14 @@ export default function AffiliatesPage() {
                           <td className="p-3 font-semibold">{formatMinorTaka(en.commissionMinor)}</td>
                           <td className="p-3">
                             <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_CLS[en.status] ?? "bg-slate-200 text-slate-600"}`}>
-                              {STATUS_LABEL[en.status] ?? en.status}
+                              {STATUS_LABEL[en.status] ? dict.commerce[STATUS_LABEL[en.status] as keyof typeof dict.commerce] : en.status}
                             </span>
                             {en.status === "voided" && en.voidReason ? (
                               <span className="ml-1 text-xs text-slate-500">({en.voidReason})</span>
                             ) : null}
                           </td>
                           <td className="p-3 text-slate-500">
-                            {en.createdAt ? new Date(en.createdAt).toLocaleDateString("bn-BD") : ""}
+                            {en.createdAt ? fmtDate(locale, new Date(en.createdAt)) : ""}
                           </td>
                           <td className="p-3">
                             {renderEntryAction(en)}
@@ -699,7 +693,7 @@ export default function AffiliatesPage() {
                     </div>
                   }
                   cards={entries.length === 0 ? (
-                    <p className="rounded-xl border p-4 text-slate-500">কোনো এন্ট্রি নেই।</p>
+                    <p className="rounded-xl border p-4 text-slate-500">{dict.commerce.noEntries}</p>
                   ) : entries.map((en) => (
                     <div key={en.id} className="rounded-xl border p-3">
                       <div className="flex items-start justify-between gap-2">
@@ -708,18 +702,18 @@ export default function AffiliatesPage() {
                       </div>
                       <dl className="mt-2 space-y-1.5 text-sm">
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">বেস</dt>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.base}</dt>
                           <dd>{formatMinorTaka(en.baseMinor)}</dd>
                         </div>
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">হার</dt>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.rate}</dt>
                           <dd>{en.percentSnapshot}%</dd>
                         </div>
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">অবস্থা</dt>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.status}</dt>
                           <dd>
                             <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_CLS[en.status] ?? "bg-slate-200 text-slate-600"}`}>
-                              {STATUS_LABEL[en.status] ?? en.status}
+                              {STATUS_LABEL[en.status] ? dict.commerce[STATUS_LABEL[en.status] as keyof typeof dict.commerce] : en.status}
                             </span>
                             {en.status === "voided" && en.voidReason ? (
                               <span className="ml-1 text-xs text-slate-500">({en.voidReason})</span>
@@ -727,9 +721,9 @@ export default function AffiliatesPage() {
                           </dd>
                         </div>
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.date}</dt>
                           <dd className="text-slate-500">
-                            {en.createdAt ? new Date(en.createdAt).toLocaleDateString("bn-BD") : ""}
+                            {en.createdAt ? fmtDate(locale, new Date(en.createdAt)) : ""}
                           </dd>
                         </div>
                       </dl>

@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useRef, useState } from "react";
+import { fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -39,6 +41,7 @@ interface Line {
 }
 
 export default function ManualOrderPage() {
+  const { dict, t, locale } = useLocale();
   const [customer, setCustomer] = useState({ phone: "", name: "", email: "", address: "", externalRef: "" });
   const [lines, setLines] = useState<Line[]>([{ name: "", sku: "", quantity: 1, unitPrice: "" }]);
   const [shipping, setShipping] = useState("60");
@@ -97,7 +100,7 @@ export default function ManualOrderPage() {
     e.preventDefault();
     const orgId = getOrganizationId();
     if (!orgId) {
-      setError("কোনো Organization নির্বাচিত নেই।");
+      setError(dict.orders.noOrganizationSelected);
       return;
     }
     setBusy(true);
@@ -130,8 +133,8 @@ export default function ManualOrderPage() {
       });
       setNotice(
         out.upsertResult === "updated"
-          ? "একই রেফারেন্সের অর্ডার আপডেট হয়েছে (ডুপ্লিকেট হয়নি)।"
-          : `অর্ডার সফলভাবে তৈরি হয়েছে — মোট ৳${(Number(out.totalMinor) / 100).toLocaleString("en-IN")}। এটি এখন অর্ডার তালিকা, অটোমেশন, রিস্ক স্কোর ও রিপোর্টে দেখা যাবে।`
+          ? dict.orders.anOrderWithTheSame
+          : t("orders.orderCreatedSuccessfullyTotalIt", { p0: fmtNumber(locale, Number(out.totalMinor) / 100) })
       );
       // ON11: intake warnings + a create-time address suggestion
       // stay visible on this success area. The suggestion is info
@@ -144,7 +147,7 @@ export default function ManualOrderPage() {
       lastParsedRef.current = "";
       setLines([{ name: "", sku: "", quantity: 1, unitPrice: "" }]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "অর্ডার তৈরি ব্যর্থ");
+      setError(err instanceof Error ? err.message : dict.orders.orderCreationFailed);
     } finally {
       setBusy(false);
     }
@@ -153,7 +156,7 @@ export default function ManualOrderPage() {
   async function handleCsvFile(file: File) {
     const orgId = getOrganizationId();
     if (!orgId) {
-      setImportError("কোনো Organization নির্বাচিত নেই।");
+      setImportError(dict.orders.noOrganizationSelected);
       return;
     }
     setImportBusy(true);
@@ -167,7 +170,7 @@ export default function ManualOrderPage() {
       });
       setResult(data);
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : "ইমপোর্ট ব্যর্থ হয়েছে");
+      setImportError(err instanceof Error ? err.message : dict.orders.importFailed);
     } finally {
       setImportBusy(false);
     }
@@ -179,25 +182,21 @@ export default function ManualOrderPage() {
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1.5">
           <Link href="/dashboard/orders" className="text-indigo-600 hover:underline">
-            ← অর্ডার তালিকা
-          </Link>
+            {dict.orders.orderList}</Link>
           <span className="text-slate-300">/</span>
-          <span className="text-slate-700">ম্যানুয়াল অর্ডার এন্ট্রি</span>
+          <span className="text-slate-700">{dict.orders.manualOrderEntry}</span>
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          📝 নতুন ম্যানুয়াল অর্ডার ও CSV ইমপোর্ট
-        </h1>
+          {dict.orders.newManualOrderCSVImport}</h1>
         <p className="mt-1 text-xs text-slate-500 max-w-2xl">
-          ফোনে বা কাউন্টারে নেওয়া অর্ডার সরাসরি এখানে তুলুন। এগুলো স্বয়ংক্রিয়ভাবে স্টক ম্যানেজমেন্ট, কুরিয়ার বুকিং ও COD রিস্ক রিপোর্টে গণনা হবে।
-        </p>
+          {dict.orders.enterOrdersTakenByPhone}</p>
       </div>
 
       {notice && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-xs font-semibold text-emerald-800 flex items-center justify-between">
           <span>{notice}</span>
           <Link href="/dashboard/orders" className="text-emerald-700 underline font-bold">
-            অর্ডার দেখুন →
-          </Link>
+            {dict.orders.viewOrder2}</Link>
         </div>
       )}
 
@@ -209,7 +208,7 @@ export default function ManualOrderPage() {
 
       {createWarnings.length > 0 && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-1">
-          <p className="text-xs font-bold text-amber-800">⚠️ অর্ডার তৈরি হয়েছে, তবে যাচাই করে দেখুন:</p>
+          <p className="text-xs font-bold text-amber-800">{dict.orders.orderCreatedButPleaseVerify}</p>
           <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-800">
             {createWarnings.map((w) => (
               <li key={w.key}>{w.label}</li>
@@ -220,8 +219,8 @@ export default function ManualOrderPage() {
 
       {createAddrSuggestion?.district && (
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700">
-          ঠিকানা থেকে সম্ভাব্য জেলা: <b>{createAddrSuggestion.district}</b>
-          {createAddrSuggestion.thana ? ` · থানা: ${createAddrSuggestion.thana}` : ""}
+          {dict.orders.possibleDistrictFromAddress}<b>{createAddrSuggestion.district}</b>
+          {createAddrSuggestion.thana ? t("orders.thana", { thana: createAddrSuggestion.thana }) : ""}
         </div>
       )}
 
@@ -232,13 +231,12 @@ export default function ManualOrderPage() {
           {/* Customer Details Card */}
           <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm space-y-4">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              ১. ক্রেতার বিবরণ
-            </span>
+              {dict.orders.texts0uboa}</span>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  ক্রেতার ফোন নম্বর <span className="text-rose-500">*</span>
+                  {dict.orders.buyerPhoneNumber}<span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -252,11 +250,10 @@ export default function ManualOrderPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  ক্রেতার নাম (ঐচ্ছিক)
-                </label>
+                  {dict.orders.buyerNameOptional}</label>
                 <input
                   type="text"
-                  placeholder="যেমন: তানভীর আহমেদ"
+                  placeholder={dict.orders.eGTanvirAhmed}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={customer.name}
                   onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
@@ -265,11 +262,10 @@ export default function ManualOrderPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  অর্ডার রেফারেন্স (ঐচ্ছিক)
-                </label>
+                  {dict.orders.orderReferenceOptional}</label>
                 <input
                   type="text"
-                  placeholder="যেমন: SHOP-1042"
+                  placeholder={dict.orders.eGSHOP1042}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={customer.externalRef}
                   onChange={(e) => setCustomer({ ...customer, externalRef: e.target.value })}
@@ -278,8 +274,7 @@ export default function ManualOrderPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  ইমেইল (ঐচ্ছিক)
-                </label>
+                  {dict.orders.emailOptional}</label>
                 <input
                   type="email"
                   placeholder="customer@example.com"
@@ -291,11 +286,10 @@ export default function ManualOrderPage() {
 
               <div className="sm:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  পূর্ণ ডেলিভারি ঠিকানা
-                </label>
+                  {dict.orders.fullDeliveryAddress}</label>
                 <textarea
                   rows={2}
-                  placeholder="বাসা, রোড, থানা, জেলা..."
+                  placeholder={dict.orders.houseRoadThanaDistrict}
                   className="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={customer.address}
                   onChange={(e) => {
@@ -317,16 +311,16 @@ export default function ManualOrderPage() {
                     }}
                     className="text-xs font-semibold text-indigo-600 hover:underline disabled:opacity-50"
                   >
-                    {parseBusy ? "জেলা খোঁজা হচ্ছে…" : "🔍 জেলা খুঁজুন"}
+                    {parseBusy ? dict.orders.searchingForDistrict : dict.orders.searchDistrict}
                   </button>
 
                   {confirmedDistrict ? (
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                      জেলা: {confirmedDistrict} ✓
+                      {dict.orders.district2}{confirmedDistrict} ✓
                       <button
                         type="button"
                         className="text-emerald-600 hover:text-rose-600"
-                        title="নিশ্চিত জেলা সরান"
+                        title={dict.orders.removeConfirmedDistrict}
                         onClick={() => setConfirmedDistrict("")}
                       >
                         ✕
@@ -334,7 +328,7 @@ export default function ManualOrderPage() {
                     </span>
                   ) : addrSuggestion?.district ? (
                     <span className="inline-flex flex-wrap items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                      জেলা: {addrSuggestion.district}?{addrSuggestion.thana ? ` · থানা: ${addrSuggestion.thana}` : ""}
+                      {dict.orders.district2}{addrSuggestion.district}?{addrSuggestion.thana ? t("orders.thana", { thana: addrSuggestion.thana }) : ""}
                       <button
                         type="button"
                         className="rounded-full bg-amber-600 px-2 py-0.5 text-white hover:bg-amber-700 text-[10px]"
@@ -343,12 +337,11 @@ export default function ManualOrderPage() {
                           setAddrSuggestion(null);
                         }}
                       >
-                        নিশ্চিত করুন
-                      </button>
+                        {dict.orders.confirm}</button>
                       <button
                         type="button"
                         className="text-amber-700 hover:text-rose-600"
-                        title="সাজেশন এড়িয়ে যান"
+                        title={dict.orders.skipSuggestion}
                         onClick={() => setAddrSuggestion(null)}
                       >
                         ✕
@@ -364,15 +357,13 @@ export default function ManualOrderPage() {
           <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                ২. পণ্যের আইটেম তালিকা
-              </span>
+                {dict.orders.text1wyu2ul}</span>
               <button
                 type="button"
                 onClick={() => setLines([...lines, { name: "", sku: "", quantity: 1, unitPrice: "" }])}
                 className="text-xs font-bold text-indigo-600 hover:underline"
               >
-                + আরেকটি পণ্য যোগ করুন
-              </button>
+                {dict.orders.addAnotherProduct}</button>
             </div>
 
             <div className="space-y-2.5">
@@ -385,7 +376,7 @@ export default function ManualOrderPage() {
                     <input
                       type="text"
                       required
-                      placeholder="পণ্যের নাম *"
+                      placeholder={dict.orders.productName}
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs"
                       value={l.name}
                       onChange={(e) =>
@@ -397,7 +388,7 @@ export default function ManualOrderPage() {
                   <div className="col-span-5 sm:col-span-3">
                     <input
                       type="text"
-                      placeholder="SKU (ঐচ্ছিক)"
+                      placeholder={dict.orders.sKUOptional}
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-mono"
                       value={l.sku}
                       onChange={(e) =>
@@ -411,7 +402,7 @@ export default function ManualOrderPage() {
                       type="number"
                       min={1}
                       max={999}
-                      placeholder="পরিমাণ"
+                      placeholder={dict.orders.quantity}
                       className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-center"
                       value={l.quantity}
                       onChange={(e) =>
@@ -428,7 +419,7 @@ export default function ManualOrderPage() {
                       min={0}
                       step="0.01"
                       required
-                      placeholder="একক দাম ৳"
+                      placeholder={dict.orders.unitPrice2}
                       className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-right font-semibold"
                       value={l.unitPrice}
                       onChange={(e) =>
@@ -454,17 +445,16 @@ export default function ManualOrderPage() {
         <div className="space-y-6">
           <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm space-y-4 sticky top-6">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              অর্ডার সামারি
-            </span>
+              {dict.orders.orderSummary}</span>
 
             <div className="space-y-2 text-xs border-b border-slate-100 pb-3">
               <div className="flex justify-between text-slate-600">
-                <span>পণ্যের সাবটোটাল</span>
-                <span className="font-semibold text-slate-900">৳{subtotal.toLocaleString("en-IN")}</span>
+                <span>{dict.orders.productSubtotal}</span>
+                <span className="font-semibold text-slate-900">{dict.orders.text1yr}{fmtNumber(locale, subtotal)}</span>
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">ডেলিভারি চার্জ</span>
+                <span className="text-slate-600">{dict.orders.deliveryCharge}</span>
                 <div className="w-24">
                   <input
                     type="number"
@@ -477,7 +467,7 @@ export default function ManualOrderPage() {
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">ছাড় / ডিসকাউন্ট</span>
+                <span className="text-slate-600">{dict.orders.discount3}</span>
                 <div className="w-24">
                   <input
                     type="number"
@@ -503,9 +493,9 @@ export default function ManualOrderPage() {
 
             {/* Total Display */}
             <div className="flex items-baseline justify-between pt-1">
-              <span className="text-xs font-bold uppercase text-slate-500">সর্বমোট প্রদেয়</span>
+              <span className="text-xs font-bold uppercase text-slate-500">{dict.orders.totalPayable}</span>
               <span className="text-2xl font-bold text-slate-900">
-                ৳{total.toLocaleString("en-IN")}
+                {dict.orders.text1yr}{fmtNumber(locale, total)}
               </span>
             </div>
 
@@ -515,7 +505,7 @@ export default function ManualOrderPage() {
               onClick={submit}
               className="w-full rounded-2xl bg-indigo-600 py-3 text-xs font-bold text-white shadow-md hover:bg-indigo-700 active:scale-95 disabled:opacity-50 transition"
             >
-              {busy ? "অর্ডার তৈরি হচ্ছে..." : "অর্ডার নিশ্চিত করুন"}
+              {busy ? dict.orders.creatingOrder : dict.orders.confirmOrder}
             </button>
           </div>
         </div>
@@ -525,10 +515,9 @@ export default function ManualOrderPage() {
       <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm space-y-4">
         <div>
           <h2 className="text-base font-bold text-slate-900">
-            📊 CSV ফাইল দিয়ে একসাথে শত শত অর্ডার ইমপোর্ট
-          </h2>
+            {dict.orders.importHundredsOfOrdersAt}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            ফাইল কলাম: <code>order_ref, customer_phone, item_name, unit_price, quantity, customer_name, address, shipping, discount, is_cod</code>
+            {dict.orders.fileColumns}<code>order_ref, customer_phone, item_name, unit_price, quantity, customer_name, address, shipping, discount, is_cod</code>
           </p>
         </div>
 
@@ -555,15 +544,13 @@ export default function ManualOrderPage() {
           <label htmlFor="orders-csv-input" className="cursor-pointer block space-y-1.5">
             <span className="text-3xl">📁</span>
             <div className="text-xs font-bold text-slate-800">
-              CSV ফাইল ড্রপ করুন অথবা ব্রাউজ করতে ক্লিক করুন
-            </div>
+              {dict.orders.dropTheCSVFileOr}</div>
             <div className="text-[11px] text-slate-400">
-              একই order_ref পুনরায় ইমপোর্ট করলে আপডেট হবে, ডুপ্লিকেট হবে না
-            </div>
+              {dict.orders.reImportingTheSameOrder}</div>
           </label>
         </div>
 
-        {importBusy && <p className="text-xs text-slate-500 animate-pulse">ইমপোর্ট হচ্ছে...</p>}
+        {importBusy && <p className="text-xs text-slate-500 animate-pulse">{dict.orders.importing}</p>}
         {importError && <p className="text-xs text-rose-600 font-semibold">{importError}</p>}
 
         {result && (
@@ -571,19 +558,19 @@ export default function ManualOrderPage() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-center">
               <div className="bg-white rounded-xl p-3 border border-slate-100">
                 <div className="text-xl font-bold text-slate-900">{result.totalRows}</div>
-                <div className="text-[10px] text-slate-400">মোট Row</div>
+                <div className="text-[10px] text-slate-400">{dict.orders.totalRows}</div>
               </div>
               <div className="bg-white rounded-xl p-3 border border-slate-100">
                 <div className="text-xl font-bold text-emerald-600">{result.successRows}</div>
-                <div className="text-[10px] text-slate-400">নতুন অর্ডার</div>
+                <div className="text-[10px] text-slate-400">{dict.orders.newOrder}</div>
               </div>
               <div className="bg-white rounded-xl p-3 border border-slate-100">
                 <div className="text-xl font-bold text-amber-600">{result.skippedRows}</div>
-                <div className="text-[10px] text-slate-400">আপডেট হয়েছে</div>
+                <div className="text-[10px] text-slate-400">{dict.orders.updated}</div>
               </div>
               <div className="bg-white rounded-xl p-3 border border-slate-100">
                 <div className="text-xl font-bold text-rose-600">{result.failedRows}</div>
-                <div className="text-[10px] text-slate-400">ব্যর্থ</div>
+                <div className="text-[10px] text-slate-400">{dict.orders.failed}</div>
               </div>
             </div>
 

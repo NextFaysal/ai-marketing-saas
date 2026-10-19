@@ -1,5 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo } from "react";
+import { fmtMoney } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import Link from "next/link";
@@ -38,55 +40,62 @@ interface ForecastResponse {
   items: InventoryItem[];
 }
 
-const STATUS_CONFIG: Record<
-  string,
-  { label: string; badgeCls: string; icon: string; desc: string }
-> = {
+// ML5 i18n: label/desc hold dictionary keys (dict.inventory.*),
+// resolved at render so the active locale drives the copy.
+const STATUS_CONFIG = {
   out_of_stock: {
-    label: "স্টক শেষ",
+    label: "outOfStock",
     badgeCls: "bg-red-100 text-red-800 border-red-300",
     icon: "🚨",
-    desc: "০ পিস স্টক - অবিলম্বে নতুন লট প্রস্তুত করুন!",
+    desc: "text6g02d1",
   },
   critical: {
-    label: "জরুরি স্টক অ্যালার্ট",
+    label: "urgentStockAlert",
     badgeCls: "bg-amber-100 text-amber-800 border-amber-300",
     icon: "⚠️",
-    desc: "৩-৪ দিনের মধ্যে শেষ হবে - রিরর্ডার প্রয়োজন",
+    desc: "willRunOutWithin3",
   },
   low: {
-    label: "লো স্টক",
+    label: "lowStock",
     badgeCls: "bg-yellow-100 text-yellow-800 border-yellow-300",
     icon: "🟡",
-    desc: "৫-১০ দিনের স্টক বাকি আছে",
+    desc: "text1893n18",
   },
   healthy: {
-    label: "পর্যাপ্ত স্টক",
+    label: "sufficientStock",
     badgeCls: "bg-emerald-100 text-emerald-800 border-emerald-300",
     icon: "✅",
-    desc: "পর্যাপ্ত ইনভেন্টরি মজুত রয়েছে",
+    desc: "sufficientInventoryAvailable",
   },
   dead_stock: {
-    label: "ধীর বিক্রি / ডেড স্টক",
+    label: "slowSellingDeadStock",
     badgeCls: "bg-purple-100 text-purple-800 border-purple-300",
     icon: "💤",
-    desc: "বিক্রি অত্যন্ত কম - ডিসকাউন্ট দিয়ে স্টক ক্লিয়ার করুন",
+    desc: "salesAreVeryLowClear",
   },
   untracked: {
-    label: "আনট্র্যাকড",
+    label: "untracked",
     badgeCls: "bg-slate-100 text-slate-700 border-slate-300",
     icon: "❓",
-    desc: "স্টক ট্র্যাকিং চালু নেই",
+    desc: "stockTrackingIsOff",
   },
-};
+} as const satisfies Record<
+  string,
+  { label: string; badgeCls: string; icon: string; desc: string }
+>;
 
-const formatBDT = (minorStr?: string | number | null) => {
-  if (minorStr == null) return "৳০";
-  const num = Number(minorStr) / 100;
-  return `৳${num.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+const formatBDT = (
+  locale: "bn" | "en",
+  minorStr?: string | number | null,
+) => {
+  if (minorStr == null) return fmtMoney(locale, 0);
+  return fmtMoney(locale, Number(minorStr) / 100, {
+    maximumFractionDigits: 0,
+  });
 };
 
 export default function InventoryForecastingPage() {
+  const { dict, t, locale } = useLocale();
   const [data, setData] = useState<ForecastResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -122,7 +131,7 @@ export default function InventoryForecastingPage() {
       setData(res);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ইনভেন্টরি পূর্বাভাস লোড করতে ব্যর্থ");
+      setError(e instanceof Error ? e.message : dict.inventory.failedToLoadInventoryForecast);
     } finally {
       setLoading(false);
     }
@@ -192,13 +201,13 @@ export default function InventoryForecastingPage() {
           reason: adjReason,
         }),
       });
-      setAdjNotice("স্টক সফলভাবে আপডেট হয়েছে!");
+      setAdjNotice(dict.inventory.stockUpdatedSuccessfully);
       setTimeout(() => {
         setAdjModalItem(null);
         loadForecast();
       }, 1000);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "স্টক আপডেট ব্যর্থ হয়েছে");
+      alert(e instanceof Error ? e.message : dict.inventory.stockUpdateFailed);
     } finally {
       setAdjBusy(false);
     }
@@ -213,11 +222,9 @@ export default function InventoryForecastingPage() {
             📦 Smart Stock & Reorder Copilot
           </span>
           <h1 className="mt-1 text-2xl font-black text-slate-900">
-            ইনভেন্টরি ফোরকাস্টিং ও সাপ্লায়ার রিরর্ডার হাব
-          </h1>
+            {dict.inventory.inventoryForecastingSupplierReorderHub}</h1>
           <p className="text-xs text-slate-500">
-            রিয়েল-টাইম অর্ডার ভেলোসিটি ট্র্যাক করে স্টক শেষ হওয়ার পূর্বাভাস এবং ১-ক্লিকে সাপ্লায়ারকে WhatsApp PO পাঠান।
-          </p>
+            {dict.inventory.trackRealTimeOrderVelocity}</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -225,20 +232,18 @@ export default function InventoryForecastingPage() {
             href="/dashboard/products"
             className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition"
           >
-            🛍️ প্রোডাক্ট ক্যাটালগ
-          </Link>
+            {dict.inventory.productCatalog}</Link>
           <button
             onClick={loadForecast}
             className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 transition"
           >
-            🔄 রিফ্রেশ ডাটা
-          </button>
+            {dict.inventory.refreshData}</button>
         </div>
       </div>
 
       {error ? (
         <div className="card border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          <p className="font-bold">ত্রুটি:</p>
+          <p className="font-bold">{dict.inventory.error}</p>
           <p>{error}</p>
         </div>
       ) : null}
@@ -246,45 +251,40 @@ export default function InventoryForecastingPage() {
       {/* KPI Overview Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <div className="card border-l-4 border-l-red-500 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">🚨 স্টক শেষ (Out of Stock)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{dict.inventory.outOfStock2}</p>
           <p className="mt-1 text-2xl font-black text-red-600">
-            {data?.summary.outOfStockCount ?? 0} টি প্রোডাক্ট
-          </p>
-          <p className="mt-1 text-[11px] text-red-500 font-medium">অর্ডার নষ্ট হওয়ার ঝুঁকি!</p>
+            {data?.summary.outOfStockCount ?? 0} {dict.inventory.products}</p>
+          <p className="mt-1 text-[11px] text-red-500 font-medium">{dict.inventory.riskOfLosingOrders}</p>
         </div>
 
         <div className="card border-l-4 border-l-amber-500 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">⚠️ জরুরি রিরর্ডার (Critical)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{dict.inventory.urgentReorderCritical}</p>
           <p className="mt-1 text-2xl font-black text-amber-600">
-            {data?.summary.criticalCount ?? 0} টি প্রোডাক্ট
-          </p>
-          <p className="mt-1 text-[11px] text-amber-600">৩-৪ দিনের মধ্যে শেষ হবে</p>
+            {data?.summary.criticalCount ?? 0} {dict.inventory.products}</p>
+          <p className="mt-1 text-[11px] text-amber-600">{dict.inventory.willRunOutWithin32}</p>
         </div>
 
         <div className="card border-l-4 border-l-yellow-500 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">🟡 লো স্টক (Low Stock)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{dict.inventory.lowStock2}</p>
           <p className="mt-1 text-2xl font-black text-yellow-600">
-            {data?.summary.lowStockCount ?? 0} টি প্রোডাক্ট
-          </p>
-          <p className="mt-1 text-[11px] text-slate-500">৫-১০ দিনের কভারেজ বাকি</p>
+            {data?.summary.lowStockCount ?? 0} {dict.inventory.products}</p>
+          <p className="mt-1 text-[11px] text-slate-500">{dict.inventory.text11rgx86}</p>
         </div>
 
         <div className="card border-l-4 border-l-emerald-500 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">✅ পর্যাপ্ত স্টক (Healthy)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{dict.inventory.sufficientStockHealthy}</p>
           <p className="mt-1 text-2xl font-black text-emerald-700">
-            {data?.summary.healthyCount ?? 0} টি প্রোডাক্ট
-          </p>
-          <p className="mt-1 text-[11px] text-emerald-600 font-medium">পর্যাপ্ত সেলস বাফার মজুদ</p>
+            {data?.summary.healthyCount ?? 0} {dict.inventory.products}</p>
+          <p className="mt-1 text-[11px] text-emerald-600 font-medium">{dict.inventory.sufficientSalesBufferInStock}</p>
         </div>
 
         <div className="card border-l-4 border-l-indigo-600 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">💰 মোট স্টক ভ্যালু (LTV)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{dict.inventory.totalStockValueLTV}</p>
           <p className="mt-1 text-xl font-black text-indigo-900">
-            {formatBDT(data?.summary.totalStockValueMinor)}
+            {formatBDT(locale, data?.summary.totalStockValueMinor)}
           </p>
           <p className="mt-1 text-[11px] text-slate-500">
-            মোট {data?.summary.totalProducts ?? 0} টি আইটেমের মজুদ
-          </p>
+            {dict.inventory.total}{data?.summary.totalProducts ?? 0} {dict.inventory.itemsInStock}</p>
         </div>
       </div>
 
@@ -294,40 +294,38 @@ export default function InventoryForecastingPage() {
           <div className="flex flex-wrap items-center gap-3">
             <div>
               <label className="block text-[11px] font-bold text-slate-500 uppercase">
-                বিক্রি অ্যানালাইসিস সময়সীমা:
-              </label>
+                {dict.inventory.salesAnalysisPeriod}</label>
               <select
                 className="input mt-1 py-1 text-xs"
                 value={lookbackDays}
                 onChange={(e) => setLookbackDays(Number(e.target.value))}
               >
-                <option value={7}>গত ৭ দিন (দ্রুত ট্রেন্ড)</option>
-                <option value={14}>গত ১৪ দিন (স্ট্যান্ডার্ড)</option>
-                <option value={30}>গত ৩০ দিন (মাসিক গড়)</option>
+                <option value={7}>{dict.inventory.last7DaysFastTrend}</option>
+                <option value={14}>{dict.inventory.last14DaysStandard}</option>
+                <option value={30}>{dict.inventory.last30DaysMonthlyAverage}</option>
               </select>
             </div>
 
             <div>
               <label className="block text-[11px] font-bold text-slate-500 uppercase">
-                লক্ষ্যমাত্রা স্টক কভারেজ:
-              </label>
+                {dict.inventory.targetStockCoverage}</label>
               <select
                 className="input mt-1 py-1 text-xs"
                 value={targetCoverDays}
                 onChange={(e) => setTargetCoverDays(Number(e.target.value))}
               >
-                <option value={14}>১৪ দিনের নিরাপত্তা মজুদ</option>
-                <option value={21}>২১ দিনের নিরাপত্তা মজুদ (সুপারিশকৃত)</option>
-                <option value={30}>৩০ দিনের নিরাপত্তা মজুদ</option>
+                <option value={14}>{dict.inventory.text6239kg}</option>
+                <option value={21}>{dict.inventory.textcq9sw1}</option>
+                <option value={30}>{dict.inventory.text13zovna}</option>
               </select>
             </div>
           </div>
 
           <div className="w-full md:w-64">
-            <label className="block text-[11px] font-bold text-slate-500 uppercase">পণ্য খুঁজুন:</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase">{dict.inventory.searchProducts}</label>
             <input
               type="text"
-              placeholder="নাম, SKU বা ক্যাটাগরি..."
+              placeholder={dict.inventory.nameSKUOrCategory}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input mt-1 w-full py-1 text-xs"
@@ -343,7 +341,7 @@ export default function InventoryForecastingPage() {
               statusFilter === "all" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
           >
-            সকল প্রোডাক্ট ({data?.items.length ?? 0})
+            {dict.inventory.allProducts}{data?.items.length ?? 0})
           </button>
           <button
             onClick={() => setStatusFilter("out_of_stock")}
@@ -353,7 +351,7 @@ export default function InventoryForecastingPage() {
                 : "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
             }`}
           >
-            🚨 স্টক শেষ ({data?.summary.outOfStockCount ?? 0})
+            {dict.inventory.outOfStock3}{data?.summary.outOfStockCount ?? 0})
           </button>
           <button
             onClick={() => setStatusFilter("critical")}
@@ -363,7 +361,7 @@ export default function InventoryForecastingPage() {
                 : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
             }`}
           >
-            ⚠️ জরুরি অ্যালার্ট ({data?.summary.criticalCount ?? 0})
+            {dict.inventory.urgentAlerts}{data?.summary.criticalCount ?? 0})
           </button>
           <button
             onClick={() => setStatusFilter("low")}
@@ -373,7 +371,7 @@ export default function InventoryForecastingPage() {
                 : "bg-yellow-50 text-yellow-700 border border-yellow-200 hover:bg-yellow-100"
             }`}
           >
-            🟡 লো স্টক ({data?.summary.lowStockCount ?? 0})
+            {dict.inventory.lowStock3}{data?.summary.lowStockCount ?? 0})
           </button>
           <button
             onClick={() => setStatusFilter("dead_stock")}
@@ -383,7 +381,7 @@ export default function InventoryForecastingPage() {
                 : "bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100"
             }`}
           >
-            💤 ধীর বিক্রি ({data?.summary.deadStockCount ?? 0})
+            {dict.inventory.slowSelling}{data?.summary.deadStockCount ?? 0})
           </button>
           <button
             onClick={() => setStatusFilter("healthy")}
@@ -393,7 +391,7 @@ export default function InventoryForecastingPage() {
                 : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
             }`}
           >
-            ✅ পর্যাপ্ত ({data?.summary.healthyCount ?? 0})
+            {dict.inventory.sufficient}{data?.summary.healthyCount ?? 0})
           </button>
         </div>
 
@@ -401,29 +399,27 @@ export default function InventoryForecastingPage() {
         {loading ? (
           <div className="p-8 text-center text-slate-500">
             <div className="mx-auto mb-2 h-7 w-7 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-            ইনভেন্টরি সেলস ভেলোসিটি ও ফোরকাস্ট গণনা করা হচ্ছে...
-          </div>
+            {dict.inventory.calculatingInventorySalesVelocityForecast}</div>
         ) : filteredItems.length === 0 ? (
           <div className="p-8 text-center text-slate-400 border border-dashed rounded-xl">
-            কোনো প্রোডাক্ট পাওয়া যায়নি।
-          </div>
+            {dict.inventory.noProductsFound}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="border-b bg-slate-50 font-bold text-slate-600 uppercase">
                 <tr>
-                  <th className="py-3 px-3">পণ্য ও SKU</th>
-                  <th className="py-3 px-3">বর্তমান স্টক</th>
-                  <th className="py-3 px-3">বিক্রি ভেলোসিটি ({lookbackDays} দিন)</th>
-                  <th className="py-3 px-3">স্টক শেষ হতে বাকি</th>
-                  <th className="py-3 px-3">স্টক স্ট্যাটাস</th>
-                  <th className="py-3 px-3">সুপারিশকৃত রিরর্ডার</th>
-                  <th className="py-3 px-3 text-right">১-ক্লিক অ্যাকশন</th>
+                  <th className="py-3 px-3">{dict.inventory.productSKU}</th>
+                  <th className="py-3 px-3">{dict.inventory.currentStock}</th>
+                  <th className="py-3 px-3">{dict.inventory.salesVelocity}{lookbackDays} {dict.inventory.days}</th>
+                  <th className="py-3 px-3">{dict.inventory.timeUntilStockRunsOut}</th>
+                  <th className="py-3 px-3">{dict.inventory.stockStatus}</th>
+                  <th className="py-3 px-3">{dict.inventory.recommendedReorder}</th>
+                  <th className="py-3 px-3 text-right">{dict.inventory.textk30llm}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredItems.map((item) => {
-                  const cfg = STATUS_CONFIG[item.status] || STATUS_CONFIG.untracked;
+                  const cfg = STATUS_CONFIG[item.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.untracked;
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/70 transition">
                       <td className="py-3 px-3">
@@ -442,7 +438,7 @@ export default function InventoryForecastingPage() {
                           <div>
                             <div className="font-bold text-slate-900">{item.name}</div>
                             <div className="text-[11px] text-slate-400 font-mono">
-                              {item.sku ? `SKU: ${item.sku}` : "SKU নেই"} · {formatBDT(item.priceMinor)}
+                              {item.sku ? `SKU: ${item.sku}` : dict.inventory.noSKU} · {formatBDT(locale, item.priceMinor)}
                             </div>
                           </div>
                         </div>
@@ -459,11 +455,11 @@ export default function InventoryForecastingPage() {
                                 : "text-slate-900"
                             }`}
                           >
-                            {item.stockQuantity !== null ? `${item.stockQuantity} পিস` : "আনট্র্যাকড"}
+                            {item.stockQuantity !== null ? t("inventory.pcs2", { stockQuantity: item.stockQuantity }) : dict.inventory.untracked}
                           </span>
                           <button
                             onClick={() => openAdjModal(item)}
-                            title="স্টক আপডেট করুন"
+                            title={dict.inventory.updateStock}
                             className="text-[10px] text-indigo-600 hover:underline"
                           >
                             ✏️
@@ -473,17 +469,15 @@ export default function InventoryForecastingPage() {
 
                       <td className="py-3 px-3">
                         <div className="font-bold text-slate-800">
-                          {item.dailyVelocity} পিস / দিন
-                        </div>
+                          {item.dailyVelocity} {dict.inventory.pcsDay}</div>
                         <div className="text-[10px] text-slate-400">
-                          মোট বিক্রি: {item.unitsSoldInWindow} পিস
-                        </div>
+                          {dict.inventory.totalSold}{item.unitsSoldInWindow} {dict.inventory.pcs}</div>
                       </td>
 
                       <td className="py-3 px-3">
                         {item.runoutDays !== null ? (
                           item.runoutDays >= 999 ? (
-                            <span className="text-slate-400">বিক্রি নেই</span>
+                            <span className="text-slate-400">{dict.inventory.noSales}</span>
                           ) : (
                             <div>
                               <span
@@ -495,10 +489,9 @@ export default function InventoryForecastingPage() {
                                     : "text-slate-700"
                                 }`}
                               >
-                                {item.runoutDays} দিন বাকি
-                              </span>
+                                {item.runoutDays} {dict.inventory.daysLeft}</span>
                               <div className="text-[10px] text-slate-400">
-                                {item.runoutDays <= 4 ? "🚨 দ্রুত ফুরাচ্ছে" : "স্বাভাবিক"}
+                                {item.runoutDays <= 4 ? dict.inventory.runningOutFast : dict.inventory.normal}
                               </div>
                             </div>
                           )
@@ -512,17 +505,16 @@ export default function InventoryForecastingPage() {
                           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${cfg.badgeCls}`}
                         >
                           <span>{cfg.icon}</span>
-                          <span>{cfg.label}</span>
+                          <span>{dict.inventory[cfg.label]}</span>
                         </span>
                       </td>
 
                       <td className="py-3 px-3">
                         {item.suggestedReorder > 0 ? (
                           <span className="font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg">
-                            +{item.suggestedReorder} পিস
-                          </span>
+                            +{item.suggestedReorder} {dict.inventory.pcs}</span>
                         ) : (
-                          <span className="text-slate-400 text-[11px]">প্রয়োজন নেই</span>
+                          <span className="text-slate-400 text-[11px]">{dict.inventory.notNeeded}</span>
                         )}
                       </td>
 
@@ -552,9 +544,8 @@ export default function InventoryForecastingPage() {
             <div className="flex items-start justify-between border-b pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  💬 সাপ্লায়ারকে WhatsApp পারচেজ অর্ডার (PO) পাঠান
-                </h3>
-                <p className="text-xs text-slate-500">পণ্য: {poModalItem.name}</p>
+                  {dict.inventory.sendAWhatsAppPurchaseOrder}</h3>
+                <p className="text-xs text-slate-500">{dict.inventory.product}{poModalItem.name}</p>
               </div>
               <button
                 onClick={() => setPoModalItem(null)}
@@ -566,24 +557,21 @@ export default function InventoryForecastingPage() {
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                সাপ্লায়ারের ফোন নম্বর (ঐচ্ছিক):
-              </label>
+                {dict.inventory.supplierPhoneNumberOptional}</label>
               <input
                 type="text"
-                placeholder="017... বা 018..."
+                placeholder={dict.inventory.text11oib7h}
                 value={supplierPhone}
                 onChange={(e) => setSupplierPhone(e.target.value)}
                 className="input w-full text-xs"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                খালি রাখলে WhatsApp ওপেন হয়ে যেকোনো সাপ্লায়ার চ্যাটে ফরোয়ার্ড করা যাবে।
-              </p>
+                {dict.inventory.leaveItEmptyAndWhatsApp}</p>
             </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                রিরর্ডার সংখ্যা (পিস):
-              </label>
+                {dict.inventory.reorderQuantityPcs}</label>
               <input
                 type="number"
                 min={1}
@@ -594,7 +582,7 @@ export default function InventoryForecastingPage() {
                   setCustomPoMessage(
                     poModalItem.supplierMessage.replace(
                       /\d+ পিস প্রস্তুত করে/g,
-                      `${qty} পিস প্রস্তুত করে`
+                      t("inventory.preparePcsAnd", { qty: qty })
                     )
                   );
                 }}
@@ -604,8 +592,7 @@ export default function InventoryForecastingPage() {
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                পারচেজ অর্ডার বার্তা প্রিভিউ:
-              </label>
+                {dict.inventory.purchaseOrderMessagePreview}</label>
               <textarea
                 rows={5}
                 value={customPoMessage}
@@ -620,15 +607,13 @@ export default function InventoryForecastingPage() {
                 onClick={() => setPoModalItem(null)}
                 className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                বাতিল
-              </button>
+                {dict.common.cancel}</button>
               <button
                 type="button"
                 onClick={sendSupplierWhatsApp}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow hover:bg-emerald-700 transition"
               >
-                <span>💬</span> WhatsApp এ পাঠান
-              </button>
+                <span>💬</span> {dict.inventory.sendOnWhatsApp}</button>
             </div>
           </div>
         </div>
@@ -640,7 +625,7 @@ export default function InventoryForecastingPage() {
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4 animate-scale-up">
             <div className="flex items-start justify-between border-b pb-3">
               <div>
-                <h3 className="text-base font-bold text-slate-900">✏️ স্টক অ্যাডজাস্টমেন্ট</h3>
+                <h3 className="text-base font-bold text-slate-900">{dict.inventory.stockAdjustment}</h3>
                 <p className="text-xs text-slate-500">{adjModalItem.name}</p>
               </div>
               <button
@@ -658,7 +643,7 @@ export default function InventoryForecastingPage() {
             )}
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">নতুন স্টক সংখ্যা:</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">{dict.inventory.newStockQuantity}</label>
               <input
                 type="number"
                 min={0}
@@ -669,16 +654,16 @@ export default function InventoryForecastingPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">কারণ:</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">{dict.inventory.reason}</label>
               <select
                 className="input w-full text-xs"
                 value={adjReason}
                 onChange={(e) => setAdjReason(e.target.value)}
               >
-                <option value="manual_count">শারীরিক গণনা / গুদাম যাচাই (Manual Count)</option>
-                <option value="restock">নতুন চালান রিস্টক (Restock)</option>
-                <option value="damage">ক্ষতিগ্রস্ত বা নষ্ট পণ্য (Damaged)</option>
-                <option value="return">কাস্টমার রিটার্ন ইনটেক (Customer Return)</option>
+                <option value="manual_count">{dict.inventory.physicalCountWarehouseCheckManual}</option>
+                <option value="restock">{dict.inventory.newShipmentRestockRestock}</option>
+                <option value="damage">{dict.inventory.damagedOrSpoiledProductsDamaged}</option>
+                <option value="return">{dict.inventory.customerReturnIntakeCustomerReturn}</option>
               </select>
             </div>
 
@@ -688,15 +673,14 @@ export default function InventoryForecastingPage() {
                 onClick={() => setAdjModalItem(null)}
                 className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                বাতিল
-              </button>
+                {dict.common.cancel}</button>
               <button
                 type="button"
                 disabled={adjBusy}
                 onClick={saveStockAdjustment}
                 className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white shadow hover:bg-indigo-700 transition"
               >
-                {adjBusy ? "সংরক্ষণ হচ্ছে..." : "স্টক আপডেট করুন"}
+                {adjBusy ? dict.inventory.saving : dict.inventory.updateStock}
               </button>
             </div>
           </div>

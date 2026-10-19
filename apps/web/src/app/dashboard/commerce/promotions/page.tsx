@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDateTime, fmtMoney, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -49,14 +51,14 @@ interface PreviewResult {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  bogo: "BOGO (কিনলে ফ্রি/ছাড়)",
-  tiered: "Tiered (পরিমাণ/মূল্যভিত্তিক)",
-  flash: "Flash Sale (সময়সীমাবদ্ধ)",
-  gift: "উপহার (Gift)",
+  bogo: "bOGOBuyGetFreeDiscount",
+  tiered: "tieredQuantityValueBased",
+  flash: "flashSaleTimeLimited",
+  gift: "gift2",
 };
 
-const money = (minor?: string | null) =>
-  minor == null ? "—" : `৳${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+const money = (minor?: string | null, locale: "bn" | "en" = "bn") =>
+  minor == null ? "—" : fmtMoney(locale, Number(minor) / 100, { maximumFractionDigits: 2 });
 
 const toMinorString = (taka: string): string => String(Math.round(parseFloat(taka || "0") * 100));
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -68,7 +70,8 @@ function ChipPicker({ options, selected, onToggle }: {
   selected: string[];
   onToggle: (id: string) => void;
 }) {
-  if (options.length === 0) return <span className="text-xs text-slate-500">কোনো অপশন নেই</span>;
+  const { dict, t, locale } = useLocale();
+  if (options.length === 0) return <span className="text-xs text-slate-500">{dict.commerce.noOptions}</span>;
   return (
     <div className="flex flex-wrap gap-2">
       {options.map((o) => {
@@ -85,6 +88,7 @@ function ChipPicker({ options, selected, onToggle }: {
 }
 
 export default function PromotionsPage() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [promotions, setPromotions] = useState<Promotion[]>([]);
@@ -157,7 +161,7 @@ export default function PromotionsPage() {
       setProducts(p.items ?? []);
       setCategories(c ?? []);
       setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.loadingFailed); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -254,11 +258,11 @@ export default function PromotionsPage() {
   async function save() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (type === "flash" && (!startsAt || !endsAt)) {
-      setError("Flash Sale-এর জন্য শুরু ও শেষের সময়সীমা আবশ্যক।");
+      setError(dict.commerce.flashSalesRequireAStart);
       return;
     }
     if (type === "gift" && !giftProductId) {
-      setError("উপহার প্রমোশনের জন্য উপহার পণ্য বেছে নিন।");
+      setError(dict.commerce.selectAGiftProductFor);
       return;
     }
     setBusy("save"); setError("");
@@ -279,14 +283,14 @@ export default function PromotionsPage() {
     try {
       if (editingId) {
         await apiFetch<{ promotion: Promotion }>(`/organizations/${orgId}/commerce/promotions/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "প্রমোশন আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.promotionUpdated, tone: "success" });
       } else {
         await apiFetch<{ promotion: Promotion }>(`/organizations/${orgId}/commerce/promotions`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "প্রমোশন তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.promotionCreated, tone: "success" });
       }
       resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed3); }
     finally { setBusy(""); }
   }
 
@@ -298,19 +302,19 @@ export default function PromotionsPage() {
         method: "POST", body: JSON.stringify({ active: !p.active }),
       });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.failed); }
     finally { setBusy(""); }
   }
 
   async function remove(p: Promotion) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${p.name}" প্রমোশনটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    if (!(await confirm({ title: t("commerce.deleteThePromotion", { name: p.name }), danger: true, confirmLabel: dict.commerce.delete2 }))) return;
     setBusy(`del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/promotions/${p.id}`, { method: "DELETE" });
       if (editingId === p.id) resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -319,7 +323,7 @@ export default function PromotionsPage() {
     const items = simRows
       .filter((r) => r.productId)
       .map((r) => ({ productId: r.productId, quantity: Math.max(1, parseInt(r.qty || "1", 10) || 1) }));
-    if (items.length === 0) { setPreviewError("সিমুলেটরে অন্তত একটি পণ্য বেছে নিন।"); setPreview(null); return; }
+    if (items.length === 0) { setPreviewError(dict.commerce.selectAtLeastOneProduct2); setPreview(null); return; }
     setBusy("preview"); setPreviewError(""); setPreview(null);
     try {
       const out = await apiFetch<PreviewResult>(`/organizations/${orgId}/commerce/promotions/preview`, {
@@ -332,7 +336,7 @@ export default function PromotionsPage() {
         }),
       });
       setPreview(out);
-    } catch (e) { setPreviewError(e instanceof Error ? e.message : "হিসাব ব্যর্থ"); }
+    } catch (e) { setPreviewError(e instanceof Error ? e.message : dict.commerce.calculationFailed); }
     finally { setBusy(""); }
   }
 
@@ -345,7 +349,7 @@ export default function PromotionsPage() {
       if (reportTo) qs.set("to", reportTo);
       const out = await apiFetch<PromotionsReport>(`/organizations/${orgId}/commerce/promotions/report?${qs.toString()}`);
       setReport(out);
-    } catch (e) { setReportError(e instanceof Error ? e.message : "রিপোর্ট ব্যর্থ"); }
+    } catch (e) { setReportError(e instanceof Error ? e.message : dict.commerce.reportFailed); }
     finally { setBusy(""); }
   }
 
@@ -354,13 +358,13 @@ export default function PromotionsPage() {
   // ED15/ED16 (EB6): promotion row actions + status shared verbatim
   // by the desktop table and the ResponsiveTable mobile card.
   const renderPromotionStatus = (p: Promotion) => (
-    p.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">সক্রিয়</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">বন্ধ</span>
+    p.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">{dict.commerce.active}</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{dict.commerce.closed}</span>
   );
   const renderPromotionActions = (p: Promotion) => (
     <div className="flex gap-2">
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(p)}>সম্পাদনা</button>
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(p)}>{p.active ? "বন্ধ করুন" : "চালু করুন"}</button>
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(p)}>মুছুন</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(p)}>{dict.commerce.edit}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(p)}>{p.active ? dict.commerce.close : dict.commerce.enable}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(p)}>{dict.commerce.delete}</button>
     </div>
   );
 
@@ -368,101 +372,87 @@ export default function PromotionsPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">Promotions — প্রমোশন</h1>
+          <h1 className="page-title">{dict.commerce.promotions2}</h1>
           <p className="text-sm text-slate-500">
-            BOGO, Tiered ও Flash Sale অফার — চেকআউটে সার্ভার নিজে হিসাব করে প্রয়োগ করে।
-            রেফারেল ছাড়ের হার Storefront সেটিংসে (&ldquo;রেফারেল ছাড়&rdquo; অংশে)।
-          </p>
+            {dict.commerce.bOGOTieredFlashSaleOffers}</p>
         </div>
         <Link href="/dashboard/commerce" className="btn-primary">← Commerce Hub</Link>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
       <div className="card p-5 space-y-4">
-        <div className="font-semibold">{editingId ? "প্রমোশন সম্পাদনা" : "নতুন প্রমোশন"}</div>
+        <div className="font-semibold">{editingId ? dict.commerce.editPromotion : dict.commerce.newPromotion}</div>
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="block text-sm">নাম
-            <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="যেমন: ২টি কিনলে ১টি ফ্রি" />
+          <label className="block text-sm">{dict.commerce.name}<input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder={dict.commerce.eGBuy2Get} />
           </label>
-          <label className="block text-sm">ধরন
-            <select className="input mt-1" value={type} disabled={!!editingId} onChange={(e) => setType(e.target.value)}>
-              {Object.entries(TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          <label className="block text-sm">{dict.commerce.type}<select className="input mt-1" value={type} disabled={!!editingId} onChange={(e) => setType(e.target.value)}>
+              {Object.entries(TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{dict.commerce[l as keyof typeof dict.commerce]}</option>)}
             </select>
           </label>
-          <label className="block text-sm">অগ্রাধিকার (priority — বড় = আগে)
-            <input className="input mt-1" type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.priorityBiggerEarlier}<input className="input mt-1" type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
           </label>
-          <label className="block text-sm">শুরু {type === "flash" ? "(আবশ্যক)" : "(খালি = এখনই)"}
+          <label className="block text-sm">{dict.commerce.start}{type === "flash" ? dict.commerce.required : dict.commerce.emptyNow}
             <input className="input mt-1" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
           </label>
-          <label className="block text-sm">শেষ {type === "flash" ? "(আবশ্যক)" : "(খালি = অসীম)"}
+          <label className="block text-sm">{dict.commerce.end}{type === "flash" ? dict.commerce.required : dict.commerce.emptyUnlimited}
             <input className="input mt-1" type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
           </label>
           <label className="flex items-end gap-2 pb-2 text-sm">
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> সক্রিয়
-          </label>
-          <label className="block text-sm">কমপক্ষে আগের অর্ডার (খালি = শর্ত নেই)
-            <input className="input mt-1" type="number" min="0" value={minPriorOrders} onChange={(e) => setMinPriorOrders(e.target.value)} placeholder="যেমন: ১" />
-            <span className="mt-1 block text-xs font-normal text-slate-500">সব ধরনের প্রমোশনেই প্রযোজ্য — ক্রেতার আগের অর্ডার অন্তত এই সংখ্যক হলেই প্রমোশনটি কাজ করবে।</span>
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> {dict.commerce.active}</label>
+          <label className="block text-sm">{dict.commerce.minimumPreviousOrdersEmptyNo}<input className="input mt-1" type="number" min="0" value={minPriorOrders} onChange={(e) => setMinPriorOrders(e.target.value)} placeholder={dict.commerce.eG1} />
+            <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.appliesToAllPromotionTypes}</span>
           </label>
         </div>
 
         {type === "bogo" ? (
           <div className="space-y-3 border-t pt-4">
-            <div className="font-semibold">BOGO সেটিং</div>
+            <div className="font-semibold">{dict.commerce.bOGOSettings}</div>
             <div className="grid gap-3 md:grid-cols-4">
-              <label className="block text-sm">কিনবেন — ভিত্তি
-                <select className="input mt-1" value={buyScope} onChange={(e) => { setBuyScope(e.target.value as "product" | "category"); setBuyId(""); }}>
-                  <option value="product">পণ্য</option>
-                  <option value="category">ক্যাটাগরি</option>
+              <label className="block text-sm">{dict.commerce.buyBasis}<select className="input mt-1" value={buyScope} onChange={(e) => { setBuyScope(e.target.value as "product" | "category"); setBuyId(""); }}>
+                  <option value="product">{dict.commerce.product}</option>
+                  <option value="category">{dict.commerce.category}</option>
                 </select>
               </label>
-              <label className="block text-sm">{buyScope === "product" ? "পণ্য বেছে নিন" : "ক্যাটাগরি বেছে নিন"}
+              <label className="block text-sm">{buyScope === "product" ? dict.commerce.selectAProduct : dict.commerce.selectACategory}
                 <select className="input mt-1" value={buyId} onChange={(e) => setBuyId(e.target.value)}>
-                  <option value="">— বেছে নিন —</option>
+                  <option value="">{dict.commerce.select}</option>
                   {(buyScope === "product" ? products : categories).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
               </label>
-              <label className="block text-sm">কয়টি কিনলে
-                <input className="input mt-1" type="number" min="1" value={buyQty} onChange={(e) => setBuyQty(e.target.value)} />
+              <label className="block text-sm">{dict.commerce.howManyToBuy}<input className="input mt-1" type="number" min="1" value={buyQty} onChange={(e) => setBuyQty(e.target.value)} />
               </label>
-              <label className="block text-sm">পাবেন — ছাড়ের হার (%)
-                <input className="input mt-1" type="number" min="0" max="100" value={getDiscountPercent} onChange={(e) => setGetDiscountPercent(e.target.value)} />
+              <label className="block text-sm">{dict.commerce.getDiscountRate}<input className="input mt-1" type="number" min="0" max="100" value={getDiscountPercent} onChange={(e) => setGetDiscountPercent(e.target.value)} />
               </label>
-              <label className="block text-sm">পাবেন — ভিত্তি
-                <select className="input mt-1" value={getScope} onChange={(e) => { setGetScope(e.target.value as "product" | "category"); setGetId(""); }}>
-                  <option value="product">পণ্য</option>
-                  <option value="category">ক্যাটাগরি</option>
+              <label className="block text-sm">{dict.commerce.getBasis}<select className="input mt-1" value={getScope} onChange={(e) => { setGetScope(e.target.value as "product" | "category"); setGetId(""); }}>
+                  <option value="product">{dict.commerce.product}</option>
+                  <option value="category">{dict.commerce.category}</option>
                 </select>
               </label>
-              <label className="block text-sm">{getScope === "product" ? "পণ্য বেছে নিন" : "ক্যাটাগরি বেছে নিন"}
+              <label className="block text-sm">{getScope === "product" ? dict.commerce.selectAProduct : dict.commerce.selectACategory}
                 <select className="input mt-1" value={getId} onChange={(e) => setGetId(e.target.value)}>
-                  <option value="">— বেছে নিন —</option>
+                  <option value="">{dict.commerce.select}</option>
                   {(getScope === "product" ? products : categories).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
               </label>
-              <label className="block text-sm">কয়টি পাবেন
-                <input className="input mt-1" type="number" min="1" value={getQty} onChange={(e) => setGetQty(e.target.value)} />
+              <label className="block text-sm">{dict.commerce.howManyYouGet}<input className="input mt-1" type="number" min="1" value={getQty} onChange={(e) => setGetQty(e.target.value)} />
               </label>
             </div>
-            <p className="text-xs text-slate-500">ছাড়ের হার ১০০% = সম্পূর্ণ ফ্রি।</p>
+            <p className="text-xs text-slate-500">{dict.commerce.a100DiscountRateCompletely}</p>
           </div>
         ) : null}
 
         {type === "tiered" ? (
           <div className="space-y-3 border-t pt-4">
-            <div className="font-semibold">Tiered সেটিং</div>
+            <div className="font-semibold">{dict.commerce.tieredSettings}</div>
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="block text-sm">ভিত্তি (scope)
-                <select className="input mt-1" value={tierScope} onChange={(e) => setTierScope(e.target.value as "subtotal" | "category")}>
-                  <option value="subtotal">পুরো কার্টের সাবটোটাল</option>
-                  <option value="category">নির্দিষ্ট ক্যাটাগরি</option>
+              <label className="block text-sm">{dict.commerce.basisScope}<select className="input mt-1" value={tierScope} onChange={(e) => setTierScope(e.target.value as "subtotal" | "category")}>
+                  <option value="subtotal">{dict.commerce.wholeCartSubtotal}</option>
+                  <option value="category">{dict.commerce.specificCategory}</option>
                 </select>
               </label>
               {tierScope === "category" ? (
-                <label className="block text-sm">ক্যাটাগরি বেছে নিন
-                  <select className="input mt-1" value={tierCategoryId} onChange={(e) => setTierCategoryId(e.target.value)}>
-                    <option value="">— বেছে নিন —</option>
+                <label className="block text-sm">{dict.commerce.selectACategory}<select className="input mt-1" value={tierCategoryId} onChange={(e) => setTierCategoryId(e.target.value)}>
+                    <option value="">{dict.commerce.select}</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </label>
@@ -471,52 +461,48 @@ export default function PromotionsPage() {
             <div className="space-y-2">
               {tiers.map((t, i) => (
                 <div key={i} className="flex flex-wrap items-end gap-2">
-                  <label className="block text-sm">শর্তের ধরন
-                    <select className="input mt-1" value={t.thresholdKind} onChange={(e) => {
+                  <label className="block text-sm">{dict.commerce.conditionType}<select className="input mt-1" value={t.thresholdKind} onChange={(e) => {
                       const next = [...tiers]; next[i] = { ...t, thresholdKind: e.target.value as "amount" | "qty" }; setTiers(next);
                     }}>
-                      <option value="amount">ন্যূনতম মূল্য (টাকা)</option>
-                      <option value="qty">ন্যূনতম পরিমাণ (টি)</option>
+                      <option value="amount">{dict.commerce.minimumPriceTaka}</option>
+                      <option value="qty">{dict.commerce.minimumQuantity}</option>
                     </select>
                   </label>
-                  <label className="block text-sm">{t.thresholdKind === "amount" ? "ন্যূনতম মূল্য (টাকা)" : "ন্যূনতম পরিমাণ"}
+                  <label className="block text-sm">{t.thresholdKind === "amount" ? dict.commerce.minimumPriceTaka : dict.commerce.minimumQuantity2}
                     <input className="input mt-1 w-36" type="number" value={t.threshold} onChange={(e) => {
                       const next = [...tiers]; next[i] = { ...t, threshold: e.target.value }; setTiers(next);
                     }} />
                   </label>
-                  <label className="block text-sm">ছাড় (%)
-                    <input className="input mt-1 w-24" type="number" min="0" max="100" value={t.percentOff} onChange={(e) => {
+                  <label className="block text-sm">{dict.commerce.discount2}<input className="input mt-1 w-24" type="number" min="0" max="100" value={t.percentOff} onChange={(e) => {
                       const next = [...tiers]; next[i] = { ...t, percentOff: e.target.value }; setTiers(next);
                     }} />
                   </label>
                   <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                     disabled={tiers.length <= 1}
-                    onClick={() => setTiers(tiers.filter((_, x) => x !== i))}>সারি মুছুন</button>
+                    onClick={() => setTiers(tiers.filter((_, x) => x !== i))}>{dict.commerce.deleteRow}</button>
                 </div>
               ))}
               <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold"
                 onClick={() => setTiers([...tiers, { thresholdKind: "amount", threshold: "", percentOff: "" }])}>
-                + আরও স্তর যোগ করুন
-              </button>
+                {dict.commerce.addAnotherTier}</button>
             </div>
           </div>
         ) : null}
 
         {type === "flash" ? (
           <div className="space-y-3 border-t pt-4">
-            <div className="font-semibold">Flash Sale সেটিং</div>
-            <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">সময়সীমা আবশ্যক — উপরে শুরু ও শেষের সময় অবশ্যই দিন।</p>
-            <label className="block max-w-xs text-sm">ছাড়ের হার (%)
-              <input className="input mt-1" type="number" min="0" max="100" value={flashPercentOff} onChange={(e) => setFlashPercentOff(e.target.value)} />
+            <div className="font-semibold">{dict.commerce.flashSaleSettings}</div>
+            <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{dict.commerce.aTimeRangeIsRequired}</p>
+            <label className="block max-w-xs text-sm">{dict.commerce.discountRate}<input className="input mt-1" type="number" min="0" max="100" value={flashPercentOff} onChange={(e) => setFlashPercentOff(e.target.value)} />
             </label>
             <div>
-              <div className="text-sm font-medium">প্রযোজ্য পণ্য (কিছু না বাছলে = সব পণ্য)</div>
+              <div className="text-sm font-medium">{dict.commerce.applicableProductsSelectNoneAll}</div>
               <div className="mt-2">
                 <ChipPicker options={products} selected={flashProductIds} onToggle={(id) => setFlashProductIds(toggleIn(flashProductIds, id))} />
               </div>
             </div>
             <div>
-              <div className="text-sm font-medium">প্রযোজ্য ক্যাটাগরি (ঐচ্ছিক)</div>
+              <div className="text-sm font-medium">{dict.commerce.applicableCategoriesOptional}</div>
               <div className="mt-2">
                 <ChipPicker options={categories} selected={flashCategoryIds} onToggle={(id) => setFlashCategoryIds(toggleIn(flashCategoryIds, id))} />
               </div>
@@ -526,26 +512,20 @@ export default function PromotionsPage() {
 
         {type === "gift" ? (
           <div className="space-y-3 border-t pt-4">
-            <div className="font-semibold">উপহার (Gift) সেটিং</div>
+            <div className="font-semibold">{dict.commerce.giftSettings}</div>
             <p className="text-xs text-slate-500">
-              কার্টের সাবটোটাল ন্যূনতম অঙ্কে পৌঁছালে উপহার পণ্যটি ফ্রি (৳০) যোগ হবে — স্টক না থাকলে
-              অর্ডার আটকায় না, শুধু উপহারটি বাদ যায় (ক্রেতা সাফল্য পেজে জানতে পারে)।
-            </p>
+              {dict.commerce.whenTheCartSubtotalReaches}</p>
             <div className="grid gap-3 md:grid-cols-4">
-              <label className="block text-sm">ন্যূনতম সাবটোটাল (টাকা)
-                <input className="input mt-1" inputMode="decimal" value={giftMinSubtotal} onChange={(e) => setGiftMinSubtotal(e.target.value)} placeholder="যেমন: 1000" />
+              <label className="block text-sm">{dict.commerce.minimumSubtotalTaka}<input className="input mt-1" inputMode="decimal" value={giftMinSubtotal} onChange={(e) => setGiftMinSubtotal(e.target.value)} placeholder={dict.commerce.eG1000} />
               </label>
-              <label className="block text-sm">উপহার পণ্য
-                <select className="input mt-1" value={giftProductId} onChange={(e) => setGiftProductId(e.target.value)}>
-                  <option value="">— বেছে নিন —</option>
+              <label className="block text-sm">{dict.commerce.giftProduct}<select className="input mt-1" value={giftProductId} onChange={(e) => setGiftProductId(e.target.value)}>
+                  <option value="">{dict.commerce.select}</option>
                   {products.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
               </label>
-              <label className="block text-sm">ভ্যারিয়েন্ট SKU (ঐচ্ছিক)
-                <input className="input mt-1" value={giftVariantSku} onChange={(e) => setGiftVariantSku(e.target.value)} placeholder="যেমন: RED-L" />
+              <label className="block text-sm">{dict.commerce.variantSKUOptional}<input className="input mt-1" value={giftVariantSku} onChange={(e) => setGiftVariantSku(e.target.value)} placeholder={dict.commerce.eGREDL} />
               </label>
-              <label className="block text-sm">উপহারের পরিমাণ (১–৩)
-                <input className="input mt-1" type="number" min="1" max="3" value={giftQty} onChange={(e) => setGiftQty(e.target.value)} />
+              <label className="block text-sm">{dict.commerce.giftQuantity13}<input className="input mt-1" type="number" min="1" max="3" value={giftQty} onChange={(e) => setGiftQty(e.target.value)} />
               </label>
             </div>
           </div>
@@ -553,16 +533,16 @@ export default function PromotionsPage() {
 
         <div className="flex gap-2">
           <button className="btn-primary" disabled={busy !== "" || !name.trim()} onClick={save}>
-            {busy === "save" ? "সেভ হচ্ছে…" : editingId ? "আপডেট করুন" : "তৈরি করুন"}
+            {busy === "save" ? dict.commerce.saving2 : editingId ? dict.commerce.update : dict.commerce.create}
           </button>
-          {editingId ? <button className="rounded-lg border px-3 py-2 text-sm" onClick={resetForm}>বাতিল</button> : null}
+          {editingId ? <button className="rounded-lg border px-3 py-2 text-sm" onClick={resetForm}>{dict.common.cancel}</button> : null}
         </div>
       </div>
 
       <div className="card p-5 space-y-3">
-        <div className="font-semibold">সব প্রমোশন ({promotions.length})</div>
-        {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : promotions.length === 0 ? (
-          <p className="text-sm text-slate-500">এখনো কোনো প্রমোশন নেই।</p>
+        <div className="font-semibold">{dict.commerce.allPromotions}{promotions.length})</div>
+        {loading ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : promotions.length === 0 ? (
+          <p className="text-sm text-slate-500">{dict.commerce.noPromotionsYet}</p>
         ) : (
           <ResponsiveTable
             table={
@@ -570,9 +550,9 @@ export default function PromotionsPage() {
                 <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 font-medium">নাম</th><th className="py-2 font-medium">ধরন</th>
-                  <th className="py-2 font-medium">অগ্রাধিকার</th><th className="py-2 font-medium">সময়সীমা</th>
-                  <th className="py-2 font-medium">অবস্থা</th><th className="py-2 font-medium">অ্যাকশন</th>
+                  <th className="py-2 font-medium">{dict.commerce.name}</th><th className="py-2 font-medium">{dict.commerce.type}</th>
+                  <th className="py-2 font-medium">{dict.commerce.priority}</th><th className="py-2 font-medium">{dict.commerce.deadline}</th>
+                  <th className="py-2 font-medium">{dict.commerce.status}</th><th className="py-2 font-medium">{dict.commerce.action}</th>
                 </tr>
               </thead>
               <tbody>
@@ -580,12 +560,12 @@ export default function PromotionsPage() {
                   <tr key={p.id} className="border-b last:border-0 align-top">
                     <td className="py-2 font-semibold">{p.name}
                       {typeof p.config?.minPriorOrders === "number" ? (
-                        <div className="text-[11px] font-normal text-slate-500">কমপক্ষে {p.config.minPriorOrders}টি আগের অর্ডার</div>
+                        <div className="text-[11px] font-normal text-slate-500">{dict.commerce.atLeast}{p.config.minPriorOrders}{dict.commerce.previousOrders}</div>
                       ) : null}
                     </td>
-                    <td className="py-2"><span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{TYPE_LABEL[p.type] ?? p.type}</span></td>
+                    <td className="py-2"><span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{TYPE_LABEL[p.type] ? dict.commerce[TYPE_LABEL[p.type] as keyof typeof dict.commerce] : p.type}</span></td>
                     <td className="py-2">{p.priority}</td>
-                    <td className="py-2 text-xs text-slate-500">{p.startsAt ? new Date(p.startsAt).toLocaleString("bn-BD") : "—"} → {p.endsAt ? new Date(p.endsAt).toLocaleString("bn-BD") : "অসীম"}</td>
+                    <td className="py-2 text-xs text-slate-500">{p.startsAt ? fmtDateTime(locale, new Date(p.startsAt)) : "—"} → {p.endsAt ? fmtDateTime(locale, new Date(p.endsAt)) : dict.commerce.unlimited}</td>
                     <td className="py-2">{renderPromotionStatus(p)}</td>
                     <td className="py-2">
                       {renderPromotionActions(p)}
@@ -603,20 +583,20 @@ export default function PromotionsPage() {
                   {renderPromotionStatus(p)}
                 </div>
                 {typeof p.config?.minPriorOrders === "number" ? (
-                  <div className="mt-0.5 text-[11px] font-normal text-slate-500">কমপক্ষে {p.config.minPriorOrders}টি আগের অর্ডার</div>
+                  <div className="mt-0.5 text-[11px] font-normal text-slate-500">{dict.commerce.atLeast}{p.config.minPriorOrders}{dict.commerce.previousOrders}</div>
                 ) : null}
                 <dl className="mt-2 space-y-1.5 text-sm">
                   <div className="flex gap-2">
-                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">ধরন</dt>
-                    <dd><span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{TYPE_LABEL[p.type] ?? p.type}</span></dd>
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.type}</dt>
+                    <dd><span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{TYPE_LABEL[p.type] ? dict.commerce[TYPE_LABEL[p.type] as keyof typeof dict.commerce] : p.type}</span></dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">অগ্রাধিকার</dt>
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.priority}</dt>
                     <dd>{p.priority}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">সময়সীমা</dt>
-                    <dd className="text-xs text-slate-500">{p.startsAt ? new Date(p.startsAt).toLocaleString("bn-BD") : "—"} → {p.endsAt ? new Date(p.endsAt).toLocaleString("bn-BD") : "অসীম"}</dd>
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.deadline}</dt>
+                    <dd className="text-xs text-slate-500">{p.startsAt ? fmtDateTime(locale, new Date(p.startsAt)) : "—"} → {p.endsAt ? fmtDateTime(locale, new Date(p.endsAt)) : dict.commerce.unlimited}</dd>
                   </div>
                 </dl>
                 <div className="mt-2">{renderPromotionActions(p)}</div>
@@ -628,99 +608,92 @@ export default function PromotionsPage() {
 
       <div className="card p-5 space-y-4">
         <div>
-          <div className="font-semibold">🧮 কার্ট সিমুলেটর</div>
-          <p className="text-xs text-slate-500">পণ্য ও পরিমাণ বেছে হিসাব করুন — সব সংখ্যা সার্ভারের প্রিভিউ API থেকে আসে, এখানে কোনো হিসাব করা হয় না।</p>
+          <div className="font-semibold">{dict.commerce.cartSimulator}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.selectProductsQuantitiesCalculateAll}</p>
         </div>
         <div className="space-y-2">
           {simRows.map((r, i) => (
             <div key={i} className="flex flex-wrap items-end gap-2">
-              <label className="block flex-1 text-sm">পণ্য
-                <select className="input mt-1" value={r.productId} onChange={(e) => {
+              <label className="block flex-1 text-sm">{dict.commerce.product}<select className="input mt-1" value={r.productId} onChange={(e) => {
                   const next = [...simRows]; next[i] = { ...r, productId: e.target.value }; setSimRows(next);
                 }}>
-                  <option value="">— বেছে নিন —</option>
+                  <option value="">{dict.commerce.select}</option>
                   {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
-              <label className="block text-sm">পরিমাণ
-                <input className="input mt-1 w-24" type="number" min="1" value={r.qty} onChange={(e) => {
+              <label className="block text-sm">{dict.commerce.quantity}<input className="input mt-1 w-24" type="number" min="1" value={r.qty} onChange={(e) => {
                   const next = [...simRows]; next[i] = { ...r, qty: e.target.value }; setSimRows(next);
                 }} />
               </label>
               <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                 disabled={simRows.length <= 1}
-                onClick={() => setSimRows(simRows.filter((_, x) => x !== i))}>সরান</button>
+                onClick={() => setSimRows(simRows.filter((_, x) => x !== i))}>{dict.commerce.remove}</button>
             </div>
           ))}
           <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold"
-            onClick={() => setSimRows([...simRows, { productId: "", qty: "1" }])}>+ পণ্য যোগ করুন</button>
+            onClick={() => setSimRows([...simRows, { productId: "", qty: "1" }])}>{dict.commerce.addProduct}</button>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="block text-sm">কুপন কোড (ঐচ্ছিক)
-            <input className="input mt-1" value={simCoupon} onChange={(e) => setSimCoupon(e.target.value.toUpperCase())} placeholder="যেমন: EID10" />
+          <label className="block text-sm">{dict.commerce.couponCodeOptional}<input className="input mt-1" value={simCoupon} onChange={(e) => setSimCoupon(e.target.value.toUpperCase())} placeholder={dict.commerce.eGEID10} />
           </label>
-          <label className="block text-sm">রেফারেল কোড (ঐচ্ছিক)
-            <input className="input mt-1" value={simReferral} onChange={(e) => setSimReferral(e.target.value)} placeholder="বন্ধুর কোড" />
+          <label className="block text-sm">{dict.commerce.referralCodeOptional}<input className="input mt-1" value={simReferral} onChange={(e) => setSimReferral(e.target.value)} placeholder={dict.commerce.friendSCode} />
           </label>
-          <label className="block text-sm">ক্রেতার ফোন (রেফারেল যাচাইয়ে লাগতে পারে)
-            <input className="input mt-1" value={simPhone} onChange={(e) => setSimPhone(e.target.value)} placeholder="01XXXXXXXXX" />
+          <label className="block text-sm">{dict.commerce.buyerPhoneMayBeNeeded}<input className="input mt-1" value={simPhone} onChange={(e) => setSimPhone(e.target.value)} placeholder="01XXXXXXXXX" />
           </label>
         </div>
         <button className="btn-primary" disabled={busy !== ""} onClick={runPreview}>
-          {busy === "preview" ? "হিসাব হচ্ছে…" : "হিসাব করুন"}
+          {busy === "preview" ? dict.commerce.calculating : dict.commerce.calculate}
         </button>
         {previewError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{previewError}</p> : null}
         {preview ? (
           <div className="space-y-2 rounded-xl border bg-slate-50 p-4 text-sm">
-            <div className="flex justify-between"><span className="text-slate-600">সাবটোটাল:</span><span className="font-semibold">{money(preview.subtotalMinor)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-600">{dict.commerce.subtotal2}</span><span className="font-semibold">{money(preview.subtotalMinor, locale)}</span></div>
             {preview.promotionsApplied.map((a) => (
               <div key={a.promotionId} className="flex justify-between text-emerald-700">
-                <span>🎁 {a.name} ({TYPE_LABEL[a.type] ?? a.type}):</span><span className="font-semibold">− {money(a.amountMinor)}</span>
+                <span>🎁 {a.name} ({TYPE_LABEL[a.type] ? dict.commerce[TYPE_LABEL[a.type] as keyof typeof dict.commerce] : a.type}):</span><span className="font-semibold">− {money(a.amountMinor, locale)}</span>
               </div>
             ))}
             {preview.gift ? (
               <div className="flex justify-between text-pink-700">
-                <span>🎁 উপহার — {preview.gift.productName} × {preview.gift.quantity} ({preview.gift.promotionName}):</span>
+                <span>{dict.commerce.gift3}{preview.gift.productName} × {preview.gift.quantity} ({preview.gift.promotionName}):</span>
                 <span className="font-semibold">{money("0")}</span>
               </div>
             ) : null}
             {Number(preview.promotionDiscountMinor) === 0 && preview.promotionsApplied.length === 0 ? (
-              <div className="flex justify-between text-slate-500"><span>প্রমোশন ছাড়:</span><span>{money(preview.promotionDiscountMinor)}</span></div>
+              <div className="flex justify-between text-slate-500"><span>{dict.commerce.promotionDiscount}</span><span>{money(preview.promotionDiscountMinor, locale)}</span></div>
             ) : null}
             {preview.coupon ? (
               <div className="flex justify-between text-emerald-700">
-                <span>🏷️ কুপন ({preview.coupon.code}):</span>
-                <span className="font-semibold">− {money(preview.coupon.discountMinor)}{preview.coupon.freeShipping ? " + ফ্রি ডেলিভারি" : ""}</span>
+                <span>{dict.commerce.coupon}{preview.coupon.code}):</span>
+                <span className="font-semibold">− {money(preview.coupon.discountMinor, locale)}{preview.coupon.freeShipping ? dict.commerce.freeDelivery2 : ""}</span>
               </div>
             ) : null}
             {preview.referral ? (
               <div className="flex justify-between text-emerald-700">
-                <span>🤝 রেফারেল ({preview.referral.code}):</span><span className="font-semibold">− {money(preview.referral.discountMinor)}</span>
+                <span>{dict.commerce.referral}{preview.referral.code}):</span><span className="font-semibold">− {money(preview.referral.discountMinor, locale)}</span>
               </div>
             ) : Number(preview.referralDiscountMinor) > 0 ? (
-              <div className="flex justify-between text-emerald-700"><span>🤝 রেফারেল ছাড়:</span><span className="font-semibold">− {money(preview.referralDiscountMinor)}</span></div>
+              <div className="flex justify-between text-emerald-700"><span>{dict.commerce.referralDiscount2}</span><span className="font-semibold">− {money(preview.referralDiscountMinor, locale)}</span></div>
             ) : null}
-            <div className="flex justify-between border-t pt-2"><span className="font-semibold">মোট ছাড়:</span><span className="font-semibold text-emerald-700">− {money(preview.totalDiscountMinor)}</span></div>
-            <div className="flex justify-between text-base font-black"><span>পণ্যের মোট (ছাড়ের পর):</span><span className="text-indigo-700">{money(preview.merchandiseTotalMinor)}</span></div>
-            <p className="text-xs text-slate-500">ডেলিভারি চার্জ এই প্রিভিউতে নেই — চেকআউটে জোন অনুযায়ী যোগ হয়। মুদ্রা: {preview.currency}</p>
+            <div className="flex justify-between border-t pt-2"><span className="font-semibold">{dict.commerce.totalDiscount2}</span><span className="font-semibold text-emerald-700">− {money(preview.totalDiscountMinor, locale)}</span></div>
+            <div className="flex justify-between text-base font-black"><span>{dict.commerce.productTotalAfterDiscount}</span><span className="text-indigo-700">{money(preview.merchandiseTotalMinor, locale)}</span></div>
+            <p className="text-xs text-slate-500">{dict.commerce.deliveryChargesAreNotIn}{preview.currency}</p>
           </div>
         ) : null}
       </div>
 
       <div className="card p-5 space-y-4">
         <div>
-          <div className="font-semibold">📊 প্রমোশন রিপোর্ট</div>
-          <p className="text-xs text-slate-500">সময়সীমা বেছে রিপোর্ট দেখুন — কোন কুপন কতবার ব্যবহৃত হয়েছে এবং প্রতিটি অটোমেটিক প্রমোশন কত ছাড় দিয়েছে।</p>
+          <div className="font-semibold">{dict.commerce.promotionReport}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.selectAPeriodViewThe}</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
-          <label className="block text-sm">শুরু (from)
-            <input className="input mt-1" type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.startFrom}<input className="input mt-1" type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} />
           </label>
-          <label className="block text-sm">শেষ (to)
-            <input className="input mt-1" type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.endTo}<input className="input mt-1" type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} />
           </label>
           <button className="btn-primary" disabled={busy !== ""} onClick={runReport}>
-            {busy === "report" ? "রিপোর্ট আসছে…" : "রিপোর্ট দেখুন"}
+            {busy === "report" ? dict.commerce.reportLoading : dict.commerce.viewReport}
           </button>
         </div>
         {reportError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{reportError}</p> : null}
@@ -729,15 +702,14 @@ export default function PromotionsPage() {
             <p className="text-xs text-slate-500">{report.coverage.note}</p>
             {report.coverage.truncated ? (
               <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
-                ⚠️ এই রিপোর্ট আংশিক — স্ক্যান করা অর্ডার: {report.coverage.ordersScanned}টি (সীমায় পৌঁছানোয় সব অর্ডার গণনা হয়নি)।
-              </p>
+                {dict.commerce.thisReportIsPartialOrders}{report.coverage.ordersScanned}{dict.commerce.notAllOrdersCountedBecause}</p>
             ) : (
-              <p className="text-xs text-slate-500">স্ক্যান করা অর্ডার: {report.coverage.ordersScanned}টি</p>
+              <p className="text-xs text-slate-500">{dict.commerce.ordersScanned}{report.coverage.ordersScanned}{dict.commerce.text1ou8}</p>
             )}
             <div>
-              <div className="mb-2 text-sm font-semibold">কুপন</div>
+              <div className="mb-2 text-sm font-semibold">{dict.commerce.coupon2}</div>
               {report.coupons.length === 0 ? (
-                <p className="text-sm text-slate-500">এই সময়ে কোনো কুপন রিডেমশন হয়নি।</p>
+                <p className="text-sm text-slate-500">{dict.commerce.noCouponRedemptionsInThis}</p>
               ) : (
                 <ResponsiveTable
                   table={
@@ -745,8 +717,8 @@ export default function PromotionsPage() {
                       <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-xs text-slate-500">
-                        <th className="py-2 font-medium">কোড</th><th className="py-2 font-medium">রিডেমশন</th>
-                        <th className="py-2 font-medium">মোট ছাড়</th><th className="py-2 font-medium">আয়</th>
+                        <th className="py-2 font-medium">{dict.commerce.code}</th><th className="py-2 font-medium">{dict.commerce.redemption}</th>
+                        <th className="py-2 font-medium">{dict.commerce.totalDiscount}</th><th className="py-2 font-medium">{dict.commerce.revenue}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -754,8 +726,8 @@ export default function PromotionsPage() {
                         <tr key={c.code} className="border-b last:border-0">
                           <td className="py-2 font-mono font-semibold">{c.code}</td>
                           <td className="py-2">{c.redemptions}</td>
-                          <td className="py-2 text-emerald-700">− {money(c.discountTotalMinor)}</td>
-                          <td className="py-2 font-semibold">{money(c.revenueMinor)}</td>
+                          <td className="py-2 text-emerald-700">− {money(c.discountTotalMinor, locale)}</td>
+                          <td className="py-2 font-semibold">{money(c.revenueMinor, locale)}</td>
                         </tr>
                       ))}
                       </tbody>
@@ -766,16 +738,16 @@ export default function PromotionsPage() {
                     <div key={c.code} className="rounded-lg border p-3">
                       <div className="flex items-start justify-between gap-2">
                         <span className="font-mono font-semibold">{c.code}</span>
-                        <span className="font-semibold">{money(c.revenueMinor)}</span>
+                        <span className="font-semibold">{money(c.revenueMinor, locale)}</span>
                       </div>
                       <dl className="mt-2 space-y-1.5 text-sm">
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">রিডেমশন</dt>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.redemption}</dt>
                           <dd>{c.redemptions}</dd>
                         </div>
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">মোট ছাড়</dt>
-                          <dd className="text-emerald-700">− {money(c.discountTotalMinor)}</dd>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.totalDiscount}</dt>
+                          <dd className="text-emerald-700">− {money(c.discountTotalMinor, locale)}</dd>
                         </div>
                       </dl>
                     </div>
@@ -784,9 +756,9 @@ export default function PromotionsPage() {
               )}
             </div>
             <div>
-              <div className="mb-2 text-sm font-semibold">অটোমেটিক প্রমোশন</div>
+              <div className="mb-2 text-sm font-semibold">{dict.commerce.automaticPromotions}</div>
               {report.promotions.length === 0 ? (
-                <p className="text-sm text-slate-500">এই সময়ে কোনো অটোমেটিক প্রমোশন প্রয়োগ হয়নি।</p>
+                <p className="text-sm text-slate-500">{dict.commerce.noAutomaticPromotionsAppliedIn}</p>
               ) : (
                 <ResponsiveTable
                   table={
@@ -794,8 +766,8 @@ export default function PromotionsPage() {
                       <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-xs text-slate-500">
-                        <th className="py-2 font-medium">নাম</th><th className="py-2 font-medium">প্রয়োগ</th>
-                        <th className="py-2 font-medium">মোট ছাড়</th>
+                        <th className="py-2 font-medium">{dict.commerce.name}</th><th className="py-2 font-medium">{dict.commerce.apply}</th>
+                        <th className="py-2 font-medium">{dict.commerce.totalDiscount}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -803,7 +775,7 @@ export default function PromotionsPage() {
                         <tr key={pr.promotionId} className="border-b last:border-0">
                           <td className="py-2 font-semibold">{pr.name}</td>
                           <td className="py-2">{pr.applications}</td>
-                          <td className="py-2 text-emerald-700">− {money(pr.discountTotalMinor)}</td>
+                          <td className="py-2 text-emerald-700">− {money(pr.discountTotalMinor, locale)}</td>
                         </tr>
                       ))}
                       </tbody>
@@ -815,12 +787,12 @@ export default function PromotionsPage() {
                       <div className="font-semibold">{pr.name}</div>
                       <dl className="mt-2 space-y-1.5 text-sm">
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">প্রয়োগ</dt>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.apply}</dt>
                           <dd>{pr.applications}</dd>
                         </div>
                         <div className="flex gap-2">
-                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">মোট ছাড়</dt>
-                          <dd className="text-emerald-700">− {money(pr.discountTotalMinor)}</dd>
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.totalDiscount}</dt>
+                          <dd className="text-emerald-700">− {money(pr.discountTotalMinor, locale)}</dd>
                         </div>
                       </dl>
                     </div>

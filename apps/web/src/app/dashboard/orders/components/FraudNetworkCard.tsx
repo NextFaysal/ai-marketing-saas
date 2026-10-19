@@ -1,5 +1,7 @@
 "use client";
 import React from "react";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
@@ -27,6 +29,7 @@ import {
  * API's refusal verbatim.
  */
 export function FraudNetworkCard() {
+  const { dict, t, locale } = useLocale();
   const [settings, setSettings] = React.useState<FraudNetworkSettingsView | null>(null);
   const [loadFailed, setLoadFailed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -64,11 +67,11 @@ export function FraudNetworkCard() {
       setSettings(updated);
       setNotice(
         enabled
-          ? "ফ্রড নেটওয়ার্ক চালু হয়েছে — এখন থেকে চূড়ান্ত অর্ডারের ফলাফল সম্মিলিত হিসাবে যোগ হবে।"
-          : "ফ্রড নেটওয়ার্ক বন্ধ হয়েছে — এখন থেকে আর কোনো নতুন অবদান যাবে না।",
+          ? dict.orders.fraudNetworkIsOnFrom
+          : dict.orders.fraudNetworkIsOffNo,
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পরিবর্তন ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.orders.changeFailed);
     } finally {
       setBusy(false);
     }
@@ -78,24 +81,23 @@ export function FraudNetworkCard() {
 
   return (
     <div className="mt-6 space-y-3 border-t pt-4">
-      <h3 className="font-semibold">🌐 ফ্রড নেটওয়ার্ক (সব দোকানের সম্মিলিত তথ্য)</h3>
+      <h3 className="font-semibold">{dict.orders.fraudNetworkCombinedDataFrom}</h3>
       <div className="space-y-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
         <p>{FRAUD_NETWORK_SHARED_BN}</p>
-        <p>চালু করা প্রতিটি দোকানের নিজের সিদ্ধান্ত — শুধুমাত্র দোকানের মালিক (OWNER) চালু বা বন্ধ করতে পারেন।</p>
-        <p>বন্ধ করলে ভবিষ্যতের অবদান সঙ্গে সঙ্গে থেমে যাবে।</p>
+        <p>{dict.orders.turningItOnIsEach}</p>
+        <p>{dict.orders.turningItOffStopsFuture}</p>
         <p className="font-medium text-amber-800">{FRAUD_NETWORK_PAST_BN}</p>
       </div>
       {loadFailed ? (
-        <p className="text-sm text-slate-400">নেটওয়ার্ক সেটিংস লোড হয়নি — আবার খুলে চেষ্টা করুন।</p>
+        <p className="text-sm text-slate-400">{dict.orders.networkSettingsDidNotLoad}</p>
       ) : !settings ? (
-        <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+        <p className="text-sm text-slate-400">{dict.common.loading}</p>
       ) : unavailable ? (
         <>
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{FRAUD_NETWORK_UNAVAILABLE_BN}</p>
           <label className="flex items-center gap-2 text-sm font-medium opacity-50">
             <input type="checkbox" checked={false} disabled readOnly />
-            ফ্রড নেটওয়ার্কে যোগ দিন
-          </label>
+            {dict.orders.joinTheFraudNetwork}</label>
         </>
       ) : (
         <>
@@ -106,14 +108,12 @@ export function FraudNetworkCard() {
               disabled={busy || fraudNetworkToggleDisabled(settings)}
               onChange={(e) => void toggle(e.target.checked)}
             />
-            ফ্রড নেটওয়ার্কে যোগ দিন (শুধু OWNER)
-          </label>
+            {dict.orders.joinTheFraudNetworkOWNER}</label>
           {settings.enabled && settings.enabledAt ? (
             <p className="text-xs text-slate-500">
-              চালু আছে — চালু হয়েছে: {new Date(settings.enabledAt).toLocaleString("bn-BD")}। শুধু এর পরের তৈরি অর্ডারের ফলাফলই যোগ হয় — আগের অর্ডার কখনো যোগ হয় না।
-            </p>
+              {dict.orders.onTurnedOn}{fmtDateTime(locale, new Date(settings.enabledAt))}{dict.orders.onlyOutcomesOfOrdersCreated}</p>
           ) : (
-            <p className="text-xs text-slate-500">বন্ধ আছে — এই দোকান থেকে নেটওয়ার্কে কিছুই যাচ্ছে না, নেটওয়ার্কের তথ্যও দেখা যাচ্ছে না।</p>
+            <p className="text-xs text-slate-500">{dict.orders.offNothingGoesToThe}</p>
           )}
         </>
       )}

@@ -13,6 +13,15 @@
  *   "orders.bulk" row and never appear here (documented
  *   definition limit on both sides).
  */
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
+
 
 export interface TeamMemberPerformance {
   userId: string;
@@ -50,16 +59,21 @@ export function buildTeamPerformancePath(orgId: string, from: string, to: string
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  OWNER: "মালিক",
-  ADMIN: "অ্যাডমিন",
-  MARKETING_MANAGER: "মার্কেটিং ম্যানেজার",
-  SUPPORT_AGENT: "সাপোর্ট এজেন্ট",
-  VIEWER: "দর্শক",
+  OWNER: ordersBn.owner,
+  ADMIN: ordersBn.admin,
+  MARKETING_MANAGER: ordersBn.marketingManager,
+  SUPPORT_AGENT: ordersBn.supportAgent,
+  VIEWER: ordersBn.viewer,
 };
 
 /** Role key → Bengali label; an unknown role shows as-is. */
-export function roleLabel(role: string): string {
-  return ROLE_LABELS[role] ?? role;
+export function roleLabel(role: string, locale: LibLocale = "bn"): string {
+  const d = D(locale);
+  const map: Record<string, string> = {
+    OWNER: d.owner, ADMIN: d.admin, MARKETING_MANAGER: d.marketingManager,
+    SUPPORT_AGENT: d.supportAgent, VIEWER: d.viewer,
+  };
+  return map[role] ?? role;
 }
 
 /** Display name: the API already falls back name → email →

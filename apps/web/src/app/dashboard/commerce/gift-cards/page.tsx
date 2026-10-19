@@ -1,7 +1,8 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtDateTime, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { ResponsiveTable } from "@repo/ui";
@@ -67,48 +68,48 @@ interface Liability {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  active: "সক্রিয়",
-  depleted: "ব্যালেন্স শেষ",
-  expired: "মেয়াদোত্তীর্ণ",
-  void: "বাতিল",
+  active: "active",
+  depleted: "balanceFinished",
+  expired: "expired",
+  void: "cancel",
 };
 
-const STATUS_FILTERS: { value: string; label: string }[] = [
-  { value: "", label: "সব অবস্থা" },
-  { value: "active", label: "সক্রিয়" },
-  { value: "depleted", label: "ব্যালেন্স শেষ" },
-  { value: "expired", label: "মেয়াদোত্তীর্ণ" },
-  { value: "void", label: "বাতিল" },
+const STATUS_FILTERS: { value: string; labelKey: string }[] = [
+  { value: "", labelKey: "allStatuses" },
+  { value: "active", labelKey: "active" },
+  { value: "depleted", labelKey: "balanceFinished" },
+  { value: "expired", labelKey: "expired" },
+  { value: "void", labelKey: "cancel" },
 ];
 
 const KIND_LABELS: Record<string, string> = {
-  issue: "ইস্যু",
-  redeem: "রিডিম",
-  restore: "ফেরত",
-  adjust: "সংশোধন",
-  void: "বাতিল",
-  expire: "মেয়াদোত্তীর্ণ",
+  issue: "issue",
+  redeem: "redeem",
+  restore: "refund",
+  adjust: "adjustment",
+  void: "cancel",
+  expire: "expired",
 };
 
 // Internal notes the API itself writes on ledger rows.
 const NOTE_LABELS: Record<string, string> = {
-  redeem_restore: "রিফান্ডে ফেরত",
-  purchase_refund_void: "ক্রয়ের অর্ডার বাতিল/রিফান্ডে বাতিল",
-  card_expired: "মেয়াদ শেষে বাতিল",
+  redeem_restore: "returnedOnRefund",
+  purchase_refund_void: "voidedOnPurchaseOrderCancellation",
+  card_expired: "voidedOnExpiry",
 };
 
-function money(minor: string): string {
+function money(minor: string, locale: "bn" | "en" = "bn"): string {
   try {
-    return formatMinor(BigInt(minor));
+    return fmtMoneyMinor(locale, BigInt(minor));
   } catch {
     return minor;
   }
 }
 
-function signedMoney(minor: string): string {
+function signedMoney(minor: string, locale: "bn" | "en" = "bn"): string {
   try {
     const v = BigInt(minor);
-    return `${v < 0n ? "−" : "+"} ${money(String(v < 0n ? -v : v))}`;
+    return `${v < 0n ? "−" : "+"} ${money(String(v < 0n ? -v : v), locale)}`;
   } catch {
     return minor;
   }
@@ -124,6 +125,7 @@ function takaToMinorString(raw: string): string | null {
 const PAGE_SIZE = 20;
 
 export default function GiftCardsPage() {
+  const { dict, t, locale } = useLocale();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -169,7 +171,7 @@ export default function GiftCardsPage() {
       );
       setRedemptionEnabled(out.setting.redemptionEnabled !== false);
       setDefaultExpiryDays(out.setting.defaultExpiryDays != null ? String(out.setting.defaultExpiryDays) : "");
-    } catch (e) { setError(e instanceof Error ? e.message : "সেটিংস লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.settingsLoadingFailed); }
   }, []);
 
   const loadLiability = useCallback(async () => {
@@ -193,7 +195,7 @@ export default function GiftCardsPage() {
       );
       setItems(out.items ?? []);
       setTotal(out.total ?? 0);
-    } catch (e) { setError(e instanceof Error ? e.message : "তালিকা লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.listLoadingFailed); }
     finally { setListBusy(false); }
   }, [search, statusFilter, page]);
 
@@ -206,7 +208,7 @@ export default function GiftCardsPage() {
     if (defaultExpiryDays.trim()) {
       const n = Number(defaultExpiryDays);
       if (!Number.isInteger(n) || n < 1 || n > 3650) {
-        setError("ডিফল্ট মেয়াদ ১–৩৬৫০ দিনের মধ্যে পূর্ণ সংখ্যায় দিন, অথবা খালি রাখুন (মেয়াদ নেই)।");
+        setError(dict.commerce.giveTheDefaultValidityAs);
         return;
       }
       expiry = n;
@@ -217,9 +219,9 @@ export default function GiftCardsPage() {
         `/organizations/${orgId}/commerce/gift-cards/settings`,
         { method: "PUT", body: JSON.stringify({ redemptionEnabled, defaultExpiryDays: expiry }) },
       );
-      setNotice("গিফট কার্ড সেটিংস সংরক্ষণ হয়েছে।");
+      setNotice(dict.commerce.giftCardSettingsSaved);
       await loadSettings();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed); }
     finally { setSettingsBusy(false); }
   }
 
@@ -247,17 +249,17 @@ export default function GiftCardsPage() {
         },
       );
       if (out.sentVia === "email" || out.sentVia === "sms") {
-        setNotice(`✅ কার্ড ইস্যু হয়েছে — কোডটি প্রাপকের কাছে পাঠানো হয়েছে (${out.sentVia === "email" ? "ইমেইল" : "এসএমএস"})।`);
+        setNotice(t("commerce.cardIssuedTheCodeHas", { out: out.sentVia === "email" ? dict.commerce.email : dict.commerce.sMS }));
       } else {
         // Honest failure: the card exists but NO send happened.
         setIssueWarning(
-          `⚠️ কার্ড তৈরি হয়েছে (••••${out.card.codeLast4 ?? ""}), কিন্তু কোডটি প্রাপকের কাছে পাঠানো যায়নি — পাঠানোর মাধ্যম সেটআপ করা নেই বা পাঠাতে ব্যর্থ হয়েছে। প্রাপকের সাথে যোগাযোগ করে বিকল্প ব্যবস্থা নিন; পূর্ণ কোড এখানে দেখা যায় না।`,
+          t("commerce.theCardWasCreatedBut", { out: out.card.codeLast4 ?? "" }),
         );
       }
       setIssueAmount(""); setIssueName(""); setIssueEmail(""); setIssuePhone(""); setIssueNote("");
       setPage(1);
       await Promise.all([loadList(), loadLiability()]);
-    } catch (e) { setError(e instanceof Error ? e.message : "ইস্যু ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.issueFailed); }
     finally { setIssueBusy(false); }
   }
 
@@ -267,7 +269,7 @@ export default function GiftCardsPage() {
     setVoidNote(""); setAdjustDelta(""); setAdjustNote(""); setConfirming(null);
     try {
       setDetail(await apiFetch<GiftCardDetail>(`/organizations/${orgId}/commerce/gift-cards/${id}`));
-    } catch (e) { setError(e instanceof Error ? e.message : "বিবরণ লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.detailsLoadingFailed2); }
     finally { setDetailBusy(false); }
   }
 
@@ -284,10 +286,10 @@ export default function GiftCardsPage() {
       await apiFetch(`/organizations/${orgId}/commerce/gift-cards/${detail.id}/void`, {
         method: "POST", body: JSON.stringify({ note: voidNote.trim() }),
       });
-      setNotice("কার্ডটি বাতিল করা হয়েছে।");
+      setNotice(dict.commerce.theCardHasBeenVoided);
       setConfirming(null);
       await reloadDetail(detail.id);
-    } catch (e) { setError(e instanceof Error ? e.message : "বাতিল ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.cancellationFailed); }
     finally { setActionBusy(false); }
   }
 
@@ -295,32 +297,30 @@ export default function GiftCardsPage() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
     if (confirming !== "adjust") { setConfirming("adjust"); return; }
     const deltaMinor = takaToMinorString(adjustDelta);
-    if (!deltaMinor || deltaMinor === "0") { setError("সংশোধনের পরিমাণ শূন্য ছাড়া টাকায় লিখুন (+ বা − চিহ্নসহ)।"); return; }
+    if (!deltaMinor || deltaMinor === "0") { setError(dict.commerce.writeTheAdjustmentAmountIn); return; }
     setActionBusy(true); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/gift-cards/${detail.id}/adjust`, {
         method: "POST", body: JSON.stringify({ deltaMinor, note: adjustNote.trim() }),
       });
-      setNotice("কার্ডের ব্যালেন্স সংশোধন করা হয়েছে।");
+      setNotice(dict.commerce.cardBalanceAdjusted);
       setConfirming(null);
       await reloadDetail(detail.id);
-    } catch (e) { setError(e instanceof Error ? e.message : "সংশোধন ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.adjustmentFailed); }
     finally { setActionBusy(false); }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const dateFmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("bn-BD") : "—");
+  const dateFmt = (iso: string | null) => (iso ? fmtDate(locale, new Date(iso)) : "—");
   const detailActionable = detail && detail.status !== "void" && detail.status !== "expired";
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">🎁 গিফট কার্ড</h1>
+          <h1 className="page-title">{dict.commerce.giftCards}</h1>
           <p className="text-sm text-slate-500">
-            গিফট কার্ডের দায় (liability), ম্যানুয়াল ইস্যু, কার্ডের তালিকা ও লেজার — সব এখানে।
-            পূর্ণ কোড এখানে কখনো দেখানো হয় না; স্টাফ শুধু কার্ডের শেষ ৪ সংখ্যা দেখতে পান।
-          </p>
+            {dict.commerce.giftCardLiabilityManualIssue}</p>
         </div>
         <Link href="/dashboard/commerce" className="btn-primary">Commerce Hub →</Link>
       </div>
@@ -332,102 +332,92 @@ export default function GiftCardsPage() {
       {/* ---------- settings ---------- */}
       <div className="card p-5 space-y-4">
         <div>
-          <div className="font-semibold">⚙️ গিফট কার্ড সেটিংস</div>
+          <div className="font-semibold">{dict.commerce.giftCardSettings}</div>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">
-            ডিফল্ট মেয়াদ নতুন ইস্যু হওয়া কার্ডের ক্ষেত্রে প্রযোজ্য — আগের কার্ডের মেয়াদ এতে বদলায় না।
-          </p>
+            {dict.commerce.theDefaultValidityAppliesTo}</p>
         </div>
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={redemptionEnabled} onChange={(e) => setRedemptionEnabled(e.target.checked)} />
-          গিফট কার্ডে কেনাকাটা (রিডিম) চালু রাখুন
-        </label>
-        <p className="text-xs text-slate-500">বন্ধ করলে বিদ্যমান কার্ড দিয়ে আর কেনাকাটা করা যাবে না — ব্যালেন্স থেকে যাবে।</p>
-        <label className="block max-w-xs text-sm">ডিফল্ট মেয়াদ (দিন) — খালি = মেয়াদ নেই
-          <input className="input mt-1" type="number" min="1" max="3650" value={defaultExpiryDays} onChange={(e) => setDefaultExpiryDays(e.target.value)} placeholder="খালি = মেয়াদ নেই" />
+          {dict.commerce.keepGiftCardShoppingRedeem}</label>
+        <p className="text-xs text-slate-500">{dict.commerce.ifTurnedOffExistingCards}</p>
+        <label className="block max-w-xs text-sm">{dict.commerce.defaultValidityDaysEmptyNo}<input className="input mt-1" type="number" min="1" max="3650" value={defaultExpiryDays} onChange={(e) => setDefaultExpiryDays(e.target.value)} placeholder={dict.commerce.emptyNoExpiry} />
         </label>
         <button type="button" className="btn-primary" disabled={settingsBusy} onClick={() => void saveSettings()}>
-          {settingsBusy ? "সেভ হচ্ছে…" : "সেটিংস সেভ করুন"}
+          {settingsBusy ? dict.commerce.saving2 : dict.commerce.saveSettings2}
         </button>
       </div>
 
       {/* ---------- liability ---------- */}
       <div className="card p-5 space-y-3">
-        <div className="font-semibold">📊 গিফট কার্ডের দায় (Liability)</div>
+        <div className="font-semibold">{dict.commerce.giftCardLiability}</div>
         {liability ? (
           <>
             <div className="flex flex-wrap items-baseline gap-3">
-              <span className="text-3xl font-bold">{money(liability.outstandingMinor)}</span>
-              <span className="text-sm text-slate-500">বকেয়া ব্যালেন্স · সক্রিয় কার্ড {liability.outstandingCount}টি</span>
+              <span className="text-3xl font-bold">{money(liability.outstandingMinor, locale)}</span>
+              <span className="text-sm text-slate-500">{dict.commerce.outstandingBalanceActiveCards}{liability.outstandingCount}{dict.commerce.text1ou8}</span>
             </div>
             <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
-              <p>সময়কালে ইস্যু: <b>{money(liability.issuedMinor)}</b></p>
-              <p>সময়কালে রিডিম: <b>{money(liability.redeemedMinor)}</b></p>
-              <p>সময়কালে ফেরত (restore): <b>{money(liability.restoredMinor)}</b></p>
-              <p>সময়কালে মেয়াদোত্তীর্ণ: <b>{money(liability.expiredMinor)}</b></p>
-              <p>সময়কালে বাতিল: <b>{money(liability.voidedMinor)}</b></p>
-              <p>সময়কালে সংশোধন (নিট): <b>{signedMoney(liability.adjustedNetMinor)}</b></p>
+              <p>{dict.commerce.issuedInPeriod}<b>{money(liability.issuedMinor, locale)}</b></p>
+              <p>{dict.commerce.redeemedInPeriod}<b>{money(liability.redeemedMinor, locale)}</b></p>
+              <p>{dict.commerce.restoredInPeriod}<b>{money(liability.restoredMinor, locale)}</b></p>
+              <p>{dict.commerce.expiredInPeriod}<b>{money(liability.expiredMinor, locale)}</b></p>
+              <p>{dict.commerce.voidedInPeriod}<b>{money(liability.voidedMinor, locale)}</b></p>
+              <p>{dict.commerce.adjustedInPeriodNet}<b>{signedMoney(liability.adjustedNetMinor, locale)}</b></p>
             </div>
             <p className="text-xs text-slate-500">
-              সময়কাল: {dateFmt(liability.from)} — {dateFmt(liability.to)}
-              {liability.truncated ? " · কার্ডের সংখ্যা অনেক বেশি হওয়ায় হিসাব আংশিক হতে পারে" : ""}
+              {dict.commerce.period2}{dateFmt(liability.from)} — {dateFmt(liability.to)}
+              {liability.truncated ? dict.commerce.theCountMayBePartial : ""}
             </p>
           </>
         ) : (
-          <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
+          <p className="text-sm text-slate-500">{dict.common.loading}</p>
         )}
-        <p className="text-xs text-slate-500">এগুলো সিস্টেমের রেকর্ডের যোগফল।</p>
+        <p className="text-xs text-slate-500">{dict.commerce.theseAreSumsOfThe}</p>
       </div>
 
       {/* ---------- manual issue ---------- */}
       <form onSubmit={manualIssue} className="card p-5 space-y-4">
         <div>
-          <div className="font-semibold">➕ ম্যানুয়ালি গিফট কার্ড ইস্যু করুন</div>
+          <div className="font-semibold">{dict.commerce.issueAGiftCardManually}</div>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">
-            নিরাপত্তার জন্য পূর্ণ কোড এখানে কখনো দেখানো হয় না — কোড শুধু প্রাপকের ইমেইল/ফোনে যায়।
-            তাই প্রাপকের ইমেইল বা ফোন যেকোনো একটি দেওয়া বাধ্যতামূলক।
-          </p>
+            {dict.commerce.forSecurityTheFullCode}</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="block text-sm">পরিমাণ (৳) *
-            <input className="input mt-1" type="number" min="0" step="0.01" value={issueAmount} onChange={(e) => setIssueAmount(e.target.value)} placeholder="যেমন: ১০০০" />
+          <label className="block text-sm">{dict.commerce.amount}<input className="input mt-1" type="number" min="0" step="0.01" value={issueAmount} onChange={(e) => setIssueAmount(e.target.value)} placeholder={dict.commerce.eG10002} />
           </label>
-          <label className="block text-sm">প্রাপকের নাম
-            <input className="input mt-1" value={issueName} onChange={(e) => setIssueName(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.recipientName}<input className="input mt-1" value={issueName} onChange={(e) => setIssueName(e.target.value)} />
           </label>
-          <label className="block text-sm">প্রাপকের ইমেইল
-            <input className="input mt-1" type="email" value={issueEmail} onChange={(e) => setIssueEmail(e.target.value)} placeholder="you@example.com" />
+          <label className="block text-sm">{dict.commerce.recipientEmail}<input className="input mt-1" type="email" value={issueEmail} onChange={(e) => setIssueEmail(e.target.value)} placeholder="you@example.com" />
           </label>
-          <label className="block text-sm">প্রাপকের ফোন
-            <input className="input mt-1" type="tel" value={issuePhone} onChange={(e) => setIssuePhone(e.target.value)} placeholder="01XXXXXXXXX" />
+          <label className="block text-sm">{dict.commerce.recipientPhone}<input className="input mt-1" type="tel" value={issuePhone} onChange={(e) => setIssuePhone(e.target.value)} placeholder="01XXXXXXXXX" />
           </label>
-          <label className="block text-sm md:col-span-2">নোট (কেন ইস্যু করা হচ্ছে) *
-            <input className="input mt-1" value={issueNote} onChange={(e) => setIssueNote(e.target.value)} placeholder="যেমন: ক্যাম্পেইন বিজয়ীর পুরস্কার" />
+          <label className="block text-sm md:col-span-2">{dict.commerce.noteWhyItIsBeing}<input className="input mt-1" value={issueNote} onChange={(e) => setIssueNote(e.target.value)} placeholder={dict.commerce.eGCampaignWinnerS} />
           </label>
         </div>
-        {!issueNote.trim() ? <p className="text-xs text-slate-500">নোট দেওয়া বাধ্যতামূলক — প্রতিটি ম্যানুয়াল ইস্যু লেজারে কারণসহ লেখা থাকে।</p> : null}
-        {!issueEmail.trim() && !issuePhone.trim() ? <p className="text-xs text-slate-500">প্রাপকের ইমেইল বা ফোন অন্তত একটি দিন — নইলে কোড কারো কাছে পৌঁছাবে না।</p> : null}
+        {!issueNote.trim() ? <p className="text-xs text-slate-500">{dict.commerce.aNoteIsMandatoryEvery}</p> : null}
+        {!issueEmail.trim() && !issuePhone.trim() ? <p className="text-xs text-slate-500">{dict.commerce.giveAtLeastOneOf}</p> : null}
         <button type="submit" className="btn-primary" disabled={issueBusy || !issueReady}>
-          {issueBusy ? "ইস্যু হচ্ছে…" : "গিফট কার্ড ইস্যু করুন"}
+          {issueBusy ? dict.commerce.issuing : dict.commerce.issueGiftCard}
         </button>
       </form>
 
       {/* ---------- list + detail ---------- */}
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         <div className="card p-5 space-y-4">
-          <div className="font-semibold">🧾 কার্ডের তালিকা</div>
+          <div className="font-semibold">{dict.commerce.cardList}</div>
           <div className="flex flex-wrap gap-2">
             <input
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              placeholder="শেষ ৪ সংখ্যা দিয়ে খুঁজুন" aria-label="শেষ ৪ সংখ্যা দিয়ে খুঁজুন"
+              placeholder={dict.commerce.searchByLast4Digits} aria-label={dict.commerce.searchByLast4Digits}
               className="w-56 rounded-lg border px-3 py-2 font-mono text-sm"
             />
             <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="rounded-lg border px-3 py-2 text-sm">
-              {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{dict.commerce[s.labelKey as keyof typeof dict.commerce]}</option>)}
             </select>
           </div>
-          {listBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : items.length === 0 ? (
-            <p className="text-sm text-slate-500">কোনো গিফট কার্ড পাওয়া যায়নি।</p>
+          {listBusy ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : items.length === 0 ? (
+            <p className="text-sm text-slate-500">{dict.commerce.noGiftCardsFound}</p>
           ) : (
             <ResponsiveTable
               table={
@@ -435,12 +425,12 @@ export default function GiftCardsPage() {
                   <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b text-xs text-slate-500">
-                    <th className="py-2 pr-2">কোড</th>
-                    <th className="py-2 pr-2">প্রাথমিক</th>
-                    <th className="py-2 pr-2">ব্যালেন্স</th>
-                    <th className="py-2 pr-2">অবস্থা</th>
-                    <th className="py-2 pr-2">উৎস</th>
-                    <th className="py-2">মেয়াদ</th>
+                    <th className="py-2 pr-2">{dict.commerce.code}</th>
+                    <th className="py-2 pr-2">{dict.commerce.initial}</th>
+                    <th className="py-2 pr-2">{dict.commerce.balance}</th>
+                    <th className="py-2 pr-2">{dict.commerce.status}</th>
+                    <th className="py-2 pr-2">{dict.commerce.source}</th>
+                    <th className="py-2">{dict.commerce.validity}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -451,11 +441,11 @@ export default function GiftCardsPage() {
                       className={`cursor-pointer border-b hover:bg-slate-50 ${detail?.id === c.id ? "bg-pink-50/60" : ""}`}
                     >
                       <td className="py-2 pr-2 font-mono font-semibold">{c.codePrefix} ••••{c.codeLast4 ?? ""}</td>
-                      <td className="py-2 pr-2">{money(c.initialAmountMinor)}</td>
-                      <td className="py-2 pr-2 font-semibold">{money(c.balanceMinor)}</td>
-                      <td className="py-2 pr-2">{STATUS_LABELS[c.status] ?? c.status}</td>
-                      <td className="py-2 pr-2">{c.source === "manual" ? "ম্যানুয়াল" : c.source === "purchase" ? "অর্ডার" : (c.source ?? "—")}</td>
-                      <td className="py-2">{c.expiresAt ? dateFmt(c.expiresAt) : "মেয়াদ নেই"}</td>
+                      <td className="py-2 pr-2">{money(c.initialAmountMinor, locale)}</td>
+                      <td className="py-2 pr-2 font-semibold">{money(c.balanceMinor, locale)}</td>
+                      <td className="py-2 pr-2">{STATUS_LABELS[c.status] ? dict.commerce[STATUS_LABELS[c.status] as keyof typeof dict.commerce] : c.status}</td>
+                      <td className="py-2 pr-2">{c.source === "manual" ? dict.commerce.manual : c.source === "purchase" ? dict.commerce.order : (c.source ?? "—")}</td>
+                      <td className="py-2">{c.expiresAt ? dateFmt(c.expiresAt) : dict.commerce.noExpiry}</td>
                     </tr>
                   ))}
                   </tbody>
@@ -470,24 +460,24 @@ export default function GiftCardsPage() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="font-mono font-semibold">{c.codePrefix} ••••{c.codeLast4 ?? ""}</span>
-                    <span>{STATUS_LABELS[c.status] ?? c.status}</span>
+                    <span>{STATUS_LABELS[c.status] ? dict.commerce[STATUS_LABELS[c.status] as keyof typeof dict.commerce] : c.status}</span>
                   </div>
                   <dl className="mt-2 space-y-1.5 text-sm">
                     <div className="flex gap-2">
-                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">প্রাথমিক</dt>
-                      <dd>{money(c.initialAmountMinor)}</dd>
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.initial}</dt>
+                      <dd>{money(c.initialAmountMinor, locale)}</dd>
                     </div>
                     <div className="flex gap-2">
-                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">ব্যালেন্স</dt>
-                      <dd className="font-semibold">{money(c.balanceMinor)}</dd>
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.balance}</dt>
+                      <dd className="font-semibold">{money(c.balanceMinor, locale)}</dd>
                     </div>
                     <div className="flex gap-2">
-                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">উৎস</dt>
-                      <dd>{c.source === "manual" ? "ম্যানুয়াল" : c.source === "purchase" ? "অর্ডার" : (c.source ?? "—")}</dd>
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.source}</dt>
+                      <dd>{c.source === "manual" ? dict.commerce.manual : c.source === "purchase" ? dict.commerce.order : (c.source ?? "—")}</dd>
                     </div>
                     <div className="flex gap-2">
-                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">মেয়াদ</dt>
-                      <dd>{c.expiresAt ? dateFmt(c.expiresAt) : "মেয়াদ নেই"}</dd>
+                      <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.validity}</dt>
+                      <dd>{c.expiresAt ? dateFmt(c.expiresAt) : dict.commerce.noExpiry}</dd>
                     </div>
                   </dl>
                 </div>
@@ -496,48 +486,48 @@ export default function GiftCardsPage() {
           )}
           {totalPages > 1 ? (
             <div className="flex items-center justify-center gap-2">
-              <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)} className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">আগের পেজ</button>
-              <span className="text-xs font-semibold text-slate-500">পেজ {page} / {totalPages} · মোট {total}টি</span>
-              <button type="button" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">পরের পেজ</button>
+              <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)} className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">{dict.commerce.previousPage}</button>
+              <span className="text-xs font-semibold text-slate-500">{dict.commerce.page}{page} / {totalPages} {dict.commerce.total2}{total}{dict.commerce.text1ou8}</span>
+              <button type="button" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-40">{dict.commerce.nextPage}</button>
             </div>
           ) : null}
         </div>
 
         {/* detail panel */}
         <div className="card h-fit p-5 space-y-4">
-          <div className="font-semibold">কার্ডের বিবরণ</div>
-          {detailBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : !detail ? (
-            <p className="text-sm text-slate-500">তালিকা থেকে একটি কার্ডে ক্লিক করলে তার লেজার ও বিবরণ এখানে দেখা যাবে।</p>
+          <div className="font-semibold">{dict.commerce.cardDetails}</div>
+          {detailBusy ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : !detail ? (
+            <p className="text-sm text-slate-500">{dict.commerce.clickingACardInThe}</p>
           ) : (
             <>
               <div className="space-y-1 text-sm">
                 <p className="font-mono text-base font-bold">{detail.codePrefix} ••••{detail.codeLast4 ?? ""}</p>
-                <p>প্রাথমিক: <b>{money(detail.initialAmountMinor)}</b> · ব্যালেন্স: <b>{money(detail.balanceMinor)}</b></p>
-                <p>অবস্থা: <b>{STATUS_LABELS[detail.status] ?? detail.status}</b> · উৎস: <b>{detail.source === "manual" ? "ম্যানুয়াল" : detail.source === "purchase" ? "অর্ডার" : (detail.source ?? "—")}</b></p>
-                {detail.recipientName ? <p>প্রাপক: {detail.recipientName}</p> : null}
-                {detail.recipientEmail ? <p>প্রাপকের ইমেইল: <span className="font-mono">{detail.recipientEmail}</span></p> : null}
-                {detail.recipientPhone ? <p>প্রাপকের ফোন: <span className="font-mono">{detail.recipientPhone}</span></p> : null}
-                {detail.issuedOrderId ? <p>ইস্যুর অর্ডার: <span className="font-mono text-xs">{detail.issuedOrderId}</span></p> : null}
-                <p>তৈরি: {detail.createdAt ? new Date(detail.createdAt).toLocaleString("bn-BD") : "—"} · মেয়াদ: {detail.expiresAt ? dateFmt(detail.expiresAt) : "নেই"}</p>
-                {detail.note ? <p className="text-slate-500">নোট: {detail.note}</p> : null}
+                <p>{dict.commerce.initial2}<b>{money(detail.initialAmountMinor, locale)}</b> {dict.commerce.balance2}<b>{money(detail.balanceMinor, locale)}</b></p>
+                <p>{dict.commerce.status3}<b>{STATUS_LABELS[detail.status] ? dict.commerce[STATUS_LABELS[detail.status] as keyof typeof dict.commerce] : detail.status}</b> {dict.commerce.source3}<b>{detail.source === "manual" ? dict.commerce.manual : detail.source === "purchase" ? dict.commerce.order : (detail.source ?? "—")}</b></p>
+                {detail.recipientName ? <p>{dict.commerce.recipient}{detail.recipientName}</p> : null}
+                {detail.recipientEmail ? <p>{dict.commerce.recipientEmail2}<span className="font-mono">{detail.recipientEmail}</span></p> : null}
+                {detail.recipientPhone ? <p>{dict.commerce.recipientPhone2}<span className="font-mono">{detail.recipientPhone}</span></p> : null}
+                {detail.issuedOrderId ? <p>{dict.commerce.issueOrder}<span className="font-mono text-xs">{detail.issuedOrderId}</span></p> : null}
+                <p>{dict.commerce.created}{detail.createdAt ? fmtDateTime(locale, new Date(detail.createdAt)) : "—"} {dict.commerce.expiry}{detail.expiresAt ? dateFmt(detail.expiresAt) : dict.commerce.none2}</p>
+                {detail.note ? <p className="text-slate-500">{dict.commerce.note2}{detail.note}</p> : null}
               </div>
 
               <div className="border-t pt-3">
-                <p className="mb-2 text-sm font-semibold">লেজার</p>
+                <p className="mb-2 text-sm font-semibold">{dict.commerce.ledger}</p>
                 {detail.ledger.length === 0 ? (
-                  <p className="text-sm text-slate-500">কোনো লেজার এন্ট্রি নেই।</p>
+                  <p className="text-sm text-slate-500">{dict.commerce.noLedgerEntries}</p>
                 ) : (
                   <ul className="space-y-2">
                     {detail.ledger.map((e) => (
                       <li key={e.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-semibold">{KIND_LABELS[e.kind] ?? e.kind}</span>
-                          <span className={`font-bold ${e.deltaMinor.startsWith("-") ? "text-rose-600" : "text-emerald-700"}`}>{signedMoney(e.deltaMinor)}</span>
+                          <span className="font-semibold">{KIND_LABELS[e.kind] ? dict.commerce[KIND_LABELS[e.kind] as keyof typeof dict.commerce] : e.kind}</span>
+                          <span className={`font-bold ${e.deltaMinor.startsWith("-") ? "text-rose-600" : "text-emerald-700"}`}>{signedMoney(e.deltaMinor, locale)}</span>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">
-                          এন্ট্রির পর ব্যালেন্স: {money(e.balanceAfter)} · {e.createdAt ? new Date(e.createdAt).toLocaleString("bn-BD") : ""}
+                          {dict.commerce.balanceAfterEntry}{money(e.balanceAfter, locale)} · {e.createdAt ? fmtDateTime(locale, new Date(e.createdAt)) : ""}
                         </p>
-                        {e.note ? <p className="mt-0.5 text-xs text-slate-500">{NOTE_LABELS[e.note] ?? e.note}</p> : null}
+                        {e.note ? <p className="mt-0.5 text-xs text-slate-500">{NOTE_LABELS[e.note] ? dict.commerce[NOTE_LABELS[e.note] as keyof typeof dict.commerce] : e.note}</p> : null}
                       </li>
                     ))}
                   </ul>
@@ -547,35 +537,35 @@ export default function GiftCardsPage() {
               {detailActionable ? (
                 <div className="space-y-4 border-t pt-3">
                   <div className="space-y-2">
-                    <p className="text-sm font-semibold text-rose-700">কার্ড বাতিল করুন</p>
-                    <input value={voidNote} onChange={(e) => { setVoidNote(e.target.value); setConfirming(null); }} placeholder="বাতিলের কারণ (নোট) *" aria-label="বাতিলের কারণ (নোট)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                    <p className="text-sm font-semibold text-rose-700">{dict.commerce.voidCard}</p>
+                    <input value={voidNote} onChange={(e) => { setVoidNote(e.target.value); setConfirming(null); }} placeholder={dict.commerce.voidReasonNote} aria-label={dict.commerce.voidReasonNote2} className="w-full rounded-lg border px-3 py-2 text-sm" />
                     <button
                       type="button"
                       disabled={actionBusy || !voidNote.trim()}
                       onClick={() => void doVoid()}
                       className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
                     >
-                      {confirming === "void" ? "নিশ্চিত করুন — কার্ডটি বাতিল হবে" : "বাতিল করুন"}
+                      {confirming === "void" ? dict.commerce.confirmTheCardWillBe : dict.commerce.cancel2}
                     </button>
-                    {confirming === "void" ? <p className="text-xs text-rose-600">আবার ক্লিক করলে কার্ডটি স্থায়ীভাবে বাতিল হবে ও অবশিষ্ট ব্যালেন্স শূন্য হয়ে যাবে।</p> : null}
+                    {confirming === "void" ? <p className="text-xs text-rose-600">{dict.commerce.clickingAgainWillPermanentlyVoid}</p> : null}
                   </div>
                   <div className="space-y-2">
-                    <p className="text-sm font-semibold">ব্যালেন্স সংশোধন করুন</p>
-                    <input value={adjustDelta} onChange={(e) => { setAdjustDelta(e.target.value); setConfirming(null); }} type="number" step="0.01" placeholder="পরিমাণ (৳) — বাড়াতে +, কমাতে −" aria-label="সংশোধনের পরিমাণ (টাকা) — বাড়াতে +, কমাতে −" className="w-full rounded-lg border px-3 py-2 text-sm" />
-                    <input value={adjustNote} onChange={(e) => { setAdjustNote(e.target.value); setConfirming(null); }} placeholder="সংশোধনের কারণ (নোট) *" aria-label="সংশোধনের কারণ (নোট)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                    <p className="text-sm font-semibold">{dict.commerce.adjustBalance}</p>
+                    <input value={adjustDelta} onChange={(e) => { setAdjustDelta(e.target.value); setConfirming(null); }} type="number" step="0.01" placeholder={dict.commerce.amountToIncreaseToDecrease} aria-label={dict.commerce.adjustmentAmountTakaToIncrease} className="w-full rounded-lg border px-3 py-2 text-sm" />
+                    <input value={adjustNote} onChange={(e) => { setAdjustNote(e.target.value); setConfirming(null); }} placeholder={dict.commerce.adjustmentReasonNote} aria-label={dict.commerce.adjustmentReasonNote2} className="w-full rounded-lg border px-3 py-2 text-sm" />
                     <button
                       type="button"
                       disabled={actionBusy || !adjustNote.trim() || !adjustDelta.trim()}
                       onClick={() => void doAdjust()}
                       className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
                     >
-                      {confirming === "adjust" ? "নিশ্চিত করুন — সংশোধন প্রয়োগ হবে" : "সংশোধন করুন"}
+                      {confirming === "adjust" ? dict.commerce.confirmTheAdjustmentWillApply : dict.commerce.adjust}
                     </button>
-                    {confirming === "adjust" ? <p className="text-xs text-slate-500">আবার ক্লিক করলে সংশোধনটি লেজারে লেখা হবে। সংশোধনের পর ব্যালেন্স ঋণাত্মক হতে পারবে না।</p> : null}
+                    {confirming === "adjust" ? <p className="text-xs text-slate-500">{dict.commerce.clickingAgainWillWriteThe}</p> : null}
                   </div>
                 </div>
               ) : (
-                <p className="border-t pt-3 text-xs text-slate-500">বাতিল/মেয়াদোত্তীর্ণ কার্ডে বাতিল বা সংশোধন করা যায় না।</p>
+                <p className="border-t pt-3 text-xs text-slate-500">{dict.commerce.voidedExpiredCardsCannotBe}</p>
               )}
             </>
           )}

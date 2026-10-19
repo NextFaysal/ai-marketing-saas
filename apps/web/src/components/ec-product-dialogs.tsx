@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
@@ -79,6 +80,7 @@ function fromLocalInput(v: string): string | null {
 }
 
 export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; onClose: () => void }) {
+  const { dict, t, locale } = useLocale();
   const myRole = useMyRole();
   const [data, setData] = useState<EcChannelsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -97,7 +99,7 @@ export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; 
       setPriceDraft(Object.fromEntries(res.listings.map((l) => [l.id, l.channelPriceMinor ?? ""])));
       setSaleDraft(Object.fromEntries(res.listings.map((l) => [l.id, { start: toLocalInput(l.saleStartsAt), end: toLocalInput(l.saleEndsAt) }])));
       setMsg("");
-    } catch (e) { setMsg(e instanceof Error ? e.message : "চ্যানেল লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToLoadChannels); }
     finally { setLoading(false); }
   }, [product.id]);
 
@@ -106,7 +108,7 @@ export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; 
   async function act(key: string, fn: () => Promise<unknown>, okMsg: string) {
     setBusy(key); setMsg("");
     try { await fn(); setMsg(okMsg); await loadChannels(); }
-    catch (e) { setMsg(e instanceof Error ? e.message : "অ্যাকশন ব্যর্থ হয়েছে"); }
+    catch (e) { setMsg(e instanceof Error ? e.message : dict.products.actionFailed); }
     finally { setBusy(""); }
   }
 
@@ -114,10 +116,10 @@ export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; 
 
   return (
     <Overlay onClose={onClose} wide>
-      <DialogHeader title={`চ্যানেল — ${product.name}`} onClose={onClose} />
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+      <DialogHeader title={t("products.channels2", { name: product.name })} onClose={onClose} />
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
       {!loading && data && data.listings.length === 0 ? (
-        <p className="text-sm text-slate-500">এই পণ্যটি এখনো কোনো স্টোরে Listing হয়নি।</p>
+        <p className="text-sm text-slate-500">{dict.products.thisProductIsNotListed}</p>
       ) : null}
       {data?.listings.map((l) => (
         <div key={l.id} className="rounded-xl border p-3.5 space-y-3">
@@ -127,74 +129,65 @@ export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; 
             <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{l.syncMode}</span>
             <span className="rounded bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{l.publishState}</span>
             <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">sync: {l.syncStatus}</span>
-            {l.saleActive ? <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">সেল চলছে</span> : null}
+            {l.saleActive ? <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">{dict.products.saleRunning}</span> : null}
           </div>
           {l.syncMode !== "full-manage" ? (
             <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
-              এই স্টোরটি full-manage মোডে নেই — পরিবর্তন স্টোরে পাঠানো হবে না।
-            </p>
+              {dict.products.thisStoreIsNotIn}</p>
           ) : null}
-          {l.lastSyncError ? <p className="text-xs text-red-600">শেষ Sync এরর: {l.lastSyncError}</p> : null}
+          {l.lastSyncError ? <p className="text-xs text-red-600">{dict.products.lastSyncError}{l.lastSyncError}</p> : null}
           {l.stockDiverged ? (
             <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
-              সতর্কতা: স্টোরের স্টক ({l.channelStock ?? "—"}) আর এখানকার স্টক ({data.productStock ?? "—"}) মিলছে না — এটি একটি সংকেত, চূড়ান্ত প্রমাণ নয়।
-            </p>
+              {dict.products.warningTheStoreSStock}{l.channelStock ?? "—"}{dict.products.andTheStockHere}{data.productStock ?? "—"}{dict.products.doNotMatchThisIs}</p>
           ) : null}
 
           <div className="flex flex-wrap gap-2">
             {l.publishState !== "published" ? (
               <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-50" disabled={busy !== ""}
-                onClick={() => act(`pub-${l.id}`, () => apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/publish`, { method: "POST" }), "প্রকাশের অনুরোধ পাঠানো হয়েছে।")}>
-                প্রকাশ করুন
-              </button>
+                onClick={() => act(`pub-${l.id}`, () => apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/publish`, { method: "POST" }), dict.products.publishRequestSent)}>
+                {dict.products.publish}</button>
             ) : (
               <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-50" disabled={busy !== ""}
-                onClick={() => act(`unpub-${l.id}`, () => apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/unpublish`, { method: "POST" }), "অপ্রকাশের অনুরোধ পাঠানো হয়েছে।")}>
-                অপ্রকাশ করুন
-              </button>
+                onClick={() => act(`unpub-${l.id}`, () => apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/unpublish`, { method: "POST" }), dict.products.unpublishRequestSent)}>
+                {dict.products.unpublish}</button>
             )}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg bg-slate-50 p-2.5 space-y-2">
               <div className="text-xs font-semibold text-slate-700">
-                চ্যানেল প্রাইস ওভাররাইড {l.channelPriceMinor ? `(বর্তমান: ${formatMinor(BigInt(l.channelPriceMinor))})` : "(নেই — মূল দামই চলছে)"}
+                {dict.products.channelPriceOverride}{l.channelPriceMinor ? t("products.current", { formatMinor: formatMinor(BigInt(l.channelPriceMinor)) }) : dict.products.noneTheBasePriceApplies}
               </div>
               <div className="flex gap-2">
-                <input className="w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="পয়সায় (minor unit), যেমন 125000"
+                <input className="w-full rounded-lg border px-2 py-1.5 text-xs" placeholder={dict.products.inPaisaMinorUnitE}
                   value={priceDraft[l.id] ?? ""} onChange={(e) => setPriceDraft({ ...priceDraft, [l.id]: e.target.value })} />
                 <button className="whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
                   onClick={() => act(`price-${l.id}`, () => apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/channel-price`, {
                     method: "PATCH", body: JSON.stringify({ channelPriceMinor: (priceDraft[l.id] ?? "").trim() || null }),
-                  }), "চ্যানেল প্রাইস সংরক্ষণ হয়েছে।")}>
-                  সংরক্ষণ
-                </button>
+                  }), dict.products.channelPriceSaved)}>
+                  {dict.products.save}</button>
                 <button className="whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs text-slate-500 disabled:opacity-50" disabled={busy !== ""}
                   onClick={() => act(`price-clear-${l.id}`, () => apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/channel-price`, {
                     method: "PATCH", body: JSON.stringify({ channelPriceMinor: null }),
-                  }), "চ্যানেল প্রাইস ওভাররাইড সরানো হয়েছে।")}>
-                  মুছুন
-                </button>
+                  }), dict.products.channelPriceOverrideRemoved)}>
+                  {dict.products.delete}</button>
               </div>
             </div>
 
             <div className="rounded-lg bg-slate-50 p-2.5 space-y-2">
-              <div className="text-xs font-semibold text-slate-700">সেলের সময়সূচি</div>
-              <label className="block text-[11px] text-slate-500">শুরু
-                <input type="datetime-local" className="mt-0.5 w-full rounded-lg border px-2 py-1.5 text-xs"
+              <div className="text-xs font-semibold text-slate-700">{dict.products.saleSchedule}</div>
+              <label className="block text-[11px] text-slate-500">{dict.products.start}<input type="datetime-local" className="mt-0.5 w-full rounded-lg border px-2 py-1.5 text-xs"
                   value={saleDraft[l.id]?.start ?? ""} onChange={(e) => setSaleDraft({ ...saleDraft, [l.id]: { start: e.target.value, end: saleDraft[l.id]?.end ?? "" } })} />
               </label>
-              <label className="block text-[11px] text-slate-500">শেষ
-                <input type="datetime-local" className="mt-0.5 w-full rounded-lg border px-2 py-1.5 text-xs"
+              <label className="block text-[11px] text-slate-500">{dict.products.end}<input type="datetime-local" className="mt-0.5 w-full rounded-lg border px-2 py-1.5 text-xs"
                   value={saleDraft[l.id]?.end ?? ""} onChange={(e) => setSaleDraft({ ...saleDraft, [l.id]: { start: saleDraft[l.id]?.start ?? "", end: e.target.value } })} />
               </label>
               <button className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
                 onClick={() => act(`sale-${l.id}`, () => apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/sale-schedule`, {
                   method: "PATCH",
                   body: JSON.stringify({ saleStartsAt: fromLocalInput(saleDraft[l.id]?.start ?? ""), saleEndsAt: fromLocalInput(saleDraft[l.id]?.end ?? "") }),
-                }), "সেলের সময়সূচি সংরক্ষণ হয়েছে।")}>
-                সময়সূচি সংরক্ষণ
-              </button>
+                }), dict.products.saleScheduleSaved)}>
+                {dict.products.saveSchedule}</button>
             </div>
           </div>
 
@@ -202,24 +195,22 @@ export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; 
             confirmDeleteId === l.id ? (
               <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
                 <p className="text-xs text-red-800">
-                  এটি <b>স্টোর থেকে</b> পণ্যটি মুছে ফেলবে। এখানকার (লোকাল) পণ্যটি থেকে যাবে। এই কাজটি ফেরানো যাবে না।
-                </p>
+                  {dict.products.this}<b>{dict.products.fromTheStore}</b> {dict.products.willDeleteTheProductFrom}</p>
                 <div className="flex gap-2">
                   <button className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""}
                     onClick={() => act(`del-${l.id}`, async () => {
                       await apiFetch(`/organizations/${orgId}/commerce/listings/${l.id}/remote`, { method: "DELETE" });
                       setConfirmDeleteId(null);
-                    }, "স্টোর থেকে মোছার অনুরোধ পাঠানো হয়েছে।")}>
-                    {busy === `del-${l.id}` ? "মোছা হচ্ছে…" : "হ্যাঁ, স্টোর থেকে মুছুন"}
+                    }, dict.products.storeDeletionRequestSent)}>
+                    {busy === `del-${l.id}` ? dict.products.deleting : dict.products.yesDeleteFromStore}
                   </button>
-                  <button className="rounded-lg border px-3 py-1.5 text-xs" onClick={() => setConfirmDeleteId(null)}>বাতিল</button>
+                  <button className="rounded-lg border px-3 py-1.5 text-xs" onClick={() => setConfirmDeleteId(null)}>{dict.common.cancel}</button>
                 </div>
               </div>
             ) : (
               <button className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""}
                 onClick={() => setConfirmDeleteId(l.id)}>
-                🗑️ স্টোর থেকে মুছুন (শুধু Owner)
-              </button>
+                {dict.products.deleteFromStoreOwnerOnly}</button>
             )
           ) : null}
         </div>
@@ -232,6 +223,7 @@ export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; 
 /* ---------------- Gallery (EC3) ---------------- */
 
 export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; onClose: () => void }) {
+  const { dict, t, locale } = useLocale();
   const confirmDialog = useConfirm();
   const [images, setImages] = useState<EcProductImage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -250,7 +242,7 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
       const detail = await apiFetch<{ images?: EcProductImage[] }>(`/organizations/${orgId}/products/${product.id}`);
       setImages([...(detail.images ?? [])].sort((a, b) => a.position - b.position));
       setMsg("");
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ছবি লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToLoadImage); }
     finally { setLoading(false); }
   }, [product.id]);
 
@@ -265,9 +257,9 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
         method: "POST", body: JSON.stringify({ url: newUrl.trim(), altText: newAlt.trim() || undefined }),
       });
       setNewUrl(""); setNewAlt("");
-      setMsg("ছবি যোগ হয়েছে।");
+      setMsg(dict.products.imageAdded);
       await loadImages();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ছবি যোগ ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToAddImage); }
     finally { setBusy(false); }
   }
 
@@ -285,26 +277,26 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
     let okCount = 0;
     for (const file of files) {
       try {
-        if (!TYPES.includes(file.type)) throw new Error("শুধু PNG, JPEG বা WebP ছবি আপলোড করা যায়।");
-        if (file.size > MAX) throw new Error("ছবিটি ১০ MB-এর বেশি বড়।");
+        if (!TYPES.includes(file.type)) throw new Error(dict.products.onlyPNGJPEGOrWebP);
+        if (file.size > MAX) throw new Error(dict.products.theImageIsLargerThan);
         const pre = await apiFetch<{ uploadUrl: string; key: string }>(
           `/organizations/${orgId}/products/${product.id}/images/presign`,
           { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type, sizeBytes: file.size }) },
         );
         const putRes = await fetch(pre.uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-        if (!putRes.ok) throw new Error(`আপলোড সার্ভার ছবিটি নেয়নি (HTTP ${putRes.status})।`);
+        if (!putRes.ok) throw new Error(t("products.theUploadServerDidNot", { status: putRes.status }));
         await apiFetch(`/organizations/${orgId}/products/${product.id}/images/complete`, {
           method: "POST", body: JSON.stringify({ key: pre.key, contentType: file.type, sizeBytes: file.size }),
         });
         okCount += 1;
       } catch (e) {
-        problems.push(`${file.name}: ${e instanceof Error ? e.message : "আপলোড ব্যর্থ হয়েছে"}`);
+        problems.push(`${file.name}: ${e instanceof Error ? e.message : dict.products.uploadFailed}`);
       }
     }
     setUploading(false);
     if (okCount > 0) await loadImages();
     setMsg([
-      ...(okCount > 0 ? [`${okCount}টি ছবি আপলোড হয়েছে।`] : []),
+      ...(okCount > 0 ? [t("products.imagesUploaded", { okCount: okCount })] : []),
       ...problems,
     ].join("\n"));
   }
@@ -312,16 +304,16 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
   async function deleteImage(img: EcProductImage) {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (!(await confirmDialog({
-      title: "এই ছবিটি মুছে ফেলবেন?",
-      confirmLabel: "মুছে ফেলুন",
+      title: dict.products.deleteThisImage,
+      confirmLabel: dict.products.delete2,
       danger: true,
     }))) return;
     setBusy(true); setMsg("");
     try {
       await apiFetch(`/organizations/${orgId}/products/${product.id}/images/${img.id}`, { method: "DELETE" });
-      setMsg("ছবি মোছা হয়েছে।");
+      setMsg(dict.products.imageDeleted);
       await loadImages();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ছবি মোছা ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToDeleteImage); }
     finally { setBusy(false); }
   }
 
@@ -337,16 +329,16 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
         method: "PATCH", body: JSON.stringify({ imageIds: next.map((i) => i.id) }),
       });
       setImages(next.map((img, i) => ({ ...img, position: i })));
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ক্রম বদলানো ব্যর্থ হয়েছে"); await loadImages(); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToChangeOrder); await loadImages(); }
     finally { setBusy(false); }
   }
 
   return (
     <Overlay onClose={onClose} wide>
-      <DialogHeader title={`ছবির গ্যালারি — ${product.name}`} onClose={onClose} />
-      <p className="text-xs text-slate-400">প্রথম ছবিটিই কভার ছবি হিসেবে ব্যবহৃত হয়।</p>
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : images.length === 0 ? (
-        <p className="text-sm text-slate-500">এখনো কোনো গ্যালারি ছবি নেই।</p>
+      <DialogHeader title={t("products.imageGallery", { name: product.name })} onClose={onClose} />
+      <p className="text-xs text-slate-400">{dict.products.theFirstImageIsUsed}</p>
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : images.length === 0 ? (
+        <p className="text-sm text-slate-500">{dict.products.noGalleryImagesYet}</p>
       ) : (
         <ul className="space-y-2">
           {images.map((img, idx) => (
@@ -354,11 +346,11 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
               <MediaImage src={img.url} alt={img.altText ?? ""} width={96} height={96} className="h-12 w-12 rounded-lg object-cover border" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs text-slate-600" title={img.url}>{img.url}</div>
-                <div className="text-[11px] text-slate-400">ক্রম: {img.position}{idx === 0 ? " · কভার" : ""}{img.altText ? ` · Alt: ${img.altText}` : ""}</div>
+                <div className="text-[11px] text-slate-400">{dict.products.order2}{img.position}{idx === 0 ? dict.products.cover : ""}{img.altText ? ` · Alt: ${img.altText}` : ""}</div>
               </div>
-              <button className="rounded border px-2 py-1 text-xs disabled:opacity-40" disabled={busy || idx === 0} onClick={() => move(idx, -1)} title="উপরে নিন">↑</button>
-              <button className="rounded border px-2 py-1 text-xs disabled:opacity-40" disabled={busy || idx === images.length - 1} onClick={() => move(idx, 1)} title="নিচে নিন">↓</button>
-              <button className="rounded border px-2 py-1 text-xs text-red-600 disabled:opacity-50" disabled={busy} onClick={() => deleteImage(img)}>মুছুন</button>
+              <button className="rounded border px-2 py-1 text-xs disabled:opacity-40" disabled={busy || idx === 0} onClick={() => move(idx, -1)} title={dict.products.moveUp}>↑</button>
+              <button className="rounded border px-2 py-1 text-xs disabled:opacity-40" disabled={busy || idx === images.length - 1} onClick={() => move(idx, 1)} title={dict.products.moveDown}>↓</button>
+              <button className="rounded border px-2 py-1 text-xs text-red-600 disabled:opacity-50" disabled={busy} onClick={() => deleteImage(img)}>{dict.products.delete}</button>
             </li>
           ))}
         </ul>
@@ -369,9 +361,9 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); void uploadFiles(e.dataTransfer.files); }}
       >
-        <p className="text-slate-600">ছবির ফাইল এখানে টেনে ছাড়ুন, অথবা</p>
+        <p className="text-slate-600">{dict.products.dragAndDropImageFiles}</p>
         <button type="button" className="btn-primary mt-2 disabled:opacity-50" disabled={uploading || busy} onClick={() => fileInputRef.current?.click()}>
-          {uploading ? "আপলোড হচ্ছে…" : "ফাইল থেকে ছবি বেছে নিন"}
+          {uploading ? dict.products.uploading : dict.products.chooseAnImageFromFile}
         </button>
         <input
           ref={fileInputRef}
@@ -381,12 +373,12 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
           className="hidden"
           onChange={(e) => { void uploadFiles(e.target.files ?? []); e.target.value = ""; }}
         />
-        <p className="mt-1 text-[11px] text-slate-400">PNG / JPEG / WebP · প্রতিটি সর্বোচ্চ ১০ MB · সরাসরি নিরাপদ স্টোরেজে আপলোড হয়</p>
+        <p className="mt-1 text-[11px] text-slate-400">{dict.products.pNGJPEGWebPMax10}</p>
       </div>
       <form onSubmit={addImage} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] border-t pt-3">
-        <input className="rounded-lg border px-3 py-2 text-sm" type="url" required placeholder="ছবির URL (https://…)" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} />
-        <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Alt টেক্সট (ঐচ্ছিক)" value={newAlt} onChange={(e) => setNewAlt(e.target.value)} />
-        <button className="btn-primary disabled:opacity-50" disabled={busy}>ছবি যোগ করুন</button>
+        <input className="rounded-lg border px-3 py-2 text-sm" type="url" required placeholder={dict.products.imageURLHttps} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} />
+        <input className="rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.altTextOptional} value={newAlt} onChange={(e) => setNewAlt(e.target.value)} />
+        <button className="btn-primary disabled:opacity-50" disabled={busy}>{dict.products.addImage}</button>
       </form>
       {msg ? <p className="whitespace-pre-line text-sm text-slate-600">{msg}</p> : null}
     </Overlay>
@@ -403,6 +395,7 @@ interface EcProductOption { id: string; name: string; sku?: string | null }
 interface EcVariantOption { id: string; name: string; sku?: string | null }
 
 export function EcBundleDialog({ product, onClose }: { product: EcProductRef; onClose: () => void }) {
+  const { dict, t, locale } = useLocale();
   const [bundle, setBundle] = useState<EcBundleItem[]>([]);
   const [options, setOptions] = useState<EcProductOption[]>([]);
   const [variants, setVariants] = useState<EcVariantOption[]>([]);
@@ -424,7 +417,7 @@ export function EcBundleDialog({ product, onClose }: { product: EcProductRef; on
       setBundle(b);
       setOptions(list.items.filter((p) => p.id !== product.id));
       setMsg("");
-    } catch (e) { setMsg(e instanceof Error ? e.message : "বান্ডল লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.bundleLoadFailed); }
     finally { setLoading(false); }
   }, [product.id]);
 
@@ -453,9 +446,9 @@ export function EcBundleDialog({ product, onClose }: { product: EcProductRef; on
         }),
       });
       setComponentId(""); setQuantity("1");
-      setMsg("কম্পোনেন্ট যোগ হয়েছে।");
+      setMsg(dict.products.componentAdded);
       await loadBundle();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "যোগ ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToAdd); }
     finally { setBusy(false); }
   }
 
@@ -464,18 +457,18 @@ export function EcBundleDialog({ product, onClose }: { product: EcProductRef; on
     setBusy(true); setMsg("");
     try {
       await apiFetch(`/organizations/${orgId}/products/${product.id}/bundle/${item.id}`, { method: "DELETE" });
-      setMsg("কম্পোনেন্ট সরানো হয়েছে।");
+      setMsg(dict.products.componentRemoved);
       await loadBundle();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "সরানো ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToRemove); }
     finally { setBusy(false); }
   }
 
   return (
     <Overlay onClose={onClose}>
-      <DialogHeader title={`বান্ডল — ${product.name}`} onClose={onClose} />
-      <p className="text-xs text-slate-400">এই পণ্যটি বিক্রি হলে যেসব পণ্য একসাথে যায়, সেগুলো এখানে কম্পোনেন্ট হিসেবে যোগ করুন।</p>
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : bundle.length === 0 ? (
-        <p className="text-sm text-slate-500">এখনো কোনো বান্ডল কম্পোনেন্ট নেই।</p>
+      <DialogHeader title={t("products.bundle2", { name: product.name })} onClose={onClose} />
+      <p className="text-xs text-slate-400">{dict.products.whenThisProductIsSold}</p>
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : bundle.length === 0 ? (
+        <p className="text-sm text-slate-500">{dict.products.noBundleComponentsYet}</p>
       ) : (
         <ul className="space-y-2">
           {bundle.map((b) => (
@@ -483,27 +476,27 @@ export function EcBundleDialog({ product, onClose }: { product: EcProductRef; on
               <span>
                 <span className="font-medium">{b.componentName}</span>
                 {b.componentSku ? <span className="text-slate-400"> · {b.componentSku}</span> : null}
-                <span className="block text-xs text-slate-500">পরিমাণ: {b.quantity}টি</span>
+                <span className="block text-xs text-slate-500">{dict.products.quantity}{b.quantity}{dict.products.items}</span>
               </span>
-              <button className="text-red-600 text-sm disabled:opacity-50" disabled={busy} onClick={() => removeItem(b)}>সরান</button>
+              <button className="text-red-600 text-sm disabled:opacity-50" disabled={busy} onClick={() => removeItem(b)}>{dict.products.remove}</button>
             </li>
           ))}
         </ul>
       )}
       <form onSubmit={addItem} className="space-y-2 border-t pt-3">
         <select className="w-full rounded-lg border px-3 py-2 text-sm" value={componentId} onChange={(e) => setComponentId(e.target.value)} required>
-          <option value="">কম্পোনেন্ট পণ্য বেছে নিন…</option>
+          <option value="">{dict.products.chooseAComponentProduct}</option>
           {options.map((p) => <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ""}</option>)}
         </select>
         {variants.length > 0 ? (
           <select className="w-full rounded-lg border px-3 py-2 text-sm" value={variantId} onChange={(e) => setVariantId(e.target.value)}>
-            <option value="">পুরো পণ্য (ভ্যারিয়েন্ট নয়)</option>
+            <option value="">{dict.products.wholeProductNotAVariant}</option>
             {variants.map((v) => <option key={v.id} value={v.id}>{v.name}{v.sku ? ` (${v.sku})` : ""}</option>)}
           </select>
         ) : null}
         <div className="flex gap-2">
           <input className="w-28 rounded-lg border px-3 py-2 text-sm" type="number" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-          <button className="btn-primary disabled:opacity-50" disabled={busy || !componentId}>যোগ করুন</button>
+          <button className="btn-primary disabled:opacity-50" disabled={busy || !componentId}>{dict.products.add}</button>
         </div>
       </form>
       {msg ? <p className="text-sm text-slate-600">{msg}</p> : null}
@@ -514,6 +507,7 @@ export function EcBundleDialog({ product, onClose }: { product: EcProductRef; on
 /* ---------------- Category manager (EC3) ---------------- */
 
 export function EcCategoryManagerDialog({ onClose, onChanged }: { onClose: () => void; onChanged?: () => void }) {
+  const { dict, t, locale } = useLocale();
   const [categories, setCategories] = useState<EcCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -528,7 +522,7 @@ export function EcCategoryManagerDialog({ onClose, onChanged }: { onClose: () =>
     try {
       const rows = await apiFetch<EcCategory[]>(`/organizations/${orgId}/products/categories`);
       setCategories(rows);
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ক্যাটাগরি লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.failedToLoadCategories); }
     finally { setLoading(false); }
   }, []);
 
@@ -544,10 +538,10 @@ export function EcCategoryManagerDialog({ onClose, onChanged }: { onClose: () =>
         body: JSON.stringify({ name: form.name.trim(), description: form.description.trim() || undefined, parentId: form.parentId || undefined }),
       });
       setForm({ name: "", description: "", parentId: "" });
-      setMsg("ক্যাটাগরি তৈরি হয়েছে।");
+      setMsg(dict.products.categoryCreated);
       await loadCategories();
       onChanged?.();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "তৈরি ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.creationFailed); }
     finally { setBusy(false); }
   }
 
@@ -560,33 +554,33 @@ export function EcCategoryManagerDialog({ onClose, onChanged }: { onClose: () =>
         body: JSON.stringify({ name: editForm.name.trim(), description: editForm.description.trim() || undefined, parentId: editForm.parentId || null }),
       });
       setEditId(null);
-      setMsg("ক্যাটাগরি হালনাগাদ হয়েছে।");
+      setMsg(dict.products.categoryUpdated);
       await loadCategories();
       onChanged?.();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "হালনাগাদ ব্যর্থ হয়েছে"); }
+    } catch (e) { setMsg(e instanceof Error ? e.message : dict.products.updateFailed); }
     finally { setBusy(false); }
   }
 
   return (
     <Overlay onClose={onClose} wide>
-      <DialogHeader title="ক্যাটাগরি পরিচালনা" onClose={onClose} />
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : categories.length === 0 ? (
-        <p className="text-sm text-slate-500">এখনো কোনো ক্যাটাগরি নেই।</p>
+      <DialogHeader title={dict.products.manageCategories} onClose={onClose} />
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : categories.length === 0 ? (
+        <p className="text-sm text-slate-500">{dict.products.noCategoriesYet}</p>
       ) : (
         <ul className="space-y-2">
           {categories.map((c) => (
             <li key={c.id} className="rounded-lg border p-2.5 text-sm">
               {editId === c.id ? (
                 <div className="space-y-2">
-                  <input className="w-full rounded-lg border px-3 py-2 text-sm" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder="নাম *" />
-                  <input className="w-full rounded-lg border px-3 py-2 text-sm" value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} placeholder="বিবরণ (ঐচ্ছিক)" />
+                  <input className="w-full rounded-lg border px-3 py-2 text-sm" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder={dict.products.name} />
+                  <input className="w-full rounded-lg border px-3 py-2 text-sm" value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} placeholder={dict.products.descriptionOptional} />
                   <select className="w-full rounded-lg border px-3 py-2 text-sm" value={editForm.parentId} onChange={(e) => setEditForm({ ...editForm, parentId: e.target.value })}>
-                    <option value="">প্যারেন্ট নেই</option>
+                    <option value="">{dict.products.noParent}</option>
                     {categories.filter((p) => p.id !== c.id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                   <div className="flex gap-2">
-                    <button className="btn-primary disabled:opacity-50" disabled={busy} onClick={() => saveEdit(c.id)}>সংরক্ষণ</button>
-                    <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setEditId(null)}>বাতিল</button>
+                    <button className="btn-primary disabled:opacity-50" disabled={busy} onClick={() => saveEdit(c.id)}>{dict.products.save}</button>
+                    <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setEditId(null)}>{dict.common.cancel}</button>
                   </div>
                 </div>
               ) : (
@@ -594,11 +588,11 @@ export function EcCategoryManagerDialog({ onClose, onChanged }: { onClose: () =>
                   <span>
                     <span className="font-medium">{c.name}</span>
                     <span className="block text-xs text-slate-400">
-                      {c.slug}{typeof c.productCount === "number" ? ` · ${c.productCount}টি পণ্য` : ""}
-                      {c.parentId ? ` · প্যারেন্ট: ${categories.find((p) => p.id === c.parentId)?.name ?? c.parentId}` : ""}
+                      {c.slug}{typeof c.productCount === "number" ? t("products.products3", { productCount: c.productCount }) : ""}
+                      {c.parentId ? t("products.parent", { parentId: categories.find((p) => p.id === c.parentId)?.name ?? c.parentId }) : ""}
                     </span>
                   </span>
-                  <button className="text-sky-700 text-sm" onClick={() => { setEditId(c.id); setEditForm({ name: c.name, description: c.description ?? "", parentId: c.parentId ?? "" }); }}>নাম বদলান</button>
+                  <button className="text-sky-700 text-sm" onClick={() => { setEditId(c.id); setEditForm({ name: c.name, description: c.description ?? "", parentId: c.parentId ?? "" }); }}>{dict.products.rename}</button>
                 </div>
               )}
             </li>
@@ -606,14 +600,14 @@ export function EcCategoryManagerDialog({ onClose, onChanged }: { onClose: () =>
         </ul>
       )}
       <form onSubmit={createCategory} className="space-y-2 border-t pt-3">
-        <div className="text-sm font-semibold">নতুন ক্যাটাগরি</div>
-        <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="নাম *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-        <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="বিবরণ (ঐচ্ছিক)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        <div className="text-sm font-semibold">{dict.products.newCategory}</div>
+        <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.name} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+        <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.descriptionOptional} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         <select className="w-full rounded-lg border px-3 py-2 text-sm" value={form.parentId} onChange={(e) => setForm({ ...form, parentId: e.target.value })}>
-          <option value="">প্যারেন্ট নেই</option>
+          <option value="">{dict.products.noParent}</option>
           {categories.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <button className="btn-primary disabled:opacity-50" disabled={busy}>ক্যাটাগরি তৈরি করুন</button>
+        <button className="btn-primary disabled:opacity-50" disabled={busy}>{dict.products.createCategory}</button>
       </form>
       {msg ? <p className="text-sm text-slate-600">{msg}</p> : null}
     </Overlay>

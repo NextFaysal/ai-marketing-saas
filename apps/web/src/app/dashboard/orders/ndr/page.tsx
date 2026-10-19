@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtDateTime, fmtNumber, fmtTime, formatMinor } from "@repo/contracts";
 import { EmptyState } from "@repo/ui";
 import { useToast } from "@repo/ui/client";
 
@@ -39,24 +40,26 @@ interface NdrMetrics {
   recoveryRatePercent: number;
 }
 
-const STATUS_BADGE: Record<string, { label: string; bg: string; text: string; dot: string }> = {
-  OPEN: { label: "ঝুঁকিপূর্ণ / নতুন", bg: "bg-rose-50", text: "text-rose-700", dot: "bg-rose-500" },
-  CUSTOMER_CONTACTED: { label: "মেসেজ পাঠানো হয়েছে", bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
-  RESCHEDULED: { label: "পুনঃনির্ধারিত", bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
-  RESOLVED: { label: "সফল সমাধান", bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
-  RETURNED: { label: "ফেরত নিশ্চিত", bg: "bg-slate-100", text: "text-slate-600", dot: "bg-slate-400" },
-};
+const STATUS_BADGE = {
+  OPEN: { labelKey: "riskyNew", bg: "bg-rose-50", text: "text-rose-700", dot: "bg-rose-500" },
+  CUSTOMER_CONTACTED: { labelKey: "messageSent", bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
+  RESCHEDULED: { labelKey: "rescheduled", bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
+  RESOLVED: { labelKey: "resolvedSuccessfully", bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
+  RETURNED: { labelKey: "returnConfirmed", bg: "bg-slate-100", text: "text-slate-600", dot: "bg-slate-400" },
+} as const satisfies Record<string, { labelKey: string; bg: string; text: string; dot: string }>;
 
-const REASON_MAP: Record<string, string> = {
-  customer_unreachable: "গ্রাহক ফোন ধরেননি / অপ্রাপ্য",
-  hold: "কুরিয়ারে হোল্ড করা হয়েছে",
-  delivery_failed: "ডেলিভারি চেষ্টা ব্যর্থ",
-  failed_attempt: "প্রথম চেষ্টা ব্যর্থ",
-  address_issue: "ঠিকানা অসম্পূর্ণ / ত্রুটিযুক্ত",
-  cancelled_by_customer: "গ্রাহক আপাতত নিতে অস্বীকৃতি জানিয়েছেন",
-};
+// ML5 i18n: values are dict.orders keys, resolved at render.
+const REASON_MAP = {
+  customer_unreachable: "customerDidNotAnswerUnreachable",
+  hold: "heldAtCourier",
+  delivery_failed: "deliveryAttemptFailed",
+  failed_attempt: "firstAttemptFailed",
+  address_issue: "addressIncompleteIncorrect",
+  cancelled_by_customer: "customerRefusedToReceiveFor",
+} as const satisfies Record<string, string>;
 
 export default function NdrRecoveryPage() {
+  const { dict, t, locale } = useLocale();
   const { toast } = useToast();
   const [metrics, setMetrics] = useState<NdrMetrics | null>(null);
   const [incidents, setIncidents] = useState<NdrIncident[]>([]);
@@ -98,7 +101,7 @@ export default function NdrRecoveryPage() {
       await apiFetch(`/organizations/${orgId}/courier/ndr/${id}/contact`, { method: "POST" });
       await loadData();
     } catch (e: any) {
-      toast({ title: e.message || "মেসেজ পাঠানো ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e.message || dict.orders.messageSendingFailed, tone: "error" });
     } finally {
       setActionBusy("");
     }
@@ -120,7 +123,7 @@ export default function NdrRecoveryPage() {
       setRescheduleNote("");
       await loadData();
     } catch (e: any) {
-      toast({ title: e.message || "রি-শিডিউল সংরক্ষণ ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e.message || dict.orders.rescheduleSaveFailed, tone: "error" });
     } finally {
       setActionBusy("");
     }
@@ -136,7 +139,7 @@ export default function NdrRecoveryPage() {
       });
       await loadData();
     } catch (e: any) {
-      toast({ title: e.message || "স্ট্যাটাস পরিবর্তন ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e.message || dict.orders.statusChangeFailed2, tone: "error" });
     } finally {
       setActionBusy("");
     }
@@ -162,24 +165,20 @@ export default function NdrRecoveryPage() {
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1.5">
             <Link href="/dashboard/orders" className="text-indigo-600 hover:underline">
-              ← অর্ডার তালিকা
-            </Link>
+              {dict.orders.orderList}</Link>
             <span className="text-slate-300">/</span>
-            <span className="text-slate-700">কুরিয়ার NDR রিকভারি</span>
+            <span className="text-slate-700">{dict.orders.courierNDRRecovery}</span>
           </div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              🚨 NDR ও ঝুঁকিপূর্ণ পার্সেল রিকভারি হাব
-            </h1>
+              {dict.orders.nDRRiskyParcelRecoveryHub}</h1>
             {metrics && metrics.open > 0 && (
               <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-800 animate-pulse">
-                {metrics.open}টি জরুরি কেস
-              </span>
+                {metrics.open}{dict.orders.urgentCases}</span>
             )}
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            কুরিয়ার রাইডার কাস্টমারকে না পেলে বা ডেলিভারি ফেইল্ড হলে সরাসরি স্বয়ংক্রিয় ফলো-আপ, WhatsApp ও রি-শিডিউল ম্যানেজমেন্ট।
-          </p>
+            {dict.orders.directAutomaticFollowUpWhatsApp}</p>
         </div>
 
         <button
@@ -189,7 +188,7 @@ export default function NdrRecoveryPage() {
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-95 disabled:opacity-50"
         >
           <span>🔄</span>
-          <span>{loading ? "রিফ্রেশ হচ্ছে..." : "রিফ্রেশ করুন"}</span>
+          <span>{loading ? dict.orders.refreshing : dict.orders.refresh2}</span>
         </button>
       </div>
 
@@ -198,51 +197,51 @@ export default function NdrRecoveryPage() {
         <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
           <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500">মোট NDR কেস</span>
+              <span className="text-xs font-semibold text-slate-500">{dict.orders.totalNDRCases}</span>
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 text-sm">
                 📦
               </span>
             </div>
             <div className="mt-2 text-2xl font-bold text-slate-900">{metrics.total}</div>
-            <p className="mt-0.5 text-[11px] text-slate-500">ডেলিভারি ব্যর্থ পার্সেল</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">{dict.orders.deliveryFailedParcels}</p>
           </div>
 
           <div className="rounded-2xl border border-rose-200/80 bg-rose-50/50 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-rose-700">জরুরি পদক্ষেপ</span>
+              <span className="text-xs font-semibold text-rose-700">{dict.orders.urgentAction}</span>
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-100 text-rose-700 text-sm">
                 ⚠️
               </span>
             </div>
             <div className="mt-2 text-2xl font-bold text-rose-800">{metrics.open}</div>
-            <p className="mt-0.5 text-[11px] text-rose-600 font-medium">কাস্টমার এখনও আনরিচড</p>
+            <p className="mt-0.5 text-[11px] text-rose-600 font-medium">{dict.orders.customerStillUnreached}</p>
           </div>
 
           <div className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-amber-700">মেসেজ পাঠানো</span>
+              <span className="text-xs font-semibold text-amber-700">{dict.orders.messageSent2}</span>
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700 text-sm">
                 💬
               </span>
             </div>
             <div className="mt-2 text-2xl font-bold text-amber-800">{metrics.contacted}</div>
-            <p className="mt-0.5 text-[11px] text-amber-600 font-medium">রেসপন্সের অপেক্ষায়</p>
+            <p className="mt-0.5 text-[11px] text-amber-600 font-medium">{dict.orders.waitingForResponse}</p>
           </div>
 
           <div className="rounded-2xl border border-blue-200/80 bg-blue-50/50 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-blue-700">পুনঃনির্ধারিত</span>
+              <span className="text-xs font-semibold text-blue-700">{dict.orders.rescheduled}</span>
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-700 text-sm">
                 🗓️
               </span>
             </div>
             <div className="mt-2 text-2xl font-bold text-blue-800">{metrics.rescheduled}</div>
-            <p className="mt-0.5 text-[11px] text-blue-600 font-medium">নতুন ডেলিভারি ডেট ফিক্সড</p>
+            <p className="mt-0.5 text-[11px] text-blue-600 font-medium">{dict.orders.newDeliveryDateFixed}</p>
           </div>
 
           <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/50 p-4 shadow-sm col-span-2 sm:col-span-1">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-emerald-700">রিকভারি সাকসেস</span>
+              <span className="text-xs font-semibold text-emerald-700">{dict.orders.recoverySuccess}</span>
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 text-sm">
                 🎯
               </span>
@@ -250,7 +249,7 @@ export default function NdrRecoveryPage() {
             <div className="mt-2 text-2xl font-bold text-emerald-800">
               {metrics.recoveryRatePercent}%
             </div>
-            <p className="mt-0.5 text-[11px] text-emerald-600 font-medium">রিটার্ন থেকে সফল উদ্ধার</p>
+            <p className="mt-0.5 text-[11px] text-emerald-600 font-medium">{dict.orders.successfullyRecoveredFromReturn}</p>
           </div>
         </div>
       )}
@@ -264,9 +263,9 @@ export default function NdrRecoveryPage() {
             </span>
             <input
               type="text"
-              aria-label="NDR কেস খুঁজুন (অর্ডার নম্বর, কাস্টমার নাম, ফোন বা ট্র্যাকিং কোড দিয়ে)"
+              aria-label={dict.orders.searchNDRCasesByOrder}
               className="w-full rounded-xl border border-slate-200 bg-slate-50/60 py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 transition hover:bg-white focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10"
-              placeholder="অর্ডার নম্বর, কাস্টমার নাম, ফোন বা ট্র্যাকিং কোড দিয়ে খুঁজুন..."
+              placeholder={dict.orders.searchByOrderNumberCustomer}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -275,7 +274,7 @@ export default function NdrRecoveryPage() {
                 type="button"
                 onClick={() => setSearchQuery("")}
                 className="absolute inset-y-0 right-0 flex min-w-[44px] items-center justify-center pr-3 text-xs text-slate-500 hover:text-slate-600"
-                aria-label="খোঁজ মুছুন"
+                aria-label={dict.orders.clearSearch}
               >
                 ✕
               </button>
@@ -286,12 +285,12 @@ export default function NdrRecoveryPage() {
         {/* Status Tabs */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none">
           {[
-            { key: "", label: "সবগুলো" },
-            { key: "OPEN", label: "🚨 জরুরি (OPEN)" },
-            { key: "CUSTOMER_CONTACTED", label: "💬 মেসেজ পাঠানো হয়েছে" },
-            { key: "RESCHEDULED", label: "🗓️ পুনঃনির্ধারিত" },
-            { key: "RESOLVED", label: "✓ সমাধান হয়েছে" },
-            { key: "RETURNED", label: "✕ ফেরত" },
+            { key: "", label: dict.orders.all },
+            { key: "OPEN", label: dict.orders.urgentOPEN },
+            { key: "CUSTOMER_CONTACTED", label: dict.orders.messageSent3 },
+            { key: "RESCHEDULED", label: dict.orders.rescheduled2 },
+            { key: "RESOLVED", label: dict.orders.resolved2 },
+            { key: "RETURNED", label: dict.orders.return4 },
           ].map((tab) => {
             const isActive = filterStatus === tab.key;
             return (
@@ -315,13 +314,13 @@ export default function NdrRecoveryPage() {
       {/* Incidents Table / Cards */}
       <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
         {loading ? (
-          <div className="p-8 text-center text-xs text-slate-500">ডাটা লোড হচ্ছে...</div>
+          <div className="p-8 text-center text-xs text-slate-500">{dict.orders.loadingData}</div>
         ) : filteredIncidents.length === 0 ? (
           <EmptyState
-            title={searchQuery ? "কোনো মিল পাওয়া যায়নি" : "কোনো ঝুঁকিপূর্ণ NDR পার্সেল নেই!"}
+            title={searchQuery ? dict.orders.noMatchesFound2 : dict.orders.noRiskyNDRParcels}
             description={searchQuery
-                ? `"${searchQuery}" এর সাথে কোনো কেস মেলেনি।`
-                : "সবগুলো পার্সেল ঠিক সময়ে ডেলিভারির পথে আছে।"}
+                ? t("orders.noCasesMatched", { searchQuery: searchQuery })
+                : dict.orders.allParcelsAreOnTheir}
           />
         ) : (
           <>
@@ -330,22 +329,22 @@ export default function NdrRecoveryPage() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                   <tr>
-                    <th className="px-4 py-3">অর্ডার ও কাস্টমার</th>
-                    <th className="px-4 py-3">কুরিয়ার ও ট্র্যাকিং</th>
-                    <th className="px-4 py-3">ব্যর্থতার কারণ</th>
-                    <th className="px-4 py-3">বর্তমান অবস্থা</th>
-                    <th className="px-4 py-3 text-right">অ্যাকশন ও সমাধান</th>
+                    <th className="px-4 py-3">{dict.orders.orderCustomer}</th>
+                    <th className="px-4 py-3">{dict.orders.courierTracking2}</th>
+                    <th className="px-4 py-3">{dict.orders.failureReason}</th>
+                    <th className="px-4 py-3">{dict.orders.currentStatus}</th>
+                    <th className="px-4 py-3 text-right">{dict.orders.actionResolution}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredIncidents.map((inc) => {
-                    const badge = STATUS_BADGE[inc.status] || {
-                      label: inc.status,
+                    const badge = STATUS_BADGE[inc.status as keyof typeof STATUS_BADGE] || {
+                      labelKey: null as string | null, rawLabel: inc.status,
                       bg: "bg-slate-100",
                       text: "text-slate-600",
                       dot: "bg-slate-400",
                     };
-                    const reasonLabel = REASON_MAP[inc.reason] || inc.reason;
+                    const reasonLabel = REASON_MAP[inc.reason as keyof typeof REASON_MAP] ? dict.orders[REASON_MAP[inc.reason as keyof typeof REASON_MAP]] : inc.reason;
 
                     return (
                       <tr key={inc.id} className="transition hover:bg-slate-50/70">
@@ -377,7 +376,7 @@ export default function NdrRecoveryPage() {
                             {inc.trackingCode}
                           </div>
                           <div className="text-[10px] text-slate-400 mt-1">
-                            {new Date(inc.createdAt).toLocaleString("bn-BD")}
+                            {fmtDateTime(locale, new Date(inc.createdAt))}
                           </div>
                         </td>
 
@@ -388,7 +387,7 @@ export default function NdrRecoveryPage() {
                           </span>
                           {inc.customerFeedback && (
                             <div className="mt-1 text-[11px] font-medium text-blue-700">
-                              গ্রাহক মন্তব্য: “{inc.customerFeedback}”
+                              {dict.orders.customerComment}{inc.customerFeedback}”
                             </div>
                           )}
                           {inc.notes && (
@@ -404,16 +403,16 @@ export default function NdrRecoveryPage() {
                             className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${badge.bg} ${badge.text}`}
                           >
                             <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
-                            <span>{badge.label}</span>
+                            <span>{badge.labelKey ? dict.orders[badge.labelKey as keyof typeof dict.orders] : (badge as { rawLabel?: string }).rawLabel}</span>
                           </span>
                           {inc.rescheduleDate && (
                             <div className="mt-1 text-[11px] font-semibold text-blue-700">
-                              🗓️ শিডিউল: {new Date(inc.rescheduleDate).toLocaleDateString("bn-BD")}
+                              {dict.orders.schedule}{fmtDate(locale, new Date(inc.rescheduleDate))}
                             </div>
                           )}
                           {inc.lastContactedAt && (
                             <div className="text-[10px] text-slate-400 mt-0.5">
-                              মেসেজ: {new Date(inc.lastContactedAt).toLocaleTimeString("bn-BD")}
+                              {dict.orders.message2}{fmtTime(locale, new Date(inc.lastContactedAt))}
                             </div>
                           )}
                         </td>
@@ -428,7 +427,7 @@ export default function NdrRecoveryPage() {
                               className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-95 disabled:opacity-50"
                             >
                               <span>💬</span>{" "}
-                              <span>{actionBusy === inc.id ? "পাঠানো হচ্ছে..." : "মেসেজ পাঠান"}</span>
+                              <span>{actionBusy === inc.id ? dict.orders.sending2 : dict.orders.sendMessage}</span>
                             </button>
 
                             <button
@@ -439,7 +438,7 @@ export default function NdrRecoveryPage() {
                               }}
                               className="rounded-xl border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 active:scale-95"
                             >
-                              <span>🗓️ রি-শিডিউল</span>
+                              <span>{dict.orders.reschedule}</span>
                             </button>
 
                             {inc.status !== "RESOLVED" && (
@@ -449,8 +448,7 @@ export default function NdrRecoveryPage() {
                                 disabled={actionBusy === inc.id}
                                 className="rounded-xl bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
                               >
-                                ✓ সমাধান
-                              </button>
+                                {dict.orders.resolved}</button>
                             )}
                           </div>
                         </td>
@@ -464,13 +462,13 @@ export default function NdrRecoveryPage() {
             {/* Mobile View (Cards) */}
             <div className="divide-y divide-slate-100 md:hidden">
               {filteredIncidents.map((inc) => {
-                const badge = STATUS_BADGE[inc.status] || {
-                  label: inc.status,
+                const badge = STATUS_BADGE[inc.status as keyof typeof STATUS_BADGE] || {
+                  labelKey: null as string | null, rawLabel: inc.status,
                   bg: "bg-slate-100",
                   text: "text-slate-600",
                   dot: "bg-slate-400",
                 };
-                const reasonLabel = REASON_MAP[inc.reason] || inc.reason;
+                const reasonLabel = REASON_MAP[inc.reason as keyof typeof REASON_MAP] ? dict.orders[REASON_MAP[inc.reason as keyof typeof REASON_MAP]] : inc.reason;
 
                 return (
                   <div key={inc.id} className="p-4 space-y-3">
@@ -492,7 +490,7 @@ export default function NdrRecoveryPage() {
                           className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.bg} ${badge.text}`}
                         >
                           <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
-                          <span>{badge.label}</span>
+                          <span>{badge.labelKey ? dict.orders[badge.labelKey as keyof typeof dict.orders] : (badge as { rawLabel?: string }).rawLabel}</span>
                         </span>
                         <div className="mt-1 font-bold text-slate-900 text-xs">
                           {formatMinor(BigInt(inc.totalAmountMinor || 0))}
@@ -502,10 +500,10 @@ export default function NdrRecoveryPage() {
 
                     <div className="rounded-xl bg-slate-50 p-2.5 text-xs space-y-1">
                       <div className="flex items-center justify-between text-slate-500">
-                        <span>কুরিয়ার: {inc.provider}</span>
+                        <span>{dict.orders.courier3}{inc.provider}</span>
                         <span className="font-mono font-semibold text-slate-800">{inc.trackingCode}</span>
                       </div>
-                      <div className="text-rose-700 font-semibold">কারণ: {reasonLabel}</div>
+                      <div className="text-rose-700 font-semibold">{dict.orders.reason}{reasonLabel}</div>
                     </div>
 
                     <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
@@ -515,8 +513,7 @@ export default function NdrRecoveryPage() {
                         disabled={actionBusy === inc.id}
                         className="inline-flex min-h-[44px] items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
                       >
-                        💬 মেসেজ
-                      </button>
+                        {dict.orders.message3}</button>
                       <button
                         type="button"
                         onClick={() => {
@@ -525,8 +522,7 @@ export default function NdrRecoveryPage() {
                         }}
                         className="inline-flex min-h-[44px] items-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700"
                       >
-                        🗓️ রি-শিডিউল
-                      </button>
+                        {dict.orders.reschedule}</button>
                       {inc.status !== "RESOLVED" && (
                         <button
                           type="button"
@@ -534,8 +530,7 @@ export default function NdrRecoveryPage() {
                           disabled={actionBusy === inc.id}
                           className="inline-flex min-h-[44px] items-center rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white"
                         >
-                          ✓ সমাধান
-                        </button>
+                          {dict.orders.resolved}</button>
                       )}
                     </div>
                   </div>
@@ -552,27 +547,24 @@ export default function NdrRecoveryPage() {
           <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl animate-rise space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">
-                🗓️ পার্সেল ডেলিভারি রি-শিডিউল করুন
-              </h3>
+                {dict.orders.rescheduleParcelDelivery}</h3>
               <button
                 type="button"
                 onClick={() => setSelectedIncident(null)}
                 className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                aria-label="বন্ধ করুন"
+                aria-label={dict.orders.close}
               >
                 ✕
               </button>
             </div>
 
             <p className="text-xs text-slate-500">
-              অর্ডার #{selectedIncident.orderNumber} ({selectedIncident.customerName}) এর জন্য নতুন ডেলিভারি তারিখ নির্ধারণ করুন।
-            </p>
+              {dict.orders.order3}{selectedIncident.orderNumber} ({selectedIncident.customerName}{dict.orders.setANewDeliveryDate}</p>
 
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  নতুন ডেলিভারির তারিখ *
-                </label>
+                  {dict.orders.newDeliveryDate}</label>
                 <input
                   type="date"
                   value={rescheduleDate}
@@ -583,13 +575,12 @@ export default function NdrRecoveryPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  বিশেষ নির্দেশনা বা নোট (কুরিয়ারের জন্য)
-                </label>
+                  {dict.orders.specialInstructionsOrNoteFor}</label>
                 <textarea
                   rows={3}
                   value={rescheduleNote}
                   onChange={(e) => setRescheduleNote(e.target.value)}
-                  placeholder="যেমন: গ্রাহক আগামীকাল বিকাল ৩টার পর বাসায় থাকবেন..."
+                  placeholder={dict.orders.eGTheCustomerWill}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>
@@ -601,15 +592,14 @@ export default function NdrRecoveryPage() {
                 onClick={() => setSelectedIncident(null)}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                বাতিল
-              </button>
+                {dict.common.cancel}</button>
               <button
                 type="button"
                 onClick={() => void handleRescheduleSubmit()}
                 disabled={!rescheduleDate || actionBusy !== ""}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {actionBusy ? "সংরক্ষণ হচ্ছে..." : "কনফার্ম করুন"}
+                {actionBusy ? dict.orders.saving2 : dict.orders.confirm2}
               </button>
             </div>
           </div>

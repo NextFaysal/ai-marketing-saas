@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { getOrganizationId } from "@/lib/org";
 import { fmtMoneyBn } from "@/lib/money-bn";
 import {
@@ -17,6 +18,7 @@ import { useToast } from "@repo/ui/client";
 // staff see exactly what state the deposit is in (manual only).
 
 export default function BookingsPage() {
+  const { dict, t, locale } = useLocale();
   const { toast } = useToast();
   const orgId = getOrganizationId();
   const [date, setDate] = useState(() => ymdInZone());
@@ -54,7 +56,7 @@ export default function BookingsPage() {
       setServices(svc);
       setStaff(stf);
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "লোড ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e instanceof Error ? e.message : dict.commerce.loadingFailed2, tone: "error" });
     } finally {
       setLoading(false);
     }
@@ -80,18 +82,18 @@ export default function BookingsPage() {
     try {
       if (action === "deposit-paid") await markDepositPaid(orgId, b.id);
       else await bookingAction(orgId, b.id, action);
-      toast({ title: "হালনাগাদ হয়েছে", tone: "success" });
+      toast({ title: dict.commerce.updated, tone: "success" });
       await load();
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "হালনাগাদ ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: e instanceof Error ? e.message : dict.commerce.updateFailed, tone: "error" });
     } finally { setBusy(""); }
   };
 
   const submitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orgId) return;
-    if (!slotPick) { toast({ title: "একটি ফাঁকা স্লট বেছে নিন", tone: "error" }); return; }
-    if (!guestName.trim() || !guestPhone.trim()) { toast({ title: "অতিথির নাম ও ফোন দিন", tone: "error" }); return; }
+    if (!slotPick) { toast({ title: dict.commerce.selectAnEmptySlot, tone: "error" }); return; }
+    if (!guestName.trim() || !guestPhone.trim()) { toast({ title: dict.commerce.giveTheGuestSName, tone: "error" }); return; }
     setBusy("create");
     try {
       const created = await createBooking(orgId, {
@@ -99,56 +101,51 @@ export default function BookingsPage() {
         guestName: guestName.trim(), guestPhone: guestPhone.trim(),
         note: note.trim() || null,
       });
-      toast({ title: `বুকিং তৈরি হয়েছে (${bookingStatusChip(created.status).label})`, tone: "success" });
+      toast({ title: t("commerce.bookingCreated", { label: bookingStatusChip(created.status).label }), tone: "success" });
       setGuestName(""); setGuestPhone(""); setNote(""); setSlotPick("");
       await load();
       await loadSlots();
     } catch (err) {
-      toast({ title: err instanceof Error ? err.message : "বুকিং তৈরি ব্যর্থ হয়েছে", tone: "error" });
+      toast({ title: err instanceof Error ? err.message : dict.commerce.bookingCreationFailed, tone: "error" });
     } finally { setBusy(""); }
   };
 
   const groups = groupBookingsByStaff(bookings);
 
-  if (!orgId) return <p className="text-sm text-slate-500">Organization পাওয়া যায়নি।</p>;
+  if (!orgId) return <p className="text-sm text-slate-500">{dict.commerce.organizationNotFound}</p>;
 
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="page-title">বুকিং</h1>
+        <h1 className="page-title">{dict.commerce.booking}</h1>
         <p className="text-sm text-slate-500">
-          দিনের অ্যাপয়েন্টমেন্ট স্টাফ অনুযায়ী সাজানো। স্ট্যাটাস বদল ও ডিপোজিট নিশ্চিতকরণ এখান থেকেই —
-          ডিপোজিট ম্যানুয়াল, কোনো অনলাইন পেমেন্ট এই ফ্লোতে হয় না।
-        </p>
+          {dict.commerce.theDaySAppointmentsSorted}</p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs text-slate-500">তারিখ
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+        <label className="text-xs text-slate-500">{dict.commerce.date}<input type="date" value={date} onChange={(e) => setDate(e.target.value)}
             className="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm" />
         </label>
-        <label className="text-xs text-slate-500">স্টাফ
-          <select value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)}
+        <label className="text-xs text-slate-500">{dict.commerce.staff}<select value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)}
             className="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm">
-            <option value="">সবাই</option>
-            {staff.map((s) => <option key={s.id} value={s.id}>{s.displayName ?? s.memberName ?? "স্টাফ"}</option>)}
+            <option value="">{dict.commerce.everyone}</option>
+            {staff.map((s) => <option key={s.id} value={s.id}>{s.displayName ?? s.memberName ?? dict.commerce.staff}</option>)}
           </select>
         </label>
-        <label className="text-xs text-slate-500">অবস্থা
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+        <label className="text-xs text-slate-500">{dict.commerce.status}<select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             className="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm">
-            <option value="">সব</option>
-            <option value="pending">অপেক্ষমাণ</option>
-            <option value="confirmed">নিশ্চিত</option>
-            <option value="completed">সম্পন্ন</option>
-            <option value="cancelled">বাতিল</option>
-            <option value="no_show">আসেননি</option>
+            <option value="">{dict.commerce.all}</option>
+            <option value="pending">{dict.commerce.pending}</option>
+            <option value="confirmed">{dict.commerce.confirmed}</option>
+            <option value="completed">{dict.commerce.completed}</option>
+            <option value="cancelled">{dict.common.cancel}</option>
+            <option value="no_show">{dict.commerce.didNotShowUp}</option>
           </select>
         </label>
       </div>
 
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : groups.length === 0 ? (
-        <p className="text-sm text-slate-500">এই দিনে কোনো বুকিং নেই।</p>
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : groups.length === 0 ? (
+        <p className="text-sm text-slate-500">{dict.commerce.noBookingsOnThisDay}</p>
       ) : groups.map((g) => (
         <section key={g.staffId} className="space-y-3">
           <h2 className="text-base font-semibold">{g.staffName}</h2>
@@ -156,9 +153,9 @@ export default function BookingsPage() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs text-slate-500">
                 <tr>
-                  <th className="px-4 py-2">সময়</th><th className="px-4 py-2">অতিথি</th>
-                  <th className="px-4 py-2">সার্ভিস</th><th className="px-4 py-2">অবস্থা</th>
-                  <th className="px-4 py-2">ডিপোজিট</th><th className="px-4 py-2" />
+                  <th className="px-4 py-2">{dict.commerce.time}</th><th className="px-4 py-2">{dict.commerce.guest}</th>
+                  <th className="px-4 py-2">{dict.commerce.service}</th><th className="px-4 py-2">{dict.commerce.status}</th>
+                  <th className="px-4 py-2">{dict.commerce.deposit}</th><th className="px-4 py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -169,11 +166,11 @@ export default function BookingsPage() {
                       <td className="px-4 py-2 whitespace-nowrap">{slotTimeLabel(b.startAt)} – {slotTimeLabel(b.endAt)}</td>
                       <td className="px-4 py-2">
                         <span className="font-medium">{b.guestName}</span>
-                        <span className="block text-xs text-slate-500">{b.guestPhone} · {b.source === "storefront" ? "অনলাইন বুকিং" : "ড্যাশবোর্ড"}</span>
+                        <span className="block text-xs text-slate-500">{b.guestPhone} · {b.source === "storefront" ? dict.commerce.onlineBooking : dict.commerce.dashboard}</span>
                         {b.note ? <span className="block text-xs text-slate-500">📝 {b.note}</span> : null}
                         {b.reminderStatus ? (
                           <span className="block text-xs text-slate-400">
-                            রিমাইন্ডার: {b.reminderStatus === "sent" ? "পাঠানো হয়েছে" : b.reminderStatus === "failed_no_channel" ? "পাঠানো যায়নি (SMS চ্যানেল নেই)" : "পাঠাতে ব্যর্থ"}
+                            {dict.commerce.reminder}{b.reminderStatus === "sent" ? dict.commerce.sent : b.reminderStatus === "failed_no_channel" ? dict.commerce.couldNotSendNoSMS : dict.commerce.sendFailed}
                           </span>
                         ) : null}
                       </td>
@@ -198,8 +195,7 @@ export default function BookingsPage() {
                           {b.depositState === "unpaid_manual" && (
                             <button onClick={() => void act(b, "deposit-paid")} disabled={busy === `${b.id}-deposit-paid`}
                               className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs text-white disabled:opacity-50">
-                              ডিপোজিট পেয়েছি
-                            </button>
+                              {dict.commerce.depositReceived}</button>
                           )}
                         </div>
                       </td>
@@ -214,33 +210,31 @@ export default function BookingsPage() {
 
       {/* ---------- Phone booking ---------- */}
       <section className="space-y-4">
-        <h2 className="text-base font-semibold">নতুন বুকিং (ফোন/কাউন্টার)</h2>
+        <h2 className="text-base font-semibold">{dict.commerce.newBookingPhoneCounter}</h2>
         <form onSubmit={submitBooking} className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="text-xs text-slate-500">সার্ভিস
-              <select value={formService} onChange={(e) => setFormService(e.target.value)}
+            <label className="text-xs text-slate-500">{dict.commerce.service}<select value={formService} onChange={(e) => setFormService(e.target.value)}
                 className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                <option value="">— বেছে নিন —</option>
+                <option value="">{dict.commerce.select}</option>
                 {services.filter((s) => s.active).map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} ({s.durationMinutes} মিনিট, {fmtMoneyBn(s.priceMinor)})</option>
+                  <option key={s.id} value={s.id}>{s.name} ({s.durationMinutes} {dict.commerce.minutes2}{fmtMoneyBn(s.priceMinor)})</option>
                 ))}
               </select>
             </label>
-            <label className="text-xs text-slate-500">স্টাফ
-              <select value={formStaff} onChange={(e) => setFormStaff(e.target.value)}
+            <label className="text-xs text-slate-500">{dict.commerce.staff}<select value={formStaff} onChange={(e) => setFormStaff(e.target.value)}
                 className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                <option value="">— বেছে নিন —</option>
+                <option value="">{dict.commerce.select}</option>
                 {staff.filter((s) => s.active).map((s) => (
-                  <option key={s.id} value={s.id}>{s.displayName ?? s.memberName ?? "স্টাফ"}</option>
+                  <option key={s.id} value={s.id}>{s.displayName ?? s.memberName ?? dict.commerce.staff}</option>
                 ))}
               </select>
             </label>
-            <span className="text-xs text-slate-500">তারিখ (উপরে বেছে নেওয়া): <b className="text-slate-700">{date}</b></span>
+            <span className="text-xs text-slate-500">{dict.commerce.dateSelectedAbove}<b className="text-slate-700">{date}</b></span>
           </div>
           <div>
-            <p className="mb-2 text-xs text-slate-500">ফাঁকা স্লট</p>
+            <p className="mb-2 text-xs text-slate-500">{dict.commerce.emptySlot}</p>
             {slots.length === 0 ? (
-              <p className="text-sm text-slate-400">সার্ভিস ও স্টাফ বেছে নিলে ফাঁকা স্লট দেখাবে (না থাকলে এই দিনে সময়সূচি/খালি স্লট নেই)।</p>
+              <p className="text-sm text-slate-400">{dict.commerce.whenAServiceStaffAre}</p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {slots.map((s) => (
@@ -253,17 +247,16 @@ export default function BookingsPage() {
             )}
           </div>
           <div className="grid gap-3 md:grid-cols-3">
-            <input className="rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="অতিথির নাম *"
+            <input className="rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder={dict.commerce.guestName}
               value={guestName} onChange={(e) => setGuestName(e.target.value)} />
-            <input className="rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="ফোন নম্বর *"
+            <input className="rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder={dict.commerce.phoneNumber2}
               value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} />
-            <input className="rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="নোট (ঐচ্ছিক)"
+            <input className="rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder={dict.commerce.noteOptional}
               value={note} onChange={(e) => setNote(e.target.value)} />
           </div>
           <button type="submit" disabled={busy === "create"}
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-            বুকিং তৈরি করুন
-          </button>
+            {dict.commerce.createBooking}</button>
         </form>
       </section>
     </div>

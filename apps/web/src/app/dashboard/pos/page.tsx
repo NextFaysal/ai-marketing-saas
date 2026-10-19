@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { fmtDateTime, fmtMoney, fmtNumber, fmtTime } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
@@ -124,27 +126,33 @@ interface OfflineReceiptCard {
   lines: Array<{ name: string; quantity: number; totalMinor: number }>;
 }
 
-const SYNC_STATUS_CHIP: Record<string, { label: string; cls: string }> = {
-  synced: { label: "সিঙ্ক হয়েছে", cls: "bg-emerald-100 text-emerald-700" },
-  conflict: { label: "দ্বন্দ্ব", cls: "bg-amber-100 text-amber-700" },
-  rejected: { label: "বাতিল", cls: "bg-red-100 text-red-700" },
-  discarded: { label: "বাদ দেওয়া", cls: "bg-slate-200 text-slate-600" },
-  pending: { label: "অপেক্ষমাণ", cls: "bg-sky-100 text-sky-700" },
-};
+// ML5 i18n: label holds a dict.pos key, resolved at render.
+const SYNC_STATUS_CHIP = {
+  synced: { label: "synced", cls: "bg-emerald-100 text-emerald-700" },
+  conflict: { label: "conflict", cls: "bg-amber-100 text-amber-700" },
+  rejected: { label: "cancel", cls: "bg-red-100 text-red-700" },
+  discarded: { label: "skipped", cls: "bg-slate-200 text-slate-600" },
+  pending: { label: "pending", cls: "bg-sky-100 text-sky-700" },
+} as const satisfies Record<string, { label: string; cls: string }>;
 
-function fmt(v: string | number | null | undefined): string {
+function fmt(locale: "bn" | "en", v: string | number | null | undefined): string {
   const n = v == null ? 0 : Number(v);
-  return `৳${(Number.isFinite(n) ? n / 100 : 0).toFixed(2)}`;
+  return fmtMoney(locale, Number.isFinite(n) ? n / 100 : 0, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
-const STOCK_BADGE: Record<string, { label: (p: PosProduct) => string; cls: string }> = {
-  in_stock: { label: (p) => `স্টকে আছে (${p.stockQuantity})`, cls: "bg-emerald-100 text-emerald-700" },
-  out_of_stock: { label: () => "স্টক শেষ", cls: "bg-red-100 text-red-700" },
-  untracked: { label: () => "স্টক ট্র্যাক হয় না", cls: "bg-slate-100 text-slate-600" },
-  preorder: { label: () => "প্রি-অর্ডার", cls: "bg-indigo-100 text-indigo-700" },
-};
+// ML5 i18n: labelKey holds a dict.pos key, resolved at render.
+const STOCK_BADGE = {
+  in_stock: { labelKey: "inStock", cls: "bg-emerald-100 text-emerald-700" },
+  out_of_stock: { labelKey: "outOfStock", cls: "bg-red-100 text-red-700" },
+  untracked: { labelKey: "stockIsNotTracked", cls: "bg-slate-100 text-slate-600" },
+  preorder: { labelKey: "preOrder", cls: "bg-indigo-100 text-indigo-700" },
+} as const satisfies Record<string, { labelKey: string; cls: string }>;
 
 export default function PosPage() {
+  const { dict, t, locale } = useLocale();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PosProduct[]>([]);
   const [searching, setSearching] = useState(false);
@@ -189,10 +197,10 @@ export default function PosPage() {
   // Barcode & Price Tag Label Printing State
   const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
   const [barcodeLabelData, setBarcodeLabelData] = useState<BarcodeLabelData>({
-    productName: "প্রিমিয়াম ক্যাজুয়াল শার্ট",
+    productName: dict.pos.premiumCasualShirt,
     skuOrBarcode: "SHIRT-BLK-L",
-    priceFormatted: "১২৫০",
-    category: "পোশাক",
+    priceFormatted: dict.pos.text1agmws,
+    category: dict.pos.clothing,
   });
   const [barcodeLayout, setBarcodeLayout] = useState<"single_sticker" | "a4_sheet_24">("single_sticker");
   const [barcodeQty, setBarcodeQty] = useState(1);
@@ -200,11 +208,11 @@ export default function PosPage() {
   // Shift Closing & Cash Drawer (Z-Report) State
   const [zReportModalOpen, setZReportModalOpen] = useState(false);
   const [openingFloat, setOpeningFloat] = useState("2000");
-  const [cashierName, setCashierName] = useState("কাউন্টার ১");
-  const [shiftName, setShiftName] = useState("সকালের শিফট");
+  const [cashierName, setCashierName] = useState(dict.pos.counter1);
+  const [shiftName, setShiftName] = useState(dict.pos.morningShift);
   const [cashPayouts, setCashPayouts] = useState("0");
   const [actualCashCounted, setActualCashCounted] = useState("");
-  const [shiftStartTime] = useState(() => new Date().toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" }));
+  const [shiftStartTime] = useState(() => fmtTime(locale, new Date()));
 
   useEffect(() => {
     const orgId = getOrganizationId();
@@ -235,25 +243,9 @@ export default function PosPage() {
     const itemsHtml = Array.from({ length: count })
       .map(() => {
         if (layout === "single_sticker") {
-          return `
-            <div class="sticker single">
-              <div class="store-name">${receiptSettings.storeName || "আমাদের শপ"}</div>
-              <div class="name">${productName}</div>
-              <div class="barcode">${svg}</div>
-              <div class="sku">${skuOrBarcode}</div>
-              <div class="price">৳${price}</div>
-            </div>
-          `;
+          return t("pos.divClassStickerSingleDiv", { receiptSettings: receiptSettings.storeName || dict.pos.ourShop, productName: productName, svg: svg, skuOrBarcode: skuOrBarcode, price: price });
         }
-        return `
-          <div class="sticker grid-item">
-            <div class="store-name">${receiptSettings.storeName || "আমাদের শপ"}</div>
-            <div class="name">${productName}</div>
-            <div class="barcode">${svg}</div>
-            <div class="sku">${skuOrBarcode}</div>
-            <div class="price">৳${price}</div>
-          </div>
-        `;
+        return t("pos.divClassStickerGridItem", { receiptSettings: receiptSettings.storeName || dict.pos.ourShop, productName: productName, svg: svg, skuOrBarcode: skuOrBarcode, price: price });
       })
       .join("");
 
@@ -277,22 +269,7 @@ export default function PosPage() {
            .sku { font-size: 9px; font-family: monospace; color: #64748b; }
            .price { font-size: 13px; font-weight: 800; color: #0f172a; margin-top: 1mm; }`;
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>বারকোড লেবেল প্রিন্ট - ${productName}</title>
-<style>
-${pageCss}
-</style>
-</head>
-<body>
-  ${layout === "a4_sheet_24" ? `<div class="grid-container">${itemsHtml}</div>` : itemsHtml}
-  <script>
-    window.onload = function() { window.print(); };
-  </script>
-</body>
-</html>`;
+    const html = t("pos.dOCTYPEHtmlHtmlHeadMeta", { productName: productName, pageCss: pageCss, p2: layout === "a4_sheet_24" ? `<div class="grid-container">${itemsHtml}</div>` : itemsHtml });
     w.document.open();
     w.document.write(html);
     w.document.close();
@@ -301,26 +278,7 @@ ${pageCss}
   const openZReportPrint = (slipText: string) => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Z-Report শিফট রিপোর্ট</title>
-<style>
-  @page { size: ${receiptSettings.paperWidth} auto; margin: 4mm; }
-  body { font-family: monospace, monospace; font-size: 11px; width: ${
-    receiptSettings.paperWidth === "58mm" ? "48mm" : "72mm"
-  }; margin: 0 auto; padding: 4px; line-height: 1.35; color: #000; }
-  pre { white-space: pre-wrap; font-family: inherit; font-size: 11px; margin: 0; }
-</style>
-</head>
-<body>
-  <pre>${slipText}</pre>
-  <script>
-    window.onload = function() { window.print(); };
-  </script>
-</body>
-</html>`;
+    const html = t("pos.dOCTYPEHtmlHtmlHeadMeta2", { paperWidth: receiptSettings.paperWidth, receiptSettings: receiptSettings.paperWidth === "58mm" ? "48mm" : "72mm", slipText: slipText });
     w.document.open();
     w.document.write(html);
     w.document.close();
@@ -419,7 +377,7 @@ ${pageCss}
         setResults(res.results);
       }
     } catch (e) {
-      setSearchError(e instanceof Error ? e.message : "খুঁজতে সমস্যা হয়েছে");
+      setSearchError(e instanceof Error ? e.message : dict.pos.searchFailed);
     } finally { setSearching(false); }
   }, [addLine]);
 
@@ -445,7 +403,7 @@ ${pageCss}
 
   const openScanner = useCallback(() => {
     if (!barcodeDetectorSupported(window)) {
-      setScanNote("এই ব্রাউজারে ক্যামেরা স্ক্যান নেই — বারকোড টাইপ করে Enter চাপুন");
+      setScanNote(dict.pos.thisBrowserHasNoCamera);
       searchRef.current?.focus();
       return;
     }
@@ -485,14 +443,14 @@ ${pageCss}
             if (!raw) return;
             const code = normalizeScanCode(raw);
             if (!code || !scanDebouncerRef.current.accept(code)) return;
-            setScanFeedback(`স্ক্যান হয়েছে: ${code}`);
+            setScanFeedback(t("pos.scanned", { code: code }));
             setQuery(code);
             await runSearchFor(code);
           } catch { /* a bad frame is not an error — keep scanning */ }
         }, 300);
       } catch {
         if (!cancelled) {
-          setScanNote("ক্যামেরা ব্যবহার করা যায়নি — বারকোড টাইপ করে Enter চাপুন");
+          setScanNote(dict.pos.couldNotUseTheCamera);
           setScanOpen(false);
         }
       }
@@ -587,7 +545,7 @@ ${pageCss}
       if (isNetworkFailure(e)) {
         queueOfflineSale(salePayload, idempotencyKey);
       } else {
-        setSaleError(e instanceof Error ? e.message : "বিক্রি সম্পন্ন করা যায়নি");
+        setSaleError(e instanceof Error ? e.message : dict.pos.couldNotCompleteTheSale);
       }
     } finally { setSelling(false); }
   };
@@ -624,9 +582,9 @@ ${pageCss}
         }
       } catch (e) {
         if (isNetworkFailure(e)) {
-          setSyncError("সিঙ্কের মাঝে সংযোগ বিচ্ছিন্ন হয়েছে — বাকিগুলো কিউতেই আছে।");
+          setSyncError(dict.pos.connectionLostDuringSyncThe);
         } else {
-          setSyncError(e instanceof Error ? e.message : "সিঙ্ক করা যায়নি");
+          setSyncError(e instanceof Error ? e.message : dict.pos.couldNotSync);
         }
         break;
       }
@@ -648,14 +606,14 @@ ${pageCss}
       await loadLedger();
       await loadToday();
     } catch (e) {
-      setSyncError(e instanceof Error ? e.message : "আবার পোস্ট করা যায়নি");
+      setSyncError(e instanceof Error ? e.message : dict.pos.couldNotRePost);
     } finally { setLedgerBusy(null); }
   };
 
   const discardLedgerRow = async (row: OfflineSyncRow) => {
     const orgId = getOrganizationId();
     if (!orgId || ledgerBusy) return;
-    const note = window.prompt("বাদ দেওয়ার নোট (ঐচ্ছিক):", "");
+    const note = window.prompt(dict.pos.skipNoteOptional, "");
     if (note === null) return; // cancelled — do nothing
     setLedgerBusy(row.id); setSyncError("");
     try {
@@ -665,7 +623,7 @@ ${pageCss}
       });
       await loadLedger();
     } catch (e) {
-      setSyncError(e instanceof Error ? e.message : "বাদ দেওয়া যায়নি");
+      setSyncError(e instanceof Error ? e.message : dict.pos.couldNotSkip);
     } finally { setLedgerBusy(null); }
   };
 
@@ -683,10 +641,9 @@ ${pageCss}
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="page-title">🧾 POS / কাউন্টার বিক্রি</h1>
+          <h1 className="page-title">{dict.pos.pOSCounterSales}</h1>
           <p className="text-xs text-slate-500">
-            দ্রুত ক্যাশ মেমো, থার্মাল রসিদ, স্টিকার প্রিন্টিং এবং দৈনিক ক্যাশ রিকনসিলিয়েশন
-          </p>
+            {dict.pos.quickCashMemosThermalReceipts}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -694,40 +651,38 @@ ${pageCss}
             onClick={() => setReceiptModalOpen(true)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
-            ⚙️ রসিদ কাস্টমাইজ ({receiptSettings.paperWidth})
+            {dict.pos.customizeReceipt}{receiptSettings.paperWidth})
           </button>
           <button
             type="button"
             onClick={() => setBarcodeModalOpen(true)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
-            🏷️ বারকোড / স্টিকার প্রিন্ট
-          </button>
+            {dict.pos.barcodeStickerPrint}</button>
           <button
             type="button"
             onClick={() => setZReportModalOpen(true)}
             className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shadow-sm"
           >
-            💰 শিফট ক্লোজ (Z-Report)
-          </button>
+            {dict.pos.shiftCloseZReport}</button>
         </div>
       </div>
 
       {/* AB4: connection + outbox strip */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-2.5 text-sm">
         {online ? (
-          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">🟢 অনলাইন</span>
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{dict.pos.online}</span>
         ) : (
-          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">🔴 অফলাইন</span>
+          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">{dict.pos.offline}</span>
         )}
-        <span className="text-slate-600">সিঙ্ক বাকি: <strong>{outbox.length}টি</strong> অফলাইন বিক্রি</span>
+        <span className="text-slate-600">{dict.pos.pendingSync}<strong>{outbox.length}{dict.pos.items}</strong> {dict.pos.offlineSales}</span>
         <button
           type="button"
           className="btn-primary ml-auto px-3 py-1.5 text-xs"
           disabled={!online || syncing || outbox.length === 0}
           onClick={syncOutbox}
         >
-          {syncing ? "সিঙ্ক হচ্ছে…" : "🔄 সিঙ্ক করুন"}
+          {syncing ? dict.pos.syncing : dict.pos.sync}
         </button>
       </div>
       {syncError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{syncError}</p> : null}
@@ -735,18 +690,18 @@ ${pageCss}
       {/* AB4: connection + outbox strip */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-2.5 text-sm">
         {online ? (
-          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">🟢 অনলাইন</span>
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{dict.pos.online}</span>
         ) : (
-          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">🔴 অফলাইন</span>
+          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">{dict.pos.offline}</span>
         )}
-        <span className="text-slate-600">সিঙ্ক বাকি: <strong>{outbox.length}টি</strong> অফলাইন বিক্রি</span>
+        <span className="text-slate-600">{dict.pos.pendingSync}<strong>{outbox.length}{dict.pos.items}</strong> {dict.pos.offlineSales}</span>
         <button
           type="button"
           className="btn-primary ml-auto px-3 py-1.5 text-xs"
           disabled={!online || syncing || outbox.length === 0}
           onClick={syncOutbox}
         >
-          {syncing ? "সিঙ্ক হচ্ছে…" : "🔄 সিঙ্ক করুন"}
+          {syncing ? dict.pos.syncing : dict.pos.sync}
         </button>
       </div>
       {syncError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{syncError}</p> : null}
@@ -762,19 +717,18 @@ ${pageCss}
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="পণ্যের নাম, SKU বা বারকোড লিখে Enter চাপুন…"
+              placeholder={dict.pos.typeAProductNameSKU}
               className="w-full rounded-lg border px-3 py-2.5 text-sm"
             />
             <button type="submit" className="btn-primary whitespace-nowrap" disabled={searching}>
-              {searching ? "খুঁজছে…" : "খুঁজুন"}
+              {searching ? dict.pos.searching : dict.pos.search}
             </button>
             <button
               type="button"
               className="whitespace-nowrap rounded-lg border px-3 py-2.5 text-sm font-semibold"
               onClick={openScanner}
             >
-              📷 স্ক্যান
-            </button>
+              {dict.pos.scan}</button>
           </form>
           {scanNote ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">{scanNote}</p> : null}
           {searchError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{searchError}</p> : null}
@@ -782,7 +736,7 @@ ${pageCss}
           {results.length > 0 ? (
             <ul className="divide-y rounded-xl border bg-white">
               {results.map((p) => {
-                const badge = STOCK_BADGE[p.stockState] ?? STOCK_BADGE.untracked;
+                const badge = STOCK_BADGE[p.stockState as keyof typeof STOCK_BADGE] ?? STOCK_BADGE.untracked;
                 const chosenVariantId = resultVariant[p.productId] ?? "";
                 const chosenVariant = p.variants.find((v) => v.id === chosenVariantId) ?? null;
                 return (
@@ -790,20 +744,20 @@ ${pageCss}
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">{p.name}</div>
                       <div className="text-xs text-slate-500">
-                        {p.sku ? `SKU: ${p.sku}` : ""}{p.barcode ? ` · বারকোড: ${p.barcode}` : ""}
+                        {p.sku ? `SKU: ${p.sku}` : ""}{p.barcode ? t("pos.barcode", { barcode: p.barcode }) : ""}
                       </div>
                     </div>
-                    <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${badge.cls}`}>{badge.label(p)}</span>
-                    <span className="text-sm font-semibold">{fmt(chosenVariant?.priceMinor ?? p.priceMinor)}</span>
+                    <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${badge.cls}`}>{badge.labelKey === "inStock" ? t("pos.inStock", { stockQuantity: p.stockQuantity ?? 0 }) : dict.pos[badge.labelKey]}</span>
+                    <span className="text-sm font-semibold">{fmt(locale, chosenVariant?.priceMinor ?? p.priceMinor)}</span>
                     {p.variants.length > 0 ? (
                       <select
                         value={chosenVariantId}
                         onChange={(e) => setResultVariant((prev) => ({ ...prev, [p.productId]: e.target.value }))}
                         className="rounded-lg border px-2 py-1.5 text-xs"
                       >
-                        <option value="">সাধারণ</option>
+                        <option value="">{dict.pos.general}</option>
                         {p.variants.map((v) => (
-                          <option key={v.id} value={v.id}>{v.name}{v.priceMinor != null ? ` — ${fmt(v.priceMinor)}` : ""}</option>
+                          <option key={v.id} value={v.id}>{v.name}{v.priceMinor != null ? ` — ${fmt(locale, v.priceMinor)}` : ""}</option>
                         ))}
                       </select>
                     ) : null}
@@ -817,50 +771,46 @@ ${pageCss}
                           productName: p.name + (chosenVariant ? ` (${chosenVariant.name})` : ""),
                           skuOrBarcode: code,
                           priceFormatted: price,
-                          category: "পণ্য",
+                          category: dict.pos.product,
                         });
                         setBarcodeModalOpen(true);
                       }}
                     >
-                      🏷️ বারকোড
-                    </button>
+                      {dict.pos.barcode2}</button>
                     <button type="button" className="btn-primary px-3 py-1.5 text-xs" onClick={() => addLine(p, chosenVariant)}>
-                      + যোগ করুন
-                    </button>
+                      {dict.pos.add}</button>
                   </li>
                 );
               })}
             </ul>
           ) : (
             <p className="rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">
-              SKU / বারকোড স্ক্যান বা লিখে Enter চাপলে exact মিল সরাসরি কার্টে যোগ হবে।
-            </p>
+              {dict.pos.scanOrTypeAnSKU}</p>
           )}
 
           {/* ---------- recent sales ---------- */}
           <section className="rounded-xl border bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">আজকের বিক্রি</h2>
-              {today ? <span className="text-sm text-slate-600">মোট {today.orderCount}টি — {fmt(today.totalSalesMinor)}</span> : null}
+              <h2 className="text-sm font-semibold">{dict.pos.todaySSales}</h2>
+              {today ? <span className="text-sm text-slate-600">{dict.pos.total}{today.orderCount}{dict.pos.text1949v8}{fmt(locale, today.totalSalesMinor)}</span> : null}
             </div>
-            {!today ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : today.orders.length === 0 ? (
-              <p className="text-sm text-slate-500">আজ এখনো কোনো কাউন্টার বিক্রি হয়নি।</p>
+            {!today ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : today.orders.length === 0 ? (
+              <p className="text-sm text-slate-500">{dict.pos.noCounterSalesYetToday}</p>
             ) : (
               <ul className="divide-y">
                 {today.orders.map((o) => (
                   <li key={o.id} className="flex flex-wrap items-center gap-3 py-2 text-sm">
                     <span className="font-medium">{o.externalNumber ?? o.id}</span>
-                    <span className="text-slate-500">{new Date(o.createdAt).toLocaleTimeString("bn-BD")}</span>
-                    <span className="text-slate-500">{o.itemCount}টি আইটেম</span>
-                    <span className="font-semibold">{fmt(o.totalMinor)}</span>
+                    <span className="text-slate-500">{fmtTime(locale, new Date(o.createdAt))}</span>
+                    <span className="text-slate-500">{o.itemCount}{dict.pos.items2}</span>
+                    <span className="font-semibold">{fmt(locale, o.totalMinor)}</span>
                     {Number(o.dueMinor) > 0 ? (
-                      <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">বাকি {fmt(o.dueMinor)}</span>
+                      <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{dict.pos.due}{fmt(locale, o.dueMinor)}</span>
                     ) : (
-                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">পরিশোধিত</span>
+                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{dict.pos.paid}</span>
                     )}
                     <button type="button" className="ml-auto text-xs font-semibold text-indigo-600 hover:underline" onClick={() => printReceipt(o.id)}>
-                      🧾 রসিদ আবার প্রিন্ট
-                    </button>
+                      {dict.pos.reprintReceipt}</button>
                   </li>
                 ))}
               </ul>
@@ -870,37 +820,35 @@ ${pageCss}
           {/* ---------- AB4: offline sync ledger ---------- */}
           <section className="rounded-xl border bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">📥 অফলাইন সিঙ্ক</h2>
+              <h2 className="text-sm font-semibold">{dict.pos.offlineSync}</h2>
               <button type="button" className="text-xs font-semibold text-indigo-600 hover:underline" onClick={loadLedger}>
-                রিফ্রেশ
-              </button>
+                {dict.pos.refresh}</button>
             </div>
             {outbox.length > 0 ? (
               <p className="mb-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">
-                এই ব্রাউজারের কিউতে {outbox.length}টি অফলাইন বিক্রি সিঙ্কের অপেক্ষায় আছে — উপরের “সিঙ্ক করুন” চাপুন।
-              </p>
+                {dict.pos.inThisBrowserSQueue}{outbox.length}{dict.pos.offlineSalesAreWaitingTo}</p>
             ) : null}
-            {!ledger ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : ledger.length === 0 ? (
-              <p className="text-sm text-slate-500">কোনো অফলাইন বিক্রি সিঙ্ক হয়নি এখনো।</p>
+            {!ledger ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : ledger.length === 0 ? (
+              <p className="text-sm text-slate-500">{dict.pos.noOfflineSalesHaveSynced}</p>
             ) : (
               <ul className="divide-y">
                 {ledger.map((row) => {
-                  const chip = SYNC_STATUS_CHIP[row.status] ?? SYNC_STATUS_CHIP.pending;
+                  const chip = SYNC_STATUS_CHIP[row.status as keyof typeof SYNC_STATUS_CHIP] ?? SYNC_STATUS_CHIP.pending;
                   const busy = ledgerBusy === row.id;
                   return (
                     <li key={row.id} className="space-y-1.5 py-2.5 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{row.localReceiptNo ?? row.id}</span>
-                        <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${chip.cls}`}>{chip.label}</span>
-                        <span className="text-xs text-slate-500">{new Date(row.createdAt).toLocaleString("bn-BD")}</span>
-                        <span className="text-xs text-slate-500">চেষ্টা: {row.attempts}</span>
+                        <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${chip.cls}`}>{dict.pos[chip.label]}</span>
+                        <span className="text-xs text-slate-500">{fmtDateTime(locale, new Date(row.createdAt))}</span>
+                        <span className="text-xs text-slate-500">{dict.pos.attempts}{row.attempts}</span>
                       </div>
                       <div className="flex flex-wrap gap-x-4 text-xs text-slate-600">
-                        <span>স্থানীয় মোট (আনুমানিক): {row.localTotalMinor != null ? fmt(row.localTotalMinor) : "—"}</span>
+                        <span>{dict.pos.localTotalEstimated}{row.localTotalMinor != null ? fmt(locale, row.localTotalMinor) : "—"}</span>
                         {row.status === "synced" ? (
                           <>
-                            <span>সার্ভারের মোট: {row.serverTotalMinor != null ? fmt(row.serverTotalMinor) : "—"}</span>
-                            <span>পার্থক্য: {row.varianceMinor != null ? fmt(row.varianceMinor) : "—"}</span>
+                            <span>{dict.pos.serverTotal}{row.serverTotalMinor != null ? fmt(locale, row.serverTotalMinor) : "—"}</span>
+                            <span>{dict.pos.difference}{row.varianceMinor != null ? fmt(locale, row.varianceMinor) : "—"}</span>
                           </>
                         ) : null}
                       </div>
@@ -908,22 +856,19 @@ ${pageCss}
                         <p className="text-xs font-medium text-red-600">{row.reason}</p>
                       ) : null}
                       {row.status === "discarded" && row.discardNote ? (
-                        <p className="text-xs text-slate-500">নোট: {row.discardNote}</p>
+                        <p className="text-xs text-slate-500">{dict.pos.note}{row.discardNote}</p>
                       ) : null}
                       {row.status === "conflict" ? (
                         <div className="flex gap-2 pt-0.5">
                           <button type="button" className="btn-primary px-3 py-1.5 text-xs" disabled={busy} onClick={() => repostLedgerRow(row, true)}>
-                            তবুও পোস্ট করুন
-                          </button>
+                            {dict.pos.postAnyway}</button>
                           <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600" disabled={busy} onClick={() => discardLedgerRow(row)}>
-                            বাদ দিন
-                          </button>
+                            {dict.pos.skip}</button>
                         </div>
                       ) : row.status === "rejected" ? (
                         <div className="flex gap-2 pt-0.5">
                           <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600" disabled={busy} onClick={() => discardLedgerRow(row)}>
-                            বাদ দিন
-                          </button>
+                            {dict.pos.skip}</button>
                         </div>
                       ) : null}
                     </li>
@@ -936,37 +881,37 @@ ${pageCss}
 
         {/* ---------- right: cart ---------- */}
         <aside className="h-fit space-y-4 rounded-xl border bg-white p-4 lg:sticky lg:top-4">
-          <h2 className="text-sm font-semibold">কার্ট</h2>
+          <h2 className="text-sm font-semibold">{dict.pos.cart}</h2>
 
           {lastSale ? (
             <div className="space-y-3 rounded-lg bg-emerald-50 p-3">
-              <p className="text-sm font-semibold text-emerald-800">✅ বিক্রি সম্পন্ন — {lastSale.receipt.orderNumber ?? ""}</p>
+              <p className="text-sm font-semibold text-emerald-800">{dict.pos.saleComplete}{lastSale.receipt.orderNumber ?? ""}</p>
               <div className="space-y-1 text-sm text-emerald-900">
-                <div className="flex justify-between"><span>সাবটোটাল</span><span>{fmt(lastSale.receipt.subtotalMinor)}</span></div>
-                <div className="flex justify-between"><span>ছাড়</span><span>-{fmt(lastSale.receipt.discountMinor)}</span></div>
+                <div className="flex justify-between"><span>{dict.pos.subtotal}</span><span>{fmt(locale, lastSale.receipt.subtotalMinor)}</span></div>
+                <div className="flex justify-between"><span>{dict.pos.discount}</span><span>-{fmt(locale, lastSale.receipt.discountMinor)}</span></div>
                 {(() => {
                   const used = lastSale.receipt.loyaltyPointsUsed ?? lastSale.loyaltyPointsUsed ?? 0;
                   const disc = lastSale.receipt.loyaltyDiscountMinor ?? lastSale.loyaltyDiscountMinor;
                   return used > 0 ? (
                     <>
-                      <div className="flex justify-between"><span>⭐ লয়্যালটি পয়েন্ট ব্যবহার</span><span>{used} পয়েন্ট</span></div>
-                      <div className="flex justify-between"><span>লয়্যালটি ছাড় (উপরের ছাড়ের অংশ)</span><span>-{fmt(disc)}</span></div>
+                      <div className="flex justify-between"><span>{dict.pos.useLoyaltyPoints}</span><span>{used} {dict.pos.points}</span></div>
+                      <div className="flex justify-between"><span>{dict.pos.loyaltyDiscountPartOfThe}</span><span>-{fmt(locale, disc)}</span></div>
                     </>
                   ) : null;
                 })()}
                 {lastSale.receipt.giftCard ? (
-                  <div className="flex justify-between"><span>🎁 গিফট কার্ড ছাড় (••••{lastSale.receipt.giftCard.codeLast4}, উপরের ছাড়ের অংশ)</span><span>-{fmt(lastSale.receipt.giftCard.discountMinor)}</span></div>
+                  <div className="flex justify-between"><span>{dict.pos.giftCardDiscount}{lastSale.receipt.giftCard.codeLast4}{dict.pos.partOfTheDiscountAbove}</span><span>-{fmt(locale, lastSale.receipt.giftCard.discountMinor)}</span></div>
                 ) : null}
                 {Number(lastSale.receipt.taxAddedMinor) > 0 ? (
-                  <div className="flex justify-between"><span>কর</span><span>{fmt(lastSale.receipt.taxAddedMinor)}</span></div>
+                  <div className="flex justify-between"><span>{dict.pos.tax}</span><span>{fmt(locale, lastSale.receipt.taxAddedMinor)}</span></div>
                 ) : null}
-                <div className="flex justify-between border-t border-emerald-200 pt-1 font-bold"><span>মোট</span><span>{fmt(lastSale.receipt.totalMinor)}</span></div>
-                <div className="flex justify-between"><span>পরিশোধিত</span><span>{fmt(lastSale.receipt.paidMinor)}</span></div>
-                <div className="flex justify-between"><span>বাকি</span><span>{fmt(lastSale.receipt.dueMinor)}</span></div>
+                <div className="flex justify-between border-t border-emerald-200 pt-1 font-bold"><span>{dict.pos.total}</span><span>{fmt(locale, lastSale.receipt.totalMinor)}</span></div>
+                <div className="flex justify-between"><span>{dict.pos.paid}</span><span>{fmt(locale, lastSale.receipt.paidMinor)}</span></div>
+                <div className="flex justify-between"><span>{dict.pos.due}</span><span>{fmt(locale, lastSale.receipt.dueMinor)}</span></div>
               </div>
               <div className="flex gap-2">
-                <button type="button" className="btn-primary flex-1" onClick={() => printReceipt(lastSale.id)}>🧾 রসিদ প্রিন্ট</button>
-                <button type="button" className="flex-1 rounded-lg border px-3 py-2 text-sm font-semibold" onClick={resetSale}>নতুন বিক্রি</button>
+                <button type="button" className="btn-primary flex-1" onClick={() => printReceipt(lastSale.id)}>{dict.pos.printReceipt}</button>
+                <button type="button" className="flex-1 rounded-lg border px-3 py-2 text-sm font-semibold" onClick={resetSale}>{dict.pos.newSale}</button>
               </div>
             </div>
           ) : null}
@@ -976,26 +921,25 @@ ${pageCss}
               at sync time is the truth. */}
           {offlineReceipt ? (
             <div className="space-y-3 rounded-lg bg-amber-50 p-3">
-              <p className="text-sm font-semibold text-amber-800">📴 অফলাইন বিক্রি — সিঙ্ক বাকি</p>
+              <p className="text-sm font-semibold text-amber-800">{dict.pos.offlineSaleSyncPending}</p>
               <p className="text-xs text-amber-700">
-                স্থানীয় রসিদ নং: {offlineReceipt.entry.localReceiptNo} · এটি স্থানীয় আনুমানিক হিসাব — চূড়ান্ত হিসাব সিঙ্কের সময় সার্ভারে হবে।
-              </p>
+                {dict.pos.localReceiptNo}{offlineReceipt.entry.localReceiptNo} {dict.pos.thisIsALocalEstimate}</p>
               <div className="space-y-1 text-sm text-amber-900">
                 {offlineReceipt.lines.map((l, i) => (
                   <div key={i} className="flex justify-between">
-                    <span>{l.name} × {l.quantity}</span><span>{fmt(l.totalMinor)}</span>
+                    <span>{l.name} × {l.quantity}</span><span>{fmt(locale, l.totalMinor)}</span>
                   </div>
                 ))}
                 <div className="flex justify-between border-t border-amber-200 pt-1 font-bold">
-                  <span>স্থানীয় মোট (আনুমানিক)</span><span>{fmt(offlineReceipt.entry.localTotalMinor)}</span>
+                  <span>{dict.pos.localTotalEstimated2}</span><span>{fmt(locale, offlineReceipt.entry.localTotalMinor)}</span>
                 </div>
               </div>
-              <button type="button" className="w-full rounded-lg border px-3 py-2 text-sm font-semibold" onClick={resetSale}>নতুন বিক্রি</button>
+              <button type="button" className="w-full rounded-lg border px-3 py-2 text-sm font-semibold" onClick={resetSale}>{dict.pos.newSale}</button>
             </div>
           ) : null}
 
           {cart.length === 0 ? (
-            <p className="text-sm text-slate-500">কার্ট খালি — বাম থেকে পণ্য যোগ করুন।</p>
+            <p className="text-sm text-slate-500">{dict.pos.cartIsEmptyAddProducts}</p>
           ) : (
             <ul className="space-y-3">
               {cart.map((l) => (
@@ -1003,9 +947,9 @@ ${pageCss}
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">{l.name}</div>
-                      <div className="text-xs text-slate-500">{fmt(l.unitPriceMinor)} × {l.quantity}</div>
+                      <div className="text-xs text-slate-500">{fmt(locale, l.unitPriceMinor)} × {l.quantity}</div>
                     </div>
-                    <div className="text-sm font-semibold">{fmt(l.unitPriceMinor * l.quantity)}</div>
+                    <div className="text-sm font-semibold">{fmt(locale, l.unitPriceMinor * l.quantity)}</div>
                   </div>
                   {l.variants.length > 0 ? (
                     <select
@@ -1013,9 +957,9 @@ ${pageCss}
                       onChange={(e) => changeLineVariant(l, e.target.value)}
                       className="mt-2 w-full rounded-lg border px-2 py-1.5 text-xs"
                     >
-                      <option value="">সাধারণ</option>
+                      <option value="">{dict.pos.general}</option>
                       {l.variants.map((v) => (
-                        <option key={v.id} value={v.id}>{v.name}{v.priceMinor != null ? ` — ${fmt(v.priceMinor)}` : ""}</option>
+                        <option key={v.id} value={v.id}>{v.name}{v.priceMinor != null ? ` — ${fmt(locale, v.priceMinor)}` : ""}</option>
                       ))}
                     </select>
                   ) : null}
@@ -1023,10 +967,10 @@ ${pageCss}
                     <button type="button" className="rounded border px-2 py-0.5 text-sm" onClick={() => setCart((prev) => prev.map((x) => x.key === l.key ? { ...x, quantity: Math.max(1, x.quantity - 1) } : x))}>−</button>
                     <span className="w-8 text-center text-sm font-medium">{l.quantity}</span>
                     <button type="button" className="rounded border px-2 py-0.5 text-sm" onClick={() => setCart((prev) => prev.map((x) => x.key === l.key ? { ...x, quantity: x.quantity + 1 } : x))}>+</button>
-                    <button type="button" className="ml-auto text-xs font-semibold text-red-600 hover:underline" onClick={() => setCart((prev) => prev.filter((x) => x.key !== l.key))}>সরান</button>
+                    <button type="button" className="ml-auto text-xs font-semibold text-red-600 hover:underline" onClick={() => setCart((prev) => prev.filter((x) => x.key !== l.key))}>{dict.pos.remove}</button>
                   </div>
                   {l.stockQuantity != null && l.quantity > l.stockQuantity ? (
-                    <p className="mt-1.5 text-xs font-medium text-red-600">⚠️ স্টকে মাত্র {l.stockQuantity}টি আছে — সার্ভার এই পরিমাণে বিক্রি আটকে দেবে</p>
+                    <p className="mt-1.5 text-xs font-medium text-red-600">{dict.pos.only}{l.stockQuantity}{dict.pos.leftInStockTheServer}</p>
                   ) : null}
                 </li>
               ))}
@@ -1034,42 +978,41 @@ ${pageCss}
           )}
 
           <div className="space-y-2 border-t pt-3">
-            <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="ক্রেতার ফোন (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="ক্রেতার নাম (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-            <input value={couponCode} onChange={(e) => setCouponCode(e.target.value)} placeholder="কুপন কোড (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-            <input value={giftCardCode} onChange={(e) => setGiftCardCode(e.target.value)} placeholder="🎁 গিফট কার্ডের কোড (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 font-mono text-sm" />
+            <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder={dict.pos.customerPhoneOptional} className="w-full rounded-lg border px-3 py-2 text-sm" />
+            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder={dict.pos.customerNameOptional} className="w-full rounded-lg border px-3 py-2 text-sm" />
+            <input value={couponCode} onChange={(e) => setCouponCode(e.target.value)} placeholder={dict.pos.couponCodeOptional} className="w-full rounded-lg border px-3 py-2 text-sm" />
+            <input value={giftCardCode} onChange={(e) => setGiftCardCode(e.target.value)} placeholder={dict.pos.giftCardCodeOptional} className="w-full rounded-lg border px-3 py-2 font-mono text-sm" />
             {customerPhone.trim() ? (
-              <label className="block text-sm">লয়্যালটি পয়েন্ট ব্যবহার (ঐচ্ছিক)
-                <input value={loyaltyPoints} onChange={(e) => setLoyaltyPoints(e.target.value)} type="number" min="0" step="1" placeholder="কত পয়েন্ট খরচ করবেন" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" />
-                <span className="mt-1 block text-xs font-normal text-slate-400">ফোন নম্বরের গ্রাহকের ব্যালেন্স থেকে কাটা হবে; চূড়ান্ত প্রয়োগ (সীমা/ব্যালেন্স) সার্ভারই ঠিক করবে।</span>
+              <label className="block text-sm">{dict.pos.useLoyaltyPointsOptional}<input value={loyaltyPoints} onChange={(e) => setLoyaltyPoints(e.target.value)} type="number" min="0" step="1" placeholder={dict.pos.howManyPointsDoYou} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" />
+                <span className="mt-1 block text-xs font-normal text-slate-400">{dict.pos.itWillBeDeductedFrom}</span>
               </label>
             ) : null}
           </div>
 
           <div className="space-y-2 border-t pt-3">
             <div className="flex gap-2">
-              <button type="button" onClick={() => setPayMode("paid")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "paid" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "text-slate-600"}`}>💵 নগদ / পেইড</button>
-              <button type="button" onClick={() => setPayMode("due")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "due" ? "border-amber-600 bg-amber-50 text-amber-700" : "text-slate-600"}`}>📒 বাকি / খাতা</button>
+              <button type="button" onClick={() => setPayMode("paid")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "paid" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "text-slate-600"}`}>{dict.pos.cashPaid}</button>
+              <button type="button" onClick={() => setPayMode("due")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "due" ? "border-amber-600 bg-amber-50 text-amber-700" : "text-slate-600"}`}>{dict.pos.dueLedger}</button>
             </div>
             {payMode === "paid" ? (
               <div className="flex gap-2">
                 <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-lg border px-2 py-2 text-sm">
-                  <option value="cash">নগদ (Cash)</option>
-                  <option value="bkash">বিকাশ</option>
-                  <option value="nagad">নগদ (Nagad)</option>
-                  <option value="card">কার্ড</option>
-                  <option value="other">অন্যান্য</option>
+                  <option value="cash">{dict.pos.cash}</option>
+                  <option value="bkash">{dict.pos.bKash}</option>
+                  <option value="nagad">{dict.pos.nagad}</option>
+                  <option value="card">{dict.pos.card}</option>
+                  <option value="other">{dict.pos.other}</option>
                 </select>
-                <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="TrxID / রেফারেন্স (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder={dict.pos.trxIDReferenceOptional} className="w-full rounded-lg border px-3 py-2 text-sm" />
               </div>
             ) : (
-              <p className="text-xs text-slate-500">বাকি বিক্রিতে পুরো টাকাটাই অর্ডারের বকেয়া (due) হিসেবে থাকবে।</p>
+              <p className="text-xs text-slate-500">{dict.pos.forDueSalesTheFull}</p>
             )}
           </div>
 
           <div className="space-y-1 border-t pt-3 text-sm">
-            <div className="flex justify-between"><span>আনুমানিক সাবটোটাল</span><span className="font-semibold">{fmt(estimate)}</span></div>
-            <p className="text-[11px] text-slate-400">আনুমানিক — চূড়ান্ত হিসাব (ছাড়/কুপন/করসহ) সার্ভারে হবে</p>
+            <div className="flex justify-between"><span>{dict.pos.estimatedSubtotal}</span><span className="font-semibold">{fmt(locale, estimate)}</span></div>
+            <p className="text-[11px] text-slate-400">{dict.pos.estimatedTheFinalTotalWith}</p>
           </div>
 
           {saleError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{saleError}</p> : null}
@@ -1079,7 +1022,7 @@ ${pageCss}
             disabled={cart.length === 0 || selling}
             onClick={completeSale}
           >
-            {selling ? "বিক্রি হচ্ছে…" : "বিক্রি সম্পন্ন করুন"}
+            {selling ? dict.pos.selling : dict.pos.completeSale}
           </button>
         </aside>
       </div>
@@ -1090,16 +1033,15 @@ ${pageCss}
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-md space-y-3 rounded-2xl bg-white p-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">📷 বারকোড স্ক্যান করুন</h2>
+              <h2 className="text-sm font-semibold">{dict.pos.scanBarcode}</h2>
               <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={closeScanner}>
-                বন্ধ করুন
-              </button>
+                {dict.pos.close}</button>
             </div>
             <video ref={videoRef} className="aspect-[4/3] w-full rounded-xl bg-black object-cover" playsInline muted />
             {scanFeedback ? (
               <p className="rounded-lg bg-emerald-50 p-2.5 text-sm font-medium text-emerald-700">{scanFeedback}</p>
             ) : (
-              <p className="text-sm text-slate-500">বারকোডটি ক্যামেরার সামনে ধরুন — exact মিল সরাসরি কার্টে যোগ হবে।</p>
+              <p className="text-sm text-slate-500">{dict.pos.holdTheBarcodeInFront}</p>
             )}
           </div>
         </div>
@@ -1111,8 +1053,8 @@ ${pageCss}
           <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b px-6 py-4">
               <div>
-                <h2 className="text-base font-bold text-slate-800">⚙️ থার্মাল রসিদ (Receipt) কাস্টমাইজেশন</h2>
-                <p className="text-xs text-slate-500">দোকানের নাম, ঠিকানা, পলিসি ও বারকোড সাজিয়ে ৮০মিমি ও ৫৮মিমি প্রিন্টারে নিখুঁত রসিদ পান</p>
+                <h2 className="text-base font-bold text-slate-800">{dict.pos.thermalReceiptCustomization}</h2>
+                <p className="text-xs text-slate-500">{dict.pos.arrangeTheShopNameAddress}</p>
               </div>
               <button
                 type="button"
@@ -1127,7 +1069,7 @@ ${pageCss}
               {/* Form Controls */}
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">প্রিন্টার পেপার সাইজ</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.printerPaperSize}</label>
                   <div className="mt-1.5 flex gap-2">
                     <button
                       type="button"
@@ -1138,8 +1080,7 @@ ${pageCss}
                           : "border-slate-200 text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      ৮০ মিমি (80mm - স্ট্যান্ডার্ড POS)
-                    </button>
+                      {dict.pos.text9o2aum}</button>
                     <button
                       type="button"
                       onClick={() => setReceiptSettings((s) => ({ ...s, paperWidth: "58mm" }))}
@@ -1149,36 +1090,35 @@ ${pageCss}
                           : "border-slate-200 text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      ৫৮ মিমি (58mm - পোর্টেবল/ব্লুটুথ)
-                    </button>
+                      {dict.pos.text74ts1c}</button>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">দোকান / ব্র্যান্ডের নাম</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.shopBrandName}</label>
                   <input
                     type="text"
                     value={receiptSettings.storeName}
                     onChange={(e) => setReceiptSettings((s) => ({ ...s, storeName: e.target.value }))}
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    placeholder="যেমন: ফ্যাশন গ্যাজেটস বিডি"
+                    placeholder={dict.pos.eGFashionGadgetsBD}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">ট্যাগলাইন (স্লোগান)</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.taglineSlogan}</label>
                   <input
                     type="text"
                     value={receiptSettings.tagline}
                     onChange={(e) => setReceiptSettings((s) => ({ ...s, tagline: e.target.value }))}
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    placeholder="যেমন: প্রিমিয়াম কোয়ালিটি ও নির্ভরযোগ্য সেবা"
+                    placeholder={dict.pos.eGPremiumQualityAnd}
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700">হটলাইন / মোবাইল নং</label>
+                    <label className="block text-xs font-semibold text-slate-700">{dict.pos.hotlineMobileNo}</label>
                     <input
                       type="text"
                       value={receiptSettings.phone}
@@ -1188,36 +1128,36 @@ ${pageCss}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700">ঠিকানা / আউটলেট লোকেশন</label>
+                    <label className="block text-xs font-semibold text-slate-700">{dict.pos.addressOutletLocation}</label>
                     <input
                       type="text"
                       value={receiptSettings.address}
                       onChange={(e) => setReceiptSettings((s) => ({ ...s, address: e.target.value }))}
                       className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                      placeholder="মিরপুর-১০, ঢাকা-১২১৬"
+                      placeholder={dict.pos.mirpur10Dhaka1216}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">পণ্য ফেরত / এক্সচেঞ্জ পলিসি</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.productReturnExchangePolicy}</label>
                   <textarea
                     rows={2}
                     value={receiptSettings.returnPolicy}
                     onChange={(e) => setReceiptSettings((s) => ({ ...s, returnPolicy: e.target.value }))}
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
-                    placeholder="পণ্য ক্রয়ের ৭ দিনের মধ্যে মেমোসহ পরিবর্তনযোগ্য..."
+                    placeholder={dict.pos.exchangeableWithin7DaysOf}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">ফুটার শুভেচ্ছা বার্তা</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.footerGreetingMessage}</label>
                   <input
                     type="text"
                     value={receiptSettings.footerGreeting}
                     onChange={(e) => setReceiptSettings((s) => ({ ...s, footerGreeting: e.target.value }))}
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    placeholder="আমাদের সাথে থাকার জন্য ধন্যবাদ! আবার আসবেন 🙏"
+                    placeholder={dict.pos.thankYouForBeingWith}
                   />
                 </div>
 
@@ -1228,45 +1168,44 @@ ${pageCss}
                     onChange={(e) => setReceiptSettings((s) => ({ ...s, showBarcode: e.target.checked }))}
                     className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   />
-                  রসিদের নিচে অর্ডারের Code128 বারকোড প্রিন্ট করুন
-                </label>
+                  {dict.pos.printTheOrderSCode128}</label>
               </div>
 
               {/* Live Preview Column */}
               <div className="flex flex-col items-center justify-start rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
                 <span className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                  লাইভ প্রিভিউ ({receiptSettings.paperWidth})
+                  {dict.pos.livePreview}{receiptSettings.paperWidth})
                 </span>
                 <div
                   className="rounded bg-white p-3 text-slate-900 shadow-md transition-all font-mono"
                   style={{ width: receiptSettings.paperWidth === "58mm" ? "220px" : "280px" }}
                 >
                   <div className="border-b border-dashed border-slate-400 pb-2 text-center">
-                    <div className="text-sm font-bold">{receiptSettings.storeName || "দোকানের নাম"}</div>
+                    <div className="text-sm font-bold">{receiptSettings.storeName || dict.pos.shopName}</div>
                     {receiptSettings.tagline ? <div className="text-[10px] text-slate-500">{receiptSettings.tagline}</div> : null}
                     {receiptSettings.address ? <div className="text-[10px] text-slate-600">{receiptSettings.address}</div> : null}
-                    {receiptSettings.phone ? <div className="text-[10px] text-slate-600">ফোন: {receiptSettings.phone}</div> : null}
-                    <div className="mt-1 text-[10px] text-slate-500">রসিদ নং: POS-SAMPLE-2026</div>
+                    {receiptSettings.phone ? <div className="text-[10px] text-slate-600">{dict.pos.phone}{receiptSettings.phone}</div> : null}
+                    <div className="mt-1 text-[10px] text-slate-500">{dict.pos.receiptNoPOSSAMPLE2026}</div>
                   </div>
 
                   <div className="my-2 space-y-1 text-[11px]">
                     <div className="flex justify-between">
-                      <span>কটন পোলো শার্ট × ১</span>
-                      <span>৳১,২৫০.০০</span>
+                      <span>{dict.pos.cottonPoloShirt1}</span>
+                      <span>{dict.pos.textp8oucj}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>ক্যাজুয়াল জিন্স × ১</span>
-                      <span>৳২,১০০.০০</span>
+                      <span>{dict.pos.casualJeans1}</span>
+                      <span>{dict.pos.text1hiiq1q}</span>
                     </div>
                   </div>
 
                   <div className="border-t border-dashed border-slate-400 pt-1.5 text-[11px] space-y-0.5">
-                    <div className="flex justify-between"><span>সাবটোটাল</span><span>৳৩,৩৫০.০০</span></div>
-                    <div className="flex justify-between"><span>ছাড়</span><span>-৳১৫০.০০</span></div>
+                    <div className="flex justify-between"><span>{dict.pos.subtotal}</span><span>{dict.pos.textcbvcw0}</span></div>
+                    <div className="flex justify-between"><span>{dict.pos.discount}</span><span>{dict.pos.text20o13m}</span></div>
                     <div className="flex justify-between font-bold border-t border-dashed pt-1">
-                      <span>সর্বমোট</span><span>৳৩,২০০.০০</span>
+                      <span>{dict.pos.grandTotal}</span><span>{dict.pos.textbs2rj0}</span>
                     </div>
-                    <div className="flex justify-between"><span>পরিশোধিত (নগদ)</span><span>৳৩,২০০.০০</span></div>
+                    <div className="flex justify-between"><span>{dict.pos.paidCash}</span><span>{dict.pos.textbs2rj0}</span></div>
                   </div>
 
                   {receiptSettings.returnPolicy ? (
@@ -1296,10 +1235,9 @@ ${pageCss}
               <div>
                 {receiptSavedFeedback ? (
                   <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                    ✓ সেটিংস সফলভাবে সংরক্ষিত হয়েছে!
-                  </span>
+                    {dict.pos.settingsSavedSuccessfully}</span>
                 ) : (
-                  <span className="text-xs text-slate-500">সব কাউন্টার সেলস ও ইনভয়েস প্রিন্টে এই তথ্য প্রযোজ্য হবে</span>
+                  <span className="text-xs text-slate-500">{dict.pos.thisInformationWillApplyTo}</span>
                 )}
               </div>
               <div className="flex gap-2">
@@ -1308,15 +1246,13 @@ ${pageCss}
                   className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                   onClick={() => setReceiptModalOpen(false)}
                 >
-                  বন্ধ করুন
-                </button>
+                  {dict.pos.close}</button>
                 <button
                   type="button"
                   className="btn-primary px-5 py-2 text-xs font-semibold"
                   onClick={() => handleSaveReceiptSettings(receiptSettings)}
                 >
-                  💾 সংরক্ষণ করুন
-                </button>
+                  {dict.pos.save}</button>
               </div>
             </div>
           </div>
@@ -1329,8 +1265,8 @@ ${pageCss}
           <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b px-6 py-4">
               <div>
-                <h2 className="text-base font-bold text-slate-800">🏷️ বারকোড স্টিকার ও প্রাইস ট্যাগ প্রিন্টিং</h2>
-                <p className="text-xs text-slate-500">সিঙ্গেল থার্মাল স্টিকার (৫০মিমি×৩০মিমি) বা A4 ২৪-স্টিকার শীটে প্রিন্ট করুন</p>
+                <h2 className="text-base font-bold text-slate-800">{dict.pos.barcodeStickerPriceTagPrinting}</h2>
+                <p className="text-xs text-slate-500">{dict.pos.printOnASingleThermal}</p>
               </div>
               <button
                 type="button"
@@ -1344,7 +1280,7 @@ ${pageCss}
             <div className="grid flex-1 gap-6 overflow-y-auto p-6 md:grid-cols-2">
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">প্রিন্ট লেআউট</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.printLayout}</label>
                   <div className="mt-1.5 flex gap-2">
                     <button
                       type="button"
@@ -1355,8 +1291,7 @@ ${pageCss}
                           : "border-slate-200 text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      🏷️ সিঙ্গেল থার্মাল স্টিকার (50×30mm)
-                    </button>
+                      {dict.pos.singleThermalSticker5030mm}</button>
                     <button
                       type="button"
                       onClick={() => { setBarcodeLayout("a4_sheet_24"); setBarcodeQty(24); }}
@@ -1366,47 +1301,46 @@ ${pageCss}
                           : "border-slate-200 text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      📄 A4 শীট (২৪টি লেবেল - ৩×৮)
-                    </button>
+                      {dict.pos.a4Sheet24Labels3}</button>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">পণ্যের নাম</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.productName}</label>
                   <input
                     type="text"
                     value={barcodeLabelData.productName}
                     onChange={(e) => setBarcodeLabelData((d) => ({ ...d, productName: e.target.value }))}
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium"
-                    placeholder="পণ্যের নাম"
+                    placeholder={dict.pos.productName}
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700">SKU / বারকোড কোড</label>
+                    <label className="block text-xs font-semibold text-slate-700">{dict.pos.sKUBarcodeCode}</label>
                     <input
                       type="text"
                       value={barcodeLabelData.skuOrBarcode}
                       onChange={(e) => setBarcodeLabelData((d) => ({ ...d, skuOrBarcode: e.target.value }))}
                       className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono"
-                      placeholder="যেমন: PRD-1002"
+                      placeholder={dict.pos.eGPRD1002}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700">মূল্য (৳)</label>
+                    <label className="block text-xs font-semibold text-slate-700">{dict.pos.price}</label>
                     <input
                       type="text"
                       value={barcodeLabelData.priceFormatted}
                       onChange={(e) => setBarcodeLabelData((d) => ({ ...d, priceFormatted: e.target.value }))}
                       className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
-                      placeholder="১২৫০"
+                      placeholder={dict.pos.text1agmws}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">লেবেল সংখ্যা (Quantity)</label>
+                  <label className="block text-xs font-semibold text-slate-700">{dict.pos.numberOfLabelsQuantity}</label>
                   <div className="mt-1.5 flex items-center gap-2">
                     {[1, 6, 12, 24, 48].map((q) => (
                       <button
@@ -1419,8 +1353,7 @@ ${pageCss}
                             : "border-slate-200 text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        {q} টি
-                      </button>
+                        {q} {dict.pos.items}</button>
                     ))}
                     <input
                       type="number"
@@ -1437,14 +1370,13 @@ ${pageCss}
               {/* Preview */}
               <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6">
                 <span className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                  স্টিকার প্রিভিউ (প্রকৃত সাইজ স্কেল)
-                </span>
+                  {dict.pos.stickerPreviewActualSizeScale}</span>
                 <div className="flex flex-col items-center justify-between rounded-lg border-2 border-slate-800 bg-white p-3 text-center shadow-lg" style={{ width: "220px", height: "135px" }}>
                   <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">
-                    {receiptSettings.storeName || "আমাদের শপ"}
+                    {receiptSettings.storeName || dict.pos.ourShop}
                   </div>
                   <div className="text-xs font-bold text-slate-900 truncate w-full">
-                    {barcodeLabelData.productName || "পণ্য"}
+                    {barcodeLabelData.productName || dict.pos.product}
                   </div>
                   <div
                     className="w-full flex justify-center [&>svg]:max-w-[180px] [&>svg]:h-8"
@@ -1454,29 +1386,27 @@ ${pageCss}
                     {barcodeLabelData.skuOrBarcode || "SAMPLE"}
                   </div>
                   <div className="text-sm font-extrabold text-slate-900">
-                    মূল্য: ৳{barcodeLabelData.priceFormatted || "০"}
+                    {dict.pos.price2}{barcodeLabelData.priceFormatted || dict.pos.text1ye}
                   </div>
                 </div>
                 <p className="mt-3 text-center text-xs text-slate-500">
                   {barcodeLayout === "single_sticker"
-                    ? `৫০মিমি × ৩০মিমি সাইজের থার্মাল স্টিকার রোল (মোট ${barcodeQty}টি লেবেল)`
-                    : `A4 পেপারে ৩টি কলাম ও ৮টি সারি (মোট ${calculateLabelGrid(barcodeQty).totalPages} পৃষ্ঠা)`}
+                    ? t("pos.textcfm04n", { barcodeQty: barcodeQty })
+                    : t("pos.text1x0vx0p", { totalPages: calculateLabelGrid(barcodeQty).totalPages })}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center justify-between border-t bg-slate-50 px-6 py-3.5">
               <span className="text-xs text-slate-500">
-                যেকোনো সাধারণ বা থার্মাল লেবেল প্রিন্টারে সরাসরি প্রিন্ট হবে
-              </span>
+                {dict.pos.printsDirectlyOnAnyStandard}</span>
               <div className="flex gap-2">
                 <button
                   type="button"
                   className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                   onClick={() => setBarcodeModalOpen(false)}
                 >
-                  বন্ধ করুন
-                </button>
+                  {dict.pos.close}</button>
                 <button
                   type="button"
                   className="btn-primary flex items-center gap-1.5 px-5 py-2 text-xs font-semibold"
@@ -1488,8 +1418,7 @@ ${pageCss}
                     barcodeLayout
                   )}
                 >
-                  🖨️ প্রিন্ট করুন ({barcodeQty}টি লেবেল)
-                </button>
+                  {dict.pos.print}{barcodeQty}{dict.pos.labels}</button>
               </div>
             </div>
           </div>
@@ -1519,10 +1448,10 @@ ${pageCss}
         });
 
         const shiftSlipData = {
-          shopName: receiptSettings.storeName || "আমাদের শপ",
+          shopName: receiptSettings.storeName || dict.pos.ourShop,
           cashierName,
           shiftStartTime,
-          shiftEndTime: new Date().toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" }),
+          shiftEndTime: fmtTime(locale, new Date()),
           orderCount: today?.orderCount ?? 0,
           totalSalesMinor: todayTotalSalesMinor,
           reconciliation,
@@ -1535,8 +1464,8 @@ ${pageCss}
             <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
               <div className="flex items-center justify-between border-b px-6 py-4">
                 <div>
-                  <h2 className="text-base font-bold text-slate-800">💰 ক্যাশ ড্রয়ার রিকনসিলিয়েশন ও শিফট ক্লোজ (Z-Report)</h2>
-                  <p className="text-xs text-slate-500">কাউন্টারের প্রারম্ভিক ক্যাশ, বিক্রি, খরচ এবং হাতে থাকা নগদ মিলিয়ে চূড়ান্ত হিসাব মিলান</p>
+                  <h2 className="text-base font-bold text-slate-800">{dict.pos.cashDrawerReconciliationShiftClose}</h2>
+                  <p className="text-xs text-slate-500">{dict.pos.reconcileTheCounterSOpening}</p>
                 </div>
                 <button
                   type="button"
@@ -1551,7 +1480,7 @@ ${pageCss}
                 <div className="space-y-3.5">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700">ক্যাশিয়ারের নাম</label>
+                      <label className="block text-xs font-semibold text-slate-700">{dict.pos.cashierName}</label>
                       <input
                         type="text"
                         value={cashierName}
@@ -1560,7 +1489,7 @@ ${pageCss}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700">শিফটের নাম</label>
+                      <label className="block text-xs font-semibold text-slate-700">{dict.pos.shiftName}</label>
                       <input
                         type="text"
                         value={shiftName}
@@ -1572,7 +1501,7 @@ ${pageCss}
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700">প্রারম্ভিক ক্যাশ ফ্লোট (৳)</label>
+                      <label className="block text-xs font-semibold text-slate-700">{dict.pos.openingCashFloat}</label>
                       <input
                         type="number"
                         min="0"
@@ -1581,10 +1510,10 @@ ${pageCss}
                         className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
                         placeholder="2000"
                       />
-                      <span className="text-[10px] text-slate-400">শিফটের শুরুতে ড্রয়ারে থাকা ভাংতি টাকা</span>
+                      <span className="text-[10px] text-slate-400">{dict.pos.theChangeMoneyKeptIn}</span>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700">নগদ খরচ / ভাউচার (৳)</label>
+                      <label className="block text-xs font-semibold text-slate-700">{dict.pos.cashExpensesVouchers}</label>
                       <input
                         type="number"
                         min="0"
@@ -1593,13 +1522,13 @@ ${pageCss}
                         className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
                         placeholder="0"
                       />
-                      <span className="text-[10px] text-slate-400">ড্রয়ার থেকে প্রদানকৃত খরচ (যদি থাকে)</span>
+                      <span className="text-[10px] text-slate-400">{dict.pos.expensesPaidFromTheDrawer}</span>
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700">
-                      হাতে গোনা নগদ ক্যাশ (Actual Cash Counted) (৳) <span className="text-red-500">*</span>
+                      {dict.pos.actualCashCountedInHand}<span className="text-red-500">*</span>
                     </label>
                     <input
                       type="number"
@@ -1607,10 +1536,10 @@ ${pageCss}
                       value={actualCashCounted}
                       onChange={(e) => setActualCashCounted(e.target.value)}
                       className="mt-1 w-full rounded-lg border-2 border-indigo-500 px-3 py-2.5 text-base font-bold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="কাউন্ট করে মোট কত টাকা পেয়েছেন লিখুন..."
+                      placeholder={dict.pos.countAndEnterTheTotal}
                       autoFocus
                     />
-                    <span className="text-[10px] text-slate-500">ড্রয়ার খুলে ফিজিক্যাল ক্যাশ গুণে মোট পরিমাণ লিখুন</span>
+                    <span className="text-[10px] text-slate-500">{dict.pos.openTheDrawerPhysicallyCount}</span>
                   </div>
 
                   {/* Discrepancy Alert */}
@@ -1624,16 +1553,16 @@ ${pageCss}
                     }`}
                   >
                     <div className="flex items-center justify-between font-bold text-sm">
-                      <span>হিসাবের ফলাফল:</span>
+                      <span>{dict.pos.calculationResult}</span>
                       <span className="font-mono text-base">{reconciliation.discrepancyFormatted}</span>
                     </div>
                     <p className="mt-1 text-xs font-medium">{reconciliation.summaryBangla}</p>
                     <div className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-200/60 pt-2 text-xs">
                       <div>
-                        প্রত্যাশিত ক্যাশ: <strong>৳{(Number(reconciliation.expectedCashInDrawerMinor) / 100).toFixed(2)}</strong>
+                        {dict.pos.expectedCash}<strong>{dict.pos.text1yr}{(Number(reconciliation.expectedCashInDrawerMinor) / 100).toFixed(2)}</strong>
                       </div>
                       <div>
-                        হাতে গোনা ক্যাশ: <strong>৳{(Number(reconciliation.actualCashCountedMinor) / 100).toFixed(2)}</strong>
+                        {dict.pos.cashCountedInHand}<strong>{dict.pos.text1yr}{(Number(reconciliation.actualCashCountedMinor) / 100).toFixed(2)}</strong>
                       </div>
                     </div>
                   </div>
@@ -1642,8 +1571,7 @@ ${pageCss}
                 {/* Thermal Z-Report Slip Preview */}
                 <div className="flex flex-col items-center justify-start rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
                   <span className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                    ৮০মিমি থার্মাল Z-Report স্লিপ প্রিভিউ
-                  </span>
+                    {dict.pos.textuakx2m}</span>
                   <div className="w-full max-w-[280px] rounded bg-white p-3 font-mono text-[11px] text-slate-800 shadow-md">
                     <pre className="whitespace-pre-wrap font-mono leading-tight">{zReportText}</pre>
                   </div>
@@ -1652,23 +1580,20 @@ ${pageCss}
 
               <div className="flex items-center justify-between border-t bg-slate-50 px-6 py-3.5">
                 <span className="text-xs text-slate-500">
-                  শিফট শেষে স্লিপ প্রিন্ট করে ক্যাশ ড্রয়ারে ও ম্যানেজারের ফাইলে রাখুন
-                </span>
+                  {dict.pos.atTheEndOfThe}</span>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                     onClick={() => setZReportModalOpen(false)}
                   >
-                    বন্ধ করুন
-                  </button>
+                    {dict.pos.close}</button>
                   <button
                     type="button"
                     className="btn-primary flex items-center gap-1.5 px-5 py-2 text-xs font-semibold"
                     onClick={() => openZReportPrint(zReportText)}
                   >
-                    🖨️ থার্মাল Z-Report স্লিপ প্রিন্ট করুন
-                  </button>
+                    {dict.pos.printThermalZReportSlip}</button>
                 </div>
               </div>
             </div>

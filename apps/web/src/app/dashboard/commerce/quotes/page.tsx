@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -37,17 +39,18 @@ interface ConvertPreview {
   orderTotalMinor: string; matchesQuoteTotal: boolean;
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: "খসড়া",
-  sent: "পাঠানো হয়েছে",
-  accepted: "গৃহীত",
-  declined: "প্রত্যাখ্যাত",
-  expired: "মেয়াদ শেষ",
-  converted: "অর্ডার হয়েছে",
-  cancelled: "বাতিল",
+const STATUS_LABEL: Record<string, string> = { /* values are commerce dict keys (ML6) */
+  draft: "draft",
+  sent: "sent",
+  accepted: "received",
+  declined: "rejected",
+  expired: "expired3",
+  converted: "ordered",
+  cancelled: "cancel",
 };
+/* ML6: label fields hold commerce dict keys, resolved at render. */
 const STATUS_FILTERS: { value: string; label: string }[] = [
-  { value: "", label: "সব" },
+  { value: "", label: "all" },
   ...Object.entries(STATUS_LABEL).map(([value, label]) => ({ value, label })),
 ];
 const statusChip = (s: string) =>
@@ -57,6 +60,7 @@ const statusChip = (s: string) =>
   : "bg-slate-100 text-slate-600";
 
 export default function QuotesPage() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [quotes, setQuotes] = useState<Quote[]>([]);
@@ -96,7 +100,7 @@ export default function QuotesPage() {
       const out = await apiFetch<{ items: Quote[] }>(`/organizations/${orgId}/commerce/quotes${qs}`);
       setQuotes(out.items ?? []);
       setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.loadingFailed); }
     finally { setLoading(false); }
   }, [statusFilter]);
   useEffect(() => { load(); }, [load]);
@@ -110,8 +114,8 @@ export default function QuotesPage() {
 
   const customerName = (c: CustomerOpt) => c.name || c.phone || c.email || c.id.slice(0, 8);
   const quoteBuyer = (q: Quote) =>
-    q.customerId ? (customers.find((c) => c.id === q.customerId) ? customerName(customers.find((c) => c.id === q.customerId)!) : "কাস্টমার")
-    : (q.walkinName || q.walkinPhone || "ওয়াক-ইন");
+    q.customerId ? (customers.find((c) => c.id === q.customerId) ? customerName(customers.find((c) => c.id === q.customerId)!) : dict.commerce.customer2)
+    : (q.walkinName || q.walkinPhone || dict.commerce.walkIn);
 
   function resetForm() {
     setEditingId(null); setIdentityMode("customer"); setCustomerId(""); setCustomerSearch("");
@@ -185,14 +189,14 @@ export default function QuotesPage() {
     const builtLines: { productId: string; variantId: string | null; qty: number; unitPriceMinor: string }[] = [];
     for (const r of lines.filter((x) => x.productId)) {
       const unitPriceMinor = takaToMinorString(r.unitPriceTaka);
-      if (unitPriceMinor === null) { setError("প্রতিটি লাইনের একক দাম টাকায় সঠিক সংখ্যা দিন।"); return; }
+      if (unitPriceMinor === null) { setError(dict.commerce.giveEachLineSUnit); return; }
       const qty = parseInt(r.qty || "0", 10);
-      if (!Number.isInteger(qty) || qty < 1) { setError("প্রতিটি লাইনের পরিমাণ কমপক্ষে ১ হতে হবে।"); return; }
+      if (!Number.isInteger(qty) || qty < 1) { setError(dict.commerce.eachLineSQuantityMust); return; }
       builtLines.push({ productId: r.productId, variantId: r.variantId || null, qty, unitPriceMinor });
     }
-    if (builtLines.length === 0) { setError("কোটে কমপক্ষে একটি পণ্যের লাইন দিন।"); return; }
-    if (identityMode === "customer" && !customerId) { setError("কাস্টমার বেছে নিন, অথবা ওয়াক-ইন তথ্য দিন।"); return; }
-    if (identityMode === "walkin" && !walkinName.trim() && !walkinPhone.trim()) { setError("ওয়াক-ইন ক্রেতার নাম অথবা ফোন দিন।"); return; }
+    if (builtLines.length === 0) { setError(dict.commerce.giveAtLeastOneProduct); return; }
+    if (identityMode === "customer" && !customerId) { setError(dict.commerce.selectACustomerOrGive); return; }
+    if (identityMode === "walkin" && !walkinName.trim() && !walkinPhone.trim()) { setError(dict.commerce.giveTheWalkInBuyer); return; }
     const deliveryChargeMinor = takaToMinorString(deliveryTaka) ?? "0";
     setBusy("save"); setError(""); setNotice("");
     const body = {
@@ -205,14 +209,14 @@ export default function QuotesPage() {
     try {
       if (editingId) {
         await apiFetch(`/organizations/${orgId}/commerce/quotes/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "কোট হালনাগাদ হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.quoteUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/quotes`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "কোট তৈরি হয়েছে (খসড়া)।", tone: "success" });
+        toast({ title: dict.commerce.quoteCreatedDraft, tone: "success" });
       }
       setFormOpen(false); resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed); }
     finally { setBusy(""); }
   }
 
@@ -243,19 +247,19 @@ export default function QuotesPage() {
       setSendResult({ sentVia: out.sentVia, link: out.link });
       setDetail(out.quote);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "পাঠানো ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.sendFailed2); }
     finally { setBusy(""); }
   }
 
   async function cancelQuote(q: Quote) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `কোট ${q.number} বাতিল করবেন?`, danger: true, confirmLabel: "বাতিল করুন" }))) return;
+    if (!(await confirm({ title: t("commerce.cancelQuote", { number: q.number }), danger: true, confirmLabel: dict.commerce.cancel2 }))) return;
     setBusy(`cancel-${q.id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/quotes/${q.id}/cancel`, { method: "POST" });
-      toast({ title: `কোট ${q.number} বাতিল হয়েছে।`, tone: "success" });
+      toast({ title: t("commerce.quoteCancelled", { number: q.number }), tone: "success" });
       if (detail?.id === q.id) await refreshDetail(q.id); else await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "বাতিল ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.cancellationFailed); }
     finally { setBusy(""); }
   }
 
@@ -265,7 +269,7 @@ export default function QuotesPage() {
     try {
       const out = await apiFetch<ConvertPreview>(`/organizations/${orgId}/commerce/quotes/${q.id}/convert-preview`);
       setPreview(out); setPreviewFor(q.id);
-    } catch (e) { setError(e instanceof Error ? e.message : "প্রিভিউ লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.previewLoadingFailed); }
     finally { setBusy(""); }
   }
 
@@ -276,10 +280,10 @@ export default function QuotesPage() {
     try {
       const out = await apiFetch<{ order: { id: string; externalNumber?: string | null }; quote: Quote }>(
         `/organizations/${orgId}/orders/from-quote/${q.id}/convert`, { method: "POST" });
-      setNotice(`কোট ${q.number} অর্ডারে রূপান্তরিত হয়েছে — অর্ডার #${out.order.externalNumber ?? out.order.id.slice(0, 8)}।`);
+      setNotice(t("commerce.quoteConvertedToAnOrder", { number: q.number, out: out.order.externalNumber ?? out.order.id.slice(0, 8) }));
       setPreview(null); setPreviewFor("");
       await refreshDetail(q.id);
-    } catch (e) { setError(e instanceof Error ? e.message : "রূপান্তর ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.conversionFailed); }
     finally { setBusy(""); }
   }
 
@@ -308,11 +312,9 @@ export default function QuotesPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">কোট / Quotes — মূল্য প্রস্তাব</h1>
+          <h1 className="page-title">{dict.commerce.quotesPriceProposals}</h1>
           <p className="text-sm text-slate-500">
-            ক্রেতাকে পণ্যের দামের লিখিত প্রস্তাব পাঠান — ক্রেতা লিংকে গৃহীত/প্রত্যাখ্যান করতে পারবেন,
-            গৃহীত কোট এক ক্লিকে আসল অর্ডারে রূপান্তরিত হয়। কোটের মোট = লাইনের যোগ + ডেলিভারি চার্জ (কর/প্রমোশন প্রযোজ্য নয়)।
-          </p>
+            {dict.commerce.sendTheBuyerAWritten}</p>
         </div>
         <Link href="/dashboard/commerce" className="btn-primary">← Commerce Hub</Link>
       </div>
@@ -323,108 +325,95 @@ export default function QuotesPage() {
         {STATUS_FILTERS.map((f) => (
           <button key={f.value} onClick={() => setStatusFilter(f.value)}
             className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold ${statusFilter === f.value ? "bg-indigo-600 text-white" : "border bg-white text-slate-600"}`}>
-            {f.label}
+            {dict.commerce[f.label as keyof typeof dict.commerce]}
           </button>
         ))}
         <button className="btn-primary ml-auto" onClick={() => { resetForm(); setFormOpen(!formOpen); }}>
-          {formOpen ? "ফর্ম বন্ধ করুন" : "+ নতুন কোট"}
+          {formOpen ? dict.commerce.closeForm : dict.commerce.newQuote}
         </button>
       </div>
 
       {formOpen ? (
         <div className="card space-y-4 p-5">
-          <div className="font-semibold">{editingId ? "কোট সম্পাদনা (শুধু খসড়া)" : "নতুন কোট"}</div>
+          <div className="font-semibold">{editingId ? dict.commerce.editQuoteDraftOnly : dict.commerce.newQuote2}</div>
           <div className="flex flex-wrap gap-2 text-sm">
-            <button type="button" className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 font-semibold ${identityMode === "customer" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("customer")}>রেজিস্টার্ড কাস্টমার</button>
-            <button type="button" className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 font-semibold ${identityMode === "walkin" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("walkin")}>ওয়াক-ইন ক্রেতা</button>
+            <button type="button" className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 font-semibold ${identityMode === "customer" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("customer")}>{dict.commerce.registeredCustomer}</button>
+            <button type="button" className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 font-semibold ${identityMode === "walkin" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("walkin")}>{dict.commerce.walkInBuyer}</button>
           </div>
           {identityMode === "customer" ? (
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="block text-sm">কাস্টমার খুঁজুন
-                <input className="input mt-1" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder="নাম বা ফোন দিয়ে খুঁজুন" />
+              <label className="block text-sm">{dict.commerce.searchCustomers}<input className="input mt-1" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder={dict.commerce.searchByNameOrPhone} />
               </label>
-              <label className="block text-sm">কাস্টমার
-                <select className="input mt-1" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                  <option value="">— বেছে নিন —</option>
+              <label className="block text-sm">{dict.commerce.customer2}<select className="input mt-1" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                  <option value="">{dict.commerce.select}</option>
                   {filteredCustomers.map((c) => <option key={c.id} value={c.id}>{customerName(c)}{c.phone ? ` · ${c.phone}` : ""}</option>)}
                 </select>
               </label>
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="block text-sm">ক্রেতার নাম
-                <input className="input mt-1" value={walkinName} onChange={(e) => setWalkinName(e.target.value)} placeholder="যেমন: করিম উদ্দিন" />
+              <label className="block text-sm">{dict.commerce.buyerName}<input className="input mt-1" value={walkinName} onChange={(e) => setWalkinName(e.target.value)} placeholder={dict.commerce.eGKarimUddin} />
               </label>
-              <label className="block text-sm">ক্রেতার ফোন
-                <input className="input mt-1" value={walkinPhone} onChange={(e) => setWalkinPhone(e.target.value)} placeholder="01XXXXXXXXX" />
+              <label className="block text-sm">{dict.commerce.buyerPhone}<input className="input mt-1" value={walkinPhone} onChange={(e) => setWalkinPhone(e.target.value)} placeholder="01XXXXXXXXX" />
               </label>
             </div>
           )}
 
           <div className="space-y-2 border-t pt-4">
-            <div className="font-semibold">লাইন আইটেম</div>
+            <div className="font-semibold">{dict.commerce.lineItems}</div>
             {lines.map((r, i) => (
               <div key={i} className="flex flex-wrap items-end gap-2">
-                <label className="block flex-1 text-sm">পণ্য
-                  <select className="input mt-1" value={r.productId} onChange={(e) => void lineProductChange(i, e.target.value)}>
-                    <option value="">— বেছে নিন —</option>
+                <label className="block flex-1 text-sm">{dict.commerce.product}<select className="input mt-1" value={r.productId} onChange={(e) => void lineProductChange(i, e.target.value)}>
+                    <option value="">{dict.commerce.select}</option>
                     {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">ভ্যারিয়েন্ট
-                  <select className="input mt-1 w-44" value={r.variantId} disabled={r.variants.length === 0}
+                <label className="block text-sm">{dict.commerce.variant}<select className="input mt-1 w-44" value={r.variantId} disabled={r.variants.length === 0}
                     onChange={(e) => lineVariantChange(i, e.target.value)}>
-                    <option value="">সব / প্রযোজ্য নয়</option>
+                    <option value="">{dict.commerce.allNotApplicable}</option>
                     {r.variants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">পরিমাণ
-                  <input className="input mt-1 w-24" type="number" min="1" value={r.qty}
+                <label className="block text-sm">{dict.commerce.quantity}<input className="input mt-1 w-24" type="number" min="1" value={r.qty}
                     onChange={(e) => { const n = [...lines]; n[i] = { ...r, qty: e.target.value }; setLines(n); }} />
                 </label>
-                <label className="block text-sm">একক দাম (৳) — প্রস্তাবিত
-                  <input className="input mt-1 w-36" inputMode="decimal" value={r.unitPriceTaka}
-                    onChange={(e) => { const n = [...lines]; n[i] = { ...r, unitPriceTaka: e.target.value }; setLines(n); }} placeholder="ক্যাটালগ দাম" />
+                <label className="block text-sm">{dict.commerce.unitPriceProposed}<input className="input mt-1 w-36" inputMode="decimal" value={r.unitPriceTaka}
+                    onChange={(e) => { const n = [...lines]; n[i] = { ...r, unitPriceTaka: e.target.value }; setLines(n); }} placeholder={dict.commerce.catalogPrice} />
                 </label>
                 <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                   disabled={lines.length <= 1}
-                  onClick={() => setLines(lines.filter((_, x) => x !== i))}>সারি মুছুন</button>
+                  onClick={() => setLines(lines.filter((_, x) => x !== i))}>{dict.commerce.deleteRow}</button>
               </div>
             ))}
             <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold"
               onClick={() => setLines([...lines, { productId: "", variantId: "", qty: "1", unitPriceTaka: "", variants: [] }])}>
-              + আরও লাইন যোগ করুন
-            </button>
-            <p className="text-xs text-slate-500">একক দাম ক্যাটালগ থেকে আগাম পূরণ হয়, কিন্তু এটি একটি প্রস্তাব — দাম বদলে দিলে কোটে বদলানো দামটাই থাকবে (স্ন্যাপশট)।</p>
+              {dict.commerce.addAnotherLine}</button>
+            <p className="text-xs text-slate-500">{dict.commerce.unitPricesArePreFilled}</p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="block text-sm">ডেলিভারি চার্জ (৳)
-              <input className="input mt-1" inputMode="decimal" value={deliveryTaka} onChange={(e) => setDeliveryTaka(e.target.value)} placeholder="০" />
+            <label className="block text-sm">{dict.commerce.deliveryCharge3}<input className="input mt-1" inputMode="decimal" value={deliveryTaka} onChange={(e) => setDeliveryTaka(e.target.value)} placeholder={dict.commerce.text1ye} />
             </label>
-            <label className="block text-sm">মেয়াদ শেষের তারিখ
-              <input className="input mt-1" type="date" value={expiresDate} onChange={(e) => setExpiresDate(e.target.value)} />
+            <label className="block text-sm">{dict.commerce.expiryDate}<input className="input mt-1" type="date" value={expiresDate} onChange={(e) => setExpiresDate(e.target.value)} />
             </label>
-            <label className="block text-sm">মোট (লাইন + ডেলিভারি)
-              <div className="input mt-1 bg-slate-50 font-bold">{formatMinorTaka(formTotalMinor)}</div>
+            <label className="block text-sm">{dict.commerce.totalLinesDelivery}<div className="input mt-1 bg-slate-50 font-bold">{formatMinorTaka(formTotalMinor)}</div>
             </label>
-            <label className="block text-sm md:col-span-3">নোট (ঐচ্ছিক)
-              <textarea className="input mt-1" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="ক্রেতার জন্য শর্ত বা বার্তা…" />
+            <label className="block text-sm md:col-span-3">{dict.commerce.noteOptional}<textarea className="input mt-1" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={dict.commerce.termsOrAMessageFor} />
             </label>
           </div>
           <div className="flex gap-2">
             <button className="btn-primary" disabled={busy !== ""} onClick={save}>
-              {busy === "save" ? "সেভ হচ্ছে…" : editingId ? "কোট হালনাগাদ করুন" : "কোট তৈরি করুন"}
+              {busy === "save" ? dict.commerce.saving2 : editingId ? dict.commerce.updateQuote : dict.commerce.createQuote}
             </button>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => { setFormOpen(false); resetForm(); }}>বাতিল</button>
+            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => { setFormOpen(false); resetForm(); }}>{dict.common.cancel}</button>
           </div>
         </div>
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="card overflow-hidden p-0 lg:col-span-2">
-          {loading ? <p className="p-4 text-sm text-slate-400">লোড হচ্ছে…</p> : quotes.length === 0 ? (
-            <p className="p-4 text-sm text-slate-500">এই ফিল্টারে কোনো কোট নেই।</p>
+          {loading ? <p className="p-4 text-sm text-slate-400">{dict.common.loading}</p> : quotes.length === 0 ? (
+            <p className="p-4 text-sm text-slate-500">{dict.commerce.noQuotesInThisFilter}</p>
           ) : quotes.map((q) => (
             <button key={q.id} onClick={() => openDetail(q)}
               className={`block w-full border-b px-4 py-3 text-left transition hover:bg-slate-50 ${detail?.id === q.id ? "bg-indigo-50/60" : ""}`}>
@@ -434,8 +423,8 @@ export default function QuotesPage() {
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                 <span>{quoteBuyer(q)}</span>
-                <span className={`rounded px-1.5 py-0.5 font-semibold ${statusChip(q.status)}`}>{STATUS_LABEL[q.status] ?? q.status}</span>
-                {q.createdAt ? <span>{new Date(q.createdAt).toLocaleDateString("bn-BD")}</span> : null}
+                <span className={`rounded px-1.5 py-0.5 font-semibold ${statusChip(q.status)}`}>{STATUS_LABEL[q.status] ? dict.commerce[STATUS_LABEL[q.status] as keyof typeof dict.commerce] : q.status}</span>
+                {q.createdAt ? <span>{fmtDate(locale, new Date(q.createdAt))}</span> : null}
               </div>
             </button>
           ))}
@@ -446,10 +435,10 @@ export default function QuotesPage() {
             <div className="card space-y-4 p-5">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h2 className="text-lg font-bold">কোট {detail.number}</h2>
-                  <p className="text-sm text-slate-500">ক্রেতা: {quoteBuyer(detail)}{detail.walkinPhone ? ` · ${detail.walkinPhone}` : ""}</p>
+                  <h2 className="text-lg font-bold">{dict.commerce.quote}{detail.number}</h2>
+                  <p className="text-sm text-slate-500">{dict.commerce.buyer2}{quoteBuyer(detail)}{detail.walkinPhone ? ` · ${detail.walkinPhone}` : ""}</p>
                 </div>
-                <span className={`rounded px-2 py-1 text-xs font-bold ${statusChip(detail.status)}`}>{STATUS_LABEL[detail.status] ?? detail.status}</span>
+                <span className={`rounded px-2 py-1 text-xs font-bold ${statusChip(detail.status)}`}>{STATUS_LABEL[detail.status] ? dict.commerce[STATUS_LABEL[detail.status] as keyof typeof dict.commerce] : detail.status}</span>
               </div>
 
               <ResponsiveTable
@@ -458,10 +447,10 @@ export default function QuotesPage() {
                     <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b text-xs text-slate-500">
-                      <th className="py-1.5 pr-2 font-semibold">পণ্য</th>
-                      <th className="py-1.5 pr-2 font-semibold">পরিমাণ</th>
-                      <th className="py-1.5 pr-2 font-semibold">একক দাম</th>
-                      <th className="py-1.5 font-semibold">লাইন মোট</th>
+                      <th className="py-1.5 pr-2 font-semibold">{dict.commerce.product}</th>
+                      <th className="py-1.5 pr-2 font-semibold">{dict.commerce.quantity}</th>
+                      <th className="py-1.5 pr-2 font-semibold">{dict.commerce.unitPrice}</th>
+                      <th className="py-1.5 font-semibold">{dict.commerce.lineTotal}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -486,11 +475,11 @@ export default function QuotesPage() {
                     {l.sku ? <div className="mt-0.5 text-xs text-slate-500">SKU: {l.sku}</div> : null}
                     <dl className="mt-2 space-y-1.5 text-sm">
                       <div className="flex gap-2">
-                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">পরিমাণ</dt>
+                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.quantity}</dt>
                         <dd>{l.qty}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">একক দাম</dt>
+                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.unitPrice}</dt>
                         <dd>{formatMinorTaka(l.unitPriceMinor)}</dd>
                       </div>
                     </dl>
@@ -498,84 +487,83 @@ export default function QuotesPage() {
                 ))}
               />
               <div className="space-y-1 border-t pt-3 text-sm">
-                <div className="flex justify-between"><span className="text-slate-500">ডেলিভারি চার্জ</span><span>{formatMinorTaka(detail.deliveryChargeMinor)}</span></div>
-                <div className="flex justify-between font-black"><span>মোট</span><span>{formatMinorTaka(detail.totalMinor)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">{dict.commerce.deliveryCharge}</span><span>{formatMinorTaka(detail.deliveryChargeMinor)}</span></div>
+                <div className="flex justify-between font-black"><span>{dict.commerce.total}</span><span>{formatMinorTaka(detail.totalMinor)}</span></div>
               </div>
-              {detail.note ? <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">নোট: {detail.note}</p> : null}
+              {detail.note ? <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{dict.commerce.note2}{detail.note}</p> : null}
 
               <div className="grid gap-1 border-t pt-3 text-xs text-slate-500">
-                {detail.createdAt ? <span>তৈরি: {new Date(detail.createdAt).toLocaleString("bn-BD")}</span> : null}
-                {detail.expiresAt ? <span>মেয়াদ: {new Date(detail.expiresAt).toLocaleDateString("bn-BD")}</span> : null}
-                {detail.sentAt ? <span>পাঠানো হয়েছে: {new Date(detail.sentAt).toLocaleString("bn-BD")}{detail.sentVia ? ` (${detail.sentVia === "sms" ? "SMS" : detail.sentVia === "email" ? "ইমেইল" : "স্বয়ংক্রিয়ভাবে পাঠানো যায়নি"})` : ""}</span> : null}
-                {detail.respondedAt ? <span>ক্রেতার উত্তর: {new Date(detail.respondedAt).toLocaleString("bn-BD")}</span> : null}
+                {detail.createdAt ? <span>{dict.commerce.created}{fmtDateTime(locale, new Date(detail.createdAt))}</span> : null}
+                {detail.expiresAt ? <span>{dict.commerce.expiry2}{fmtDate(locale, new Date(detail.expiresAt))}</span> : null}
+                {detail.sentAt ? <span>{dict.commerce.sent2}{fmtDateTime(locale, new Date(detail.sentAt))}{detail.sentVia ? ` (${detail.sentVia === "sms" ? "SMS" : detail.sentVia === "email" ? dict.commerce.email : dict.commerce.couldNotSendAutomatically})` : ""}</span> : null}
+                {detail.respondedAt ? <span>{dict.commerce.buyerReply}{fmtDateTime(locale, new Date(detail.respondedAt))}</span> : null}
                 {detail.convertedOrderId ? (
-                  <span>রূপান্তরিত অর্ডার: <Link href="/dashboard/orders" className="font-semibold text-indigo-700 underline">#{detail.convertedOrderId.slice(0, 8)} — অর্ডার তালিকায় দেখুন</Link></span>
+                  <span>{dict.commerce.convertedOrder}<Link href="/dashboard/orders" className="font-semibold text-indigo-700 underline">#{detail.convertedOrderId.slice(0, 8)} {dict.commerce.viewInTheOrderList}</Link></span>
                 ) : null}
               </div>
 
               {sendResult ? (
                 <div className="space-y-2 rounded-xl bg-slate-50 p-3 text-sm">
                   <p className={sendResult.sentVia === "none" ? "font-semibold text-amber-700" : "font-semibold text-emerald-700"}>
-                    {sendResult.sentVia === "sms" ? "SMS পাঠানো হয়েছে" : sendResult.sentVia === "email" ? "ইমেইলে পাঠানো হয়েছে" : "পাঠানো যায়নি — লিংকটি কপি করে নিজে পাঠান"}
+                    {sendResult.sentVia === "sms" ? dict.commerce.sentBySMS : sendResult.sentVia === "email" ? dict.commerce.sentByEmail : dict.commerce.couldNotSendCopyThe}
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <code className="min-w-0 flex-1 break-all rounded-lg bg-white px-2 py-1.5 font-mono text-xs">{sendResult.link}</code>
-                    <button className="btn-secondary btn-sm" onClick={() => copyLink(sendResult.link)}>{copied ? "কপি হয়েছে ✅" : "লিংক কপি করুন"}</button>
+                    <button className="btn-secondary btn-sm" onClick={() => copyLink(sendResult.link)}>{copied ? dict.commerce.copied2 : dict.commerce.copyLink}</button>
                   </div>
-                  <p className="text-xs text-slate-500">আবার পাঠালে নতুন লিংক তৈরি হবে এবং আগের লিংকটি কাজ করবে না।</p>
+                  <p className="text-xs text-slate-500">{dict.commerce.sendingAgainWillCreateA}</p>
                 </div>
               ) : null}
 
               <div className="flex flex-wrap gap-2 border-t pt-3">
                 {detail.status === "draft" ? (
-                  <button className="btn-secondary btn-sm" onClick={() => startEdit(detail)}>সম্পাদনা</button>
+                  <button className="btn-secondary btn-sm" onClick={() => startEdit(detail)}>{dict.commerce.edit}</button>
                 ) : null}
                 {detail.status === "draft" || detail.status === "sent" ? (
                   <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={() => sendQuote(detail)}>
-                    {busy === `send-${detail.id}` ? "পাঠানো হচ্ছে…" : detail.status === "sent" ? "আবার পাঠান" : "পাঠান"}
+                    {busy === `send-${detail.id}` ? dict.commerce.sending : detail.status === "sent" ? dict.commerce.sendAgain : dict.commerce.send2}
                   </button>
                 ) : null}
                 {detail.status === "accepted" && !detail.convertedOrderId ? (
                   <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => loadPreview(detail)}>
-                    {busy === `preview-${detail.id}` ? "প্রিভিউ আসছে…" : "অর্ডারে রূপান্তরের প্রিভিউ"}
+                    {busy === `preview-${detail.id}` ? dict.commerce.previewLoading : dict.commerce.orderConversionPreview}
                   </button>
                 ) : null}
                 {detail.status === "draft" || detail.status === "sent" ? (
-                  <button className="btn-secondary btn-sm text-red-600" disabled={busy !== ""} onClick={() => cancelQuote(detail)}>বাতিল করুন</button>
+                  <button className="btn-secondary btn-sm text-red-600" disabled={busy !== ""} onClick={() => cancelQuote(detail)}>{dict.commerce.cancel2}</button>
                 ) : null}
               </div>
 
               {preview && previewFor === detail.id && detail.status === "accepted" ? (
                 <div className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3 text-sm">
-                  <div className="font-semibold">রূপান্তরের প্রিভিউ (কিছুই তৈরি হয়নি এখনো)</div>
+                  <div className="font-semibold">{dict.commerce.conversionPreviewNothingCreatedYet}</div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="rounded-lg bg-white p-3">
-                      <div className="text-xs text-slate-500">কোটের মোট</div>
+                      <div className="text-xs text-slate-500">{dict.commerce.quoteTotal}</div>
                       <div className="text-lg font-black">{formatMinorTaka(preview.quoteTotalMinor)}</div>
                     </div>
                     <div className="rounded-lg bg-white p-3">
-                      <div className="text-xs text-slate-500">অর্ডারের হিসাব</div>
-                      <div className="text-sm">সাবটোটাল: <b>{formatMinorTaka(preview.orderSubtotalMinor)}</b></div>
-                      <div className="text-sm">ডেলিভারি: <b>{formatMinorTaka(preview.orderShippingMinor)}</b></div>
-                      <div className="text-lg font-black">মোট: {formatMinorTaka(preview.orderTotalMinor)}</div>
+                      <div className="text-xs text-slate-500">{dict.commerce.orderCalculation}</div>
+                      <div className="text-sm">{dict.commerce.subtotal2}<b>{formatMinorTaka(preview.orderSubtotalMinor)}</b></div>
+                      <div className="text-sm">{dict.commerce.delivery2}<b>{formatMinorTaka(preview.orderShippingMinor)}</b></div>
+                      <div className="text-lg font-black">{dict.commerce.total3}{formatMinorTaka(preview.orderTotalMinor)}</div>
                     </div>
                   </div>
                   {!preview.matchesQuoteTotal ? (
                     <p className="rounded-lg bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-800">
-                      ⚠️ সতর্কতা: অর্ডারের মোট ({formatMinorTaka(preview.orderTotalMinor)}) কোটের মোটের ({formatMinorTaka(preview.quoteTotalMinor)}) সঙ্গে মিলছে না।
-                    </p>
+                      {dict.commerce.warningTheOrderTotal}{formatMinorTaka(preview.orderTotalMinor)}{dict.commerce.doesNotMatchTheQuote}{formatMinorTaka(preview.quoteTotalMinor)}{dict.commerce.textm4rs8w}</p>
                   ) : null}
                   <button className="btn-primary" disabled={busy !== ""} onClick={() => convertQuote(detail)}>
-                    {busy === `convert-${detail.id}` ? "রূপান্তর হচ্ছে…" : "নিশ্চিত করুন — অর্ডার তৈরি করুন"}
+                    {busy === `convert-${detail.id}` ? dict.commerce.converting : dict.commerce.confirmCreateOrder}
                   </button>
                 </div>
               ) : null}
               {detail.status === "accepted" && !detail.convertedOrderId && (!preview || previewFor !== detail.id) ? (
-                <p className="text-xs text-slate-500">অর্ডারে রূপান্তর করতে আগে প্রিভিউ লোড করুন — প্রিভিউ ছাড়া রূপান্তর বোতাম আসবে না।</p>
+                <p className="text-xs text-slate-500">{dict.commerce.loadThePreviewBeforeConverting}</p>
               ) : null}
             </div>
           ) : (
-            <div className="card p-5 text-sm text-slate-500">বাম দিক থেকে একটি কোট বেছে নিন, অথবা নতুন কোট তৈরি করুন।</div>
+            <div className="card p-5 text-sm text-slate-500">{dict.commerce.selectAQuoteFromThe}</div>
           )}
         </div>
       </div>

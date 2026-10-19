@@ -17,14 +17,31 @@
  * status is "unknown": the widget shows the courier's own words
  * verbatim with NO stepper guess. Matching is case-insensitive
  * and treats spaces/hyphens as underscores.
+ *
+ * MB2 F2: the step labels live in the `orders` i18n namespace
+ * (booked3 / reviewPending / inTransit / outForDelivery /
+ * delivered2, created for this stepper). COURIER_STEP_LABELS
+ * stays the bn default array; `courierStepLabels(locale)` is
+ * the locale-aware accessor (this completes the accessor a
+ * partial MB2 edit left referencing undefined helpers).
  */
-export const COURIER_STEP_LABELS = [
-  "বুক হয়েছে",
-  "রিভিউ / পেন্ডিং",
-  "পথে আছে",
-  "ডেলিভারির পথে",
-  "ডেলিভার্ড",
-] as const;
+import type { UiLocale } from "./i18n/dict";
+import { ordersBn, ordersEn } from "./i18n/orders";
+
+export const COURIER_STEP_LABELS: readonly string[] = [
+  ordersBn.booked3,
+  ordersBn.reviewPending,
+  ordersBn.inTransit,
+  ordersBn.outForDelivery,
+  ordersBn.delivered2,
+];
+
+/** Step labels for the given UI locale, in stepper order —
+ * the same array shape as COURIER_STEP_LABELS. */
+export function courierStepLabels(locale: UiLocale = "bn"): readonly string[] {
+  const d = locale === "en" ? ordersEn : ordersBn;
+  return [d.booked3, d.reviewPending, d.inTransit, d.outForDelivery, d.delivered2];
+}
 
 export type CourierStatusView =
   | { kind: "progress"; step: number; partial: boolean }

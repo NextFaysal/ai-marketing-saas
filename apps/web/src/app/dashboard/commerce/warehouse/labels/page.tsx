@@ -1,5 +1,6 @@
 "use client";
 import React, { Suspense, useEffect, useMemo, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -17,6 +18,7 @@ interface Assignment { id: string; productId: string; productName?: string | nul
 interface Label { key: string; name: string; priceMinor?: string; value: string; kind: "Barcode" | "SKU" }
 
 function LabelsInner() {
+  const { dict, t, locale } = useLocale();
   const params = useSearchParams();
   const productIdsCsv = params.get("productIds") ?? "";
   const warehouseId = params.get("warehouseId") ?? "";
@@ -29,27 +31,27 @@ function LabelsInner() {
   useEffect(() => {
     (async () => {
       const orgId = getOrganizationId();
-      if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
+      if (!orgId) { setError(dict.commerce.noOrganizationSelected); setLoading(false); return; }
       try {
         let ids: string[] = productIdsCsv ? productIdsCsv.split(",").map((s) => s.trim()).filter(Boolean) : [];
         if (ids.length === 0 && warehouseId && binId) {
           const all = (await apiFetch<{ items: Assignment[] }>(`/organizations/${orgId}/commerce/bin-assignments?warehouseId=${encodeURIComponent(warehouseId)}`))?.items ?? [];
           ids = [...new Set((all ?? []).filter((a) => a.binLocationId === binId).map((a) => a.productId))];
         }
-        if (ids.length === 0) { setError("কোনো পণ্য পাওয়া যায়নি — productIds অথবা warehouseId+binId দরকার।"); setLoading(false); return; }
+        if (ids.length === 0) { setError(dict.commerce.noProductsFoundProductIdsOr); setLoading(false); return; }
         const details = await Promise.allSettled(ids.map((id) => apiFetch<ProductDetail>(`/organizations/${orgId}/products/${id}`)));
         const ok: Label[] = []; const skip: { name: string; reason: string }[] = [];
         details.forEach((r, i) => {
-          if (r.status !== "fulfilled") { skip.push({ name: ids[i], reason: "পণ্যের তথ্য লোড করা যায়নি" }); return; }
+          if (r.status !== "fulfilled") { skip.push({ name: ids[i], reason: dict.commerce.couldNotLoadProductInformation }); return; }
           const p = r.value;
           const value = p.barcode ?? p.sku ?? null;
-          if (!value) { skip.push({ name: p.name, reason: "Barcode বা SKU কোনোটিই নেই — নম্বর বানিয়ে লেবেল ছাপা হয়নি" }); return; }
-          try { code128Svg(value); } catch { skip.push({ name: p.name, reason: "Barcode/SKU-তে CODE128-B-তে ছাপা যায় না এমন অক্ষর আছে" }); return; }
+          if (!value) { skip.push({ name: p.name, reason: dict.commerce.noBarcodeOrSKUNo }); return; }
+          try { code128Svg(value); } catch { skip.push({ name: p.name, reason: dict.commerce.theBarcodeSKUHasCharacters }); return; }
           ok.push({ key: `${p.id}-${value}`, name: p.name, priceMinor: p.priceMinor, value, kind: p.barcode ? "Barcode" : "SKU" });
         });
         setLabels(ok); setSkipped(skip);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "লেবেল লোড করা যায়নি");
+        setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadLabels);
       } finally { setLoading(false); }
     })();
   }, [productIdsCsv, warehouseId, binId]);
@@ -63,16 +65,16 @@ function LabelsInner() {
       <style>{`@page { size: A4; margin: 10mm; } @media print { body { background: #fff; } }`}</style>
       <div className="mb-6 flex items-center justify-between print:hidden">
         <div>
-          <h1 className="page-title">🏷️ লেবেল প্রিন্ট</h1>
-          <p className="text-sm text-slate-500">প্রতিটি লেবেলে আসল Barcode অথবা SKU-র CODE128 বারকোড — কোনোটিই না থাকলে লেবেল ছাপা হয় না।</p>
+          <h1 className="page-title">{dict.commerce.labelPrint}</h1>
+          <p className="text-sm text-slate-500">{dict.commerce.eachLabelHasTheReal}</p>
         </div>
-        <button type="button" className="btn-primary" onClick={() => window.print()} disabled={labels.length === 0}>প্রিন্ট করুন</button>
+        <button type="button" className="btn-primary" onClick={() => window.print()} disabled={labels.length === 0}>{dict.commerce.print}</button>
       </div>
-      {loading ? <p className="text-sm text-slate-500 print:hidden">লোড হচ্ছে…</p> : null}
+      {loading ? <p className="text-sm text-slate-500 print:hidden">{dict.common.loading}</p> : null}
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700 print:hidden">{error}</p> : null}
       {skipped.length > 0 ? (
         <div className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
-          <p className="font-semibold">বাদ গেছে ({skipped.length}টি):</p>
+          <p className="font-semibold">{dict.commerce.skipped2}{skipped.length}{dict.commerce.text1943sh}</p>
           <ul className="mt-1 list-disc pl-5">{skipped.map((s, i) => <li key={i}>{s.name} — {s.reason}</li>)}</ul>
         </div>
       ) : null}
@@ -91,14 +93,15 @@ function LabelsInner() {
           </div>
         ))}
       </div>
-      {!loading && labels.length === 0 && !error ? <p className="text-sm text-slate-500 print:hidden">ছাপার মতো কোনো লেবেল নেই।</p> : null}
+      {!loading && labels.length === 0 && !error ? <p className="text-sm text-slate-500 print:hidden">{dict.commerce.noLabelsToPrint}</p> : null}
     </div>
   );
 }
 
 export default function WarehouseLabelsPage() {
+  const { dict, t, locale } = useLocale();
   return (
-    <Suspense fallback={<p className="p-6 text-sm text-slate-500">লোড হচ্ছে…</p>}>
+    <Suspense fallback={<p className="p-6 text-sm text-slate-500">{dict.common.loading}</p>}>
       <LabelsInner />
     </Suspense>
   );

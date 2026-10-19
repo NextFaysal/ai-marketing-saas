@@ -4,7 +4,16 @@
  * suggests advance delivery charges (৳100 - ৳200), and generates 1-click WhatsApp advance payment requests.
  */
 
+import { fmtNumber } from "@repo/contracts";
 import { formatCleanPhone } from "./abandoned-chase";
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
 
 export type RtoRiskBand = "low" | "medium" | "high";
 
@@ -35,41 +44,41 @@ export function estimateDistrictDeliveryCharge(districtOrAddress?: string | null
 
   const isDhakaMetro =
     text.includes("dhaka") ||
-    text.includes("ঢাকা") ||
+    text.includes(ordersBn.dhaka) ||
     text.includes("mirpur") ||
-    text.includes("মিরপুর") ||
+    text.includes(ordersBn.mirpur) ||
     text.includes("uttara") ||
-    text.includes("উত্তরা") ||
+    text.includes(ordersBn.uttara) ||
     text.includes("dhanmondi") ||
-    text.includes("ধানমন্ডি") ||
+    text.includes(ordersBn.dhanmondi) ||
     text.includes("gulshan") ||
-    text.includes("গুলশান") ||
+    text.includes(ordersBn.gulshan) ||
     text.includes("banani") ||
-    text.includes("বনানী") ||
+    text.includes(ordersBn.banani) ||
     text.includes("mohammadpur") ||
-    text.includes("মোহাম্মদপুর");
+    text.includes(ordersBn.mohammadpur);
 
   if (isDhakaMetro) {
     return 100;
   }
 
   const isRemote =
-    text.includes("উপজেলা") ||
+    text.includes(ordersBn.upazila) ||
     text.includes("upazila") ||
     text.includes("thana") ||
-    text.includes("থানা") ||
+    text.includes(ordersBn.thana2) ||
     text.includes("union") ||
-    text.includes("ইউনিয়ন") ||
+    text.includes(ordersBn.union) ||
     text.includes("gram") ||
-    text.includes("গ্রাম") ||
+    text.includes(ordersBn.village) ||
     text.includes("char") ||
-    text.includes("চর") ||
+    text.includes(ordersBn.char) ||
     text.includes("bandarban") ||
-    text.includes("বান্দরবান") ||
+    text.includes(ordersBn.bandarban) ||
     text.includes("rangamati") ||
-    text.includes("রাঙ্গামাটি") ||
+    text.includes(ordersBn.rangamati) ||
     text.includes("khagrachhari") ||
-    text.includes("খাগড়াছড়ি");
+    text.includes(ordersBn.khagrachhari);
 
   if (isRemote) {
     return 200;
@@ -86,7 +95,9 @@ export function evaluateRtoRisk(params: {
   totalTaka?: number;
   districtOrAddress?: string | null;
   isCod?: boolean;
+  locale?: LibLocale;
 }): RtoEvaluation {
+  const locale = params.locale ?? "bn";
   const history = params.history;
   const delivered = Math.max(0, history?.delivered ?? 0);
   const returned = Math.max(0, history?.returned ?? 0);
@@ -99,12 +110,12 @@ export function evaluateRtoRisk(params: {
   // No prior history
   if (decided === 0) {
     if (totalTaka >= 3500) {
-      reasons.push(`নতুন কাস্টমারের উচ্চ মূল্যের COD অর্ডার (৳${totalTaka.toLocaleString("en-IN")})`);
+      reasons.push(interpolate(D(locale).newCustomerSHighValue, { totalTaka: fmtNumber(locale, totalTaka) }));
       return {
         successRate: null,
         rtoRate: null,
         band: "medium",
-        badgeText: "সতর্কতা (নতুন উচ্চমূল্য)",
+        badgeText: D(locale).cautionNewHighValue,
         badgeColor: "bg-amber-100 text-amber-800 border-amber-300",
         reasons,
         recommendedAdvanceTaka,
@@ -112,12 +123,12 @@ export function evaluateRtoRisk(params: {
       };
     }
 
-    reasons.push("কোনো পূর্ববর্তী কুরিয়ার ইতিহাস নেই (প্রথম অর্ডার)");
+    reasons.push(D(locale).noPreviousCourierHistoryFirst);
     return {
       successRate: null,
       rtoRate: null,
       band: "low",
-      badgeText: "নতুন কাস্টমার",
+      badgeText: D(locale).newCustomer2,
       badgeColor: "bg-slate-100 text-slate-700 border-slate-300",
       reasons,
       recommendedAdvanceTaka,
@@ -130,13 +141,13 @@ export function evaluateRtoRisk(params: {
 
   // High Risk Criteria: Multiple returns AND success rate < 70% OR 3+ returned
   if (returned >= 3 || (returned >= 1 && successRate < 60) || successRate <= 50) {
-    reasons.push(`কুরিয়ার ডেলিভারি সাকসেস রেট মাত্র ${successRate}% (${decided} টির মধ্যে ${returned} টি রিটার্ন)`);
-    if (returned >= 2) reasons.push(`${returned} বার পার্সেল রিসিভ না করে ফেরত পাঠিয়েছেন`);
+    reasons.push(interpolate(D(locale).courierDeliverySuccessRateIs, { successRate: successRate, decided: decided, returned: returned }));
+    if (returned >= 2) reasons.push(interpolate(D(locale).returnedParcelsTimesWithoutReceiving, { returned: returned }));
     return {
       successRate,
       rtoRate,
       band: "high",
-      badgeText: `উচ্চ RTO ঝুঁকি (${rtoRate}% রিটার্ন)`,
+      badgeText: interpolate(D(locale).highRtoRiskReturns, { rtoRate: rtoRate }),
       badgeColor: "bg-red-100 text-red-800 border-red-300",
       reasons,
       recommendedAdvanceTaka,
@@ -146,13 +157,13 @@ export function evaluateRtoRisk(params: {
 
   // Medium Risk: Success rate between 60% and 80%, or returned = 1
   if (successRate < 80 || returned >= 1 || (totalTaka >= 4000 && successRate < 90)) {
-    reasons.push(`ডেলিভারি সাকসেস রেট ${successRate}% (${delivered} ডেলিভার্ড, ${returned} রিটার্ন)`);
-    if (totalTaka >= 4000) reasons.push(`উচ্চ মূল্যের অর্ডার (৳${totalTaka.toLocaleString("en-IN")})`);
+    reasons.push(interpolate(D(locale).deliverySuccessRateDeliveredReturned, { successRate: successRate, delivered: delivered, returned: returned }));
+    if (totalTaka >= 4000) reasons.push(interpolate(D(locale).highValueOrder, { totalTaka: fmtNumber(locale, totalTaka) }));
     return {
       successRate,
       rtoRate,
       band: "medium",
-      badgeText: `মাঝারি ঝুঁকি (${successRate}% সাকসেস)`,
+      badgeText: interpolate(D(locale).mediumRiskSuccess, { successRate: successRate }),
       badgeColor: "bg-amber-100 text-amber-800 border-amber-300",
       reasons,
       recommendedAdvanceTaka,
@@ -161,12 +172,12 @@ export function evaluateRtoRisk(params: {
   }
 
   // Low Risk: High delivery success rate (>= 80%)
-  reasons.push(`চমৎকার কুরিয়ার ট্র্যাক রেকর্ড (${successRate}% সফল ডেলিভারি)`);
+  reasons.push(interpolate(D(locale).excellentCourierTrackRecordSuccessful, { successRate: successRate }));
   return {
     successRate,
     rtoRate,
     band: "low",
-    badgeText: `নিরাপদ ক্রেতা (${successRate}% সাকসেস)`,
+    badgeText: interpolate(D(locale).safeBuyerSuccess, { successRate: successRate }),
     badgeColor: "bg-emerald-100 text-emerald-800 border-emerald-300",
     reasons,
     recommendedAdvanceTaka,
@@ -186,19 +197,21 @@ export function buildAdvanceCodMessage(params: {
   paymentMethod: "bkash" | "nagad" | "rocket";
   paymentNumber: string;
   isMerchantAccount?: boolean;
+  locale?: LibLocale;
 }): string {
-  const name = params.customerName?.trim() || "সম্মানিত গ্রাহক";
+  const locale = params.locale ?? "bn";
+  const name = params.customerName?.trim() || D(locale).valuedCustomer;
   const items = params.itemSummary?.trim() ? ` (${params.itemSummary.trim()})` : "";
-  const methodLabel = params.paymentMethod === "bkash" ? "বিকাশ" : params.paymentMethod === "nagad" ? "নগদ" : "রকেট";
-  const accType = params.isMerchantAccount ? "মার্চেন্ট (Payment)" : "পার্সোনাল (Send Money)";
+  const methodLabel = params.paymentMethod === "bkash" ? D(locale).bKash : params.paymentMethod === "nagad" ? D(locale).cash : D(locale).rocket;
+  const accType = params.isMerchantAccount ? D(locale).merchantPayment : D(locale).personalSendMoney;
 
   return (
-    `আসসালামু আলাইকুম ${name}!\n` +
-    `আমাদের শপে আপনার #${params.orderNumber} অর্ডারটির${items} জন্য ধন্যবাদ।\n\n` +
-    `পার্সেলটি প্যাকেজিং ও কুরিয়ারে বুকিং নিশ্চিত করার জন্য অনুগ্রহ করে ডেলিভারি চার্জ *৳${params.advanceAmount}* অগ্রিম প্রদান করুন:\n\n` +
-    `📱 ${methodLabel} নম্বর: *${params.paymentNumber}* (${accType})\n` +
-    `🔖 রেফারেন্স: *${params.orderNumber}*\n\n` +
-    `পেমেন্ট সম্পন্ন করার পর ট্রানজেকশন আইডি (TrxID) দিয়ে মেসেজটি রিপ্লাই দিন। বাকি *৳${params.dueAmount}* পার্সেল হাতে পাওয়ার পর প্রদান করবেন। ধন্যবাদ!`
+    interpolate(D(locale).assalamuAlaikum, { name: name }) +
+    interpolate(D(locale).thankYouForYourOrder, { orderNumber: params.orderNumber, items: items }) +
+    interpolate(D(locale).pleasePayTheDeliveryCharge, { advanceAmount: params.advanceAmount }) +
+    interpolate(D(locale).number, { methodLabel: methodLabel, paymentNumber: params.paymentNumber, accType: accType }) +
+    interpolate(D(locale).reference, { orderNumber: params.orderNumber }) +
+    interpolate(D(locale).afterCompletingThePaymentReply, { dueAmount: params.dueAmount })
   );
 }
 

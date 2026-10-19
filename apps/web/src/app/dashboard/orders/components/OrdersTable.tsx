@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
-import { formatMinor } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtDate, fmtDateTime, fmtNumber, formatMinor } from "@repo/contracts";
 import type { Order, Shipment, CourierRule } from "./types";
 import { RISK_LABEL } from "./types";
 
@@ -46,6 +47,7 @@ export function OrdersTable({
   onDownloadPdf,
   orgId,
 }: OrdersTableProps) {
+  const { dict, t, locale } = useLocale();
   const shipmentFor = (orderId: string) => shipments.find((s) => s.orderId === orderId);
 
   const allSelected = orders.length > 0 && orders.every((o) => selected.includes(o.id));
@@ -65,13 +67,13 @@ export function OrdersTable({
                   onChange={(e) => onSelectAll(e.target.checked)}
                 />
               </th>
-              <th className="px-4 py-3">অর্ডার আইডি ও তারিখ</th>
-              <th className="px-4 py-3">কাস্টমার</th>
-              <th className="px-4 py-3">আইটেমসমূহ</th>
-              <th className="px-4 py-3">স্ট্যাটাস ও ঝুঁকি</th>
-              <th className="px-4 py-3">পেমেন্ট ও মোট</th>
-              <th className="px-4 py-3">কুরিয়ার ট্র্যাকিং</th>
-              <th className="px-4 py-3 text-right">অ্যাকশন</th>
+              <th className="px-4 py-3">{dict.orders.orderIDDate}</th>
+              <th className="px-4 py-3">{dict.orders.customer2}</th>
+              <th className="px-4 py-3">{dict.orders.items5}</th>
+              <th className="px-4 py-3">{dict.orders.statusRisk}</th>
+              <th className="px-4 py-3">{dict.orders.paymentTotal}</th>
+              <th className="px-4 py-3">{dict.orders.courierTracking}</th>
+              <th className="px-4 py-3 text-right">{dict.orders.action}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -115,13 +117,13 @@ export function OrdersTable({
                     {o.duplicate?.isDuplicate && (
                       <span
                         className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800"
-                        title={`একই নম্বরে ${o.duplicate.count}টি অর্ডার`}
+                        title={t("orders.ordersOnTheSameNumber", { count: o.duplicate.count })}
                       >
-                        ⚠️ ডুপ্লিকেট ({o.duplicate.count})
+                        {dict.orders.duplicate}{o.duplicate.count})
                       </span>
                     )}
                     <div className="mt-1 text-[11px] text-slate-400">
-                      {o.placedAt ? new Date(o.placedAt).toLocaleString("bn-BD") : "—"}
+                      {o.placedAt ? fmtDateTime(locale, new Date(o.placedAt)) : "—"}
                     </div>
                     {o.deliverySlot && (
                       <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">
@@ -152,8 +154,7 @@ export function OrdersTable({
                     </div>
                     {o.giftWrapMinor && Number(o.giftWrapMinor) > 0 && (
                       <span className="mt-1 inline-block rounded bg-pink-50 px-1.5 py-0.2 text-[10px] font-medium text-pink-700">
-                        🎁 গিফট র‍্যাপ
-                      </span>
+                        {dict.orders.giftWrap}</span>
                     )}
                   </td>
 
@@ -172,16 +173,16 @@ export function OrdersTable({
                           type="button"
                           onClick={() => onShowRisk(o)}
                           className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold border ${
-                            RISK_LABEL[o.risk.band]?.cls ?? "bg-slate-50 text-slate-600"
-                          } ${RISK_LABEL[o.risk.band]?.borderCls ?? "border-slate-200"}`}
-                          title="ঝুঁকির কারণ জানতে ক্লিক করুন"
+                            RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL]?.cls ?? "bg-slate-50 text-slate-600"
+                          } ${RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL]?.borderCls ?? "border-slate-200"}`}
+                          title={dict.orders.clickToSeeTheRisk}
                         >
                           <span
                             className={`h-1.5 w-1.5 rounded-full ${
-                              RISK_LABEL[o.risk.band]?.dotCls ?? "bg-slate-400"
+                              RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL]?.dotCls ?? "bg-slate-400"
                             }`}
                           />
-                          <span>{RISK_LABEL[o.risk.band]?.text ?? "ঝুঁকি"}</span>
+                          <span>{RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL] ? dict.orders[RISK_LABEL[o.risk.band as keyof typeof RISK_LABEL]!.textKey] : dict.orders.risk}</span>
                           {o.risk.score !== null && <span>({o.risk.score}%)</span>}
                         </button>
                       )}
@@ -200,7 +201,7 @@ export function OrdersTable({
                     </div>
                     {o.advancePaidMinor !== undefined && Number(o.advancePaidMinor) > 0 && (
                       <div className="text-[10px] text-emerald-700 font-medium">
-                        অগ্রিম: {formatMinor(BigInt(o.advancePaidMinor))}
+                        {dict.orders.advance}{formatMinor(BigInt(o.advancePaidMinor))}
                       </div>
                     )}
                   </td>
@@ -237,8 +238,7 @@ export function OrdersTable({
                             onClick={() => onSyncShipment(sh.id)}
                             className="font-semibold text-indigo-600 hover:underline"
                           >
-                            যাচাই
-                          </button>
+                            {dict.orders.verify}</button>
                           <span>·</span>
                           <button
                             type="button"
@@ -250,8 +250,7 @@ export function OrdersTable({
                             }
                             className="font-semibold text-slate-700 hover:underline"
                           >
-                            🏷️ লেবেল
-                          </button>
+                            {dict.orders.label}</button>
                         </div>
                       </div>
                     ) : courierConnected ? (
@@ -260,10 +259,9 @@ export function OrdersTable({
                         onClick={() => onOpenOrderDrawer(o, "courier")}
                         className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 transition hover:bg-indigo-100 active:scale-95"
                       >
-                        <span>⚡</span> পার্সেল বুক করুন
-                      </button>
+                        <span>⚡</span> {dict.orders.bookParcel}</button>
                     ) : (
-                      <span className="text-[11px] text-slate-400">কুরিয়ার যুক্ত নেই</span>
+                      <span className="text-[11px] text-slate-400">{dict.orders.noCourierLinked}</span>
                     )}
                   </td>
 
@@ -274,7 +272,7 @@ export function OrdersTable({
                       onClick={() => onOpenOrderDrawer(o, "overview")}
                       className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
                     >
-                      <span>বিস্তারিত</span>
+                      <span>{dict.orders.details}</span>
                       <span>→</span>
                     </button>
                   </td>
@@ -320,7 +318,7 @@ export function OrdersTable({
                       #{o.externalNumber ?? o.id.slice(0, 8)}
                     </span>
                     <div className="text-[10px] text-slate-400">
-                      {o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}
+                      {o.placedAt ? fmtDate(locale, new Date(o.placedAt)) : "—"}
                     </div>
                   </div>
                 </div>
@@ -365,7 +363,7 @@ export function OrdersTable({
 
               {/* Items summary */}
               <div className="mt-2 text-xs text-slate-600 line-clamp-1">
-                আইটেম: {o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") || "—"}
+                {dict.orders.items3}{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") || "—"}
               </div>
 
               {/* Logistics & Action Buttons */}
@@ -381,8 +379,7 @@ export function OrdersTable({
                       onClick={() => onOpenOrderDrawer(o, "courier")}
                       className="text-[11px] font-semibold text-indigo-600 hover:underline"
                     >
-                      ⚡ বুক করুন
-                    </button>
+                      {dict.orders.book}</button>
                   ) : null}
                 </div>
 
@@ -391,7 +388,7 @@ export function OrdersTable({
                   onClick={() => onOpenOrderDrawer(o, "overview")}
                   className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
                 >
-                  <span>বিস্তারিত ও অ্যাকশন</span>
+                  <span>{dict.orders.detailsActions}</span>
                   <span>→</span>
                 </button>
               </div>
