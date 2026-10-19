@@ -3,7 +3,7 @@
 - **Program:** Multi-Language (i18n), master plan `Multi-Language-Master-Plan-2026-10-19.md` §২ (governing laws), §৬ MB2, §৮ D7
 - **Batch:** MB2 = STEP-0 + ML4 + ML5 + ML6 — every merchant-dashboard surface converted to the bn/en dictionary; every screen renders 100% in the selected locale (ML-L2), formats follow the language (ML-L3)
 - **Worktree / branch:** `~/workspace/ai-marketing-saas-i18n` · `multi-language`
-- **Base:** `529380bf` (MB1 complete) → **Final HEAD: `a566a9d4`** (tree clean)
+- **Base:** `529380bf` (MB1 complete) → **Final HEAD: `cf1334ad`** (acceptance written at `a566a9d4`; superseded by the reconciliation commit — see Addendum) (tree clean)
 - **Migration:** NONE (as planned). No API changes in this batch.
 - **Push:** none — local commits only (owner-only push rule).
 - **Batch record:** `hidden_files/multi-language-mb2-record.md` (goal workspace); worker reports `hidden_files/mb2-worker-{a,b,c,d}-report.md`, `mb2-finisher-{1,2}-report.md`, `mb2-f3-{alpha,beta,gamma}-report.md`.
@@ -87,6 +87,10 @@ Of the remaining 2,635 literals, ~1,773 are D7 DATA catalogues (bn source fields
 6. **Org-switch locale re-resolution** inherits MB1's known limit (staff preference → org default → bn resolution timing on switch).
 7. **Amount formatting inside gb6 segment summaries** uses the pre-existing `minorToTaka` (Latin digits) inside summary sentences in both locales — bn output byte-identical to before MB2; routing it through `fmtMoney` is a behaviour-change decision left for a later batch.
 8. **Admin app, storefront/public surfaces, API/notifications/documents, AI unification** are MB3–MB6 scope and untouched by this batch (scanner "other-web" area unchanged at 1,145 literals, as expected).
+
+## Addendum — post-acceptance reconciliation (commit `cf1334ad`)
+
+The F3 finisher round ran overlapping duplicate agents in the same worktree (their full handoffs arrived after the acceptance was written). The losing agent had appended **259 bn/en key pairs** (shell `tt*/pw*/f3Ga*`, ads `cs*/funPrev*`, misc `bk*/ds*/acc*/sp*/lr*/ri*/pr*`, crm `gb6*`, social `mlSurf*/ls*/sa*`, ai `air*/mp*/pp*`, analytics `rg*/as*`) that no component or lib ever referenced — every consumer uses the winning twin sets (`shared zz*`, crm `zzBook*/zzGb6*`, billing `zzDrop*/zzAcct*`, analytics `zzCamp*`, misc `f3Ml*/zzFunnel*`). A coordinator audit (literal + word-boundary reference checks across `apps/web/src`) verified each set as dead, and they were removed, restoring ML-L1's one-string-one-home for those strings. Dictionary now holds **14,451 bn keys** by the audit count. The same commit wires `locale` into the customers page's `segmentCriteriaSummary(s.criteria, locale)` call (F3b follow-up; bn output was unaffected). Gates re-run on the reconciled tree: targeted parity/gb6 ✅ 29/29 · web tsc ✅ zero errors · full web vitest ✅ 139 files / 1,140 tests · next build ✅ PASS. **Final HEAD is now `cf1334ad`.** Known remainder: ~140 further unreferenced keys from the main worker rounds (single-home dead entries, e.g. parts of inbox/messaging/common) were deliberately left — they are not duplicates, have no runtime effect, and bulk removal risks dynamic key construction; they are a safe future cleanup.
 
 ## Process notes (for the record)
 
