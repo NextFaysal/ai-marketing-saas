@@ -4288,6 +4288,19 @@ export class StorefrontService {
 
   // ================= Public: by-domain =================
 
+  // In-memory bounded LRU TTL cache for verified custom domains to prevent Postgres hammering on public traffic
+  private verifiedDomainCache = new Map<string, { expiresAt: number; value: { org: any; setting: any } | null }>();
+
+  clearVerifiedDomainCache(domain?: string) {
+    if (domain) {
+      for (const candidate of customDomainCandidates(domain)) {
+        this.verifiedDomainCache.delete(candidate.toLowerCase());
+      }
+    } else {
+      this.verifiedDomainCache.clear();
+    }
+  }
+
   /**
    * TD9: the ONE verified-domain resolution, shared by byDomain
    * and domainAllowed. A domain resolves ONLY when an org's stored
@@ -4299,13 +4312,31 @@ export class StorefrontService {
   async resolveVerifiedDomain(domain: string): Promise<{ org: any; setting: any } | null> {
     const candidates = customDomainCandidates(domain);
     if (candidates.length === 0) return null;
+    const cacheKey = (candidates[0] ?? domain).toLowerCase();
+    const now = Date.now();
+    const cached = this.verifiedDomainCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
     const org = await this.t("organization").findFirst({
       where: { customDomain: { in: candidates } },
     });
-    if (!org) return null;
+    if (!org) {
+      this.verifiedDomainCache.set(cacheKey, { expiresAt: now + 15_000, value: null });
+      return null;
+    }
     const setting = await this.getSetting(org.id);
-    if (!setting?.domainVerifiedAt) return null;
-    return { org, setting };
+    if (!setting?.domainVerifiedAt) {
+      this.verifiedDomainCache.set(cacheKey, { expiresAt: now + 15_000, value: null });
+      return null;
+    }
+    const result = { org, setting };
+    this.verifiedDomainCache.set(cacheKey, { expiresAt: now + 60_000, value: result });
+    if (this.verifiedDomainCache.size > 1000) {
+      const oldestKey = this.verifiedDomainCache.keys().next().value;
+      if (oldestKey) this.verifiedDomainCache.delete(oldestKey);
+    }
+    return result;
   }
 
   async byDomain(domain: string) {
@@ -6144,6 +6175,8 @@ export class StorefrontService {
       data: { customDomain: domain },
     });
     if (changed) {
+      this.clearVerifiedDomainCache(previousDomain ?? undefined);
+      this.clearVerifiedDomainCache(domain ?? undefined);
       const setting = await this.getSetting(orgId);
       if (setting) {
         await this.t("storefrontSetting").update({
@@ -6174,6 +6207,7 @@ export class StorefrontService {
         "আগে সংস্থার ব্র্যান্ডিং/সেটিংসে Custom Domain সেট করুন, তারপর যাচাই টোকেন নিন",
       );
     }
+    this.clearVerifiedDomainCache(domain);
     const token = randomBytes(32).toString("hex");
     const existing = await this.getSetting(orgId);
     // Issuing a NEW token resets verification: the old proof no
@@ -6326,6 +6360,7 @@ export class StorefrontService {
       where: { id: setting.id },
       data: { domainVerifiedAt: new Date() },
     });
+    this.clearVerifiedDomainCache(domain);
     await this.audit?.log({
       organizationId: orgId,
       userId: actorId,
