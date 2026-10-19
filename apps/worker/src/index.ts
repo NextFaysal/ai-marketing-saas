@@ -29,8 +29,9 @@ export const queueEvents: QueueEvents[] = [];
 for (const name of Object.values(QUEUES)) {
   if (name === QUEUES.SCHEDULED_JOBS_DLQ) continue; // record-only channel (rows live in the API's DeadLetterJob table)
   const processor = processors[name];
-  if (!processor) throw new Error(`No processor registered for queue ${name} — a queue ships only with its processor (WK1 rule)`);
-  const worker = new Worker(name, processor as any, { connection, concurrency: 5 });
+  const defaultConcurrency = name === QUEUES.WEBHOOK ? 15 : 5;
+  const concurrency = Math.max(1, Number(process.env.WORKER_CONCURRENCY ?? defaultConcurrency));
+  const worker = new Worker(name, processor as any, { connection, concurrency });
   worker.on("failed", (job, err) => console.error(`[${name}] job ${job?.id} failed`, err));
   workers.push(worker);
   queueEvents.push(new QueueEvents(name, { connection }));
