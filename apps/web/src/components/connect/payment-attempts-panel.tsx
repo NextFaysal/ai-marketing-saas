@@ -2,8 +2,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatWhen } from "@/lib/connections";
-import { formatMinor } from "@repo/contracts";
+import { formatTakaMinor, formatWhen } from "@/lib/connections";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber } from "@repo/contracts";
 
 /**
  * GC12 — Payment Ops: the org's payment attempts
@@ -61,24 +62,26 @@ interface ResendResult {
   sendNote: string;
 }
 
-const fmtM = (minor?: string | null): string => {
-  if (minor == null) return "—";
-  try { return formatMinor(BigInt(minor)); } catch { return minor; }
+const STATUS_META: Record<string, { labelKey: string; cls: string }> = {
+  verified_paid: { labelKey: "paStatusVerified", cls: "bg-green-100 text-green-700" },
+  initiated: { labelKey: "paStatusInitiated", cls: "bg-amber-100 text-amber-700" },
+  expired: { labelKey: "paStatusExpired", cls: "bg-slate-200 text-slate-600" },
+  failed: { labelKey: "paStatusFailed", cls: "bg-red-100 text-red-700" },
+  cancelled: { labelKey: "", cls: "bg-slate-100 text-slate-500" },
 };
 
-const STATUS_META: Record<string, { label: string; cls: string }> = {
-  verified_paid: { label: "যাচাইকৃত পেমেন্ট হয়েছে", cls: "bg-green-100 text-green-700" },
-  initiated: { label: "শুরু হয়েছে", cls: "bg-amber-100 text-amber-700" },
-  expired: { label: "মেয়াদোত্তীর্ণ (initiated)", cls: "bg-slate-200 text-slate-600" },
-  failed: { label: "ব্যর্থ", cls: "bg-red-100 text-red-700" },
-  cancelled: { label: "বাতিল", cls: "bg-slate-100 text-slate-500" },
+const statusMeta = (a: PaymentAttemptView, D: Record<string, string>, cancelLabel: string) => {
+  const m = STATUS_META[a.displayStatus] ?? STATUS_META[a.status];
+  if (!m) return { label: a.displayStatus, cls: "bg-slate-100 text-slate-600" };
+  return { label: m.labelKey ? D[m.labelKey] ?? m.labelKey : cancelLabel, cls: m.cls };
 };
-
-const statusMeta = (a: PaymentAttemptView) => STATUS_META[a.displayStatus] ?? STATUS_META[a.status] ?? { label: a.displayStatus, cls: "bg-slate-100 text-slate-600" };
 
 const inputCls = "rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400";
 
 export function PaymentAttemptsPanel() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.connections;
+  const fmtM = (minor?: string | null): string => (minor == null ? "—" : formatTakaMinor(minor, locale));
   const [status, setStatus] = useState("");
   const [provider, setProvider] = useState("");
   const [source, setSource] = useState("");
@@ -102,7 +105,7 @@ export function PaymentAttemptsPanel() {
       setData(res);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পেমেন্ট চেষ্টার তালিকা লোড ব্যর্থ");
+      setError(e instanceof Error ? e.message : D.paLoadFailed);
     }
   }, [status, provider, source, page]);
 
@@ -136,7 +139,7 @@ export function PaymentAttemptsPanel() {
       setResendOut((o) => ({ ...o, [row.id]: { result } }));
       await load();
     } catch (e) {
-      setResendOut((o) => ({ ...o, [row.id]: { error: e instanceof Error ? e.message : "আবার পাঠানো যায়নি" } }));
+      setResendOut((o) => ({ ...o, [row.id]: { error: e instanceof Error ? e.message : D.paResendFailed } }));
     } finally { setResendBusy(""); }
   }, [load]);
 
@@ -145,60 +148,60 @@ export function PaymentAttemptsPanel() {
   return (
     <div className="card space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <select className={inputCls} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="অবস্থা">
-          <option value="">সব অবস্থা</option>
-          <option value="initiated">শুরু হয়েছে</option>
-          <option value="verified_paid">যাচাইকৃত পেমেন্ট হয়েছে</option>
-          <option value="failed">ব্যর্থ</option>
-          <option value="cancelled">বাতিল</option>
-          <option value="expired">মেয়াদোত্তীর্ণ (initiated)</option>
+        <select className={inputCls} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label={D.paAriaStatus}>
+          <option value="">{D.paAllStatuses}</option>
+          <option value="initiated">{D.paStatusInitiated}</option>
+          <option value="verified_paid">{D.paStatusVerified}</option>
+          <option value="failed">{D.paStatusFailed}</option>
+          <option value="cancelled">{dict.common.cancel}</option>
+          <option value="expired">{D.paStatusExpired}</option>
         </select>
-        <select className={inputCls} value={provider} onChange={(e) => { setProvider(e.target.value); setPage(1); }} aria-label="প্রোভাইডার">
-          <option value="">সব প্রোভাইডার</option>
+        <select className={inputCls} value={provider} onChange={(e) => { setProvider(e.target.value); setPage(1); }} aria-label={D.paAriaProvider}>
+          <option value="">{D.paAllProviders}</option>
           <option value="sslcommerz">SSLCommerz</option>
           <option value="bkash">bKash</option>
           <option value="nagad">Nagad</option>
           <option value="shurjopay">ShurjoPay</option>
           <option value="aamarpay">aamarPay</option>
         </select>
-        <select className={inputCls} value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }} aria-label="উৎস">
-          <option value="">নিজের + প্ল্যাটফর্ম</option>
-          <option value="own">নিজের গেটওয়ে</option>
-          <option value="platform">প্ল্যাটফর্ম গেটওয়ে</option>
+        <select className={inputCls} value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }} aria-label={D.paAriaSource}>
+          <option value="">{D.paBothSources}</option>
+          <option value="own">{D.phOwnGateway}</option>
+          <option value="platform">{D.plPlatformGateway}</option>
         </select>
-        <span className="text-xs text-slate-400">মোট {data?.total ?? 0}টি চেষ্টা</span>
+        <span className="text-xs text-slate-400">{t("connections.paTotalCount", { count: fmtNumber(locale, data?.total ?? 0) })}</span>
       </div>
 
       {error ? <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</div> : null}
-      {!data && !error ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
-      {data && data.items.length === 0 ? <p className="text-sm text-slate-400">এই ফিল্টারে কোনো পেমেন্ট চেষ্টা নেই।</p> : null}
+      {!data && !error ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : null}
+      {data && data.items.length === 0 ? <p className="text-sm text-slate-400">{D.paEmpty}</p> : null}
 
       {data && data.items.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] text-sm">
             <thead>
               <tr className="border-b text-left text-xs text-slate-500">
-                <th className="py-2 pr-2 font-semibold">সময়</th>
-                <th className="py-2 pr-2 font-semibold">অর্ডার নম্বর</th>
-                <th className="py-2 pr-2 font-semibold">প্রোভাইডার / উৎস</th>
-                <th className="py-2 pr-2 font-semibold">পরিমাণ</th>
-                <th className="py-2 pr-2 font-semibold">অবস্থা</th>
-                <th className="py-2 pr-2 font-semibold">ব্যর্থতার কারণ</th>
-                <th className="py-2 pr-2 font-semibold">ফি / নেট</th>
-                <th className="py-2 font-semibold">অ্যাকশন</th>
+                <th className="py-2 pr-2 font-semibold">{D.paColTime}</th>
+                <th className="py-2 pr-2 font-semibold">{D.paColOrder}</th>
+                <th className="py-2 pr-2 font-semibold">{D.paColProviderSource}</th>
+                <th className="py-2 pr-2 font-semibold">{D.paColAmount}</th>
+                <th className="py-2 pr-2 font-semibold">{D.paAriaStatus}</th>
+                <th className="py-2 pr-2 font-semibold">{D.paColFailure}</th>
+                <th className="py-2 pr-2 font-semibold">{D.paColFeeNet}</th>
+                <th className="py-2 font-semibold">{D.paColAction}</th>
               </tr>
             </thead>
             <tbody>
               {data.items.map((row) => {
-                const meta = statusMeta(row);
+                const meta = statusMeta(row, D as unknown as Record<string, string>, dict.common.cancel);
                 const detail = details[row.id];
                 const out = resendOut[row.id];
                 return (
                   <React.Fragment key={row.id}>
                     <tr className="border-b last:border-0 align-top">
-                      <td className="py-2 pr-2 whitespace-nowrap text-xs text-slate-500">{formatWhen(row.createdAt) ?? "—"}</td>
+                      <td className="py-2 pr-2 whitespace-nowrap text-xs text-slate-500">{formatWhen(row.createdAt, locale) ?? "—"}</td>
                       <td className="py-2 pr-2 font-medium">{row.orderNumber ?? row.orderId.slice(0, 8)}</td>
-                      <td className="py-2 pr-2">{row.provider}<span className="block text-xs text-slate-400">{row.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের"}</span></td>
+                      <td className="py-2 pr-2">{row.provider}<span className="block text-xs text-slate-400">{row.source === "platform" ? D.phPlatform : D.stOwnShort}</span></td>
                       <td className="py-2 pr-2 whitespace-nowrap">{fmtM(row.amountMinor)}</td>
                       <td className="py-2 pr-2"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.cls}`}>{meta.label}</span></td>
                       <td className="py-2 pr-2 max-w-[220px] text-xs text-red-600">{row.failureReason ?? "—"}</td>
@@ -206,11 +209,11 @@ export function PaymentAttemptsPanel() {
                       <td className="py-2">
                         <div className="flex flex-wrap gap-1.5">
                           <button type="button" onClick={() => void toggleDetail(row)} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-200">
-                            {expandedId === row.id ? "বন্ধ করুন" : "বিস্তারিত"}
+                            {expandedId === row.id ? dict.common.close : D.paDetails}
                           </button>
                           {row.status !== "verified_paid" ? (
                             <button type="button" disabled={resendBusy === row.id} onClick={() => void resend(row)} className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-                              {resendBusy === row.id ? "পাঠানো হচ্ছে…" : "পেমেন্ট লিংক আবার পাঠান"}
+                              {resendBusy === row.id ? D.paSending : D.paResendLink}
                             </button>
                           ) : null}
                         </div>
@@ -227,9 +230,9 @@ export function PaymentAttemptsPanel() {
                       <tr className="border-b bg-slate-50">
                         <td colSpan={8} className="px-3 py-2">
                           {detail === "loading" || detail === undefined ? (
-                            <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+                            <p className="text-xs text-slate-400">{dict.common.loading}</p>
                           ) : detail === "error" ? (
-                            <p className="text-xs font-medium text-red-600">বিস্তারিত লোড ব্যর্থ</p>
+                            <p className="text-xs font-medium text-red-600">{D.paDetailFailed}</p>
                           ) : (
                             <div className="space-y-1.5 text-xs text-slate-600">
                               <div>Provider Txn ID: <span className="font-mono">{detail.providerTxnId ?? "—"}</span></div>
@@ -252,9 +255,9 @@ export function PaymentAttemptsPanel() {
 
       {data && totalPages > 1 ? (
         <div className="flex items-center gap-2 text-xs">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-lg bg-slate-100 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">← আগের</button>
-          <span className="text-slate-500">পৃষ্ঠা {page} / {totalPages}</span>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="rounded-lg bg-slate-100 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">পরের →</button>
+          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-lg bg-slate-100 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">← {D.paPrev}</button>
+          <span className="text-slate-500">{t("connections.paPageOf", { page: fmtNumber(locale, page), total: fmtNumber(locale, totalPages) })}</span>
+          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="rounded-lg bg-slate-100 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">{D.paNext} →</button>
         </div>
       ) : null}
     </div>

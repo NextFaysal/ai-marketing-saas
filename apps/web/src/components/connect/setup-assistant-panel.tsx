@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { findingSeverityMeta, type SetupFindingView } from "@/lib/connections";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * CC20 — Smart Setup Assistant.
@@ -20,6 +21,8 @@ import { findingSeverityMeta, type SetupFindingView } from "@/lib/connections";
  * "সব ঠিক আছে" — never a padded list of generic tips.
  */
 export function SetupAssistantPanel() {
+  const { dict, locale } = useLocale();
+  const D = dict.connections;
   const [findings, setFindings] = useState<SetupFindingView[] | null>(null);
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
@@ -34,7 +37,7 @@ export function SetupAssistantPanel() {
     } catch (e) {
       // A failing assistant must not take the Center down — the
       // panel shows its own failure honestly and stays small.
-      setError(e instanceof Error ? e.message : "সেটআপ সহকারী লোড হয়নি");
+      setError(e instanceof Error ? e.message : D.saLoadFailed);
       setFindings([]);
     }
   }, []);
@@ -52,7 +55,7 @@ export function SetupAssistantPanel() {
       });
       setFindings((prev) => (prev ?? []).filter((f) => f.key !== finding.key));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "বাদ দেওয়া যায়নি");
+      setError(e instanceof Error ? e.message : D.saDismissFailed);
     } finally {
       setBusyKey("");
     }
@@ -61,20 +64,18 @@ export function SetupAssistantPanel() {
   if (findings === null) return null;
 
   return (
-    <section className="card space-y-3 p-4" aria-label="স্মার্ট সেটআপ সহকারী">
+    <section className="card space-y-3 p-4" aria-label={D.saAria}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold text-slate-800">🧭 স্মার্ট সেটআপ সহকারী</h2>
-        <span className="text-xs text-slate-400">প্রতিটি পরামর্শ আপনার আসল রেকর্ড যাচাই করে তৈরি — অনুমান নয়</span>
+        <h2 className="font-semibold text-slate-800">{D.saTitle}</h2>
+        <span className="text-xs text-slate-400">{D.saSubtitle}</span>
       </div>
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">{error}</p> : null}
       {findings.length === 0 ? (
-        <p className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-          ✅ সব ঠিক আছে — আপনার কানেকশনগুলোতে কোনো ঘাটতি পাওয়া যায়নি।
-        </p>
+        <p className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">{D.saAllGood}</p>
       ) : (
         <ul className="space-y-2">
           {findings.map((f) => {
-            const meta = findingSeverityMeta(f.severity);
+            const meta = findingSeverityMeta(f.severity, locale);
             return (
               <li key={f.key} className="rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-inset ring-slate-100">
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -87,13 +88,13 @@ export function SetupAssistantPanel() {
                     disabled={busyKey === f.key}
                     onClick={() => void dismiss(f)}
                     className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-200 hover:text-slate-600 disabled:opacity-50"
-                    title="এই পরামর্শটি আমার জন্য বাদ দিন"
+                    title={D.saDismissTitle}
                   >
-                    ✕ বাদ দিন
+                    {D.saDismissBtn}
                   </button>
                 </div>
                 <p className="mt-1.5 text-[13px] text-slate-600">{f.evidence}</p>
-                <p className="mt-1 text-xs text-slate-400">যে ফিচারটি আটকে আছে: {f.feature}</p>
+                <p className="mt-1 text-xs text-slate-400">{D.saBlockedFeature}{f.feature}</p>
                 <a href={f.href} className="mt-2 inline-block rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
                   {f.actionLabel} →
                 </a>

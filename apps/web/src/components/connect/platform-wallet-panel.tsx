@@ -7,6 +7,8 @@ import {
   formatTakaMinor, formatWhen, ledgerTypeLabel, payoutStatusLabel,
   type PayoutRequestView, type PlatformPaymentsView, type WalletView,
 } from "@/lib/connections";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber } from "@repo/contracts";
 
 /**
  * CC10 (Connect Center B5) — Platform gateway + Wallet.
@@ -22,9 +24,9 @@ import {
  * অনুমোদন + mark-paid-এর পর।
  */
 
-const PROVIDER_META: { id: string; icon: string; title: string }[] = [
-  { id: "sslcommerz", icon: "💳", title: "SSLCommerz (প্ল্যাটফর্মের)" },
-  { id: "bkash", icon: "📱", title: "বিকাশ (bKash, প্ল্যাটফর্মের)" },
+const PROVIDER_META: { id: string; icon: string; titleKey: string }[] = [
+  { id: "sslcommerz", icon: "💳", titleKey: "pwTtlSsl" },
+  { id: "bkash", icon: "📱", titleKey: "pwTtlBkash" },
 ];
 
 const inputCls = "mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400";
@@ -35,6 +37,8 @@ const EMPTY_PAYOUT: PayoutForm = {
 };
 
 export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
+  const { dict, t, locale } = useLocale();
+  const D = dict.connections;
   const [platform, setPlatform] = useState<PlatformPaymentsView | null>(null);
   const [wallet, setWallet] = useState<WalletView | null>(null);
   const [requests, setRequests] = useState<PayoutRequestView[]>([]);
@@ -71,10 +75,10 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
       await apiFetch(`organizations/${orgId}/connections/platform-payments/${provider}/enabled`, {
         method: "PUT", body: JSON.stringify({ isEnabled: enabled }),
       });
-      setNotice(enabled ? "প্ল্যাটফর্ম গেটওয়ে চালু হয়েছে — এখন এই প্রোভাইডারে প্ল্যাটফর্ম পেমেন্ট নেওয়া যাবে।" : "প্ল্যাটফর্ম গেটওয়ে বন্ধ করা হয়েছে।");
+      setNotice(enabled ? D.pwToggleOn : D.pwToggleOff);
       await load(); onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কাজটি সম্পন্ন হয়নি");
+      setError(e instanceof Error ? e.message : D.gwActionFailed);
     } finally { setBusy(""); }
   }, [load, onChanged]);
 
@@ -87,13 +91,13 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
       const res = await apiFetch<{ stepUpUnavailable?: boolean }>(`organizations/${orgId}/connections/payout-requests`, {
         method: "POST", body: JSON.stringify({ ...buildPayoutBody(form), ...(totpCode.trim() ? { totpCode: totpCode.trim() } : {}) }),
       });
-      const base = "Payout অনুরোধ পাঠানো হয়েছে — পরিমাণটি অনুমোদন পর্যন্ত আটকে (hold) থাকবে। অ্যাডমিন অনুমোদন দিয়ে পাঠালে তবেই ব্যালেন্স থেকে কাটা হবে।";
-      setNotice(res?.stepUpUnavailable ? `${base} (আপনার Two-Factor চালু নেই — Wallet থেকে টাকা তোলার মতো সংবেদনশীল কাজে অতিরিক্ত সুরক্ষার জন্য Settings থেকে Two-Factor চালু করুন।)` : base);
+      const base = D.pwPayoutBase;
+      setNotice(res?.stepUpUnavailable ? `${base}${D.pwStepUpSuffix}` : base);
       setForm(EMPTY_PAYOUT);
       setTotpCode("");
       await load(); onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Payout অনুরোধ পাঠানো যায়নি");
+      setError(err instanceof Error ? err.message : D.pwPayoutFailed);
     } finally { setBusy(""); }
   }, [form, load, onChanged, totpCode]);
 
@@ -103,10 +107,10 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
     setBusy(id); setError("");
     try {
       await apiFetch(`organizations/${orgId}/connections/payout-requests/${id}/cancel`, { method: "POST", body: "{}" });
-      setNotice("অনুরোধটি বাতিল করা হয়েছে — আটকে থাকা পরিমাণ আবার উপলব্ধ হয়েছে।");
+      setNotice(D.pwCancelled);
       await load(); onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "বাতিল করা যায়নি");
+      setError(err instanceof Error ? err.message : D.pwCancelFailed);
     } finally { setBusy(""); }
   }, [load, onChanged]);
 
@@ -132,7 +136,7 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
       a.href = url; a.download = `wallet-statement.${format}`; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Statement ডাউনলোড হয়নি");
+      setError(e instanceof Error ? e.message : D.pwStmtFailed);
     } finally { setBusy(""); }
   }, [stmtFrom, stmtTo]);
 
@@ -141,10 +145,10 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="card space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-semibold text-slate-800">🏦 প্ল্যাটফর্ম গেটওয়ে + Wallet</div>
+        <div className="font-semibold text-slate-800">{D.pwTitle}</div>
         {wallet ? (
           <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-            ব্যালেন্স {formatTakaMinor(wallet.balanceMinor)}
+            {t("connections.pwBalanceChip", { amount: formatTakaMinor(wallet.balanceMinor, locale) })}
           </span>
         ) : null}
       </div>
@@ -152,9 +156,8 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
       {notice ? <div className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">{notice}</div> : null}
 
       <p className="text-xs leading-relaxed text-slate-500">
-        আমাদের গেটওয়ে দিয়ে কাস্টমার পেমেন্ট করলে টাকা প্ল্যাটফর্ম অ্যাকাউন্টে আসে; গেটওয়ের সার্ভার-যাচাই সফল হলেই
-        কেবল নিট অংশ আপনার Wallet-এ জমা হয় — পেমেন্ট শুরু বা ব্রাউজার ফেরত কখনোই জমা ধরা হয় না।
-        {feePercent !== null ? <> বর্তমান প্ল্যাটফর্ম ফি: <b>{feePercent}%</b> (প্রতি যাচাইকৃত পেমেন্টে, অ্যাডমিন কনফিগ থেকে)।</> : null}
+        {D.pwIntro}
+        {feePercent !== null ? <>{t("connections.pwFeePart", { fee: fmtNumber(locale, feePercent) })}</> : null}
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -163,19 +166,17 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
           return (
             <div key={meta.id} className="space-y-2 rounded-xl border border-slate-200 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-slate-800">{meta.icon} {meta.title}</div>
+                <div className="text-sm font-semibold text-slate-800">{meta.icon} {D[meta.titleKey as keyof typeof D]}</div>
                 {!view || !view.offered ? (
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">প্ল্যাটফর্মে এখনো কনফিগার করা হয়নি</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{D.pwNotConfigured}</span>
                 ) : view.enabled ? (
-                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">চালু আছে</span>
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">{D.pwOn}</span>
                 ) : (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">বন্ধ আছে</span>
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{D.gwOff}</span>
                 )}
               </div>
               <p className="text-xs leading-relaxed text-slate-500">
-                {!view || !view.offered
-                  ? "প্ল্যাটফর্ম অ্যাডমিন এই গেটওয়েটি যোগ করলে তবেই এটি চালু করা যাবে — তার আগে কোনো চেকআউট এই পথে চলবে না।"
-                  : "চালু থাকলে আপনার স্টোরের কাস্টমার এই গেটওয়েতে পেমেন্ট করতে পারবে; যাচাইকৃত টাকার নিট অংশ Wallet-এ জমা হবে।"}
+                {!view || !view.offered ? D.pwNotOfferedNote : D.pwOfferedNote}
               </p>
               {view?.offered ? (
                 <button
@@ -184,7 +185,7 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
                   onClick={() => void toggle(meta.id, !view.enabled)}
                   className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                 >
-                  {busy === meta.id ? "হচ্ছে..." : view.enabled ? "বন্ধ করুন" : "চালু করুন"}
+                  {busy === meta.id ? D.pwWorking : view.enabled ? dict.common.close : D.gwEnable}
                 </button>
               ) : null}
             </div>
@@ -195,31 +196,31 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
       {wallet ? (
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl bg-slate-50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">মোট ব্যালেন্স</div>
-            <div className="mt-1 text-lg font-bold text-slate-800">{formatTakaMinor(wallet.balanceMinor)}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{D.pwTotalBalance}</div>
+            <div className="mt-1 text-lg font-bold text-slate-800">{formatTakaMinor(wallet.balanceMinor, locale)}</div>
           </div>
           <div className="rounded-xl bg-slate-50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">আটকে আছে (Payout অনুরোধে)</div>
-            <div className="mt-1 text-lg font-bold text-slate-800">{formatTakaMinor(wallet.heldMinor)}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{D.pwHeld}</div>
+            <div className="mt-1 text-lg font-bold text-slate-800">{formatTakaMinor(wallet.heldMinor, locale)}</div>
           </div>
           <div className="rounded-xl bg-slate-50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">উপলব্ধ</div>
-            <div className="mt-1 text-lg font-bold text-emerald-700">{formatTakaMinor(wallet.availableMinor)}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{D.pwAvailable}</div>
+            <div className="mt-1 text-lg font-bold text-emerald-700">{formatTakaMinor(wallet.availableMinor, locale)}</div>
           </div>
         </div>
       ) : null}
 
       {wallet && wallet.ledger.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-sm font-semibold text-slate-700">সাম্প্রতিক Wallet লেনদেন</div>
+          <div className="text-sm font-semibold text-slate-700">{D.pwRecentTitle}</div>
           {wallet.ledger.slice(0, 10).map((row) => (
             <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
-              <span className="font-medium text-slate-700">{ledgerTypeLabel(row.type)}{row.note ? <span className="block font-normal text-slate-400">{row.note}</span> : null}</span>
-              <span className="text-slate-400">{formatWhen(row.createdAt) ?? ""}</span>
+              <span className="font-medium text-slate-700">{ledgerTypeLabel(row.type, locale)}{row.note ? <span className="block font-normal text-slate-400">{row.note}</span> : null}</span>
+              <span className="text-slate-400">{formatWhen(row.createdAt, locale) ?? ""}</span>
               <span className={`font-semibold ${row.amountMinor.startsWith("-") ? "text-red-600" : "text-emerald-700"}`}>
-                {formatTakaMinor(row.amountMinor)}
+                {formatTakaMinor(row.amountMinor, locale)}
               </span>
-              <span className="text-slate-500">ব্যালেন্স: {formatTakaMinor(row.balanceAfterMinor)}</span>
+              <span className="text-slate-500">{D.pwBalanceLabel}{formatTakaMinor(row.balanceAfterMinor, locale)}</span>
             </div>
           ))}
         </div>
@@ -227,82 +228,79 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
 
       {wallet ? (
         <div className="space-y-2 rounded-xl border border-slate-200 p-3">
-          <div className="text-sm font-semibold text-slate-700">📄 Wallet স্টেটমেন্ট (Ledger থেকে)</div>
+          <div className="text-sm font-semibold text-slate-700">{D.pwStmtTitle}</div>
           <div className="flex flex-wrap items-end gap-2">
-            <label className="block text-xs text-slate-500">শুরু (থেকে)
+            <label className="block text-xs text-slate-500">{D.pwFrom}
               <input type="date" className={inputCls} value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
             </label>
-            <label className="block text-xs text-slate-500">শেষ (পর্যন্ত)
+            <label className="block text-xs text-slate-500">{D.pwTo}
               <input type="date" className={inputCls} value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
             </label>
             <button type="button" disabled={busy === "statement-csv"} onClick={() => void downloadStatement("csv")} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-              {busy === "statement-csv" ? "তৈরি হচ্ছে…" : "CSV ডাউনলোড"}
+              {busy === "statement-csv" ? D.pwBuilding : D.pwCsvDl}
             </button>
             <button type="button" disabled={busy === "statement-pdf"} onClick={() => void downloadStatement("pdf")} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">
-              {busy === "statement-pdf" ? "তৈরি হচ্ছে…" : "PDF ডাউনলোড"}
+              {busy === "statement-pdf" ? D.pwBuilding : D.pwPdfDl}
             </button>
           </div>
-          <p className="text-[11px] leading-relaxed text-slate-400">
-            তারিখ খালি রাখলে পুরো ইতিহাস আসবে। Opening ব্যালেন্স হিসাব হয় পরিসরের আগের শেষ ledger এন্ট্রি থেকে — কোনো অনুমান নয়।
-            PDF-তে শুধু তারিখ/ধরন/পরিমাণ থাকে (পূর্ণ নোট CSV-তে) — এটি ফাইলের গায়েই লেখা থাকে।
-          </p>
+          <p className="text-[11px] leading-relaxed text-slate-400">{D.pwStmtNote}</p>
         </div>
       ) : null}
 
       <form onSubmit={(e) => void submitPayout(e)} className="space-y-2 rounded-xl border border-slate-200 p-3">
-        <div className="text-sm font-semibold text-slate-700">💸 Payout অনুরোধ</div>
+        <div className="text-sm font-semibold text-slate-700">{D.pwPayoutTitle}</div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <label className="block text-sm">পরিমাণ (টাকা)
-            <input className={inputCls} inputMode="decimal" value={form.amountTaka} onChange={(e) => setForm({ ...form, amountTaka: e.target.value })} required placeholder="যেমন: 5000" />
+          <label className="block text-sm">{D.pwAmount}
+            <input className={inputCls} inputMode="decimal" value={form.amountTaka} onChange={(e) => setForm({ ...form, amountTaka: e.target.value })} required placeholder={D.pwEg5000} />
           </label>
-          <label className="block text-sm">মাধ্যম
+          <label className="block text-sm">{D.pwMethod}
             <select className={inputCls} value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value as PayoutForm["method"] })}>
-              <option value="bkash">বিকাশ (bKash)</option>
-              <option value="bank">ব্যাংক অ্যাকাউন্ট</option>
+              <option value="bkash">{D.pwMethodBkash}</option>
+              <option value="bank">{D.pwMethodBank}</option>
             </select>
           </label>
         </div>
         {form.method === "bkash" ? (
-          <label className="block text-sm">বিকাশ নম্বর
+          <label className="block text-sm">{D.poBkashNumber}
             <input className={inputCls} value={form.bkashNumber} onChange={(e) => setForm({ ...form, bkashNumber: e.target.value })} required placeholder="01XXXXXXXXX" />
           </label>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
-            <label className="block text-sm">অ্যাকাউন্টের নাম
+            <label className="block text-sm">{D.pwAcctName}
               <input className={inputCls} value={form.accountName} onChange={(e) => setForm({ ...form, accountName: e.target.value })} required />
             </label>
-            <label className="block text-sm">অ্যাকাউন্ট নম্বর
+            <label className="block text-sm">{D.pwAcctNumber}
               <input className={inputCls} value={form.accountNumber} onChange={(e) => setForm({ ...form, accountNumber: e.target.value })} required />
             </label>
-            <label className="block text-sm">ব্যাংকের নাম
+            <label className="block text-sm">{D.pwBankName}
               <input className={inputCls} value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })} required />
             </label>
-            <label className="block text-sm">শাখা (ঐচ্ছিক)
+            <label className="block text-sm">{D.pwBranch}
               <input className={inputCls} value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })} />
             </label>
           </div>
         )}
-        <label className="block max-w-sm text-sm">🔐 TOTP কোড (শুধু আপনার Two-Factor চালু থাকলেই লাগবে)
-          <input className={inputCls} value={totpCode} onChange={(e) => setTotpCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" placeholder="৬-সংখ্যার কোড" />
+        <label className="block max-w-sm text-sm">{D.pwTotpLabel}
+          <input className={inputCls} value={totpCode} onChange={(e) => setTotpCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" placeholder={t("connections.gwTotpPh", { n: fmtNumber(locale, 6) })} />
         </label>
         <button type="submit" disabled={busy === "payout"} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-          {busy === "payout" ? "পাঠানো হচ্ছে..." : "অনুরোধ পাঠান"}
+          {busy === "payout" ? D.pwSending : D.pwSendReq}
         </button>
-        <p className="text-[11px] leading-relaxed text-slate-400">অনুরোধ পাঠালেই টাকা কাটা হয় না — পরিমাণটি hold থাকে। অ্যাডমিন অনুমোদন দিয়ে আসল টাকা পাঠিয়ে mark-paid করলে তবেই ব্যালেন্স থেকে কাটা হয়।</p>
+        <p className="text-[11px] leading-relaxed text-slate-400">{D.pwPayoutNote}</p>
       </form>
 
       {requests.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-sm font-semibold text-slate-700">আপনার Payout অনুরোধসমূহ</div>
+          <div className="text-sm font-semibold text-slate-700">{D.pwRequestsTitle}</div>
           {requests.map((r) => (
             <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
               <span className="font-medium text-slate-700">
-                {formatTakaMinor(r.amountMinor)} · {r.method === "bkash" ? "বিকাশ" : "ব্যাংক"}
-                <span className="block font-normal text-slate-400">{formatWhen(r.createdAt) ?? ""}{r.payoutRef ? ` · Ref: ${r.payoutRef}` : ""}{r.adminNote ? ` · অ্যাডমিন নোট: ${r.adminNote}` : ""}</span>
+                {formatTakaMinor(r.amountMinor, locale)} · {r.method === "bkash" ? D.payBkash : D.poMethodBank}
+                <span className="block font-normal text-slate-400">{formatWhen(r.createdAt, locale) ?? ""}{r.payoutRef ? ` · Ref: ${r.payoutRef}` : ""}{r.adminNote ? t("connections.pwAdminNote", { note: r.adminNote }) : ""}</span>
               </span>
-              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{payoutStatusLabel(r.status)}</span>
+              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{payoutStatusLabel(r.status, locale)}</span>
               {r.status === "pending" ? (
-                <button type="button" disabled={busy === r.id} onClick={() => void cancel(r.id)} className="rounded-lg bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50">বাতিল করুন</button>
+                <button type="button" disabled={busy === r.id} onClick={() => void cancel(r.id)} className="rounded-lg bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50">{D.pwCancelBtn}</button>
               ) : null}
             </div>
           ))}

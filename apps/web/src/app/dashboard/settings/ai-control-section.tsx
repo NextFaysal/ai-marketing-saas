@@ -2,8 +2,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber } from "@repo/contracts";
 import {
   ADMIN_CONSOLE_DECISION_LABEL,
+  ADMIN_CONSOLE_DECISION_LABEL_EN,
   ActionProposal,
   ActivityEvent,
   ActivityFeed,
@@ -48,6 +51,8 @@ const BTN = "rounded-lg border px-3 py-1.5 text-[13px] font-semibold disabled:op
  * the W4 foundation the plan asks for.
  */
 export function AiControlCenterSection() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [role, setRole] = useState("");
   const [catalog, setCatalog] = useState<CatalogAction[]>([]);
   const [autonomy, setAutonomy] = useState<AutonomyRow[]>([]);
@@ -81,7 +86,7 @@ export function AiControlCenterSection() {
 
   const load = useCallback(async () => {
     const id = getOrganizationId();
-    if (!id) { setError("কোনো Organization নির্বাচিত নেই।"); setLoaded(true); return; }
+    if (!id) { setError(dict.settings.noOrgSelected); setLoaded(true); return; }
     const base = `/organizations/${id}/ai/actions`;
     const activityBase = `/organizations/${id}/ai/activity`;
     const filter = feedFilterRef.current;
@@ -95,14 +100,14 @@ export function AiControlCenterSection() {
       apiFetch<ActivityFeed>(`${activityBase}${activityQuery({ kind: filter.kind, days: filter.days, limit: 20, offset: 0 })}`).catch(() => null),
     ]);
     setRole(mine.find((x) => x.id === id)?.myRole ?? "");
-    if (!cat || !aut || !pend || !rec) setError("AI নিয়ন্ত্রণের তথ্য লোড করা যায়নি।");
+    if (!cat || !aut || !pend || !rec) setError(D.ctrlLoadFailed);
     setCatalog(cat ?? []);
     setAutonomy(aut ?? []);
     setPending(pend ?? []);
     setRecent(rec ?? []);
     // The new blocks fail independently — their errors stay local.
-    if (usageRes) { setUsage(usageRes); setUsageError(""); } else setUsageError("AI ব্যবহারের তথ্য লোড করা যায়নি।");
-    if (feedRes) { setFeed(feedRes); setFeedError(""); } else setFeedError("AI কার্যকলাপ লোড করা যায়নি।");
+    if (usageRes) { setUsage(usageRes); setUsageError(""); } else setUsageError(D.ctrlUsageLoadFailed);
+    if (feedRes) { setFeed(feedRes); setFeedError(""); } else setFeedError(D.ctrlFeedLoadFailed);
     setLoaded(true);
   }, []);
 
@@ -119,7 +124,7 @@ export function AiControlCenterSection() {
       const res = await apiFetch<AiUsageOverview>(`/organizations/${orgId}/ai/activity/usage?days=${days}`);
       setUsage(res);
     } catch {
-      setUsageError("AI ব্যবহারের তথ্য লোড করা যায়নি।");
+      setUsageError(D.ctrlUsageLoadFailed);
     }
   }
 
@@ -134,7 +139,7 @@ export function AiControlCenterSection() {
       const res = await apiFetch<ActivityFeed>(`/organizations/${orgId}/ai/activity${activityQuery({ kind, days, limit: 20, offset: 0 })}`);
       setFeed(res);
     } catch {
-      setFeedError("AI কার্যকলাপ লোড করা যায়নি।");
+      setFeedError(D.ctrlFeedLoadFailed);
     } finally { setFeedBusy(false); }
   }
 
@@ -147,7 +152,7 @@ export function AiControlCenterSection() {
       const res = await apiFetch<ActivityFeed>(`/organizations/${orgId}/ai/activity${activityQuery({ kind, days, limit: 20, offset: feed.items.length })}`);
       setFeed({ ...res, items: [...feed.items, ...res.items] });
     } catch {
-      setFeedError("আরও কার্যকলাপ লোড করা যায়নি।");
+      setFeedError(D.ctrlFeedMoreFailed);
     } finally { setFeedBusy(false); }
   }
 
@@ -160,12 +165,12 @@ export function AiControlCenterSection() {
       // land as failed, and a money-adjacent approval records
       // the decision without executing — the message must say
       // what the row says, never assume success.
-      const text = proposalOutcomeText(row);
+      const text = proposalOutcomeText(row, locale);
       if (row.status === "failed") setError(text);
       else setNotice(text);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সিদ্ধান্তটি দেওয়া যায়নি");
+      setError(e instanceof Error ? e.message : D.ctrlDecisionFailed);
       await load();
     } finally { setBusy(""); }
   }
@@ -175,16 +180,17 @@ export function AiControlCenterSection() {
     setBusy(`autonomy-${row.actionId}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/ai/actions/autonomy/${row.actionId}`, { method: "PUT", body: JSON.stringify({ level }) });
-      setNotice(`“${row.title.bn}”-এর মাত্রা বদলানো হয়েছে: ${autonomyLevelLabel(level)}।`);
+      setNotice(t("settings.ctrlLevelChanged", { title: locale === "en" ? (row.title.en ?? row.title.bn) : row.title.bn, level: autonomyLevelLabel(level, locale) }));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "মাত্রা বদলানো যায়নি");
+      setError(e instanceof Error ? e.message : D.ctrlLevelChangeFailed);
       await load();
     } finally { setBusy(""); }
   }
 
   function actionTitle(p: ActionProposal): string {
-    return (p.actionId ? catalogById.get(p.actionId)?.title.bn : null) ?? p.title;
+    const title = p.actionId ? catalogById.get(p.actionId)?.title : null;
+    return (title ? (locale === "en" ? (title.en ?? title.bn) : title.bn) : null) ?? p.title;
   }
 
   const decided = recent.filter((p) => p.status !== "proposed");
@@ -195,40 +201,40 @@ export function AiControlCenterSection() {
       <div className="mb-4 flex items-start gap-3">
         <span className="stat-icon stat-icon-brand !h-10 !w-10 text-lg">🎛️</span>
         <div className="min-w-0">
-          <h2 className="font-semibold leading-tight text-slate-900">AI নিয়ন্ত্রণ</h2>
-          <p className="mt-0.5 text-[13px] leading-snug text-slate-500">AI শুধু কথা বলে না — কাজও করে। কোন কাজ AI নিজে করতে পারবে, কোনটায় আপনার অনুমোদন লাগবে, তা এখান থেকে ঠিক করা যায়। ডিফল্টে প্রতিটি কাজের প্রস্তাব আগে এখানে আসে; আপনি অনুমোদন না দিলে কিছুই হয় না। আর টাকা-সংক্রান্ত কাজ AI কখনোই নিজে করে না — সেগুলো শুধু প্রস্তাব পর্যন্তই।</p>
+          <h2 className="font-semibold leading-tight text-slate-900">{D.ctrlTitle}</h2>
+          <p className="mt-0.5 text-[13px] leading-snug text-slate-500">{D.ctrlIntro}</p>
         </div>
       </div>
 
       {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       {notice ? <p className="mb-3 text-sm text-green-600">{notice}</p> : null}
-      {!loaded ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+      {!loaded ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
 
       {loaded ? (
         <div className="space-y-8">
           {/* ---- অপেক্ষমাণ প্রস্তাব ---- */}
           <div>
-            <div className="font-semibold">কাজের প্রস্তাব — আপনার সিদ্ধান্তের অপেক্ষায়</div>
+            <div className="font-semibold">{D.ctrlPendingTitle}</div>
             {pending.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-500">এখন কোনো প্রস্তাব অপেক্ষায় নেই। AI বা টিম কোনো কাজের প্রস্তাব দিলে তা এখানে আসবে।</p>
+              <p className="mt-2 text-sm text-slate-500">{D.ctrlPendingEmpty}</p>
             ) : (
               <ul className="mt-3 space-y-2">
                 {pending.map((p) => (
                   <li key={p.id} className="rounded-lg bg-slate-50 p-3 text-sm">
                     <div>
                       <span className="font-medium">{p.title}</span>{" "}
-                      <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{surfaceLabel(p.surface)}</span>{" "}
+                      <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{surfaceLabel(p.surface, locale)}</span>{" "}
                       <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{actionTitle(p)}</span>{" "}
-                      <span className="text-slate-400">{proposedByLabel(p.proposedBy)} · {ageText(p.createdAt)}</span>
+                      <span className="text-slate-400">{proposedByLabel(p.proposedBy, locale)} · {ageText(p.createdAt, new Date(), locale)}</span>
                     </div>
                     <div className="mt-1 text-slate-600">{p.preview}</div>
                     {canDecide ? (
                       <div className="mt-2 flex flex-wrap gap-2">
-                        <button className={BTN} disabled={busy === `decide-${p.id}`} onClick={() => decide(p, "approve")}>অনুমোদন করুন</button>
-                        <button className={BTN} disabled={busy === `decide-${p.id}`} onClick={() => decide(p, "reject")}>বাতিল করুন</button>
+                        <button className={BTN} disabled={busy === `decide-${p.id}`} onClick={() => decide(p, "approve")}>{D.approve}</button>
+                        <button className={BTN} disabled={busy === `decide-${p.id}`} onClick={() => decide(p, "reject")}>{D.rejectSuggestion}</button>
                       </div>
                     ) : (
-                      <p className="mt-1 text-[13px] text-slate-400">সিদ্ধান্ত দেওয়ার অধিকার আপনার ভূমিকায় নেই (মালিক/অ্যাডমিন/মার্কেটিং ম্যানেজার দরকার)।</p>
+                      <p className="mt-1 text-[13px] text-slate-400">{D.ctrlNoDecideRight}</p>
                     )}
                   </li>
                 ))}
@@ -238,36 +244,36 @@ export function AiControlCenterSection() {
 
           {/* ---- সাম্প্রতিক কার্যকলাপ ---- */}
           <div className="border-t border-slate-100 pt-6">
-            <div className="font-semibold">সাম্প্রতিক কার্যকলাপ</div>
+            <div className="font-semibold">{D.ctrlRecentTitle}</div>
             {recent.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-500">এখনো কোনো প্রস্তাবের ইতিহাস নেই।</p>
+              <p className="mt-2 text-sm text-slate-500">{D.ctrlRecentEmpty}</p>
             ) : (
               <>
                 <div className="mt-3 grid grid-cols-3 gap-3">
                   <div className="rounded-lg bg-slate-50 p-3">
-                    <div className="text-xl font-bold">{summary.executed}</div>
-                    <div className="text-[13px] text-slate-500">কার্যকর হয়েছে (যাচাইকৃত)</div>
+                    <div className="text-xl font-bold">{fmtNumber(locale, summary.executed)}</div>
+                    <div className="text-[13px] text-slate-500">{D.ctrlExecutedLabel}</div>
                   </div>
                   <div className="rounded-lg bg-slate-50 p-3">
-                    <div className="text-xl font-bold">{summary.failed}</div>
-                    <div className="text-[13px] text-slate-500">ব্যর্থ হয়েছে</div>
+                    <div className="text-xl font-bold">{fmtNumber(locale, summary.failed)}</div>
+                    <div className="text-[13px] text-slate-500">{D.ctrlFailedLabel}</div>
                   </div>
                   <div className="rounded-lg bg-slate-50 p-3">
-                    <div className="text-xl font-bold">{summary.pending}</div>
-                    <div className="text-[13px] text-slate-500">অপেক্ষমাণ</div>
+                    <div className="text-xl font-bold">{fmtNumber(locale, summary.pending)}</div>
+                    <div className="text-[13px] text-slate-500">{D.ctrlPendingLabel}</div>
                   </div>
                 </div>
-                <p className="mt-2 text-[13px] text-slate-400">এই হিসাব দেখানো সর্বশেষ ৫০টি প্রস্তাবের ওপর ভিত্তি করে — সব সময়ের মোট নয়।</p>
+                <p className="mt-2 text-[13px] text-slate-400">{D.ctrlSummaryNote}</p>
                 {decided.length > 0 ? (
                   <ul className="mt-3 space-y-2">
                     {decided.slice(0, 10).map((p) => (
                       <li key={p.id} className="rounded-lg bg-slate-50 p-3 text-sm">
                         <div>
                           <span className="font-medium">{p.title}</span>{" "}
-                          <span className={`rounded px-1.5 py-0.5 text-xs ${p.status === "executed" ? "bg-green-100 text-green-700" : p.status === "failed" ? "bg-red-100 text-red-700" : isProposalOnly(p) ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>{isProposalOnly(p) ? "অনুমোদিত (শুধু প্রস্তাব)" : proposalStatusLabel(p.status)}</span>{" "}
-                          <span className="text-slate-400">{formatDateTime(p.executedAt ?? p.decidedAt ?? p.updatedAt)}</span>
+                          <span className={`rounded px-1.5 py-0.5 text-xs ${p.status === "executed" ? "bg-green-100 text-green-700" : p.status === "failed" ? "bg-red-100 text-red-700" : isProposalOnly(p) ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>{isProposalOnly(p) ? D.ctrlApprovedProposalOnly : proposalStatusLabel(p.status, locale)}</span>{" "}
+                          <span className="text-slate-400">{formatDateTime(p.executedAt ?? p.decidedAt ?? p.updatedAt, locale)}</span>
                         </div>
-                        <div className="mt-1 text-slate-600">{proposalOutcomeText(p)}</div>
+                        <div className="mt-1 text-slate-600">{proposalOutcomeText(p, locale)}</div>
                       </li>
                     ))}
                   </ul>
@@ -278,30 +284,30 @@ export function AiControlCenterSection() {
 
           {/* ---- AI ব্যবহার (SA-B25 T4) ---- */}
           <div className="border-t border-slate-100 pt-6">
-            <div className="font-semibold">AI ব্যবহার</div>
+            <div className="font-semibold">{D.ctrlUsageTitle}</div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <button className={BTN} disabled={usageDays === 7} onClick={() => loadUsage(7)}>গত ৭ দিন</button>
-              <button className={BTN} disabled={usageDays === 30} onClick={() => loadUsage(30)}>গত ৩০ দিন</button>
+              <button className={BTN} disabled={usageDays === 7} onClick={() => loadUsage(7)}>{D.ctrlLast7Days}</button>
+              <button className={BTN} disabled={usageDays === 30} onClick={() => loadUsage(30)}>{D.ctrlLast30Days}</button>
             </div>
             {usageError ? <p className="mt-2 text-sm text-red-600">{usageError}</p> : null}
             {usage?.totals ? (
               usage.totals.calls === 0 ? (
-                <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো AI কল হয়নি।</p>
+                <p className="mt-2 text-sm text-slate-500">{D.ctrlNoCalls}</p>
               ) : (
                 <>
                   <p className="mt-2 text-sm text-slate-600">
-                    মোট AI কল: {usage.totals.calls.toLocaleString("bn-BD")}
+                    {t("settings.ctrlTotalCalls", { calls: fmtNumber(locale, usage.totals.calls) })}
                     {usage.totals.estimatedCalls > 0 ? (
-                      <> — এর মধ্যে {usage.totals.estimatedCalls.toLocaleString("bn-BD")}টি আনুমানিক হিসাবে (ডেভ অ্যাডাপ্টার)</>
+                      <> — {t("settings.ctrlEstimatedSuffix", { count: fmtNumber(locale, usage.totals.estimatedCalls) })}</>
                     ) : null}
                   </p>
                   {(usage.features ?? []).length > 0 ? (
                     <ul className="mt-3 space-y-2">
                       {usage.features.map((f) => (
                         <li key={f.feature} className="rounded-lg bg-slate-50 p-3 text-sm">
-                          <span className="font-medium">{usageFeatureLabel(f.feature)}</span>{" "}
-                          <span className="text-slate-600">{f.calls.toLocaleString("bn-BD")}টি কল</span>{" "}
-                          <span className="text-slate-400">ইনপুট টোকেন: {f.inputTokens.toLocaleString("bn-BD")} · আউটপুট টোকেন: {f.outputTokens.toLocaleString("bn-BD")}</span>
+                          <span className="font-medium">{usageFeatureLabel(f.feature, locale)}</span>{" "}
+                          <span className="text-slate-600">{t("settings.ctrlCallsSuffix", { count: fmtNumber(locale, f.calls) })}</span>{" "}
+                          <span className="text-slate-400">{t("settings.ctrlTokensLine", { input: fmtNumber(locale, f.inputTokens), output: fmtNumber(locale, f.outputTokens) })}</span>
                         </li>
                       ))}
                     </ul>
@@ -313,51 +319,51 @@ export function AiControlCenterSection() {
 
           {/* ---- AI কার্যকলাপ (SA-B25 T4) ---- */}
           <div className="border-t border-slate-100 pt-6">
-            <div className="font-semibold">AI কার্যকলাপ</div>
+            <div className="font-semibold">{D.ctrlFeedTitle}</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {([null, "proposal", "learned", "answer", "content"] as (string | null)[]).map((k) => (
                 <button key={k ?? "all"} className={BTN} disabled={feedBusy || feedKind === k} onClick={() => loadFeed(k, feedDays)}>
-                  {k === null ? "সব" : activityKindLabel(k)}
+                  {k === null ? dict.common.all : activityKindLabel(k, locale)}
                 </button>
               ))}
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {[7, 30, 90].map((d) => (
                 <button key={d} className={BTN} disabled={feedBusy || feedDays === d} onClick={() => loadFeed(feedKind, d)}>
-                  শেষ {d.toLocaleString("bn-BD")} দিন
+                  {t("settings.ctrlLastDaysBtn", { days: fmtNumber(locale, d) })}
                 </button>
               ))}
             </div>
             {feedError ? <p className="mt-2 text-sm text-red-600">{feedError}</p> : null}
             {feed ? (
               <>
-                <p className="mt-2 text-[13px] text-slate-400">মোট {feed.total.toLocaleString("bn-BD")}টি ঘটনা (গত {feed.days.toLocaleString("bn-BD")} দিনে)</p>
+                <p className="mt-2 text-[13px] text-slate-400">{t("settings.ctrlFeedTotal", { total: fmtNumber(locale, feed.total), days: fmtNumber(locale, feed.days) })}</p>
                 {(feed.items ?? []).length === 0 ? (
-                  <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো কার্যকলাপ নেই।</p>
+                  <p className="mt-2 text-sm text-slate-500">{D.ctrlFeedEmpty}</p>
                 ) : (
                   <ul className="mt-3 space-y-2">
                     {feed.items.map((ev: ActivityEvent) => (
                       <li key={ev.id} className="rounded-lg bg-slate-50 p-3 text-sm">
                         <div>
-                          <span className="font-medium">{activityEventText(ev)}</span>{" "}
-                          <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{activityKindLabel(ev.kind)}</span>{" "}
-                          {activitySourceLabel(ev) ? (
-                            <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{activitySourceLabel(ev)}</span>
+                          <span className="font-medium">{activityEventText(ev, locale)}</span>{" "}
+                          <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{activityKindLabel(ev.kind, locale)}</span>{" "}
+                          {activitySourceLabel(ev, locale) ? (
+                            <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{activitySourceLabel(ev, locale)}</span>
                           ) : null}{" "}
-                          <span className="text-slate-400">{formatDateTime(ev.at)}</span>
+                          <span className="text-slate-400">{formatDateTime(ev.at, locale)}</span>
                           {isAdminConsoleDecision(ev) ? (
-                            <> <span className="rounded bg-purple-100 px-1.5 py-0.5 text-xs text-purple-700">{ADMIN_CONSOLE_DECISION_LABEL}</span></>
+                            <> <span className="rounded bg-purple-100 px-1.5 py-0.5 text-xs text-purple-700">{locale === "en" ? ADMIN_CONSOLE_DECISION_LABEL_EN : ADMIN_CONSOLE_DECISION_LABEL}</span></>
                           ) : null}
                         </div>
                         {ev.title ? <div className="mt-1 text-slate-600">{ev.title}</div> : null}
-                        {ev.detail ? <div className="mt-1 text-red-600">কারণ: {ev.detail}</div> : null}
+                        {ev.detail ? <div className="mt-1 text-red-600">{D.ctrlReasonPrefix} {ev.detail}</div> : null}
                       </li>
                     ))}
                   </ul>
                 )}
                 {feed.items.length < feed.total ? (
                   <div className="mt-3">
-                    <button className={BTN} disabled={feedBusy} onClick={() => loadMoreFeed()}>আরও দেখুন</button>
+                    <button className={BTN} disabled={feedBusy} onClick={() => loadMoreFeed()}>{D.ctrlSeeMore}</button>
                   </div>
                 ) : null}
               </>
@@ -366,21 +372,21 @@ export function AiControlCenterSection() {
 
           {/* ---- স্বায়ত্তশাসনের মাত্রা ---- */}
           <div className="border-t border-slate-100 pt-6">
-            <div className="font-semibold">কোন কাজে AI কতটা নিজে করতে পারবে</div>
-            <p className="mt-1 text-[13px] text-slate-500">প্রতিটি কাজের জন্য মাত্রা আলাদা করে ঠিক করা যায়। <b>বন্ধ</b> মানে ওই কাজের প্রস্তাবই আসবে না; <b>প্রস্তাব</b> মানে অনুমোদন ছাড়া কিছু হবে না (ডিফল্ট); <b>সীমিত নিজে</b> মানে শুধু কম ঝুঁকির কাজ অনুমোদন ছাড়া কার্যকর হবে — তাও ফলাফল যাচাই করেই। স্তর ৩ (তত্ত্বাবধানে নিজে) এই সংস্করণে চালু করা যায় না — এর জন্য মালিকের আলাদা সিদ্ধান্ত দরকার।</p>
+            <div className="font-semibold">{D.ctrlAutonomyTitle}</div>
+            <p className="mt-1 text-[13px] text-slate-500">{D.ctrlAutonomyNoteParts} <b>{D.ctrlAutonomyOffBold}</b> {D.ctrlAutonomyOffText} <b>{D.ctrlAutonomyProposalBold}</b> {D.ctrlAutonomyProposalText} <b>{D.ctrlAutonomyLimitedBold}</b> {D.ctrlAutonomyLimitedText}</p>
             {autonomy.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-500">কাজের তালিকা লোড করা যায়নি।</p>
+              <p className="mt-2 text-sm text-slate-500">{D.ctrlActionsLoadFailed}</p>
             ) : (
               <ul className="mt-3 space-y-2">
                 {autonomy.map((row) => (
                   <li key={row.actionId} className="rounded-lg bg-slate-50 p-3 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="min-w-0">
-                        <span className="font-medium">{row.title.bn}</span>{" "}
-                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{surfaceLabel(row.surface)}</span>{" "}
-                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{riskLabel(row.riskClass)}</span>
+                        <span className="font-medium">{locale === "en" ? (row.title.en ?? row.title.bn) : row.title.bn}</span>{" "}
+                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{surfaceLabel(row.surface, locale)}</span>{" "}
+                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{riskLabel(row.riskClass, locale)}</span>
                         {row.moneyAdjacent ? (
-                          <> <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">শুধু প্রস্তাব — AI নিজে করবে না</span></>
+                          <> <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">{D.ctrlMoneyOnlyBadge}</span></>
                         ) : null}
                       </span>
                       {canSetAutonomy ? (
@@ -389,30 +395,30 @@ export function AiControlCenterSection() {
                           value={row.level}
                           disabled={busy === `autonomy-${row.actionId}`}
                           onChange={(e) => changeAutonomy(row, Number(e.target.value))}
-                          aria-label={`${row.title.bn}-এর মাত্রা`}
+                          aria-label={t("settings.ctrlLevelAria", { title: locale === "en" ? (row.title.en ?? row.title.bn) : row.title.bn })}
                         >
-                          <option value={0}>বন্ধ</option>
-                          <option value={1}>প্রস্তাব — মানুষ অনুমোদন দেবে</option>
-                          <option value={2}>সীমিত নিজে — শুধু কম ঝুঁকির কাজ</option>
-                          <option value={3} disabled>স্তর ৩ — তত্ত্বাবধানে নিজে (চালু করা যায় না)</option>
+                          <option value={0}>{D.ctrlLevel0}</option>
+                          <option value={1}>{D.ctrlLevel1}</option>
+                          <option value={2}>{D.ctrlLevel2}</option>
+                          <option value={3} disabled>{D.ctrlLevel3}</option>
                         </select>
                       ) : (
-                        <span className="rounded bg-slate-200 px-2 py-1 text-xs text-slate-600">{autonomyLevelLabel(row.level)}{row.levelIsDefault ? " (ডিফল্ট)" : ""}</span>
+                        <span className="rounded bg-slate-200 px-2 py-1 text-xs text-slate-600">{autonomyLevelLabel(row.level, locale)}{row.levelIsDefault ? ` ${D.ctrlDefaultSuffix}` : ""}</span>
                       )}
                     </div>
                     {row.moneyAdjacent ? (
-                      <p className="mt-1 text-[13px] text-slate-500">টাকা-সংক্রান্ত কাজ: যেকোনো মাত্রাতেই AI এটি নিজে কার্যকর করে না। অনুমোদন মানে শুধু সিদ্ধান্তটি রেকর্ড হওয়া — কাজটি টিমকে প্রচলিত পথে নিজে করতে হয়।</p>
+                      <p className="mt-1 text-[13px] text-slate-500">{D.ctrlMoneyNote}</p>
                     ) : row.level === 2 && row.riskClass === "low" ? (
-                      <p className="mt-1 text-[13px] text-slate-500">এই মাত্রায় এই কাজের প্রস্তাব অনুমোদন ছাড়াই কার্যকর হবে — তবে প্রতিবারই ফলাফল যাচাই করে রেকর্ড করা হবে।</p>
+                      <p className="mt-1 text-[13px] text-slate-500">{D.ctrlLevel2LowNote}</p>
                     ) : row.level === 2 ? (
-                      <p className="mt-1 text-[13px] text-slate-500">এই মাত্রায় শুধু কম ঝুঁকির কাজ নিজে থেকে কার্যকর হয় — এই কাজটি মাঝারি/বেশি ঝুঁকির, তাই এর প্রস্তাব অনুমোদনের জন্যই আসবে।</p>
+                      <p className="mt-1 text-[13px] text-slate-500">{D.ctrlLevel2HighNote}</p>
                     ) : null}
                   </li>
                 ))}
               </ul>
             )}
             {!canSetAutonomy ? (
-              <p className="mt-2 text-[13px] text-slate-400">মাত্রা বদলানোর অধিকার শুধু মালিক/অ্যাডমিনের।</p>
+              <p className="mt-2 text-[13px] text-slate-400">{D.ctrlAutonomyRightNote}</p>
             ) : null}
           </div>
         </div>

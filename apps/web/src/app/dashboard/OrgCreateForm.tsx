@@ -3,6 +3,7 @@ import React from "react";
 import { createOrganizationSchema } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { slugifyShopName, localSlugProblem, SHOP_ADDRESS_SUFFIX } from "@/lib/shop-slug";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * OU1 item 2: the "নতুন Organization তৈরি" form inside the
@@ -19,6 +20,7 @@ import { slugifyShopName, localSlugProblem, SHOP_ADDRESS_SUFFIX } from "@/lib/sh
  * On success the parent switches into the new org.
  */
 export default function OrgCreateForm({ onBack, onCreated }: { onBack: () => void; onCreated: (orgId: string) => void }) {
+  const { dict } = useLocale();
   const [name, setName] = React.useState("");
   const [slug, setSlug] = React.useState("");
   const [slugTouched, setSlugTouched] = React.useState(false);
@@ -34,8 +36,8 @@ export default function OrgCreateForm({ onBack, onCreated }: { onBack: () => voi
     if (problem) {
       setSlugState("bad");
       setSlugMsg(problem === "reserved"
-        ? "এই নামটি সংরক্ষিত — প্ল্যাটফর্মের নিজের বা বিভ্রান্তিকর নাম হওয়ায় ব্যবহার করা যাবে না।"
-        : "নামের আকার ঠিক নেই — ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও একক হাইফেন, ৩–৬০ অক্ষর।");
+        ? dict.shell.slugReservedMsg
+        : dict.shell.slugFormatMsg);
       return;
     }
     setSlugState("checking"); setSlugMsg("");
@@ -49,21 +51,21 @@ export default function OrgCreateForm({ onBack, onCreated }: { onBack: () => voi
       } catch {
         if (slugSeq.current !== seq) return;
         setSlugState("unknown");
-        setSlugMsg("এই মুহূর্তে নামটি যাচাই করা যাচ্ছে না — তৈরি করার সময় সার্ভার আবার যাচাই করবে।");
+        setSlugMsg(dict.shell.slugCheckUnknownMsg);
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [slug]);
+  }, [slug, dict]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     const parsed = createOrganizationSchema.safeParse({ name: name.trim(), slug });
     if (!parsed.success) {
-      setError(name.trim().length < 2 ? "ব্যবসার নাম কমপক্ষে ২ অক্ষরের হতে হবে।" : "দোকানের ঠিকানার নামটি ঠিক করুন (ছোট হাতের অক্ষর, সংখ্যা ও একক হাইফেন, ৩–৬০ অক্ষর)।");
+      setError(name.trim().length < 2 ? dict.shell.nameTooShortError : dict.shell.slugFixError);
       return;
     }
-    if (slugState === "bad") { setError(slugMsg || "এই দোকানের ঠিকানাটি ব্যবহার করা যাবে না।"); return; }
+    if (slugState === "bad") { setError(slugMsg || dict.shell.slugUnusableError); return; }
     setCreating(true);
     try {
       const org = await apiFetch<{ id: string }>("/organizations", {
@@ -72,15 +74,15 @@ export default function OrgCreateForm({ onBack, onCreated }: { onBack: () => voi
       });
       onCreated(org.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Organization তৈরি করা যায়নি। আবার চেষ্টা করুন।");
+      setError(err instanceof Error ? err.message : dict.shell.createOrgErrorFallback);
       setCreating(false);
     }
   };
 
   return (
     <form onSubmit={submit} className="p-1.5">
-      <div className="pb-2 text-[13px] font-bold text-slate-800">নতুন Organization তৈরি</div>
-      <label className="block text-xs font-medium text-slate-600">ব্যবসার নাম
+      <div className="pb-2 text-[13px] font-bold text-slate-800">{dict.shell.createOrgTitle}</div>
+      <label className="block text-xs font-medium text-slate-600">{dict.shell.businessNameLabel}
         <input
           className="input mt-1"
           value={name}
@@ -88,32 +90,32 @@ export default function OrgCreateForm({ onBack, onCreated }: { onBack: () => voi
             setName(e.target.value);
             if (!slugTouched) setSlug(slugifyShopName(e.target.value));
           }}
-          placeholder="যেমন: Dhaka Fashion House"
+          placeholder={dict.shell.businessNamePlaceholder}
           required
           autoFocus
         />
       </label>
-      <label className="mt-3 block text-xs font-medium text-slate-600">দোকানের ঠিকানা
+      <label className="mt-3 block text-xs font-medium text-slate-600">{dict.shell.shopAddressLabel}
         <span className="mt-1 flex items-stretch overflow-hidden rounded-lg border border-slate-300 bg-white focus-within:border-indigo-500">
           <input
             className="min-w-0 flex-1 px-2.5 py-2 text-[13px] outline-none"
             value={slug}
             onChange={(e) => { setSlugTouched(true); setSlug(e.target.value.toLowerCase()); }}
             placeholder="dhaka-fashion-house"
-            aria-label="দোকানের ঠিকানার নাম"
+            aria-label={dict.shell.shopAddressAria}
           />
           <span className="flex items-center bg-slate-50 px-2 text-[11px] text-slate-500">{SHOP_ADDRESS_SUFFIX}</span>
         </span>
       </label>
-      {slugState === "checking" ? <p className="mt-1 text-[11px] text-slate-500">নামটি খালি আছে কিনা যাচাই হচ্ছে…</p> : null}
+      {slugState === "checking" ? <p className="mt-1 text-[11px] text-slate-500">{dict.shell.slugChecking}</p> : null}
       {slugState === "ok" ? <p className="mt-1 text-[11px] text-emerald-600">✓ {slugMsg}</p> : null}
       {slugState === "bad" ? <p className="mt-1 text-[11px] text-red-600">{slugMsg}</p> : null}
       {slugState === "unknown" ? <p className="mt-1 text-[11px] text-amber-600">{slugMsg}</p> : null}
-      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">এই ঠিকানা পরে বদলানো যাবে না। তৈরি করলেই আপনি নতুন Organization-এর মালিক (Owner) হবেন এবং সরাসরি সেটিতে চলে যাবেন।</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{dict.shell.slugNote}</p>
       {error ? <p className="mt-2 rounded-lg bg-red-50 px-2.5 py-2 text-[12px] text-red-700">{error}</p> : null}
       <div className="mt-3 flex gap-2">
-        <button type="button" className="btn-secondary flex-1" onClick={onBack} disabled={creating}>ফিরে যান</button>
-        <button type="submit" className="btn-primary flex-1" disabled={creating || slugState === "bad"}>{creating ? "তৈরি হচ্ছে…" : "তৈরি করুন"}</button>
+        <button type="button" className="btn-secondary flex-1" onClick={onBack} disabled={creating}>{dict.shell.backButton}</button>
+        <button type="submit" className="btn-primary flex-1" disabled={creating || slugState === "bad"}>{creating ? dict.shell.creatingOrg : dict.shell.createOrgSubmit}</button>
       </div>
     </form>
   );

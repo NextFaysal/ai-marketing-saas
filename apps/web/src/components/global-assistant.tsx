@@ -15,7 +15,9 @@ import { MentionPicker } from "@/components/mention-picker";
 import { ATTACHMENT_ACCEPT, uploadChatAttachment, type ChatAttachment } from "@/lib/attachments";
 import { useVoiceInput } from "@/lib/voice-input";
 import { useSpeechOutput } from "@/lib/voice-output";
-import { PERSONAS_UI } from "@/lib/personas";
+import { personasForLocale } from "@/lib/personas";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtDate, fmtNumber } from "@repo/contracts";
 import { AiMessageAttachment } from "@/components/ai-rich";
 
 interface Conversation { id: string; title?: string | null; updatedAt: string; pinnedAt?: string | null; tags?: string[]; persona?: string }
@@ -40,6 +42,8 @@ type NotificationItem = BriefingLike & { conversationId?: string | null }
  * links to the approval panel on the AI page.
  */
 export function GlobalAssistant() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.shell;
   const pathname = usePathname() ?? "/dashboard";
   const [open, setOpen] = useState(false);
   const [booted, setBooted] = useState(false);
@@ -99,14 +103,14 @@ export function GlobalAssistant() {
   const streamTextRef = useRef("");
 
   const onAiPage = pathname === "/dashboard/ai" || pathname.startsWith("/dashboard/ai/");
-  const pageLabel = pageLabelFor(pathname);
+  const pageLabel = pageLabelFor(pathname, locale);
   const pageContext = pageContextFor(pathname);
-  const starters = suggestionsFor(pathname);
+  const starters = suggestionsFor(pathname, locale);
 
   const loadMessages = useCallback(async (convId: string) => {
     const id = getOrganizationId(); if (!id || !convId) return;
     try { setMessages(await apiFetch<Message[]>(`/organizations/${id}/ai/chat/conversations/${convId}/messages`)); }
-    catch (e) { setError(e instanceof Error ? e.message : "মেসেজ লোড করা যায়নি"); }
+    catch (e) { setError(e instanceof Error ? e.message : D.gaMsgLoadFailed); }
   }, []);
 
   const loadConversations = useCallback(async (q?: string): Promise<Conversation[]> => {
@@ -157,7 +161,7 @@ export function GlobalAssistant() {
   async function approveAllPending() {
     const ids = pendingProposals.map((x) => x.id);
     if (ids.length < 2 || propBusy) return;
-    if (!window.confirm(`${ids.length}টি অপেক্ষমাণ প্রস্তাবের সবগুলো অনুমোদন দেবেন? প্রতিটির ফলাফল আলাদাভাবে জানানো হবে।`)) return;
+    if (!window.confirm(t("shell.gaConfirmBulk", { count: fmtNumber(locale, ids.length) }))) return;
     const orgId = getOrganizationId();
     if (!orgId) return;
     setPropBusy("bulk");
@@ -166,10 +170,10 @@ export function GlobalAssistant() {
         `/organizations/${orgId}/ai/proposals/bulk-approve`, { method: "POST", body: JSON.stringify({ ids }) });
       const failures = out.results.filter((r) => r.status !== "executed");
       setPropNotice(failures.length === 0
-        ? `সবগুলো প্রস্তাব কার্যকর হয়েছে (${out.executed}টি)।`
-        : `${out.executed}টি কার্যকর হয়েছে; ${failures.length}টি হয়নি: ${failures.map((f) => f.error ?? f.status).join(" · ")}`);
+        ? t("shell.gaBulkAllDone", { count: fmtNumber(locale, out.executed) })
+        : t("shell.gaBulkPartial", { done: fmtNumber(locale, out.executed), failed: fmtNumber(locale, failures.length), errors: failures.map((f) => f.error ?? f.status).join(" · ") }));
       await loadPending();
-    } catch (e) { setPropNotice(e instanceof Error ? e.message : "Bulk অনুমোদন ব্যর্থ হয়েছে"); }
+    } catch (e) { setPropNotice(e instanceof Error ? e.message : D.gaBulkFailed); }
     setPropBusy("");
   }
 
@@ -197,22 +201,22 @@ export function GlobalAssistant() {
 
   async function decideProposal(pr: Proposal, action: "approve" | "reject") {
     const id = getOrganizationId(); if (!id || propBusy) return;
-    if (action === "approve" && !window.confirm(`${pr.preview}\n\nআপনি কি সত্যিই অনুমোদন দিচ্ছেন?`)) return;
+    if (action === "approve" && !window.confirm(t("shell.gaConfirmApprove", { preview: pr.preview }))) return;
     setPropBusy(pr.id);
     setPropNotice("");
     try {
       const updated = await apiFetch<Proposal>(`/organizations/${id}/ai/proposals/${pr.id}/${action}`, { method: "POST", body: JSON.stringify({}) });
       if (action === "approve" && updated.status === "failed") {
-        setPropNotice(`প্রস্তাবটি ব্যর্থ হিসেবে রেকর্ড হয়েছে: ${updated.error ?? "platform error"}`);
+        setPropNotice(t("shell.gaProposalFailedRecord", { error: updated.error ?? "platform error" }));
       } else if (action === "approve") {
-        setPropNotice("প্রস্তাব অনুমোদিত ও কার্যকর হয়েছে।");
+        setPropNotice(D.gaProposalApproved);
       } else {
-        setPropNotice("প্রস্তাব প্রত্যাখ্যান করা হয়েছে।");
+        setPropNotice(D.gaProposalRejected);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed";
       setPropNotice(msg.toLowerCase().includes("forbidden")
-        ? "আপনার রোলে প্রস্তাব অনুমোদন/প্রত্যাখ্যানের অধিকার নেই — একজন OWNER/ADMIN/MARKETING_MANAGER-কে দিয়ে করান।"
+        ? D.gaForbiddenRole
         : msg);
     } finally {
       setPropBusy("");
@@ -229,11 +233,11 @@ export function GlobalAssistant() {
   async function onAttachFile(file: File | undefined) {
     if (!file) return;
     const orgId = getOrganizationId();
-    if (!orgId) { setError("Organization পাওয়া যায়নি"); return; }
+    if (!orgId) { setError(D.gaOrgNotFound); return; }
     setAttaching(true);
     try {
       setPendingAttachment(await uploadChatAttachment(orgId, file));
-    } catch (e) { setError(e instanceof Error ? e.message : "আপলোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.gaUploadFailed); }
     setAttaching(false);
   }
 
@@ -248,25 +252,25 @@ export function GlobalAssistant() {
     const body = input.trim();
     if (!body || body.startsWith("/")) return;
     const fallback = body.split("\n")[0].slice(0, 60);
-    const title = window.prompt("এই prompt-এর নাম দিন:", fallback);
+    const title = window.prompt(D.gaPromptNameQ, fallback);
     if (title === null) return;
-    if (!title.trim()) { setError("Prompt-এর নাম খালি রাখা যাবে না"); return; }
+    if (!title.trim()) { setError(D.gaPromptNameEmpty); return; }
     try {
       await promptsLib.create(title.trim(), body);
-      setPromptNote("✓ Prompt save হয়েছে — এবার “/” লিখলেই পাবেন");
-    } catch (e) { setError(e instanceof Error ? e.message : "Prompt save করা যায়নি"); }
+      setPromptNote(D.gaPromptSaved);
+    } catch (e) { setError(e instanceof Error ? e.message : D.gaPromptSaveFailed); }
   }
 
   function renameSavedPrompt(sp: SavedPrompt) {
-    const title = window.prompt("Prompt-এর নতুন নাম:", sp.title);
+    const title = window.prompt(D.gaPromptRenameQ, sp.title);
     if (title === null) return;
-    if (!title.trim()) { setError("Prompt-এর নাম খালি রাখা যাবে না"); return; }
-    promptsLib.rename(sp.id, title.trim()).catch((e) => setError(e instanceof Error ? e.message : "নাম বদলানো যায়নি"));
+    if (!title.trim()) { setError(D.gaPromptNameEmpty); return; }
+    promptsLib.rename(sp.id, title.trim()).catch((e) => setError(e instanceof Error ? e.message : D.gaRenameFailed));
   }
 
   function deleteSavedPrompt(sp: SavedPrompt) {
-    if (!window.confirm(`“${sp.title}” prompt-টি মুছে ফেলবেন?`)) return;
-    promptsLib.remove(sp.id).catch((e) => setError(e instanceof Error ? e.message : "মুছে ফেলা যায়নি"));
+    if (!window.confirm(t("shell.gaPromptDeleteConfirm", { title: sp.title }))) return;
+    promptsLib.remove(sp.id).catch((e) => setError(e instanceof Error ? e.message : D.gaDeleteFailed));
   }
 
   function expandBriefing() {
@@ -313,7 +317,7 @@ export function GlobalAssistant() {
     try {
       await apiFetch(`/organizations/${id}/ai/chat/conversations/${c.id}`, { method: "PATCH", body: JSON.stringify({ pinned: !c.pinnedAt }) });
       void loadConversations(histSearch);
-    } catch (e) { setError(e instanceof Error ? e.message : "পিন করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.gaPinFailed); }
   }
 
   // G6: watch dashboard text selections while the panel is closed;
@@ -344,7 +348,7 @@ export function GlobalAssistant() {
 
   function askAboutSelection() {
     if (!selBubble) return;
-    setInput(`নির্বাচিত লেখা: “${selBubble.text}”\nআমার প্রশ্ন: `);
+    setInput(t("shell.gaSelectionTemplate", { text: selBubble.text }));
     setSelBubble(null);
     window.getSelection()?.removeAllRanges();
     setOpen(true);
@@ -389,7 +393,7 @@ export function GlobalAssistant() {
     try {
       if (!convId) { convId = (await newConversation()) ?? ""; if (!convId) { setSending(false); return; } }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পাঠানো যায়নি");
+      setError(e instanceof Error ? e.message : D.gaSendFailed);
       setSending(false);
       return;
     }
@@ -413,7 +417,7 @@ export function GlobalAssistant() {
         setStreaming(null);
         setFollowUps(done.suggestions ?? []);
         if (done.proposal) {
-          setNotice(`একটি প্রস্তাব তৈরি হয়েছে: ${done.proposal.title ?? ""} — অনুমোদন ছাড়া কিছুই হয়নি। নিচের প্রস্তাব কার্ডে সিদ্ধান্ত দিন।`);
+          setNotice(t("shell.gaProposalCreated", { title: done.proposal.title ?? "" }));
           void loadPending();
         }
         setSending(false);
@@ -441,19 +445,19 @@ export function GlobalAssistant() {
         <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">🔍</span>
         <input
           className="input pl-9"
-          placeholder="কথোপকথন খুঁজুন (নাম বা মেসেজ)..."
+          placeholder={D.gaSearchPh}
           value={histSearch}
           onChange={(e) => setHistSearch(e.target.value)}
           autoFocus
         />
       </div>
       {conversations.length === 0 ? (
-        <p className="px-1 py-4 text-center text-sm text-slate-400">{histSearch.trim() ? "কিছু পাওয়া যায়নি" : "এখনো কোনো কথোপকথন নেই।"}</p>
+        <p className="px-1 py-4 text-center text-sm text-slate-400">{histSearch.trim() ? D.gaNothingFound : D.gaNoConversations}</p>
       ) : conversations.map((c) => (
         <div key={c.id} className={`ai3-conv ${c.id === activeId ? "ai3-conv-active" : ""}`}>
           <button type="button" className="w-full text-left" onClick={() => switchConversation(c)}>
-            <span className={`block truncate text-sm ${c.id === activeId ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>{c.pinnedAt ? "📌 " : ""}{c.title ?? "নতুন কথোপকথন"}</span>
-            <span className="mt-0.5 block text-[11px] text-slate-400">{new Date(c.updatedAt).toLocaleDateString()}</span>
+            <span className={`block truncate text-sm ${c.id === activeId ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>{c.pinnedAt ? "📌 " : ""}{c.title ?? D.gaNewConversation}</span>
+            <span className="mt-0.5 block text-[11px] text-slate-400">{fmtDate(locale, c.updatedAt)}</span>
           </button>
           {c.tags && c.tags.length > 0 ? (
             <span className="mt-1.5 flex flex-wrap gap-1">
@@ -461,12 +465,12 @@ export function GlobalAssistant() {
             </span>
           ) : null}
           <span className="mt-1.5 flex gap-1">
-            <button type="button" className="ai3-act-btn" onClick={() => void togglePin(c)}>{c.pinnedAt ? "আনপিন" : "পিন করুন"}</button>
+            <button type="button" className="ai3-act-btn" onClick={() => void togglePin(c)}>{c.pinnedAt ? D.gaUnpin : D.gaPin}</button>
           </span>
         </div>
       ))}
       <p className="px-1 pt-1 text-[11px] leading-5 text-slate-400">
-        নাম বদল, এক্সপোর্ট ও মুছে ফেলা <Link href="/dashboard/ai" className="font-semibold underline" onClick={() => setOpen(false)}>পূর্ণ AI পেজে</Link> করা যায়।
+        {D.gaHistoryNoteA}<Link href="/dashboard/ai" className="font-semibold underline" onClick={() => setOpen(false)}>{D.gaFullAiPage}</Link>{D.gaHistoryNoteB}
       </p>
     </div>
   );
@@ -481,20 +485,20 @@ export function GlobalAssistant() {
           className="ga-ask-bubble"
           style={{ left: selBubble.x, top: selBubble.y }}
           onClick={askAboutSelection}
-        >✦ AI-কে জিজ্ঞেস করুন</button>
+        >{D.gaAskAi}</button>
       ) : null}
       {!open ? (
         <button
           type="button"
           className="ga-fab"
           onClick={() => setOpen(true)}
-          aria-label="AI Assistant খুলুন (Ctrl+J)"
+          aria-label={D.gaFabAria}
           title="AI Assistant — Ctrl/⌘+J"
         >
           <span className="text-xl leading-none" aria-hidden="true">✦</span>
-          <span className="hidden text-sm font-bold sm:inline">AI সাহায্য</span>
+          <span className="hidden text-sm font-bold sm:inline">{D.gaFabLabel}</span>
           {pendingBadgeLabel(pendingCount) ? (
-            <span className="ga-fab-badge" title="অপেক্ষমাণ প্রস্তাব">{pendingBadgeLabel(pendingCount)}</span>
+            <span className="ga-fab-badge" title={D.gaPendingTitle}>{pendingBadgeLabel(pendingCount)}</span>
           ) : null}
         </button>
       ) : null}
@@ -513,24 +517,24 @@ export function GlobalAssistant() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[15px] font-bold leading-tight">{assistantName || "AI Assistant"}</p>
                 <p className="truncate text-[11.5px] text-white/80">
-                  📍 এখন: {pageLabel}
+                  {t("shell.gaNowLabel", { label: pageLabel })}
                   {provider === "dev-template" ? " · ⚠ Dev Template Mode" : provider ? ` · LLM: ${provider}` : ""}
                 </p>
                 <select className="ga-persona-select" value={personaSel} onChange={(e) => void changePersona(e.target.value)} aria-label="Persona">
-                  {PERSONAS_UI.map((p) => <option key={p.id} value={p.id}>{p.icon} {p.labelBn}</option>)}
+                  {personasForLocale(locale).map((p) => <option key={p.id} value={p.id}>{p.icon} {p.label}</option>)}
                 </select>
               </div>
               {view === "history" ? (
-                <button type="button" className="ga-head-btn" onClick={() => setView("chat")} title="চ্যাটে ফিরুন">← চ্যাট</button>
+                <button type="button" className="ga-head-btn" onClick={() => setView("chat")} title={D.gaBackToChatTitle}>{D.gaBackToChat}</button>
               ) : (
                 <>
-                  <button type="button" className="ga-head-btn" onClick={() => { setView("history"); void loadConversations(histSearch); }} title="কথোপকথনের ইতিহাস">🕘 ইতিহাস</button>
-                  <button type="button" className="ga-head-btn" onClick={() => void newConversation().catch(() => undefined)} title="নতুন কথোপকথন">+ নতুন</button>
+                  <button type="button" className="ga-head-btn" onClick={() => { setView("history"); void loadConversations(histSearch); }} title={D.gaHistoryTitle}>{D.gaHistoryBtn}</button>
+                  <button type="button" className="ga-head-btn" onClick={() => void newConversation().catch(() => undefined)} title={D.gaNewConversation}>{D.gaNewBtn}</button>
                 </>
               )}
-              <Link href="/dashboard/support" className="ga-head-btn" title="সাপোর্ট টিকিট ও হেল্পডেস্ক" onClick={() => setOpen(false)}>🎫 সাপোর্ট</Link>
-              <Link href="/dashboard/ai" className="ga-head-btn" title="পূর্ণ AI পেজ খুলুন" onClick={() => setOpen(false)}>পূর্ণ পেজ ↗</Link>
-              <button type="button" className="ga-head-btn" onClick={() => setOpen(false)} aria-label="বন্ধ করুন">✕</button>
+              <Link href="/dashboard/support" className="ga-head-btn" title={D.gaSupportTitle} onClick={() => setOpen(false)}>{D.gaSupportLink}</Link>
+              <Link href="/dashboard/ai" className="ga-head-btn" title={D.gaFullPageTitle} onClick={() => setOpen(false)}>{D.gaFullPageLink}</Link>
+              <button type="button" className="ga-head-btn" onClick={() => setOpen(false)} aria-label={dict.common.close}>✕</button>
             </div>
 
             {/* Messages / History (GV1) */}
@@ -541,7 +545,7 @@ export function GlobalAssistant() {
                   <div className="flex items-center gap-2">
                     <span aria-hidden="true">🌅</span>
                     <p className="min-w-0 flex-1 truncate text-sm font-bold text-slate-900">{briefing.title}</p>
-                    {!briefing.readAt ? <span className="badge badge-brand">নতুন</span> : null}
+                    {!briefing.readAt ? <span className="badge badge-brand">{D.gaNewBadge}</span> : null}
                   </div>
                   {briefing.body ? (
                     briefingExpanded ? (
@@ -549,7 +553,7 @@ export function GlobalAssistant() {
                     ) : (
                       <>
                         <p className="mt-1 text-sm leading-6 text-slate-600">{briefing.body.slice(0, 220)}{briefing.body.length > 220 ? "…" : ""}</p>
-                        <button type="button" className="mt-1 text-[13px] font-bold text-brand-600 hover:underline" onClick={() => expandBriefing()}>পুরোটা পড়ুন →</button>
+                        <button type="button" className="mt-1 text-[13px] font-bold text-brand-600 hover:underline" onClick={() => expandBriefing()}>{D.gaReadMore}</button>
                       </>
                     )
                   ) : null}
@@ -558,9 +562,9 @@ export function GlobalAssistant() {
               {pendingProposals.length > 0 ? (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">অপেক্ষমাণ প্রস্তাব ({pendingProposals.length})</p>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t("shell.gaPendingHeading", { count: fmtNumber(locale, pendingProposals.length) })}</p>
                     {pendingProposals.length >= 2 ? (
-                      <button type="button" className="ai3-act-btn" disabled={Boolean(propBusy)} onClick={() => void approveAllPending()}>সব অনুমোদন</button>
+                      <button type="button" className="ai3-act-btn" disabled={Boolean(propBusy)} onClick={() => void approveAllPending()}>{D.gaApproveAll}</button>
                     ) : null}
                   </div>
                   {propNotice ? <p className="alert alert-amber text-[13px]">{propNotice}</p> : null}
@@ -572,8 +576,8 @@ export function GlobalAssistant() {
                       </div>
                       <p className="mt-1 text-[13px] leading-6 text-slate-600">{pr.preview}</p>
                       <div className="mt-2 flex gap-2">
-                        <button type="button" className="btn-primary btn-sm" disabled={propBusy === pr.id} onClick={() => void decideProposal(pr, "approve")}>অনুমোদন দিন</button>
-                        <button type="button" className="btn-secondary btn-sm" disabled={propBusy === pr.id} onClick={() => void decideProposal(pr, "reject")}>প্রত্যাখ্যান</button>
+                        <button type="button" className="btn-primary btn-sm" disabled={propBusy === pr.id} onClick={() => void decideProposal(pr, "approve")}>{D.gaApproveBtn}</button>
+                        <button type="button" className="btn-secondary btn-sm" disabled={propBusy === pr.id} onClick={() => void decideProposal(pr, "reject")}>{D.gaRejectBtn}</button>
                       </div>
                     </div>
                   ))}
@@ -585,7 +589,7 @@ export function GlobalAssistant() {
               {messages.length === 0 && !streaming ? (
                 <div className="space-y-3 py-1">
                   <p className="text-sm leading-6 text-slate-500">
-                    যেকোনো পেজ থেকে জিজ্ঞেস করুন — উত্তর শুধু যাচাইকৃত ডেটা থেকে আসে। আপনি এখন <b>{pageLabel}</b> পেজে আছেন, তাই এই পেজের প্রসঙ্গ উত্তর বুঝতে সাহায্য করবে।
+                    {D.gaEmptyIntroA}<b>{pageLabel}</b>{D.gaEmptyIntroB}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {starters.map((s) => (
@@ -596,7 +600,7 @@ export function GlobalAssistant() {
                       onClick={() => setOpen(false)}
                       className="ai3-follow-chip !border-sky-300 !bg-sky-50 !text-sky-700 hover:!bg-sky-100"
                     >
-                      🎫 সাপোর্ট টিকিট খুলুন
+                      {D.gaSupportChip}
                     </Link>
                   </div>
                 </div>
@@ -626,13 +630,13 @@ export function GlobalAssistant() {
                         {streaming.steps.map((s, i) => (
                           <p key={i} className="ai-step-row">
                             <span className="ai-step-dot" />
-                            {s.phase === "planning" ? "পরিকল্পনা চলছে…" : `টুল চলছে… ${s.tool ?? ""}`}
+                            {s.phase === "planning" ? D.gaStepPlanning : t("shell.gaStepTool", { tool: s.tool ?? "" })}
                           </p>
                         ))}
                         {streaming.text ? (
                           <div className="ai-stream-caret mt-1"><Markdown text={streaming.text} /></div>
                         ) : (
-                          <span className="ai3-typing" aria-label="ভাবছি"><span /><span /><span /></span>
+                          <span className="ai3-typing" aria-label={D.gaThinkingAria}><span /><span /><span /></span>
                         )}
                       </div>
                     </div>
@@ -642,7 +646,7 @@ export function GlobalAssistant() {
 
               {followUps.length > 0 && !sending ? (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-semibold text-slate-400">এরপর:</span>
+                  <span className="text-[11px] font-semibold text-slate-400">{D.gaNextLabel}</span>
                   {followUps.map((s) => (
                     <button key={s} type="button" className="ai3-follow-chip" onClick={() => send(s)}>{s}</button>
                   ))}
@@ -660,28 +664,28 @@ export function GlobalAssistant() {
                   className="ai3-textarea"
                   rows={1}
                   autoFocus
-                  placeholder="বাংলা বা ইংরেজিতে জিজ্ঞেস করুন..."
+                  placeholder={D.gaInputPh}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
                 />
                 {sending ? (
-                  <button type="button" className="ai3-stop-btn !min-h-[40px] !min-w-[56px] !px-3 text-[13px]" onClick={() => stopStreaming()}>■ থামান</button>
+                  <button type="button" className="ai3-stop-btn !min-h-[40px] !min-w-[56px] !px-3 text-[13px]" onClick={() => stopStreaming()}>{D.gaStopBtn}</button>
                 ) : (
-                  <button type="submit" className="ai3-send-btn !min-h-[40px] !min-w-[48px] !px-4 text-[13px]" disabled={!input.trim()}>পাঠান ➤</button>
+                  <button type="submit" className="ai3-send-btn !min-h-[40px] !min-w-[48px] !px-4 text-[13px]" disabled={!input.trim()}>{D.gaSendBtn}</button>
                 )}
               </form>
               {pendingAttachment ? (
                 <div className="mx-2 mb-1 flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  <span className="min-w-0 flex-1 truncate">{pendingAttachment.kind === "image" ? "🖼️" : "📎"} {pendingAttachment.name}{pendingAttachment.truncated ? " (আংশিক)" : ""}</span>
-                  <button type="button" aria-label="সংযুক্তি সরান" onClick={() => setPendingAttachment(null)}>✕</button>
+                  <span className="min-w-0 flex-1 truncate">{pendingAttachment.kind === "image" ? "🖼️" : "📎"} {pendingAttachment.name}{pendingAttachment.truncated ? D.gaTruncatedSuffix : ""}</span>
+                  <button type="button" aria-label={D.gaRemoveAttachmentAria} onClick={() => setPendingAttachment(null)}>✕</button>
                 </div>
               ) : null}
               <input ref={fileInputRef} type="file" accept={ATTACHMENT_ACCEPT} className="hidden" onChange={(e) => { void onAttachFile(e.target.files?.[0]); e.target.value = ""; }} />
               {mentionRef ? (
                 <div className="mx-2 mb-1 flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
-                  <span className="min-w-0 flex-1 truncate">📌 সংযুক্ত রেকর্ড: {mentionRef.label}</span>
-                  <button type="button" aria-label="রেকর্ড সরান" onClick={() => setMentionRef(null)}>✕</button>
+                  <span className="min-w-0 flex-1 truncate">{t("shell.gaAttachedRecord", { label: mentionRef.label })}</span>
+                  <button type="button" aria-label={D.gaRemoveRecordAria} onClick={() => setMentionRef(null)}>✕</button>
                 </div>
               ) : null}
               {mentionOpen ? (
@@ -703,19 +707,19 @@ export function GlobalAssistant() {
                 />
               ) : null}
               <div className="flex flex-wrap items-center gap-2 px-2 pb-0.5 pt-1.5">
-                <p className="min-w-0 flex-1 text-[10.5px] text-slate-400"><span className="kbd">Enter</span> পাঠান · <span className="kbd">/</span> prompt লাইব্রেরি · <span className="kbd">Esc</span> বন্ধ</p>
-                <button type="button" className="ai3-act-btn" disabled={attaching} title="ফাইল বা ছবি সংযুক্ত করুন (.txt, .md, .csv, .pdf, .docx, ছবি)" onClick={() => fileInputRef.current?.click()}>{attaching ? "…" : "📎"}</button>
+                <p className="min-w-0 flex-1 text-[10.5px] text-slate-400"><span className="kbd">Enter</span>{D.gaComposerHintSend}<span className="kbd">/</span>{D.gaComposerHintPromptLib}<span className="kbd">Esc</span>{D.gaComposerHintClose}</p>
+                <button type="button" className="ai3-act-btn" disabled={attaching} title={D.gaAttachTitle} onClick={() => fileInputRef.current?.click()}>{attaching ? "…" : "📎"}</button>
                 {voice.supported ? (
                   <span className="inline-flex items-center gap-1">
-                    <button type="button" className="ai3-act-btn" title="ভয়েসে লিখুন (বাংলা/English)" onClick={() => (voice.listening ? voice.stop() : voice.start(input))}>{voice.listening ? "🔴 শুনছি…" : "🎤"}</button>
-                    <button type="button" className="ai3-act-btn" title="ভয়েসের ভাষা বদলান" onClick={() => voice.setLang(voice.lang === "bn-BD" ? "en-US" : "bn-BD")}>{voice.lang === "bn-BD" ? "বাং" : "EN"}</button>
+                    <button type="button" className="ai3-act-btn" title={D.gaVoiceTitle} onClick={() => (voice.listening ? voice.stop() : voice.start(input))}>{voice.listening ? D.gaVoiceListening : "🎤"}</button>
+                    <button type="button" className="ai3-act-btn" title={D.gaVoiceLangTitle} onClick={() => voice.setLang(voice.lang === "bn-BD" ? "en-US" : "bn-BD")}>{voice.lang === "bn-BD" ? D.gaVoiceLangBn : "EN"}</button>
                   </span>
                 ) : null}
               {tts.supported ? (
-                <button type="button" className="ai3-act-btn" title="উত্তর পড়ে শোনান (voice-first)" onClick={() => tts.setEnabled(!tts.enabled)}>{tts.enabled ? "🔊 শোনা চালু" : "🔇"}</button>
+                <button type="button" className="ai3-act-btn" title={D.gaTtsTitle} onClick={() => tts.setEnabled(!tts.enabled)}>{tts.enabled ? D.gaTtsOn : "🔇"}</button>
               ) : null}
                 {input.trim() && !input.startsWith("/") ? (
-                  <button type="button" className="ai3-act-btn" onClick={() => void saveCurrentAsPrompt()}>＋ Prompt হিসেবে save</button>
+                  <button type="button" className="ai3-act-btn" onClick={() => void saveCurrentAsPrompt()}>{D.gaSaveAsPrompt}</button>
                 ) : null}
                 {promptNote ? <span className="text-[10.5px] font-semibold text-emerald-600">{promptNote}</span> : null}
               </div>

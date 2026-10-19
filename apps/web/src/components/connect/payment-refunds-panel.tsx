@@ -6,6 +6,7 @@ import {
   formatTakaMinor, formatWhen, refundStatusMeta,
   type PaymentRefundView, type PaymentTransactionView,
 } from "@/lib/connections";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * CC24 — গেটওয়ে রিফান্ড।
@@ -23,6 +24,8 @@ import {
  * bookkeeping)। প্যানেল কখনো বলে না প্ল্যাটফর্ম টাকা ফিরিয়েছে।
  */
 export function PaymentRefundsPanel() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.connections;
   const [paidTxns, setPaidTxns] = useState<PaymentTransactionView[]>([]);
   const [refunds, setRefunds] = useState<PaymentRefundView[]>([]);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
@@ -46,7 +49,7 @@ export function PaymentRefundsPanel() {
       setRefunds(refundsRes.refunds ?? []);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "রিফান্ডের তথ্য লোড হয়নি");
+      setError(e instanceof Error ? e.message : D.rfLoadFailed);
     } finally { setLoaded(true); }
   }, []);
 
@@ -61,7 +64,7 @@ export function PaymentRefundsPanel() {
       const body: Record<string, unknown> = {};
       if (takaRaw) {
         const taka = Number(takaRaw);
-        if (!Number.isFinite(taka) || taka <= 0) throw new Error("রিফান্ডের পরিমাণ সঠিক টাকায় দিন (খালি রাখলে পুরো অবশিষ্ট পরিমাণ)।");
+        if (!Number.isFinite(taka) || taka <= 0) throw new Error(D.rfAmountInvalid);
         body.amountMinor = String(Math.round(taka * 100));
       }
       const reason = (reasons[txn.id] ?? "").trim();
@@ -69,11 +72,11 @@ export function PaymentRefundsPanel() {
       const out = await apiFetch<PaymentRefundView>(`organizations/${orgId}/connections/payment-transactions/${txn.id}/refunds`, {
         method: "POST", body: JSON.stringify(body),
       });
-      setNotice(`রিফান্ড শুরু হয়েছে (${formatTakaMinor(out.amountMinor)}) — গেটওয়ে গ্রহণ করেছে, এখন প্রক্রিয়াধীন। গেটওয়ের যাচাই সফল হলেই কেবল এটি "রিফান্ড যাচাইকৃত" হবে; Refresh চাপলেই সর্বশেষ অবস্থা আসবে।`);
+      setNotice(t("connections.rfStartedNotice", { amount: formatTakaMinor(out.amountMinor, locale) }));
       setAmounts((s) => ({ ...s, [txn.id]: "" }));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "রিফান্ড শুরু করা যায়নি");
+      setError(e instanceof Error ? e.message : D.rfStartFailed);
     } finally { setBusy(""); }
   }
 
@@ -86,15 +89,15 @@ export function PaymentRefundsPanel() {
         method: "POST", body: "{}",
       });
       if (out.status === "refunded") {
-        setNotice(`রিফান্ড যাচাইকৃত — ${formatTakaMinor(out.amountMinor)} গেটওয়ে নিশ্চিত করেছে। অর্ডারের refunded অঙ্ক হালনাগাদ হয়েছে${out.source === "platform" ? " এবং Wallet থেকে ডেবিট-ব্যাক হয়েছে" : ""}।`);
+        setNotice(t("connections.rfVerifiedNotice", { amount: formatTakaMinor(out.amountMinor, locale), wallet: out.source === "platform" ? D.rfWalletSuffix : "" }));
       } else if (out.status === "failed") {
-        setNotice("গেটওয়ে জানিয়েছে এই রিফান্ডটি ব্যর্থ/বাতিল — কোনো টাকা ফেরেনি।");
+        setNotice(D.rfFailedNotice);
       } else {
-        setNotice("গেটওয়ে এখনো প্রক্রিয়াধীন বলছে — কিছুক্ষণ পর আবার Refresh করুন।");
+        setNotice(D.rfProcessingNotice);
       }
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "রিফান্ডের অবস্থা যাচাই করা যায়নি");
+      setError(e instanceof Error ? e.message : D.rfRefreshFailed);
     } finally { setBusy(""); }
   }
 
@@ -107,7 +110,7 @@ export function PaymentRefundsPanel() {
   const [proofNotes, setProofNotes] = useState<Record<string, string>>({});
 
   function providerLabel(p: string) {
-    return p === "bkash" ? "বিকাশ" : p === "nagad" ? "নগদ" : p === "shurjopay" ? "ShurjoPay" : p === "aamarpay" ? "aamarPay" : "SSLCommerz";
+    return p === "bkash" ? D.payBkash : p === "nagad" ? D.rfNagad : p === "shurjopay" ? "ShurjoPay" : p === "aamarpay" ? "aamarPay" : "SSLCommerz";
   }
 
   async function buildAmountBody(txnId: string) {
@@ -115,7 +118,7 @@ export function PaymentRefundsPanel() {
     const takaRaw = (amounts[txnId] ?? "").trim();
     if (takaRaw) {
       const taka = Number(takaRaw);
-      if (!Number.isFinite(taka) || taka <= 0) throw new Error("রিফান্ডের পরিমাণ সঠিক টাকায় দিন (খালি রাখলে পুরো অবশিষ্ট পরিমাণ)।");
+      if (!Number.isFinite(taka) || taka <= 0) throw new Error(D.rfAmountInvalid);
       body.amountMinor = String(Math.round(taka * 100));
     }
     const reason = (reasons[txnId] ?? "").trim();
@@ -132,11 +135,11 @@ export function PaymentRefundsPanel() {
       await apiFetch<PaymentRefundView>(`organizations/${orgId}/connections/payment-transactions/${txn.id}/refunds/manual`, {
         method: "POST", body: JSON.stringify(body),
       });
-      setNotice("ম্যানুয়াল রিফান্ড অনুরোধ তৈরি হয়েছে — এখন provider dashboard থেকে refund করে নিচের তালিকায় তার reference রেকর্ড করুন। অনুরোধ তৈরি মানেই টাকা ফেরেনি।");
+      setNotice(D.rfManualCreated);
       setAmounts((s) => ({ ...s, [txn.id]: "" }));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ম্যানুয়াল রিফান্ড অনুরোধ তৈরি করা যায়নি");
+      setError(e instanceof Error ? e.message : D.rfManualCreateFailed);
     } finally { setBusy(""); }
   }
 
@@ -144,16 +147,16 @@ export function PaymentRefundsPanel() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     const providerRef = (providerRefs[refund.id] ?? "").trim();
-    if (!providerRef) { setError("Provider dashboard-এর refund reference/transaction ID দিন — রেফারেন্স ছাড়া রেকর্ড হবে না।"); return; }
+    if (!providerRef) { setError(D.rfRefRequired); return; }
     setBusy(refund.id); setError(""); setNotice("");
     try {
       await apiFetch<PaymentRefundView>(`organizations/${orgId}/connections/refunds/${refund.id}/manual/record`, {
         method: "POST", body: JSON.stringify({ providerRef, proofNote: (proofNotes[refund.id] ?? "").trim() || undefined }),
       });
-      setNotice("Dashboard refund রেকর্ড হয়েছে — যাচাই করে “সম্পূর্ণ করুন” চাপলেই অর্ডারের refunded অঙ্ক হালনাগাদ হবে।");
+      setNotice(D.rfRecordedNotice);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "রেকর্ড করা যায়নি");
+      setError(e instanceof Error ? e.message : D.rfRecordFailed);
     } finally { setBusy(""); }
   }
 
@@ -165,57 +168,52 @@ export function PaymentRefundsPanel() {
       const out = await apiFetch<PaymentRefundView>(`organizations/${orgId}/connections/refunds/${refund.id}/manual/complete`, {
         method: "POST", body: "{}",
       });
-      setNotice(`ম্যানুয়াল রিফান্ড সম্পূর্ণ রেকর্ড হয়েছে — ${formatTakaMinor(out.amountMinor)}। provider dashboard-এ হাতে করা হয়েছে — প্ল্যাটফর্ম ট্র্যাক করছে। অর্ডারের refunded অঙ্ক হালনাগাদ হয়েছে${out.source === "platform" ? " এবং Wallet থেকে ডেবিট-ব্যাক হয়েছে" : ""}।`);
+      setNotice(t("connections.rfManualCompleted", { amount: formatTakaMinor(out.amountMinor, locale), wallet: out.source === "platform" ? D.rfWalletSuffix : "" }));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সম্পূর্ণ করা যায়নি");
+      setError(e instanceof Error ? e.message : D.rfCompleteFailed);
     } finally { setBusy(""); }
   }
 
   return (
     <div className="card space-y-3 p-4">
-      <div className="font-semibold text-slate-800">↩️ রিফান্ড (গেটওয়ে + Refund Center)</div>
+      <div className="font-semibold text-slate-800">{D.rfTitle}</div>
       {error ? <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</div> : null}
       {notice ? <div className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">{notice}</div> : null}
-      <p className="text-xs leading-relaxed text-slate-500">
-        রিফান্ড শুরু করা মানেই টাকা ফেরা নয় — গেটওয়ের status যাচাই সফল হলেই কেবল রিফান্ড সম্পূর্ণ ধরা হয়।
-        আংশিক রিফান্ডও করা যায়; সব মিলিয়ে যাচাইকৃত + প্রক্রিয়াধীন রিফান্ড কখনো পেমেন্টের পরিমাণ ছাড়াতে পারবে না।
-        ShurjoPay, aamarPay ও Nagad-এর কোনো refund API সংযুক্ত নেই — সেগুলোর রিফান্ড provider dashboard-এ হাতে করে
-        Refund Center-এ রেকর্ড রাখুন: প্ল্যাটফর্ম টাকা ফেরায় না, শুধু ট্র্যাক করে এবং সম্পূর্ণ হলে অর্ডারের refunded অঙ্ক হালনাগাদ করে।
-      </p>
+      <p className="text-xs leading-relaxed text-slate-500">{D.rfIntro}</p>
 
       {!loaded ? (
-        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+        <p className="text-xs text-slate-400">{dict.common.loading}</p>
       ) : refundableTxns.length === 0 ? (
-        <p className="text-xs text-slate-400">এখনো কোনো যাচাইকৃত পেইড লেনদেন নেই — পেমেন্ট যাচাই সম্পন্ন হলেই এখানে রিফান্ডের অপশন আসবে।</p>
+        <p className="text-xs text-slate-400">{D.rfEmpty}</p>
       ) : (
         <ul className="space-y-1.5">
           {refundableTxns.map((txn) => (
             <li key={txn.id} className="space-y-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-slate-700">{formatTakaMinor(txn.amountMinor)}</span>
-                <span className="text-slate-500">{txn.provider === "bkash" ? "বিকাশ" : "SSLCommerz"} · {txn.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের গেটওয়ে"}</span>
-                <span className="text-slate-400">অর্ডার: {txn.orderId}</span>
-                <span className="text-slate-400">{formatWhen(txn.createdAt) ?? ""}</span>
+                <span className="font-semibold text-slate-700">{formatTakaMinor(txn.amountMinor, locale)}</span>
+                <span className="text-slate-500">{txn.provider === "bkash" ? D.payBkash : "SSLCommerz"} · {txn.source === "platform" ? D.phPlatform : D.phOwnGateway}</span>
+                <span className="text-slate-400">{D.phOrderLabel}{txn.orderId}</span>
+                <span className="text-slate-400">{formatWhen(txn.createdAt, locale) ?? ""}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <input
-                  aria-label="রিফান্ডের পরিমাণ (টাকা)"
+                  aria-label={D.rfAriaAmount}
                   className="w-36 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                  inputMode="decimal" placeholder="টাকা (খালি = পুরোটা)"
+                  inputMode="decimal" placeholder={D.rfAmountPh}
                   value={amounts[txn.id] ?? ""} onChange={(e) => setAmounts((s) => ({ ...s, [txn.id]: e.target.value }))}
                 />
                 <input
-                  aria-label="রিফান্ডের কারণ"
+                  aria-label={D.rfAriaReason}
                   className="w-48 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                  placeholder="কারণ (ঐচ্ছিক)"
+                  placeholder={D.rfReasonPh}
                   value={reasons[txn.id] ?? ""} onChange={(e) => setReasons((s) => ({ ...s, [txn.id]: e.target.value }))}
                 />
                 <button type="button" disabled={busy === txn.id} onClick={() => void initiate(txn)} className="rounded-lg bg-red-600 px-3 py-1.5 font-semibold text-white hover:bg-red-700 disabled:opacity-50">
-                  {busy === txn.id ? "হচ্ছে…" : "রিফান্ড শুরু করুন"}
+                  {busy === txn.id ? D.rfWorking : D.rfStartBtn}
                 </button>
                 <button type="button" disabled={busy === txn.id} onClick={() => void initiateManual(txn)} className="rounded-lg bg-slate-100 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">
-                  ম্যানুয়াল রেকর্ড শুরু (dashboard-এ করে থাকলে)
+                  {D.rfManualStartBtn}
                 </button>
               </div>
             </li>
@@ -225,35 +223,32 @@ export function PaymentRefundsPanel() {
 
       {loaded && manualTxns.length > 0 ? (
         <div className="space-y-1.5">
-          <div className="text-sm font-semibold text-slate-700">🧾 Refund Center — ম্যানুয়াল রিফান্ড (API নেই)</div>
-          <p className="text-xs leading-relaxed text-slate-500">
-            এই প্রোভাইডারগুলোর refund API নেই — টাকা ফেরাতে হবে provider dashboard-এ হাতে। এখানে অনুরোধ তৈরি করুন,
-            dashboard-এর reference রেকর্ড করুন, তারপর সম্পূর্ণ করুন। লেবেল: provider dashboard-এ হাতে করা হয়েছে — প্ল্যাটফর্ম ট্র্যাক করছে।
-          </p>
+          <div className="text-sm font-semibold text-slate-700">{D.rfCenterTitle}</div>
+          <p className="text-xs leading-relaxed text-slate-500">{D.rfCenterIntro}</p>
           <ul className="space-y-1.5">
             {manualTxns.map((txn) => (
               <li key={txn.id} className="space-y-2 rounded-lg bg-amber-50 px-3 py-2 text-xs">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-semibold text-slate-700">{formatTakaMinor(txn.amountMinor)}</span>
-                  <span className="text-slate-500">{providerLabel(txn.provider)} · {txn.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের গেটওয়ে"}</span>
-                  <span className="text-slate-400">অর্ডার: {txn.orderId}</span>
-                  <span className="text-slate-400">{formatWhen(txn.createdAt) ?? ""}</span>
+                  <span className="font-semibold text-slate-700">{formatTakaMinor(txn.amountMinor, locale)}</span>
+                  <span className="text-slate-500">{providerLabel(txn.provider)} · {txn.source === "platform" ? D.phPlatform : D.phOwnGateway}</span>
+                  <span className="text-slate-400">{D.phOrderLabel}{txn.orderId}</span>
+                  <span className="text-slate-400">{formatWhen(txn.createdAt, locale) ?? ""}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <input
-                    aria-label="ম্যানুয়াল রিফান্ডের পরিমাণ (টাকা)"
+                    aria-label={D.rfAriaManualAmount}
                     className="w-36 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                    inputMode="decimal" placeholder="টাকা (খালি = পুরোটা)"
+                    inputMode="decimal" placeholder={D.rfAmountPh}
                     value={amounts[txn.id] ?? ""} onChange={(e) => setAmounts((s) => ({ ...s, [txn.id]: e.target.value }))}
                   />
                   <input
-                    aria-label="ম্যানুয়াল রিফান্ডের কারণ"
+                    aria-label={D.rfAriaManualReason}
                     className="w-48 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                    placeholder="কারণ (ঐচ্ছিক)"
+                    placeholder={D.rfReasonPh}
                     value={reasons[txn.id] ?? ""} onChange={(e) => setReasons((s) => ({ ...s, [txn.id]: e.target.value }))}
                   />
                   <button type="button" disabled={busy === txn.id} onClick={() => void initiateManual(txn)} className="rounded-lg bg-amber-600 px-3 py-1.5 font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
-                    {busy === txn.id ? "হচ্ছে…" : "ম্যানুয়াল রিফান্ড অনুরোধ"}
+                    {busy === txn.id ? D.rfWorking : D.rfManualReqBtn}
                   </button>
                 </div>
               </li>
@@ -264,24 +259,24 @@ export function PaymentRefundsPanel() {
 
       {refunds.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-sm font-semibold text-slate-700">রিফান্ডসমূহ</div>
+          <div className="text-sm font-semibold text-slate-700">{D.rfListTitle}</div>
           {refunds.map((r) => {
-            const meta = refundStatusMeta(r.status);
+            const meta = refundStatusMeta(r.status, locale);
             const manual = r.mode === "manual";
             return (
               <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                <span className={`rounded-full px-2 py-0.5 font-semibold ${meta.cls}`}>{manual && r.status === "refunded" ? "রিফান্ড রেকর্ড সম্পূর্ণ" : manual && r.status === "processing" ? "রেকর্ড হয়েছে — সম্পূর্ণ বাকি" : manual && r.status === "initiated" ? "অনুরোধ — dashboard রেকর্ড বাকি" : meta.label}</span>
-                {manual ? <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">ম্যানুয়াল · provider dashboard-এ হাতে করা হয়েছে — প্ল্যাটফর্ম ট্র্যাক করছে</span> : null}
-                <span className="font-semibold text-slate-700">{formatTakaMinor(r.amountMinor)}</span>
-                <span className="text-slate-500">{providerLabel(r.provider)} · {r.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের গেটওয়ে"}</span>
-                <span className="text-slate-400">অর্ডার: {r.orderId}</span>
+                <span className={`rounded-full px-2 py-0.5 font-semibold ${meta.cls}`}>{manual && r.status === "refunded" ? D.rfManualDone : manual && r.status === "processing" ? D.rfManualRecorded : manual && r.status === "initiated" ? D.rfManualRequested : meta.label}</span>
+                {manual ? <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">{D.rfManualBadge}</span> : null}
+                <span className="font-semibold text-slate-700">{formatTakaMinor(r.amountMinor, locale)}</span>
+                <span className="text-slate-500">{providerLabel(r.provider)} · {r.source === "platform" ? D.phPlatform : D.phOwnGateway}</span>
+                <span className="text-slate-400">{D.phOrderLabel}{r.orderId}</span>
                 {r.gatewayRefundRef ? <span className="font-mono text-slate-400">{manual ? "Dashboard Ref" : "Ref"}: {r.gatewayRefundRef}</span> : null}
-                {manual && r.manualProofNote ? <span className="text-slate-400">প্রমাণ নোট: {r.manualProofNote}</span> : null}
+                {manual && r.manualProofNote ? <span className="text-slate-400">{D.rfProofNote}{r.manualProofNote}</span> : null}
                 {r.reason ? <span className="text-slate-400">{r.reason}</span> : null}
-                <span className="text-slate-400">{formatWhen(r.createdAt) ?? ""}</span>
+                <span className="text-slate-400">{formatWhen(r.createdAt, locale) ?? ""}</span>
                 {!manual && (r.status === "processing" || r.status === "initiated") ? (
                   <button type="button" disabled={busy === r.id} onClick={() => void refresh(r)} className="rounded-lg bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
-                    {busy === r.id ? "যাচাই হচ্ছে…" : "অবস্থা Refresh"}
+                    {busy === r.id ? D.rfChecking : D.rfRefreshBtn}
                   </button>
                 ) : null}
                 {manual && r.status === "initiated" ? (
@@ -289,27 +284,27 @@ export function PaymentRefundsPanel() {
                     <input
                       aria-label="Provider dashboard refund reference"
                       className="w-52 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                      placeholder="Dashboard refund reference / TrxID (আবশ্যক)"
+                      placeholder={D.rfRefPh}
                       value={providerRefs[r.id] ?? ""} onChange={(e) => setProviderRefs((s) => ({ ...s, [r.id]: e.target.value }))}
                     />
                     <input
-                      aria-label="ম্যানুয়াল রিফান্ডের প্রমাণ নোট"
+                      aria-label={D.rfAriaProof}
                       className="w-52 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                      placeholder="প্রমাণ নোট (ঐচ্ছিক)"
+                      placeholder={D.rfProofPh}
                       value={proofNotes[r.id] ?? ""} onChange={(e) => setProofNotes((s) => ({ ...s, [r.id]: e.target.value }))}
                     />
                     <button type="button" disabled={busy === r.id} onClick={() => void recordManual(r)} className="rounded-lg bg-amber-600 px-2 py-1.5 font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
-                      {busy === r.id ? "হচ্ছে…" : "Dashboard কাজ রেকর্ড করুন"}
+                      {busy === r.id ? D.rfWorking : D.rfRecordBtn}
                     </button>
                   </span>
                 ) : null}
                 {manual && r.status === "processing" ? (
                   <button type="button" disabled={busy === r.id} onClick={() => void completeManual(r)} className="rounded-lg bg-green-600 px-2 py-1.5 font-semibold text-white hover:bg-green-700 disabled:opacity-50">
-                    {busy === r.id ? "হচ্ছে…" : "সম্পূর্ণ করুন"}
+                    {busy === r.id ? D.rfWorking : D.rfCompleteBtn}
                   </button>
                 ) : null}
                 {!manual && r.gatewayStatusRaw ? (
-                  <span className="w-full font-mono text-[10px] leading-relaxed text-slate-400">গেটওয়ের সর্বশেষ উত্তর: {JSON.stringify(r.gatewayStatusRaw)}</span>
+                  <span className="w-full font-mono text-[10px] leading-relaxed text-slate-400">{D.rfGatewayRaw}{JSON.stringify(r.gatewayStatusRaw)}</span>
                 ) : null}
               </div>
             );
