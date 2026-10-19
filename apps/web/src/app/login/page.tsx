@@ -4,11 +4,14 @@ import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { googleErrorMessage } from "@/lib/google-auth";
 import { loginSchema } from "@repo/contracts";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 const HIGHLIGHTS = [
-  { title: "সব মার্কেটিং এক জায়গায়", text: "Ads, Orders, Profit আর AI Report, একটাই Operating System এ।" },
-  { title: "অনুমোদন ছাড়া কিছুই লাইভ নয়", text: "প্রতিটি Campaign মানুষের অনুমোদন পেরিয়ে, PAUSED অবস্থায় Publish হয়।" },
-  { title: "বানানো সংখ্যা নয়, প্রমাণিত সংখ্যা", text: "Platform এর রিপোর্ট আর আপনার আসল Order ডেটা আলাদা ও যাচাইযোগ্য।" },
+  { title: t.auth.highlight1Title, text: t.auth.highlight1Text },
+  { title: t.auth.highlight2Title, text: t.auth.highlight2Text },
+  { title: t.auth.highlight3Title, text: t.auth.highlight3Text },
 ];
 
 interface LoginResponse { accessToken?: string; requiresTotp?: boolean; challengeToken?: string }
@@ -54,10 +57,10 @@ export default function LoginPage() {
     setGoogleBusy(true);
     try {
       const data = await apiFetch<{ url: string }>("/auth/google/start");
-      if (!data.url) throw new Error("Google লগইন ব্যর্থ হয়েছে — আবার চেষ্টা করুন");
+      if (!data.url) throw new Error(t.auth.googleFailed);
       window.location.assign(data.url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Google লগইন ব্যর্থ হয়েছে — আবার চেষ্টা করুন");
+      setError(err instanceof Error ? err.message : t.auth.googleFailed);
       setGoogleBusy(false);
     }
   }
@@ -66,7 +69,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     const parsed = loginSchema.safeParse({ email, password });
-    if (!parsed.success) { setError("সঠিক ইমেইল ও পাসওয়ার্ড দিন"); return; }
+    if (!parsed.success) { setError(t.auth.invalidCredentials); return; }
     setLoading(true);
     try {
       const data = await apiFetch<LoginResponse>("/auth/login", { method: "POST", body: JSON.stringify(parsed.data) });
@@ -91,7 +94,7 @@ export default function LoginPage() {
       });
       localStorage.setItem("accessToken", data.accessToken);
       router.push("/dashboard");
-    } catch (err) { setError(err instanceof Error ? err.message : "কোড যাচাই করা যায়নি"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t.auth.codeVerifyFailed); }
     finally { setLoading(false); }
   }
 
@@ -109,7 +112,7 @@ export default function LoginPage() {
           </div>
         </div>
         <div className="relative space-y-8">
-          <h2 className="max-w-md text-4xl font-bold leading-[1.15] tracking-tight text-white">আপনার পুরো মার্কেটিং, <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">একটা OS এ।</span></h2>
+          <h2 className="max-w-md text-4xl font-bold leading-[1.15] tracking-tight text-white">{t.auth.heroTitlePrefix}<span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">{t.auth.heroTitleAccent}</span></h2>
           <div className="space-y-5">
             {HIGHLIGHTS.map((h) => (
               <div key={h.title} className="flex gap-3.5">
@@ -122,7 +125,7 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
-        <div className="relative text-xs text-slate-500">© 2026 Qosprey · Bangladesh থেকে, বিশ্বের জন্য</div>
+        <div className="relative text-xs text-slate-500">{t.auth.copyright}</div>
       </section>
 
       {/* Form panel */}
@@ -132,43 +135,44 @@ export default function LoginPage() {
             <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-base font-black text-white">Q</span>
             <div className="text-lg font-bold tracking-tight">AI Marketing OS</div>
           </div>
-          <h1 className="page-title">লগইন করুন</h1>
-          <p className="page-sub mt-1">আপনার মার্কেটিং ড্যাশবোর্ডে স্বাগতম</p>
+          <h1 className="page-title">{t.auth.loginTitle}</h1>
+          <p className="page-sub mt-1">{t.auth.loginSubtitle}</p>
           {challengeToken ? (
             <form onSubmit={onVerifyCode} className="card mt-6 space-y-4 p-6 sm:p-7">
-              <p className="text-sm text-slate-600">🔐 পাসওয়ার্ড মিলেছে। এখন আপনার <b>Authenticator অ্যাপের ৬ সংখ্যার কোড</b> দিন — কোড যাচাই হলেই লগইন সম্পূর্ণ হবে।</p>
-              <label className="block text-sm font-medium text-slate-700">প্রমাণীকরণ কোড
+              <p className="text-sm text-slate-600">{t.auth.totpIntroPrefix}<b>{t.auth.totpIntroBold}</b>{t.auth.totpIntroSuffix}</p>
+              <label className="block text-sm font-medium text-slate-700">{t.auth.totpCodeLabel}
                 <input className="input mt-1.5 tracking-[0.4em]" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} required placeholder="123456" />
               </label>
               {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-200">{error}</p> : null}
               <button className="btn-primary w-full py-2.5 text-[15px]" disabled={loading || code.length !== 6}>
-                {loading ? "যাচাই হচ্ছে..." : "যাচাই করে লগইন করুন"}
+                {loading ? t.auth.verifying : t.auth.verifyAndLogin}
               </button>
               <button type="button" className="w-full text-center text-sm text-slate-500 hover:text-slate-700" onClick={() => { setChallengeToken(""); setCode(""); setError(""); }}>
-                ← আবার শুরু করুন
+                {t.auth.restart}
               </button>
             </form>
           ) : (
           <form onSubmit={onSubmit} className="card mt-6 space-y-4 p-6 sm:p-7">
-            <label className="block text-sm font-medium text-slate-700">ইমেইল
+            <label className="block text-sm font-medium text-slate-700">{t.auth.emailLabel}
               <input className="input mt-1.5" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
             </label>
-            <label className="block text-sm font-medium text-slate-700">পাসওয়ার্ড
+            <label className="block text-sm font-medium text-slate-700">{t.auth.passwordLabel}
               <input className="input mt-1.5" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="••••••••" autoComplete="current-password" />
             </label>
             {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-200">{error}</p> : null}
             <button className="btn-primary w-full py-2.5 text-[15px]" disabled={loading}>
-              {loading ? "অপেক্ষা করুন..." : "লগইন করুন"}
+              {loading ? t.auth.pleaseWait : t.auth.loginTitle}
             </button>
             {googleEnabled ? (
               <>
-                <div className="flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />অথবা<span className="h-px flex-1 bg-slate-200" /></div>
+                <div className="flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />{t.auth.orDivider}<span className="h-px flex-1 bg-slate-200" /></div>
                 <button type="button" className="btn-secondary w-full py-2.5 text-[15px]" disabled={googleBusy} onClick={onGoogleLogin}>
-                  {googleBusy ? "Google এ যাওয়া হচ্ছে..." : "Google দিয়ে লগইন করুন"}
+                  {googleBusy ? t.auth.googleBusy : t.auth.googleLogin}
                 </button>
               </>
             ) : null}
-            <p className="text-center text-sm text-slate-500">অ্যাকাউন্ট নেই? <a className="font-semibold text-brand-600 hover:text-brand-700" href="/register">রেজিস্টার করুন</a></p>
+            <p className="text-center text-sm text-slate-500">{t.auth.noAccount}<a className="font-semibold text-brand-600 hover:text-brand-700" href="/register">{t.auth.registerLink}</a></p>
+
           </form>
           )}
           <p className="mt-4 rounded-2xl bg-brand-50 px-4 py-3 text-center text-[13px] text-brand-700 ring-1 ring-inset ring-brand-100">

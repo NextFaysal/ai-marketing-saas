@@ -1,5 +1,6 @@
 "use client";
 import React, { useState } from "react";
+import { pubT } from "@/lib/i18n/public";
 
 /**
  * ED6 (EB2) — the landing page FAQ accordion, extracted verbatim
@@ -9,12 +10,14 @@ import React, { useState } from "react";
  * identical to the in-file version it replaces: first item open by
  * default, click toggles, empty list renders nothing.
  */
-export function FaqBlock({ items }: { items: { q: string; a: string }[] }) {
+export function FaqBlock({ items, locale }: { items: { q: string; a: string }[]; locale?: string }) {
+  const t = pubT(locale);
   const [open, setOpen] = useState(0);
   if (!items.length) return null;
   return (
     <section className="space-y-3">
-      <h2 className="text-xl font-black text-slate-900">সাধারণ প্রশ্নোত্তর</h2>
+      <h2 className="text-xl font-black text-slate-900">{t.landingPage.faqHeading}</h2>
+
       <div className="space-y-2">
         {items.map((it, i) => (
           <div key={i} className="rounded-2xl border border-slate-200 bg-white">

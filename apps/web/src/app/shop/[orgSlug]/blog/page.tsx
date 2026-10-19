@@ -1,4 +1,5 @@
 import React from "react";
+import { fmtDate } from "@repo/contracts";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -21,7 +22,7 @@ function dateText(iso: string | null, locale: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(locale === "en" ? "en-GB" : "bn-BD", { year: "numeric", month: "long", day: "numeric" });
+  return fmtDate(locale === "en" ? "en" : "bn", d);
 }
 
 export default async function ShopBlogIndexPage({ params }: { params: Params }) {

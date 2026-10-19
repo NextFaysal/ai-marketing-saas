@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoney, fmtNumber, formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopHome, ShopProduct } from "@/lib/storefront-server";
 import { type ShopLocale, shopT } from "@/lib/shop-i18n";
@@ -22,27 +22,28 @@ export function formatFurniturePrice(minor: string): string {
 // ----------------------------------------------------
 // 1. Furniture Trust & Warranty Bar (4 Pillars)
 // ----------------------------------------------------
-export function FurnitureTrustBar() {
+export function FurnitureTrustBar({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   const pillars = [
     {
       icon: "🛡️",
-      title: "১০ বছরের কাঠামোগত ওয়ারেন্টি",
-      subtitle: "সলিড কাঠ ও ফ্রেমে ঘুণে না ধরার লিখিত গ্যারান্টি",
+      title: t.themeFurniture.trust1Title,
+      subtitle: t.themeFurniture.trust1Sub,
     },
     {
       icon: "🚚",
-      title: "ফ্রি ডোরস্টেপ ডেলিভারি",
-      subtitle: "শক-প্রুফ কার্টনে ঢাকা ও সারাদেশে নিরাপদ পরিবহন",
+      title: t.themeFurniture.trust2Title,
+      subtitle: t.themeFurniture.trust2Sub,
     },
     {
       icon: "🔧",
-      title: "ফ্রি হোম ফিটিং ও অ্যাসেম্বলি",
-      subtitle: "দক্ষ কার্পেন্টার টিম দ্বারা নিখুঁত ইনস্টলেশন",
+      title: t.themeFurniture.trust3Title,
+      subtitle: t.themeFurniture.trust3Sub,
     },
     {
       icon: "💳",
-      title: "০% সহজ ইএমআই কিস্তি",
-      subtitle: "১২ মাস পর্যন্ত শীর্ষ ব্যাংকের ক্রেডিট কার্ড সুবিধা",
+      title: t.themeFurniture.trust4Title,
+      subtitle: t.themeFurniture.trust4Sub,
     },
   ];
 
@@ -78,6 +79,7 @@ export function FurnitureProductCard({
   product: ShopProduct;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
 
@@ -128,7 +130,7 @@ export function FurnitureProductCard({
             </span>
           ) : null}
           <span className="rounded-lg bg-stone-900/80 px-2 py-0.5 text-[9px] font-bold text-white backdrop-blur-xs">
-            🛡️ ১০ বছর ওয়ারেন্টি
+            {t.themeFurniture.warrantyBadge}
           </span>
         </div>
 
@@ -158,10 +160,10 @@ export function FurnitureProductCard({
         <div>
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-semibold text-amber-900">
-              {product.category || "আসবাবপত্র"}
+              {product.category || t.themeFurniture.furnitureFallback}
             </span>
             <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-bold text-stone-700">
-              {isOutOfStock ? "স্টক শেষ" : "● রেডি স্টক"}
+              {isOutOfStock ? t.themeFurniture.outOfStock : t.themeFurniture.readyStock}
             </span>
           </div>
 
@@ -175,7 +177,7 @@ export function FurnitureProductCard({
 
           {emiPerMonth > 0 ? (
             <p className="mt-1 text-[11px] font-bold text-stone-500">
-              ইএমআই: <span className="text-amber-900">৳{emiPerMonth.toLocaleString("bn-BD")}/মাস</span> (০%)
+              {t.themeFurniture.emiPrefix}<span className="text-amber-900">{fmtMoney(locale === "en" ? "en" : "bn", emiPerMonth)}{t.themeFurniture.emiPerMonthSuffix}</span> ({fmtNumber(locale === "en" ? "en" : "bn", 0)}%)
             </p>
           ) : null}
         </div>
@@ -206,11 +208,11 @@ export function FurnitureProductCard({
             }`}
           >
             {added ? (
-              <span>✓ অর্ডারে যোগ হয়েছে</span>
+              <span>{t.themeFurniture.addedToOrder}</span>
             ) : (
               <>
                 <span>🛋️</span>
-                <span>{isOutOfStock ? "স্টক শেষ" : busy ? "যোগ হচ্ছে…" : "অর্ডারে যোগ করুন"}</span>
+                <span>{isOutOfStock ? t.themeFurniture.outOfStock : busy ? t.themeFurniture.adding : t.themeFurniture.addToOrder}</span>
               </>
             )}
           </button>
@@ -226,24 +228,27 @@ export function FurnitureProductCard({
 export function FurnitureFinishSelector({
   selectedFinish = "সেগুন কাঠ ফিনিশ",
   onSelectFinish,
+  locale = "bn",
 }: {
   selectedFinish?: string;
   onSelectFinish?: (finish: string) => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const finishes = [
-    { label: "সেগুন কাঠ ফিনিশ", color: "#8B5A2B", badge: "প্রিমিয়াম" },
-    { label: "কানাডিয়ান ওক", color: "#D2B48C", badge: "মডার্ন" },
-    { label: "ডার্ক ওয়ালনাট", color: "#3D2B1F", badge: "জনপ্রিয়" },
-    { label: "মেহগনি কালার", color: "#5C2C16", badge: "ক্লাসিক" },
+    { label: "সেগুন কাঠ ফিনিশ", color: "#8B5A2B", badge: t.themeFurniture.badgePremium },
+    { label: "কানাডিয়ান ওক", color: "#D2B48C", badge: t.themeFurniture.badgeModern },
+    { label: "ডার্ক ওয়ালনাট", color: "#3D2B1F", badge: t.themeFurniture.badgePopular },
+    { label: "মেহগনি কালার", color: "#5C2C16", badge: t.themeFurniture.badgeClassic },
   ];
 
   return (
     <div className="space-y-2.5 rounded-2xl border border-stone-200 bg-stone-50/60 p-4">
       <div className="flex items-center justify-between text-xs">
         <label className="font-bold text-stone-900">
-          কাঠের ফিনিশ ও টেক্সচার বেছে নিন: <span className="text-amber-800">{selectedFinish}</span>
+          {t.themeFurniture.finishLabel}<span className="text-amber-800">{selectedFinish}</span>
         </label>
-        <span className="text-[11px] font-bold text-stone-500">সিজনড হার্ডউড</span>
+        <span className="text-[11px] font-bold text-stone-500">{t.themeFurniture.seasonedHardwood}</span>
       </div>
 
       <div className="flex flex-wrap gap-2.5">
@@ -285,30 +290,31 @@ export function FurnitureFinishSelector({
 // ----------------------------------------------------
 // 4. Dimension & Clearance Specification Table
 // ----------------------------------------------------
-export function FurnitureDimensionSpecs() {
+export function FurnitureDimensionSpecs({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-4 text-xs space-y-3 shadow-xs">
       <div className="flex items-center justify-between border-b border-stone-100 pb-2">
-        <h4 className="font-black text-stone-900">আসবাবের মাপ ও স্পেস গাইড (Dimension Specs):</h4>
-        <span className="text-[10px] text-amber-800 font-bold">দরজা ও লিফট ফ্রেন্ডলি</span>
+        <h4 className="font-black text-stone-900">{t.themeFurniture.dimsHeading}</h4>
+        <span className="text-[10px] text-amber-800 font-bold">{t.themeFurniture.dimsFriendly}</span>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-stone-700">
         <div className="rounded-xl bg-stone-50 p-2.5">
-          <p className="text-stone-400">দৈর্ঘ্য (Length)</p>
+          <p className="text-stone-400">{t.themeFurniture.dimLength}</p>
           <p className="font-bold text-stone-900">৮৪ ইঞ্চি (২১৩ সেমি)</p>
         </div>
         <div className="rounded-xl bg-stone-50 p-2.5">
-          <p className="text-stone-400">প্রস্থ (Width)</p>
+          <p className="text-stone-400">{t.themeFurniture.dimWidth}</p>
           <p className="font-bold text-stone-900">৭২ ইঞ্চি (১৮২ সেমি)</p>
         </div>
         <div className="rounded-xl bg-stone-50 p-2.5">
-          <p className="text-stone-400">উচ্চতা (Height)</p>
+          <p className="text-stone-400">{t.themeFurniture.dimHeight}</p>
           <p className="font-bold text-stone-900">৪৫ ইঞ্চি (১১৪ সেমি)</p>
         </div>
         <div className="rounded-xl bg-stone-50 p-2.5">
-          <p className="text-stone-400">সিজনড কাঠ</p>
-          <p className="font-bold text-stone-900">কেমিক্যাল ট্রিটেড</p>
+          <p className="text-stone-400">{t.themeFurniture.dimWood}</p>
+          <p className="font-bold text-stone-900">{t.themeFurniture.dimTreated}</p>
         </div>
       </div>
 
@@ -326,10 +332,13 @@ export function FurnitureDimensionSpecs() {
 export function FurnitureRoomSetBundle({
   orgSlug,
   mainProduct,
+  locale = "bn",
 }: {
   orgSlug: string;
   mainProduct: ShopProduct;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [wardrobe, setWardrobe] = useState(true);
   const [dressing, setDressing] = useState(true);
   const [bedside, setBedside] = useState(true);
@@ -378,10 +387,10 @@ export function FurnitureRoomSetBundle({
           </span>
           <div>
             <h3 className="text-sm font-black text-stone-900 font-serif">
-              কমপ্লিট মাস্টার বেডরুম স্যুট কম্বো (Complete Bedroom Set)
+              {t.themeFurniture.comboTitle}
             </h3>
             <p className="text-[11px] text-stone-500">
-              বেড + ৪-পাল্লা আলমিরা + ড্রেসিং টেবিল + বেডসাইড ইউনিট একসাথে নিয়ে ঘরে আনুন রাজকীয় লুক
+              {t.themeFurniture.comboSub}
             </p>
           </div>
         </div>
@@ -394,7 +403,7 @@ export function FurnitureRoomSetBundle({
         {/* Step 1: Main Product (e.g. King Bed) */}
         <div className="rounded-2xl border-2 border-amber-900 bg-white p-3 shadow-xs">
           <span className="rounded bg-amber-900 px-1.5 py-0.2 text-[9px] font-black text-white">
-            মূল আসবাব
+            {t.themeFurniture.comboMain}
           </span>
           <p className="mt-1 line-clamp-1 text-xs font-black text-stone-900">{mainProduct.name}</p>
           <p className="text-xs font-extrabold text-amber-900">{formatFurniturePrice(mainProduct.priceMinor)}</p>
@@ -471,17 +480,17 @@ export function FurnitureRoomSetBundle({
               (৳৪,৫০০ সেভ হচ্ছে)
             </span>
           </div>
-          <p className="text-[11px] text-stone-500">সম্পূর্ণ রুম সেট একসাথে ডেলিভারি ও ফ্রি ফিটিং করা হবে</p>
+          <p className="text-[11px] text-stone-500">{t.themeFurniture.comboNote}</p>
         </div>
 
         {added ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-emerald-800">✓ সম্পূর্ণ রুম সেট অর্ডারে যুক্ত হয়েছে!</span>
+            <span className="text-xs font-bold text-emerald-800">{t.themeFurniture.comboAdded}</span>
             <Link
               href={`/shop/${orgSlug}/cart`}
               className="rounded-xl bg-amber-900 px-4 py-2 text-xs font-bold text-white hover:bg-stone-900"
             >
-              কার্ট দেখুন
+              {t.themeFurniture.viewCart}
             </Link>
           </div>
         ) : (
@@ -491,7 +500,7 @@ export function FurnitureRoomSetBundle({
             disabled={busy}
             className="rounded-xl bg-amber-900 px-5 py-3 text-xs font-black text-white shadow-md shadow-amber-900/20 hover:bg-stone-900 transition disabled:opacity-50"
           >
-            {busy ? "যোগ হচ্ছে…" : "এক ক্লিকে সম্পূর্ণ রুম সেট কিনুন"}
+            {busy ? t.themeFurniture.comboBusy : t.themeFurniture.comboBuy}
           </button>
         )}
       </div>
@@ -506,11 +515,14 @@ export function FurnitureWarrantyModal({
   open,
   onClose,
   productName,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productName: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   if (!open) return null;
 
   return (
@@ -530,7 +542,7 @@ export function FurnitureWarrantyModal({
             🛡️
           </span>
           <div>
-            <h3 className="text-base font-black text-stone-900 font-serif">১০ বছরের অফিশিয়াল স্ট্রাকচারাল ওয়ারেন্টি</h3>
+            <h3 className="text-base font-black text-stone-900 font-serif">{t.themeFurniture.warrantyTitle}</h3>
             <p className="line-clamp-1 text-xs text-stone-500">{productName}</p>
           </div>
         </div>
@@ -538,26 +550,26 @@ export function FurnitureWarrantyModal({
         <div className="mt-5 space-y-3 text-xs text-stone-700">
           <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 space-y-2">
             <div className="flex items-center justify-between border-b border-amber-200/60 pb-2">
-              <span className="font-bold text-stone-900">ওয়ারেন্টির ধরন:</span>
-              <span className="font-black text-amber-900">১০ বছর পার্টস ও ফ্রেম কভারেজ</span>
+              <span className="font-bold text-stone-900">{t.themeFurniture.warrantyTypeLabel}</span>
+              <span className="font-black text-amber-900">{t.themeFurniture.warrantyTypeValue}</span>
             </div>
-            <p><strong>কাঠ ও মেটেরিয়াল:</strong> সিজনড সলিড কাঠ ও হাই-ডেনসিটি বোর্ড — কোনো অবস্থাতেই ঘুণ ধরবে না (Termite-free guarantee)।</p>
-            <p><strong>ফিটিং ও জয়েন্ট:</strong> স্ক্রু, কবজা ও মেকানিজমে ১ বছরের ফ্রি রিপ্লেসমেন্ট এবং লাইফটাইম সার্ভিস সাপোর্ট।</p>
-            <p><strong>সার্ভিসিং পলিসি:</strong> যেকোনো সমস্যায় আমাদের টেকনিক্যাল টিম সরাসরি আপনার বাসায় গিয়ে ইন্সপেকশন ও রিপেয়ার সম্পন্ন করবে।</p>
+            <p><strong>{t.themeFurniture.warrantyWoodPrefix}</strong> সিজনড সলিড কাঠ ও হাই-ডেনসিটি বোর্ড — কোনো অবস্থাতেই ঘুণ ধরবে না (Termite-free guarantee)।</p>
+            <p><strong>{t.themeFurniture.warrantyFittingPrefix}</strong> স্ক্রু, কবজা ও মেকানিজমে ১ বছরের ফ্রি রিপ্লেসমেন্ট এবং লাইফটাইম সার্ভিস সাপোর্ট।</p>
+            <p><strong>{t.themeFurniture.warrantyServicePrefix}</strong> যেকোনো সমস্যায় আমাদের টেকনিক্যাল টিম সরাসরি আপনার বাসায় গিয়ে ইন্সপেকশন ও রিপেয়ার সম্পন্ন করবে।</p>
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
             <div className="rounded-xl border border-stone-100 bg-stone-50 p-2.5">
-              <p className="font-bold text-stone-900">ঘুণ প্রতিরোধী</p>
-              <p className="text-stone-400 text-[10px]">কেমিক্যাল সিজনিং</p>
+              <p className="font-bold text-stone-900">{t.themeFurniture.feat1Title}</p>
+              <p className="text-stone-400 text-[10px]">{t.themeFurniture.feat1Sub}</p>
             </div>
             <div className="rounded-xl border border-stone-100 bg-stone-50 p-2.5">
-              <p className="font-bold text-stone-900">ফ্রি টেকনিশিয়ান</p>
-              <p className="text-stone-400 text-[10px]">হোম ভিজিট</p>
+              <p className="font-bold text-stone-900">{t.themeFurniture.feat2Title}</p>
+              <p className="text-stone-400 text-[10px]">{t.themeFurniture.feat2Sub}</p>
             </div>
             <div className="rounded-xl border border-stone-100 bg-stone-50 p-2.5">
-              <p className="font-bold text-stone-900">জেনুইন কার্ড</p>
-              <p className="text-stone-400 text-[10px]">QR ভেরিফায়েড</p>
+              <p className="font-bold text-stone-900">{t.themeFurniture.feat3Title}</p>
+              <p className="text-stone-400 text-[10px]">{t.themeFurniture.feat3Sub}</p>
             </div>
           </div>
         </div>
@@ -573,11 +585,14 @@ export function FurnitureRoomVisualizerModal({
   open,
   onClose,
   productName,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productName: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [roomType, setRoomType] = useState("bedroom");
   const [wallColor, setWallColor] = useState("#F5EBE0");
 
@@ -600,7 +615,7 @@ export function FurnitureRoomVisualizerModal({
             📐
           </span>
           <div>
-            <h3 className="text-base font-black text-stone-900 font-serif">৩ডি রুম ভিজ্যুয়ালাইজার ও স্পেস প্ল্যানার</h3>
+            <h3 className="text-base font-black text-stone-900 font-serif">{t.themeFurniture.vizTitle}</h3>
             <p className="line-clamp-1 text-xs text-stone-500">{productName}</p>
           </div>
         </div>
@@ -611,8 +626,8 @@ export function FurnitureRoomVisualizerModal({
           style={{ backgroundColor: wallColor }}
         >
           <div className="flex items-center justify-between text-xs font-bold text-stone-700 bg-white/80 backdrop-blur-xs px-3 py-1 rounded-full shadow-xs">
-            <span>রুম প্রিভিউ: {roomType === "bedroom" ? "মাস্টার বেডরুম" : roomType === "living" ? "লিভিং রুম" : "ডাইনিং স্পেস"}</span>
-            <span className="text-amber-800">পারফেক্ট ফিট ✓</span>
+            <span>{t.themeFurniture.vizPreviewPrefix}{roomType === "bedroom" ? t.themeFurniture.vizBedroom : roomType === "living" ? t.themeFurniture.vizLiving : t.themeFurniture.vizDining}</span>
+            <span className="text-amber-800">{t.themeFurniture.vizPerfectFit}</span>
           </div>
 
           <div className="text-center space-y-1">
@@ -623,19 +638,19 @@ export function FurnitureRoomVisualizerModal({
           </div>
 
           <p className="text-[11px] text-stone-500 text-center bg-white/60 rounded px-2 py-0.5">
-            ফ্লোর স্পেস কভারেজ: ১২০-১৫০ বর্গফুট রুমের জন্য আদর্শ
+            {t.themeFurniture.vizCoverage}
           </p>
         </div>
 
         {/* Wall Color & Room Selector */}
         <div className="space-y-3 text-xs">
           <div>
-            <label className="font-bold text-stone-800 block mb-1">রুমের ধরন নির্বাচন করুন:</label>
+            <label className="font-bold text-stone-800 block mb-1">{t.themeFurniture.vizRoomLabel}</label>
             <div className="grid grid-cols-3 gap-2">
               {[
-                { id: "bedroom", label: "বেডরুম" },
-                { id: "living", label: "লিভিং রুম" },
-                { id: "dining", label: "ডাইনিং রুম" },
+                { id: "bedroom", label: t.themeFurniture.roomBedroom },
+                { id: "living", label: t.themeFurniture.roomLiving },
+                { id: "dining", label: t.themeFurniture.roomDining },
               ].map((r) => (
                 <button
                   key={r.id}
@@ -654,7 +669,7 @@ export function FurnitureRoomVisualizerModal({
           </div>
 
           <div>
-            <label className="font-bold text-stone-800 block mb-1">দেয়ালের রঙ ম্যাচ করুন:</label>
+            <label className="font-bold text-stone-800 block mb-1">{t.themeFurniture.vizWallLabel}</label>
             <div className="flex gap-2">
               {[
                 { color: "#F5EBE0", label: "ওয়ার্ম আইভরি" },
@@ -694,6 +709,7 @@ export function FurnitureThemeHome({
   orgSlug: string;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const { settings, products, flashSales, categories, brands, pagination } = home;
   const page = pagination.page;
 
@@ -712,14 +728,14 @@ export function FurnitureThemeHome({
       <div className="bg-stone-950 text-white text-xs py-2 px-4 border-b border-amber-900/30">
         <div className="mx-auto max-w-7xl flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 font-bold">
-            <span>🛋️ প্রিমিয়াম সলিড উড ও আধুনিক ফার্নিচার</span>
+            <span>{t.themeFurniture.topPremium}</span>
             <span className="hidden sm:inline">·</span>
-            <span className="text-amber-400">১০ বছরের অফিশিয়াল কাঠামোগত ওয়ারেন্টি ও ফ্রি ফিটিং</span>
+            <span className="text-amber-400">{t.themeFurniture.topWarranty}</span>
           </div>
           <div className="flex items-center gap-2 font-semibold text-[11px]">
-            <span>📞 শোরুম হটলাইন: 01XXXXXXXXX</span>
+            <span>{t.themeFurniture.topHotline}01XXXXXXXXX</span>
             <span>·</span>
-            <span className="bg-amber-900 px-2.5 py-0.5 rounded-full">০% ইএমআই সুবিধা</span>
+            <span className="bg-amber-900 px-2.5 py-0.5 rounded-full">{t.themeFurniture.topEmi}</span>
           </div>
         </div>
       </div>
@@ -734,24 +750,24 @@ export function FurnitureThemeHome({
                 <span>ARCHITECTURAL LUXURY & SOLID HARDWOOD</span>
               </div>
               <h1 className="text-3xl font-black tracking-tight text-white sm:text-5xl lg:text-6xl font-serif">
-                {settings.shopName || "আপনার স্বপ্নের বাড়ি সাজান সেরা ডিজাইনের আসবাবে"}
+                {settings.shopName || t.themeFurniture.heroTaglineFallback}
               </h1>
               <p className="max-w-xl text-xs sm:text-sm text-stone-300 leading-relaxed">
                 {settings.metaDescription ||
-                  "সিজনড সেগুন কাঠ ও কানাডিয়ান ওকের নিখুঁত ফিনিশ। আধুনিক আর্কিটেকচারাল ডিজাইন, ১০ বছরের ওয়ারেন্টি এবং ফ্রি হোম ফিটিং সার্ভিস।"}
+                  t.themeFurniture.heroDescFallback}
               </p>
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 <a
                   href="#furniture-featured"
                   className="rounded-xl bg-amber-700 px-6 py-3 text-xs font-black text-white shadow-lg shadow-amber-900/40 transition hover:bg-amber-600"
                 >
-                  ফিচার্ড ফার্নিচার দেখুন →
+                  {t.themeFurniture.heroCta}
                 </a>
                 <a
                   href="#room-categories"
                   className="rounded-xl border border-stone-700 bg-stone-900/60 px-5 py-3 text-xs font-bold text-stone-200 backdrop-blur-sm hover:bg-stone-800"
                 >
-                  রুম অনুযায়ী ক্যাটাগরি
+                  {t.themeFurniture.heroCategories}
                 </a>
               </div>
             </div>
@@ -762,11 +778,11 @@ export function FurnitureThemeHome({
                 <span className="text-5xl">🛋️</span>
                 <h3 className="text-lg font-black text-white font-serif">Living & Bedroom Suites</h3>
                 <p className="text-xs text-amber-200/80 max-w-xs">
-                  আন্তর্জাতিক স্ট্যান্ডার্ড সিজনিং ও লেকার ফিনিশ দ্বারা তৈরি দীর্ঘস্থায়ী আসবাব
+                  {t.themeFurniture.heroQuality}
                 </p>
                 <div className="flex justify-center gap-2 text-[10px] font-bold text-amber-100">
-                  <span className="rounded-full bg-white/10 px-2.5 py-1">১০ বছর ওয়ারেন্টি</span>
-                  <span className="rounded-full bg-white/10 px-2.5 py-1">ফ্রি হোম ডেলিভারি</span>
+                  <span className="rounded-full bg-white/10 px-2.5 py-1">{t.themeFurniture.chipWarranty}</span>
+                  <span className="rounded-full bg-white/10 px-2.5 py-1">{t.themeFurniture.chipDelivery}</span>
                 </div>
               </div>
             </div>
@@ -774,15 +790,15 @@ export function FurnitureThemeHome({
         </section>
 
         {/* 3. 4 Pillars Trust Bar */}
-        <FurnitureTrustBar />
+        <FurnitureTrustBar locale={locale} />
 
         {/* 4. Room Categories */}
         <section id="room-categories" className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-black text-stone-900 font-serif">
-              রুম অনুযায়ী ফার্নিচার বেছে নিন:
+              {t.themeFurniture.roomsHeading}
             </h3>
-            <span className="text-xs font-bold text-amber-800">সম্পূর্ণ রুম সলিউশন</span>
+            <span className="text-xs font-bold text-amber-800">{t.themeFurniture.roomsSub}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
@@ -811,9 +827,9 @@ export function FurnitureThemeHome({
                 <span className="text-2xl">🔥</span>
                 <div>
                   <h3 className="text-lg font-black text-white font-serif">
-                    {flashSales.sales[0].name || "রুম মেকওভার মেগা ড্রপ — সীমিত সময়ের ছাড়"}
+                    {flashSales.sales[0].name || t.themeFurniture.flashFallback}
                   </h3>
-                  <p className="text-xs text-amber-300">হোম ডেকর ও ফার্নিচারে বিশেষ আকর্ষণীয় মূল্যছাড়</p>
+                  <p className="text-xs text-amber-300">{t.themeFurniture.flashSub}</p>
                 </div>
               </div>
               <FlashCountdown endsAt={flashSales.sales[0].endsAt} serverNow={flashSales.serverNow} locale={locale} />
@@ -837,10 +853,10 @@ export function FurnitureThemeHome({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black text-stone-900 sm:text-2xl font-serif">
-                অভিজাত ও টেকসই আসবাব কালেকশন
+                {t.themeFurniture.collectionHeading}
               </h2>
               <p className="text-xs text-stone-500">
-                ১০ বছরের লিখিত ওয়ারেন্টি ও ফ্রি হোম ফিটিং সার্ভিস সহ
+                {t.themeFurniture.collectionSub}
               </p>
             </div>
             <SortSelect orgSlug={orgSlug} locale={locale} value="featured" />
@@ -865,18 +881,18 @@ export function FurnitureThemeHome({
                   href={`/shop/${orgSlug}?page=${page - 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-50"
                 >
-                  আগের পেজ
+                  {t.themeFurniture.prevPage}
                 </Link>
               )}
               <span className="text-xs font-semibold text-stone-500">
-                পেজ {pagination.page} / {pagination.totalPages}
+                {t.themeFurniture.pagePrefix}{fmtNumber(locale === "en" ? "en" : "bn", pagination.page)} / {fmtNumber(locale === "en" ? "en" : "bn", pagination.totalPages)}
               </span>
               {page < pagination.totalPages && (
                 <Link
                   href={`/shop/${orgSlug}?page=${page + 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-50"
                 >
-                  পরের পেজ
+                  {t.themeFurniture.nextPage}
                 </Link>
               )}
             </nav>

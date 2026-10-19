@@ -119,7 +119,7 @@ export function BundleCard({
               return (
                 <div key={slot.id ?? slot.label} className="space-y-1.5">
                   <p className="text-xs font-bold text-slate-800">
-                    {slot.label} — {slot.chooseQty}টি বেছে নিন
+                    {slot.label}{t.shopWidgets.bundleChooseMid}{fmtNumber(locale === "en" ? "en" : "bn", slot.chooseQty)}{t.shopWidgets.bundleChooseSuffix}
                     <span className={`ml-1 font-semibold ${slotSatisfied(slot.id, slot.chooseQty) ? "text-emerald-600" : "text-slate-400"}`}>
                       ({chosen.length}/{slot.chooseQty})
                     </span>
@@ -148,7 +148,7 @@ export function BundleCard({
                     })}
                   </div>
                   {slot.options.length === 0 ? (
-                    <p className="text-[11px] text-slate-400">এই স্লটে এখন বেছে নেওয়ার মতো পণ্য নেই।</p>
+                    <p className="text-[11px] text-slate-400">{t.shopWidgets.bundleEmpty}</p>
                   ) : null}
                 </div>
               );
@@ -164,7 +164,7 @@ export function BundleCard({
           </div>
           {error ? <p className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700">{error}</p> : null}
           {slots.length > 0 && !allSlotsSatisfied ? (
-            <p className="text-[11px] font-medium text-slate-500">কার্টে যোগ করতে প্রতিটি স্লট থেকে ঠিক নির্দিষ্ট সংখ্যক পণ্য বেছে নিন।</p>
+            <p className="text-[11px] font-medium text-slate-500">{t.shopWidgets.bundleHint}</p>
           ) : null}
           <button
             type="button"

@@ -2,6 +2,10 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
+import { pubT, publicDicts } from "@/lib/i18n/public";
+import { tr } from "@/lib/i18n/lookup";
+
+const t = pubT();
 
 interface UnsubscribeInfo { valid: boolean; channel: string; address: string }
 
@@ -23,9 +27,9 @@ export default function PublicUnsubscribePage() {
     (async () => {
       try {
         const res = await fetch(`${API_URL}/public/messaging/unsubscribe/${token}`);
-        if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? "লিংকটি ব্যবহার করা যাচ্ছে না"); }
+        if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? t.unsubscribe.linkUnusable); }
         setInfo(await res.json());
-      } catch (e) { setError(e instanceof Error ? e.message : "লিংকটি ব্যবহার করা যাচ্ছে না"); }
+      } catch (e) { setError(e instanceof Error ? e.message : t.unsubscribe.linkUnusable); }
     })();
   }, [token]);
 
@@ -34,9 +38,9 @@ export default function PublicUnsubscribePage() {
     try {
       const res = await fetch(`${API_URL}/public/messaging/unsubscribe/${token}`, { method: "POST" });
       const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.message ?? "আনসাবস্ক্রাইব করা যায়নি");
-      setDone(j?.message ?? "আপনাকে আনসাবস্ক্রাইব করা হয়েছে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "আনসাবস্ক্রাইব করা যায়নি"); }
+      if (!res.ok) throw new Error(j?.message ?? t.unsubscribe.failed);
+      setDone(j?.message ?? t.unsubscribe.doneFallback);
+    } catch (e) { setError(e instanceof Error ? e.message : t.unsubscribe.failed); }
     finally { setBusy(false); }
   }
 
@@ -44,17 +48,18 @@ export default function PublicUnsubscribePage() {
     <main className="mx-auto max-w-xl space-y-5 p-6">
       <header>
         <p className="text-xs uppercase tracking-wide text-slate-400">Messaging</p>
-        <h1 className="mt-1 text-2xl font-bold">📭 আনসাবস্ক্রাইব</h1>
+        <h1 className="mt-1 text-2xl font-bold">{t.unsubscribe.title}</h1>
       </header>
-      {!info && !error ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : null}
+      {!info && !error ? <p className="text-sm text-slate-500">{t.unsubscribe.loading}</p> : null}
       {error && !done ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
       {info && !done ? (
         <section className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
           <p className="text-sm text-slate-700">
-            <span className="font-medium">{info.address}</span> ঠিকানায় ({info.channel}) আর কোনো Broadcast বার্তা পাঠানো হবে না।
+            {tr(publicDicts, "bn", "unsubscribe.body", { address: info.address, channel: info.channel })}
           </p>
-          <p className="text-xs text-slate-400">অর্ডার বা অ্যাকাউন্ট সংক্রান্ত জরুরি বার্তা এর আওতায় পড়ে না।</p>
-          <button className="btn-primary" disabled={busy} onClick={confirm}>{busy ? "কাজ চলছে..." : "আনসাবস্ক্রাইব নিশ্চিত করুন"}</button>
+          <p className="text-xs text-slate-400">{t.unsubscribe.note}</p>
+          <button className="btn-primary" disabled={busy} onClick={confirm}>{busy ? t.unsubscribe.working : t.unsubscribe.confirmButton}</button>
+
         </section>
       ) : null}
       {done ? (

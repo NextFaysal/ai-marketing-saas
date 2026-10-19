@@ -3,6 +3,8 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
+import { fmtDate } from "@repo/contracts";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 
 // AB2 (AX3) — public gift-card balance check. The code + the
 // shop are the whole credential: the API answers an unknown
@@ -16,12 +18,15 @@ interface BalanceResult {
   expiresAt: string | null;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  active: "সক্রিয়",
-  depleted: "ব্যালেন্স শেষ",
-  expired: "মেয়াদোত্তীর্ণ",
-  void: "বাতিল",
-};
+function statusLabels(locale: ShopLocale | string | undefined): Record<string, string> {
+  const w = shopT(locale).shopWidgets;
+  return {
+    active: w.gcStatusActive,
+    depleted: w.gcStatusDepleted,
+    expired: w.gcStatusExpired,
+    void: w.gcStatusVoid,
+  };
+}
 
 function money(minor: string): string {
   try {
@@ -31,7 +36,9 @@ function money(minor: string): string {
   }
 }
 
-export function GiftCardBalanceClient({ orgSlug }: { orgSlug: string }) {
+export function GiftCardBalanceClient({ orgSlug, locale = "bn" }: { orgSlug: string; locale?: ShopLocale | string }) {
+  const t = shopT(locale);
+  const STATUS_LABELS = statusLabels(locale);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -51,11 +58,11 @@ export function GiftCardBalanceClient({ orgSlug }: { orgSlug: string }) {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         // The API's generic error, verbatim.
-        throw new Error((body as { message?: string }).message ?? "গিফট কার্ডের কোডটি সঠিক নয় বা এই দোকানের কার্ড নয়");
+        throw new Error((body as { message?: string }).message ?? t.shopWidgets.gcInvalid);
       }
       setResult((await res.json()) as BalanceResult);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ব্যালেন্স দেখা যায়নি");
+      setError(err instanceof Error ? err.message : t.shopWidgets.gcLoadFailed);
     } finally {
       setBusy(false);
     }
@@ -64,14 +71,13 @@ export function GiftCardBalanceClient({ orgSlug }: { orgSlug: string }) {
   return (
     <div className="mx-auto max-w-md px-4 py-12">
       <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-black text-slate-900">🎁 গিফট কার্ডের ব্যালেন্স</h1>
+        <h1 className="text-xl font-black text-slate-900">{t.shopWidgets.gcBalanceTitle}</h1>
         <p className="text-xs leading-relaxed text-slate-500">
-          আপনার গিফট কার্ডের কোডটি লিখুন — কার্ডে কত টাকা অবশিষ্ট আছে, কার্ডটি সক্রিয়
-          আছে কিনা আর মেয়াদ কবে শেষ হবে, তা এখানে দেখা যাবে।
+          {t.shopWidgets.gcBalanceBody}
         </p>
         <form onSubmit={check} className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gift-card-code">গিফট কার্ডের কোড</label>
+            <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gift-card-code">{t.shopWidgets.gcCodeLabel}</label>
             <input
               id="gift-card-code"
               required
@@ -87,29 +93,29 @@ export function GiftCardBalanceClient({ orgSlug }: { orgSlug: string }) {
             disabled={busy || !code.trim()}
             className="w-full rounded-2xl bg-pink-600 py-3 text-sm font-extrabold text-white shadow hover:bg-pink-700 disabled:opacity-50"
           >
-            {busy ? "দেখা হচ্ছে…" : "ব্যালেন্স দেখুন"}
+            {busy ? t.shopWidgets.gcChecking : t.shopWidgets.gcCheck}
           </button>
         </form>
         {result ? (
           <div className="space-y-2 rounded-2xl border border-pink-100 bg-pink-50/60 p-4 text-sm">
             <div className="flex justify-between">
-              <span className="font-semibold text-slate-600">ব্যালেন্স</span>
+              <span className="font-semibold text-slate-600">{t.shopWidgets.gcBalance}</span>
               <span className="text-lg font-black text-pink-700">{money(result.balanceMinor)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="font-semibold text-slate-600">অবস্থা</span>
+              <span className="font-semibold text-slate-600">{t.shopWidgets.gcStatus}</span>
               <span className="font-bold text-slate-900">{STATUS_LABELS[result.status] ?? result.status}</span>
             </div>
             {result.expiresAt ? (
               <div className="flex justify-between">
-                <span className="font-semibold text-slate-600">মেয়াদ</span>
-                <span className="font-bold text-slate-900">{new Date(result.expiresAt).toLocaleDateString("bn-BD")}</span>
+                <span className="font-semibold text-slate-600">{t.shopWidgets.gcExpiry}</span>
+                <span className="font-bold text-slate-900">{fmtDate(locale === "en" ? "en" : "bn", result.expiresAt)}</span>
               </div>
             ) : null}
           </div>
         ) : null}
         <p className="text-center">
-          <Link href={`/shop/${orgSlug}`} className="text-xs font-bold text-indigo-700 hover:underline">← দোকানে ফিরে যান</Link>
+          <Link href={`/shop/${orgSlug}`} className="text-xs font-bold text-indigo-700 hover:underline">{t.shopWidgets.gcBackToShop}</Link>
         </p>
       </div>
     </div>

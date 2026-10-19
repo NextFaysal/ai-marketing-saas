@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor, fmtNumber, formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopHome, ShopProduct } from "@/lib/storefront-server";
 import { type ShopLocale, shopT } from "@/lib/shop-i18n";
@@ -22,7 +22,8 @@ export function formatGroceryPrice(minor: string): string {
 // ----------------------------------------------------
 // 1. Organic & Grocery Trust Bar
 // ----------------------------------------------------
-export function GroceryTrustBar() {
+export function GroceryTrustBar({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
       <div className="flex items-center gap-3 rounded-2xl border border-emerald-100 bg-white p-3.5 shadow-xs transition hover:shadow-md">
@@ -30,8 +31,8 @@ export function GroceryTrustBar() {
           ⚡
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">১ ঘণ্টায় এক্সপ্রেস ডেলিভারি</h4>
-          <p className="text-[11px] text-slate-500">আপনার এরিয়ার নিকটস্থ হাব থেকে সরাসরি</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeGrocery.trust1Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeGrocery.trust1Desc}</p>
         </div>
       </div>
 
@@ -40,8 +41,8 @@ export function GroceryTrustBar() {
           🌿
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">১০০% প্রাকৃতিক ও নির্ভেজাল</h4>
-          <p className="text-[11px] text-slate-500">সরাসরি কৃষক ও কাঠের ঘানি থেকে সংগৃহীত</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeGrocery.trust2Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeGrocery.trust2Desc}</p>
         </div>
       </div>
 
@@ -50,8 +51,8 @@ export function GroceryTrustBar() {
           ❄️
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">কোল্ড-চেইন তাজা প্যাকেজিং</h4>
-          <p className="text-[11px] text-slate-500">শাকসবজি, মাছ ও মাংসের তাজা স্বাদ অটুট</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeGrocery.trust3Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeGrocery.trust3Desc}</p>
         </div>
       </div>
 
@@ -60,8 +61,8 @@ export function GroceryTrustBar() {
           🔄
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">ডোরস্টেপ চেক ও রিটার্ন</h4>
-          <p className="text-[11px] text-slate-500">পণ্য দেখে পছন্দ না হলে সাথে সাথে ফেরত</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeGrocery.trust4Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeGrocery.trust4Desc}</p>
         </div>
       </div>
     </div>
@@ -80,6 +81,7 @@ export function GroceryProductCard({
   product: ShopProduct;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [qty, setQty] = useState(0);
   const [busy, setBusy] = useState(false);
 
@@ -112,7 +114,7 @@ export function GroceryProductCard({
       <div className="relative aspect-square w-full overflow-hidden bg-emerald-50/20 p-3">
         <div className="absolute left-2.5 top-2.5 z-10 flex flex-col gap-1">
           <span className="rounded-lg bg-emerald-600 px-2 py-0.5 text-[9px] font-black text-white shadow-xs">
-            🌿 ১০০% ফ্রেশ
+            {t.themeGrocery.freshBadge}
           </span>
           {compareMinor && BigInt(compareMinor) > BigInt(priceMinor) && (
             <span className="rounded-lg bg-rose-600 px-2 py-0.5 text-[9px] font-black text-white shadow-xs">
@@ -147,10 +149,10 @@ export function GroceryProductCard({
         <div>
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-semibold text-emerald-800">
-              {product.category || "গ্রোসারি"}
+              {product.category || t.themeGrocery.groceryFallback}
             </span>
             <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
-              ১ কেজি প্যাক
+              {t.themeGrocery.pack1kg}
             </span>
           </div>
 
@@ -187,7 +189,7 @@ export function GroceryProductCard({
               >
                 −
               </button>
-              <span className="text-xs font-black text-emerald-950">{qty} টি ব্যাগে</span>
+              <span className="text-xs font-black text-emerald-950">{fmtNumber(locale === "en" ? "en" : "bn", qty)}{t.themeGrocery.inBagSuffix}</span>
               <button
                 type="button"
                 onClick={() => updateQuantity(qty + 1)}
@@ -209,7 +211,7 @@ export function GroceryProductCard({
               }`}
             >
               <span>+</span>
-              <span>{isOutOfStock ? "স্টক শেষ" : busy ? "যোগ হচ্ছে…" : "ব্যাগে যোগ করুন"}</span>
+              <span>{isOutOfStock ? t.themeGrocery.outOfStock : busy ? t.themeGrocery.adding : t.themeGrocery.addToBag}</span>
             </button>
           )}
         </div>
@@ -224,14 +226,17 @@ export function GroceryProductCard({
 export function GroceryWeightSelector({
   selectedWeight = "১ কেজি",
   onSelectWeight,
+  locale = "bn",
 }: {
   selectedWeight?: string;
   onSelectWeight?: (w: string) => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const packs = [
     { label: "২৫০ গ্রাম", discount: null },
     { label: "৫০০ গ্রাম", discount: null },
-    { label: "১ কেজি", discount: "জনপ্রিয়" },
+    { label: "১ কেজি", discount: t.themeGrocery.badgePopular },
     { label: "২ কেজি", discount: "৳২০ ছাড়" },
     { label: "৫ কেজি", discount: "৳৬০ ছাড়" },
   ];
@@ -239,8 +244,8 @@ export function GroceryWeightSelector({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="text-xs font-bold text-slate-800">পরিমাণ ও ওজনের প্যাক বেছে নিন:</label>
-        <span className="text-[11px] text-emerald-700 font-bold">বেশি পরিমাণে বাড়তি ছাড়</span>
+        <label className="text-xs font-bold text-slate-800">{t.themeGrocery.weightLabel}</label>
+        <span className="text-[11px] text-emerald-700 font-bold">{t.themeGrocery.weightNote}</span>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -281,10 +286,13 @@ export function GroceryWeightSelector({
 export function GroceryMonthlyBazarBundle({
   orgSlug,
   mainProduct,
+  locale = "bn",
 }: {
   orgSlug: string;
   mainProduct: ShopProduct;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [rice, setRice] = useState(true);
   const [oil, setOil] = useState(true);
   const [dal, setDal] = useState(true);
@@ -333,8 +341,8 @@ export function GroceryMonthlyBazarBundle({
             🧺
           </span>
           <div>
-            <h3 className="text-sm font-black text-slate-900">ফ্যামিলি মাসিক বাজার কম্বো (Monthly Bazar Pack)</h3>
-            <p className="text-[11px] text-slate-500">এক ক্লিকে পরিবারের পুরো মাসের নিত্যপ্রয়োজনীয় বাজার কিনুন এবং ৳২৫০ সাশ্রয় করুন</p>
+            <h3 className="text-sm font-black text-slate-900">{t.themeGrocery.comboTitle}</h3>
+            <p className="text-[11px] text-slate-500">{t.themeGrocery.comboSubPrefix}{fmtMoneyMinor(locale === "en" ? "en" : "bn", 25000)}{t.themeGrocery.comboSubSuffix}</p>
           </div>
         </div>
         <span className="rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-black text-white">
@@ -346,7 +354,7 @@ export function GroceryMonthlyBazarBundle({
         {/* Main Product (e.g. 5kg Rice) */}
         <div className="rounded-2xl border border-emerald-600 bg-white p-3 shadow-xs">
           <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
-            মূল পণ্য
+            {t.themeGrocery.comboMain}
           </span>
           <p className="mt-2 line-clamp-1 text-xs font-black text-slate-900">{mainProduct.name}</p>
           <p className="text-xs font-extrabold text-emerald-700">{formatGroceryPrice(mainProduct.priceMinor)}</p>
@@ -408,17 +416,17 @@ export function GroceryMonthlyBazarBundle({
               (৳২৫০ সেভ হচ্ছে)
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">মাসিক বাজার প্যাকেজ একসাথে ডেলিভারি হবে</p>
+          <p className="text-[11px] text-slate-500">{t.themeGrocery.comboNote}</p>
         </div>
 
         {added ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-emerald-800">✅ সম্পূর্ণ বাজার ব্যাগে যোগ হয়েছে!</span>
+            <span className="text-xs font-bold text-emerald-800">{t.themeGrocery.comboAdded}</span>
             <Link
               href={`/shop/${orgSlug}/cart`}
               className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
             >
-              কার্ট দেখুন
+              {t.themeGrocery.viewCart}
             </Link>
           </div>
         ) : (
@@ -428,7 +436,7 @@ export function GroceryMonthlyBazarBundle({
             disabled={busy}
             className="rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-700 transition disabled:opacity-50"
           >
-            {busy ? "যোগ হচ্ছে…" : "এক ক্লিকে সম্পূর্ণ বাজার কিনুন"}
+            {busy ? t.themeGrocery.comboBusy : t.themeGrocery.comboBuy}
           </button>
         )}
       </div>
@@ -444,12 +452,15 @@ export function GroceryPurityCertModal({
   onClose,
   productName,
   source = "সুন্দরবনের প্রাকৃতিক চাক ও নাটোরের ঘানি",
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productName: string;
   source?: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   if (!open) return null;
 
   return (
@@ -469,7 +480,7 @@ export function GroceryPurityCertModal({
             🌿
           </span>
           <div>
-            <h3 className="text-base font-black text-slate-900">১০০% অর্গানিক ও ল্যাব টেস্ট রিপোর্ট</h3>
+            <h3 className="text-base font-black text-slate-900">{t.themeGrocery.purityTitle}</h3>
             <p className="line-clamp-1 text-xs text-slate-500">{productName}</p>
           </div>
         </div>
@@ -477,26 +488,26 @@ export function GroceryPurityCertModal({
         <div className="mt-5 space-y-3.5 text-xs text-slate-700">
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-2">
             <div className="flex items-center justify-between border-b border-emerald-200/60 pb-2">
-              <span className="font-bold text-emerald-950">বিশুদ্ধতার স্কোর (Purity Score):</span>
-              <span className="font-black text-emerald-700 text-sm">১০০% প্রাকৃতিক ও খাঁটি</span>
+              <span className="font-bold text-emerald-950">{t.themeGrocery.purityScoreLabel}</span>
+              <span className="font-black text-emerald-700 text-sm">{t.themeGrocery.purityScoreValue}</span>
             </div>
-            <p><strong>উৎস ও এলাকা:</strong> {source}</p>
-            <p><strong>ল্যাব পরীক্ষার ফলাফল:</strong> ০% ইউরিয়া, ০% প্যারাফিন, ০% প্রিজারভেটিভ বা ক্ষতিকর রঙ।</p>
-            <p><strong>বিএসটিআই সনদ:</strong> BSTI & বাংলাদেশ ফুড সেফটি স্ট্যান্ডার্ড কমপ্লায়েন্ট।</p>
+            <p><strong>{t.themeGrocery.sourcePrefix}</strong> {source}</p>
+            <p><strong>{t.themeGrocery.labPrefix}</strong> ০% ইউরিয়া, ০% প্যারাফিন, ০% প্রিজারভেটিভ বা ক্ষতিকর রঙ।</p>
+            <p><strong>{t.themeGrocery.bstiPrefix}</strong> BSTI & বাংলাদেশ ফুড সেফটি স্ট্যান্ডার্ড কমপ্লায়েন্ট।</p>
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
-              <p className="font-bold text-slate-900">১০০% হালাল</p>
-              <p className="text-slate-400 text-[10px]">সার্টিফাইড</p>
+              <p className="font-bold text-slate-900">{t.themeGrocery.feat1Title}</p>
+              <p className="text-slate-400 text-[10px]">{t.themeGrocery.feat1Sub}</p>
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
-              <p className="font-bold text-slate-900">রাসায়নিকমুক্ত</p>
-              <p className="text-slate-400 text-[10px]">ন্যাচারাল ফার্মিং</p>
+              <p className="font-bold text-slate-900">{t.themeGrocery.feat2Title}</p>
+              <p className="text-slate-400 text-[10px]">{t.themeGrocery.feat2Sub}</p>
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
-              <p className="font-bold text-slate-900">কোল্ড প্রসেসড</p>
-              <p className="text-slate-400 text-[10px]">পুষ্টিগুণ অক্ষুণ্ণ</p>
+              <p className="font-bold text-slate-900">{t.themeGrocery.feat3Title}</p>
+              <p className="text-slate-400 text-[10px]">{t.themeGrocery.feat3Sub}</p>
             </div>
           </div>
         </div>
@@ -508,12 +519,13 @@ export function GroceryPurityCertModal({
 // ----------------------------------------------------
 // 6. Nutrition Facts Table
 // ----------------------------------------------------
-export function GroceryNutritionFacts() {
+export function GroceryNutritionFacts({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 text-xs space-y-2.5 shadow-xs">
       <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-        <h4 className="font-black text-slate-900">পুষ্টিগুণ ও স্বাস্থ্য উপকারিতা (প্রতি ১০০ গ্রাম):</h4>
-        <span className="text-[10px] text-emerald-700 font-bold">ল্যাব ভেরিফায়েড</span>
+        <h4 className="font-black text-slate-900">{t.themeGrocery.nutritionHeading}</h4>
+        <span className="text-[10px] text-emerald-700 font-bold">{t.themeGrocery.labVerified}</span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-700">
         <div className="rounded-lg bg-slate-50 p-2">
@@ -540,7 +552,8 @@ export function GroceryNutritionFacts() {
 // ----------------------------------------------------
 // 7. Express Delivery Slot Picker
 // ----------------------------------------------------
-export function GroceryDeliverySlotPicker() {
+export function GroceryDeliverySlotPicker({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   const [slot, setSlot] = useState("slot1");
   const slots = [
     { id: "slot1", label: "আজ সকাল ১০:০০ - ১২:০০ (১ ঘণ্টায় এক্সপ্রেস)", fast: true },
@@ -553,7 +566,7 @@ export function GroceryDeliverySlotPicker() {
     <div className="space-y-2 rounded-2xl border border-emerald-100 bg-emerald-50/40 p-3.5 text-xs">
       <div className="flex items-center gap-1.5 font-bold text-slate-900">
         <span>⏰</span>
-        <span>পছন্দের তাজা ডেলিভারি স্লট বেছে নিন:</span>
+        <span>{t.themeGrocery.slotLabel}</span>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {slots.map((s) => (
@@ -573,7 +586,7 @@ export function GroceryDeliverySlotPicker() {
               />
               <span className="text-[11px]">{s.label}</span>
             </div>
-            {s.fast && <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[9px] text-white">তাজা</span>}
+            {s.fast && <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[9px] text-white">{t.themeGrocery.freshTag}</span>}
           </label>
         ))}
       </div>
@@ -593,6 +606,7 @@ export function GroceryThemeHome({
   orgSlug: string;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const { settings, products, flashSales, categories, brands, pagination } = home;
   const page = pagination.page;
 
@@ -613,14 +627,14 @@ export function GroceryThemeHome({
       <div className="bg-emerald-900 text-white text-xs py-2 px-4">
         <div className="mx-auto max-w-7xl flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 font-bold">
-            <span>📍 ঢাকা সিটিতে এক্সপ্রেস ডেলিভারি</span>
+            <span>{t.themeGrocery.topExpress}</span>
             <span className="hidden sm:inline">·</span>
-            <span className="text-emerald-300">১ ঘণ্টায় ঘরের দরজায় তাজা বাজার পৌঁছে যাবে!</span>
+            <span className="text-emerald-300">{t.themeGrocery.topPromise}</span>
           </div>
           <div className="flex items-center gap-2 font-semibold text-[11px]">
-            <span>📞 সরাসরি অর্ডার: 01XXXXXXXXX</span>
+            <span>{t.themeGrocery.topOrder}01XXXXXXXXX</span>
             <span>·</span>
-            <span className="bg-emerald-800 px-2 py-0.5 rounded-full">ক্যাশ অন ডেলিভারি</span>
+            <span className="bg-emerald-800 px-2 py-0.5 rounded-full">{t.themeGrocery.topCod}</span>
           </div>
         </div>
       </div>
@@ -635,24 +649,24 @@ export function GroceryThemeHome({
                 <span>100% ORGANIC & FRESH FARM PRODUCE</span>
               </div>
               <h1 className="text-3xl font-black tracking-tight text-white sm:text-5xl font-serif">
-                {settings.shopName || "খাঁটি ও তাজা অর্গানিক খাদ্য, সরাসরি কৃষকের বাড়ি থেকে"}
+                {settings.shopName || t.themeGrocery.heroTaglineFallback}
               </h1>
               <p className="max-w-xl text-xs sm:text-sm text-emerald-100 leading-relaxed">
                 {settings.metaDescription ||
-                  "সুন্দরবনের প্রাকৃতিক চাকের মধু, ঘানিতে ভাঙা খাঁটি সরিষার তেল, প্রিমিয়াম চাল ও বিষমুক্ত তাজা শাকসবজি। ১ ঘণ্টায় ঘরে পৌঁছে দেওয়ার বিশ্বস্ত ঠিকানা।"}
+                  t.themeGrocery.heroDescFallback}
               </p>
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 <a
                   href="#grocery-featured"
                   className="rounded-xl bg-white px-6 py-3 text-xs font-black text-emerald-900 shadow-md transition hover:bg-emerald-50"
                 >
-                  আজকের তাজা বাজার দেখুন →
+                  {t.themeGrocery.heroCta}
                 </a>
                 <a
                   href="#grocery-departments"
                   className="rounded-xl border border-emerald-400/40 bg-emerald-900/40 px-5 py-3 text-xs font-bold text-white backdrop-blur-sm hover:bg-emerald-900/60"
                 >
-                  ক্যাটাগরি ব্রাউজ করুন
+                  {t.themeGrocery.browseCategories}
                 </a>
               </div>
             </div>
@@ -672,8 +686,8 @@ export function GroceryThemeHome({
                   <div className="text-8xl">🍯</div>
                 )}
                 <div className="absolute bottom-4 left-4 right-4 rounded-2xl bg-white/95 p-3.5 backdrop-blur-md text-slate-900 shadow-lg text-left">
-                  <span className="text-[10px] font-bold text-emerald-700">খাঁটি অর্গানিক স্পেশাল</span>
-                  <p className="line-clamp-1 text-xs font-black">{products[0]?.name || "খাঁটি মধু ও সরিষার তেল"}</p>
+                  <span className="text-[10px] font-bold text-emerald-700">{t.themeGrocery.organicSpecial}</span>
+                  <p className="line-clamp-1 text-xs font-black">{products[0]?.name || t.themeGrocery.heroProductFallback}</p>
                   <p className="text-xs font-extrabold text-emerald-800">
                     {products[0]?.priceMinor ? formatGroceryPrice(products[0].priceMinor) : ""}
                   </p>
@@ -684,13 +698,13 @@ export function GroceryThemeHome({
         </section>
 
         {/* 3. Organic Trust Bar */}
-        <GroceryTrustBar />
+        <GroceryTrustBar locale={locale} />
 
         {/* 4. Department Hub */}
         <section id="grocery-departments" className="space-y-4">
           <div>
-            <h2 className="text-xl font-black text-slate-900 sm:text-2xl font-serif">বাজারের বিভাগসমূহ</h2>
-            <p className="text-xs text-slate-500">আপনার প্রয়োজনীয় নিত্যপ্রয়োজনীয় অর্গানিক খাদ্যপণ্য</p>
+            <h2 className="text-xl font-black text-slate-900 sm:text-2xl font-serif">{t.themeGrocery.categoriesHeading}</h2>
+            <p className="text-xs text-slate-500">{t.themeGrocery.categoriesSub}</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-8">
@@ -718,8 +732,8 @@ export function GroceryThemeHome({
               <div className="flex items-center gap-2">
                 <span className="text-2xl">🔥</span>
                 <div>
-                  <h3 className="text-lg font-black text-rose-950 font-serif">{flashSales.sales[0].name || "দৈনিক তাজা বাজার অফার (Flash Grocery Drops)"}</h3>
-                  <p className="text-xs text-rose-700">সীমিত সময়ের জন্য বিশেষ সাশ্রয়ী মূল্যে খাঁটি খাদ্যপণ্য</p>
+                  <h3 className="text-lg font-black text-rose-950 font-serif">{flashSales.sales[0].name || t.themeGrocery.flashFallback}</h3>
+                  <p className="text-xs text-rose-700">{t.themeGrocery.flashSub}</p>
                 </div>
               </div>
               <FlashCountdown endsAt={flashSales.sales[0].endsAt} serverNow={flashSales.serverNow} locale={locale} />
@@ -743,10 +757,10 @@ export function GroceryThemeHome({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black text-slate-900 sm:text-2xl font-serif">
-                নিত্যপ্রয়োজনীয় খাঁটি খাদ্যপণ্য
+                {t.themeGrocery.collectionHeading}
               </h2>
               <p className="text-xs text-slate-500">
-                রাসায়নিকমুক্ত, তাজা ও ল্যাব টেস্টের মাধ্যমে শতভাগ বিশুদ্ধ প্রমাণিত
+                {t.themeGrocery.collectionSub}
               </p>
             </div>
             <SortSelect orgSlug={orgSlug} locale={locale} value="featured" />
@@ -771,18 +785,18 @@ export function GroceryThemeHome({
                   href={`/shop/${orgSlug}?page=${page - 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                 >
-                  আগের পেজ
+                  {t.themeGrocery.prevPage}
                 </Link>
               )}
               <span className="text-xs font-semibold text-slate-500">
-                পেজ {pagination.page} / {pagination.totalPages}
+                {t.themeGrocery.pagePrefix}{fmtNumber(locale === "en" ? "en" : "bn", pagination.page)} / {fmtNumber(locale === "en" ? "en" : "bn", pagination.totalPages)}
               </span>
               {page < pagination.totalPages && (
                 <Link
                   href={`/shop/${orgSlug}?page=${page + 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                 >
-                  পরের পেজ
+                  {t.themeGrocery.nextPage}
                 </Link>
               )}
             </nav>

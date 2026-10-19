@@ -147,14 +147,14 @@ export default async function ShopLayout({
       <ShopPopupDeferred orgSlug={orgSlug} locale={locale} />
       {/* NF6: gamified promotions overlay (same placement/trigger
           machinery as the popup; overlay-queue slot "promo"). */}
-      <ShopPromotionsDeferred orgSlug={orgSlug} />
+      <ShopPromotionsDeferred orgSlug={orgSlug} locale={locale} />
       {/* AB7 (AX16): push prompt (shop-scoped worker) + AX17 social proof. */}
-      <ShopPushPrompt orgSlug={orgSlug} />
+      <ShopPushPrompt orgSlug={orgSlug} locale={locale} />
       {/* AB8 (AX22): per-shop install bar (rides the stashed
           beforeinstallprompt; iOS gets manual instructions). */}
-      <ShopInstallBar orgSlug={orgSlug} />
+      <ShopInstallBar orgSlug={orgSlug} locale={locale} />
       {/* ED6: social proof deferred (renders nothing until its feed loads). */}
-      <ShopSocialProofDeferred orgSlug={orgSlug} themeId={effThemeId} />
+      <ShopSocialProofDeferred orgSlug={orgSlug} themeId={effThemeId} locale={locale} />
       {/* ED9: contact buttons ride the bottom-lift wrapper (see
           ShopContactLift) so they clear the v2 bottom nav / a
           page buy bar; at lift 0 rendering is pixel-identical. */}

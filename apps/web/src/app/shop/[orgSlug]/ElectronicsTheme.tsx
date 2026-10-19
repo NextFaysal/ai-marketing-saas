@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoney, fmtNumber, formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopHome, ShopProduct } from "@/lib/storefront-server";
 import { type ShopLocale, shopT } from "@/lib/shop-i18n";
@@ -22,7 +22,8 @@ export function formatTechPrice(minor: string): string {
 // ----------------------------------------------------
 // 1. Technical Trust Bar for Electronics & Gadgets
 // ----------------------------------------------------
-export function ElectronicsTrustBar() {
+export function ElectronicsTrustBar({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
       <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-xs transition hover:shadow-md">
@@ -30,8 +31,8 @@ export function ElectronicsTrustBar() {
           🛡️
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">১০০% অফিশিয়াল ওয়ারেন্টি</h4>
-          <p className="text-[11px] text-slate-500">অথোরাইজড ব্র্যান্ড পার্টস ও সার্ভিস গ্যারান্টি</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeElectronics.trust1Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeElectronics.trust1Desc}</p>
         </div>
       </div>
 
@@ -40,8 +41,8 @@ export function ElectronicsTrustBar() {
           ⚡
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">সুপারফাস্ট এক্সপ্রেস ডেলিভারি</h4>
-          <p className="text-[11px] text-slate-500">ঢাকায় ২৪ ঘণ্টায় ও সারাদেশে ২ দিনে ডেলিভারি</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeElectronics.trust2Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeElectronics.trust2Desc}</p>
         </div>
       </div>
 
@@ -50,8 +51,8 @@ export function ElectronicsTrustBar() {
           💳
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">০% ইএমআই (EMI) সুবিধা</h4>
-          <p className="text-[11px] text-slate-500">শীর্ষ ৩০+ ব্যাংকের ক্রেডিট কার্ডে কিস্তি</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeElectronics.trust3Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeElectronics.trust3Desc}</p>
         </div>
       </div>
 
@@ -60,8 +61,8 @@ export function ElectronicsTrustBar() {
           🔄
         </div>
         <div>
-          <h4 className="text-xs font-black text-slate-900">৭ দিনের রিপ্লেসমেন্ট</h4>
-          <p className="text-[11px] text-slate-500">যেকোনো টেকনিক্যাল ত্রুটিতে দ্রুত পরিবর্তন</p>
+          <h4 className="text-xs font-black text-slate-900">{t.themeElectronics.trust4Title}</h4>
+          <p className="text-[11px] text-slate-500">{t.themeElectronics.trust4Desc}</p>
         </div>
       </div>
     </div>
@@ -76,13 +77,15 @@ export function ElectronicsEmiCalculatorModal({
   onClose,
   productPriceMinor,
   productName,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productPriceMinor: string;
   productName: string;
+  locale?: ShopLocale | string;
 }) {
-  const [tenure, setTenure] = useState<3 | 6 | 9 | 12>(12);
+  const t = shopT(locale);
   const [selectedBank, setSelectedBank] = useState("City Bank Amex");
 
   if (!open) return null;
@@ -117,7 +120,7 @@ export function ElectronicsEmiCalculatorModal({
             💳
           </span>
           <div>
-            <h3 className="text-base font-black text-slate-900">০% ইএমআই কিস্তি ক্যালকুলেটর</h3>
+            <h3 className="text-base font-black text-slate-900">{t.themeElectronics.emiTitle}</h3>
             <p className="line-clamp-1 text-xs text-slate-500">{productName}</p>
           </div>
         </div>
@@ -125,7 +128,7 @@ export function ElectronicsEmiCalculatorModal({
         <div className="mt-5 space-y-4">
           {/* Price Tag */}
           <div className="flex items-baseline justify-between rounded-2xl bg-slate-50 p-3.5 border border-slate-100">
-            <span className="text-xs font-bold text-slate-600">পণ্যের নগদ মূল্য:</span>
+            <span className="text-xs font-bold text-slate-600">{t.themeElectronics.emiCashPrice}</span>
             <span className="text-xl font-black text-indigo-600">
               {formatTechPrice(productPriceMinor)}
             </span>
@@ -133,7 +136,7 @@ export function ElectronicsEmiCalculatorModal({
 
           {/* Bank Selection */}
           <div>
-            <label className="text-xs font-bold text-slate-700">আপনার ক্রেডিট কার্ড ব্যাংক নির্বাচন করুন:</label>
+            <label className="text-xs font-bold text-slate-700">{t.themeElectronics.emiBankLabel}</label>
             <select
               value={selectedBank}
               onChange={(e) => setSelectedBank(e.target.value)}
@@ -149,7 +152,7 @@ export function ElectronicsEmiCalculatorModal({
 
           {/* Tenure Selection */}
           <div>
-            <label className="text-xs font-bold text-slate-700">কিস্তির মেয়াদ (মাস):</label>
+            <label className="text-xs font-bold text-slate-700">{t.themeElectronics.emiTenureLabel}</label>
             <div className="mt-1.5 grid grid-cols-4 gap-2">
               {[3, 6, 9, 12].map((m) => (
                 <button
@@ -162,7 +165,7 @@ export function ElectronicsEmiCalculatorModal({
                       : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                   }`}
                 >
-                  {m} মাস
+                  {fmtNumber(locale === "en" ? "en" : "bn", m)}{t.themeElectronics.emiMonthsSuffix}
                 </button>
               ))}
             </div>
@@ -171,14 +174,14 @@ export function ElectronicsEmiCalculatorModal({
           {/* Result Box */}
           <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50/50 p-4 text-center">
             <span className="inline-block rounded-full bg-indigo-600/10 px-3 py-1 text-[11px] font-black text-indigo-700">
-              ০% সুদে মাসিক কিস্তি
+              {t.themeElectronics.emiMonthlyLabel}
             </span>
             <p className="mt-2 text-3xl font-black text-slate-900 font-mono tracking-tight">
-              ৳{monthlyEmi.toLocaleString("en-IN")}{" "}
-              <span className="text-xs font-sans font-bold text-slate-500">/ মাস</span>
+              {fmtMoney(locale === "en" ? "en" : "bn", monthlyEmi)}{" "}
+              <span className="text-xs font-sans font-bold text-slate-500">{t.themeElectronics.emiPerMonth}</span>
             </p>
             <p className="mt-1 text-[11px] text-slate-500">
-              {selectedBank} ক্রেডিট কার্ড দিয়ে মোট {tenure}টি সমান মাসিক কিস্তিতে পরিশোধ করতে পারবেন।
+              {selectedBank}{t.themeElectronics.emiNotePrefix}{fmtNumber(locale === "en" ? "en" : "bn", tenure)}{t.themeElectronics.emiNoteSuffix}
             </p>
           </div>
 
@@ -195,25 +198,29 @@ export function ElectronicsEmiCalculatorModal({
 // 3. Official Warranty & Tech Assurance Box
 // ----------------------------------------------------
 export function ElectronicsWarrantyBox({
-  warrantyText = "১ বছর অফিশিয়াল ব্র্যান্ড পার্টস ও সার্ভিস ওয়ারেন্টি",
+  warrantyText,
+  locale = "bn",
 }: {
   warrantyText?: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
+  const warranty = warrantyText ?? t.themeElectronics.warrantyDefault;
   return (
     <div className="space-y-2.5 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 text-xs">
       <div className="flex items-center gap-2 font-bold text-slate-900">
         <span className="text-indigo-600 text-base">🛡️</span>
-        <span className="font-extrabold text-indigo-950">ওয়ারেন্টি ও গ্যারান্টি নিশ্চয়তা:</span>
+        <span className="font-extrabold text-indigo-950">{t.themeElectronics.warrantyHeading}</span>
       </div>
       <ul className="space-y-1.5 text-[11px] text-slate-600 pl-6 list-disc">
         <li>
-          <strong>অফিশিয়াল ওয়ারেন্টি:</strong> {warrantyText}। অনুমোদিত সার্ভিস সেন্টার থেকে সরাসরি সেবা পাবেন।
+          <strong>{t.themeElectronics.warrantyOfficialPrefix}</strong> {warranty}{t.themeElectronics.warrantyOfficialSuffix}
         </li>
         <li>
-          <strong>৭ দিনের রিপ্লেসমেন্ট:</strong> প্যাকেট খোলার পর কোনো টেকনিক্যাল ম্যানুফ্যাকচারিং ত্রুটি থাকলে ইনস্ট্যান্ট রিপ্লেসমেন্ট।
+          <strong>{t.themeElectronics.warrantyReplacePrefix}</strong>{t.themeElectronics.warrantyReplaceBody}
         </li>
         <li>
-          <strong>ইনভয়েস কপি:</strong> ডেলিভারির সাথে ডিজিটাল ভ্যাট ইনভয়েস ও ওয়ারেন্টি ক্লেইম স্লিপ প্রদান করা হবে।
+          <strong>{t.themeElectronics.warrantyInvoicePrefix}</strong>{t.themeElectronics.warrantyInvoiceBody}
         </li>
       </ul>
     </div>
@@ -225,9 +232,12 @@ export function ElectronicsWarrantyBox({
 // ----------------------------------------------------
 export function ElectronicsSpecTable({
   specs,
+  locale = "bn",
 }: {
   specs?: Record<string, string>;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const defaultSpecs: Record<string, string> = {
     "প্রসেসর / চিপসেট": "High Performance Flagship Octa-Core",
     "ডিসপ্লে": "Super AMOLED, 120Hz Refresh Rate, HDR10+",
@@ -246,10 +256,10 @@ export function ElectronicsSpecTable({
       <div className="flex items-center justify-between border-b border-slate-100 pb-3">
         <div className="flex items-center gap-2">
           <span className="text-xl">⚙️</span>
-          <h3 className="text-sm font-black text-slate-900">টেকনিক্যাল স্পেসিফিকেশন (Technical Specs)</h3>
+          <h3 className="text-sm font-black text-slate-900">{t.themeElectronics.specsTitle}</h3>
         </div>
         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
-          অফিশিয়াল স্পেকস
+          {t.themeElectronics.officialSpecs}
         </span>
       </div>
 
@@ -281,6 +291,7 @@ export function ElectronicsProductCard({
   product: ShopProduct;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
   const [emiModalOpen, setEmiModalOpen] = useState(false);
@@ -333,7 +344,7 @@ export function ElectronicsProductCard({
               </span>
             ) : null}
             <span className="rounded-lg bg-slate-900/80 px-2 py-0.5 text-[9px] font-bold text-white backdrop-blur-xs">
-              অফিশিয়াল
+              {t.themeElectronics.officialBadge}
             </span>
           </div>
 
@@ -364,14 +375,14 @@ export function ElectronicsProductCard({
             {/* Category or In Stock indicator */}
             <div className="flex items-center justify-between text-[11px]">
               <span className="font-semibold text-slate-400">
-                {product.category || "গ্যাজেটস"}
+                {product.category || t.themeElectronics.gadgetsFallback}
               </span>
               <span
                 className={`font-bold ${
                   isOutOfStock ? "text-rose-500" : "text-emerald-600"
                 }`}
               >
-                {isOutOfStock ? "স্টক শেষ" : "● স্টকে আছে"}
+                {isOutOfStock ? t.themeElectronics.outOfStock : t.themeElectronics.inStock}
               </span>
             </div>
 
@@ -387,10 +398,10 @@ export function ElectronicsProductCard({
             {/* Tech Key Specs bullet highlights */}
             <div className="flex flex-wrap gap-1 pt-1">
               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-                ১ বছর ওয়ারেন্টি
+                {t.themeElectronics.warranty1yr}
               </span>
               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-                জেনুইন পার্টস
+                {t.themeElectronics.genuineParts}
               </span>
             </div>
           </div>
@@ -419,8 +430,8 @@ export function ElectronicsProductCard({
                   }}
                   className="mt-0.5 flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800"
                 >
-                  <span>ইএমআই: ৳{monthlyEmi.toLocaleString("en-IN")}/মাস</span>
-                  <span className="underline">ক্যালকুলেটর</span>
+                  <span>{t.themeElectronics.emiPrefix}{fmtMoney(locale === "en" ? "en" : "bn", monthlyEmi)}{t.themeElectronics.emiPerMonthShort}</span>
+                  <span className="underline">{t.themeElectronics.calculator}</span>
                 </button>
               )}
             </div>
@@ -439,14 +450,14 @@ export function ElectronicsProductCard({
                     : "bg-slate-900 text-white hover:bg-indigo-600 shadow-sm"
                 }`}
               >
-                {added ? "✓ যোগ হয়েছে" : isOutOfStock ? "স্টক আউট" : busy ? "যোগ হচ্ছে…" : "অর্ডার করুন"}
+                {added ? t.themeElectronics.added : isOutOfStock ? t.themeElectronics.stockOut : busy ? t.themeElectronics.adding : t.themeElectronics.orderNow}
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <ElectronicsEmiCalculatorModal
+      <ElectronicsEmiCalculatorModal locale={locale}
         open={emiModalOpen}
         onClose={() => setEmiModalOpen(false)}
         productPriceMinor={priceMinor}
@@ -468,6 +479,7 @@ export function ElectronicsThemeHome({
   orgSlug: string;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const { settings, products, flashSales, categories, brands, pagination } = home;
   const page = pagination.page;
   const isBangla = locale === "bn";
@@ -494,24 +506,24 @@ export function ElectronicsThemeHome({
                 <span>ORIGINAL TECH · OFFICIAL WARRANTY</span>
               </div>
               <h1 className="text-3xl font-black tracking-tight text-white sm:text-5xl lg:text-6xl">
-                {settings.shopName || "ভবিষ্যতের প্রযুক্তি, আপনার হাতের মুঠোয়"}
+                {settings.shopName || t.themeElectronics.heroTaglineFallback}
               </h1>
               <p className="max-w-xl text-xs sm:text-sm text-slate-300 leading-relaxed">
                 {settings.metaDescription ||
-                  "বাংলাদেশের সেরা মূল্যে ১০০% অফিসিয়াল স্মার্টফোন, ল্যাপটপ, গেমিং গিয়ার এবং প্রিমিয়াম এক্সেসরিজ। সহজ কিস্তি ও দ্রুততম হোম ডেলিভারি সুবিধা।"}
+                  t.themeElectronics.heroDescFallback}
               </p>
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 <a
                   href="#tech-featured"
                   className="rounded-xl bg-indigo-600 px-6 py-3 text-xs font-black text-white shadow-lg shadow-indigo-600/30 transition hover:bg-indigo-500"
                 >
-                  ফিচার্ড গ্যাজেট দেখুন →
+                  {t.themeElectronics.heroCta}
                 </a>
                 <a
                   href="#tech-categories"
                   className="rounded-xl border border-slate-700 bg-slate-900/60 px-5 py-3 text-xs font-bold text-slate-200 backdrop-blur-sm hover:bg-slate-800"
                 >
-                  ক্যাটাগরি ব্রাউজ করুন
+                  {t.themeElectronics.browseCategories}
                 </a>
               </div>
             </div>
@@ -531,8 +543,8 @@ export function ElectronicsThemeHome({
                   <div className="text-8xl">💻</div>
                 )}
                 <div className="absolute bottom-4 left-4 right-4 rounded-2xl bg-slate-950/90 p-3.5 backdrop-blur-md border border-slate-800 text-left">
-                  <span className="text-[10px] font-bold text-indigo-400">টপ রেটেড গ্যাজেট</span>
-                  <p className="line-clamp-1 text-xs font-black text-white">{products[0]?.name || "ফ্ল্যাগশিপ গ্যাজেট"}</p>
+                  <span className="text-[10px] font-bold text-indigo-400">{t.themeElectronics.topRated}</span>
+                  <p className="line-clamp-1 text-xs font-black text-white">{products[0]?.name || t.themeElectronics.flagshipFallback}</p>
                   <p className="text-xs font-extrabold text-indigo-300">
                     {products[0]?.priceMinor ? formatTechPrice(products[0].priceMinor) : ""}
                   </p>
@@ -543,14 +555,14 @@ export function ElectronicsThemeHome({
         </section>
 
         {/* 2. Electronics Trust Bar */}
-        <ElectronicsTrustBar />
+        <ElectronicsTrustBar locale={locale} />
 
         {/* 3. Tech Department Hub */}
         <section id="tech-categories" className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-black text-slate-900 sm:text-2xl">ক্যাটাগরি অনুযায়ী খুঁজুন</h2>
-              <p className="text-xs text-slate-500">আপনার প্রয়োজনীয় গ্যাজেট ও ইলেকট্রনিক্স ডিপার্টমেন্ট</p>
+              <h2 className="text-xl font-black text-slate-900 sm:text-2xl">{t.themeElectronics.categoriesHeading}</h2>
+              <p className="text-xs text-slate-500">{t.themeElectronics.categoriesSub}</p>
             </div>
           </div>
 
@@ -579,8 +591,8 @@ export function ElectronicsThemeHome({
               <div className="flex items-center gap-2">
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-600 text-lg">🔥</span>
                 <div>
-                  <h3 className="text-lg font-black text-white">{flashSales.sales[0].name || "ফ্ল্যাশ টেক ড্রপ — লিমিটেড অফার"}</h3>
-                  <p className="text-xs text-rose-300">সীমিত সময়ের বিশেষ মূল্যে প্রিমিয়াম গ্যাজেটস</p>
+                  <h3 className="text-lg font-black text-white">{flashSales.sales[0].name || t.themeElectronics.flashFallback}</h3>
+                  <p className="text-xs text-rose-300">{t.themeElectronics.flashSub}</p>
                 </div>
               </div>
               <FlashCountdown endsAt={flashSales.sales[0].endsAt} serverNow={flashSales.serverNow} locale={locale} />
@@ -604,10 +616,10 @@ export function ElectronicsThemeHome({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black text-slate-900 sm:text-2xl">
-                জনপ্রিয় ও ফিচার্ড গ্যাজেটস
+                {t.themeElectronics.featuredHeading}
               </h2>
               <p className="text-xs text-slate-500">
-                অফিশিয়াল ওয়ারেন্টি ও অথোরাইজড ডিস্ট্রিবিউটর গ্যারান্টি সহ
+                {t.themeElectronics.featuredSub}
               </p>
             </div>
             <SortSelect orgSlug={orgSlug} locale={locale} value="featured" />
@@ -632,18 +644,18 @@ export function ElectronicsThemeHome({
                   href={`/shop/${orgSlug}?page=${page - 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                 >
-                  আগের পেজ
+                  {t.themeElectronics.prevPage}
                 </Link>
               )}
               <span className="text-xs font-semibold text-slate-500">
-                পেজ {pagination.page} / {pagination.totalPages}
+                {t.themeElectronics.pagePrefix}{fmtNumber(locale === "en" ? "en" : "bn", pagination.page)} / {fmtNumber(locale === "en" ? "en" : "bn", pagination.totalPages)}
               </span>
               {page < pagination.totalPages && (
                 <Link
                   href={`/shop/${orgSlug}?page=${page + 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                 >
-                  পরের পেজ
+                  {t.themeElectronics.nextPage}
                 </Link>
               )}
             </nav>
@@ -654,9 +666,9 @@ export function ElectronicsThemeHome({
         <section className="rounded-3xl border border-slate-200/90 bg-white p-6 shadow-xs space-y-4">
           <div className="text-center">
             <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest text-slate-500">
-              শীর্ষ অফিসিয়াল গ্যাজেট ব্র্যান্ডস
+              {t.themeElectronics.brandsHeading}
             </h3>
-            <p className="text-xs text-slate-400">সরাসরি অনুমোদিত ব্র্যান্ড ডিস্ট্রিবিউটর থেকে সংগৃহীত</p>
+            <p className="text-xs text-slate-400">{t.themeElectronics.brandsSub}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-10 pt-2 text-slate-600 font-black text-sm">
             {["APPLE", "SAMSUNG", "XIAOMI", "ANKER", "SONY", "ASUS", "ONEPLUS", "LENOVO"].map(
@@ -681,16 +693,19 @@ export function ElectronicsThemeHome({
 // ----------------------------------------------------
 export function ElectronicsBranchStock({
   productName,
+  locale = "bn",
 }: {
   productName?: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const branches = [
-    { name: "আইডিবি ভবন শাখা (IDB Bhaban, Agargaon)", status: "in_stock", label: "স্টকে আছে" },
-    { name: "মাল্টিপ্ল্যান সেন্টার (Multiplan, Elephant Rd)", status: "in_stock", label: "স্টকে আছে" },
-    { name: "উত্তরা শাখা (Uttara Sector 3, Dhaka)", status: "limited", label: "সীমিত স্টক" },
-    { name: "যমুনা ফিউচার পার্ক (Level 4, JFP)", status: "in_stock", label: "স্টকে আছে" },
-    { name: "চট্টগ্রাম জিইসি শোরুম (GEC Circle, Ctg)", status: "in_stock", label: "স্টকে আছে" },
-    { name: "রাজশাহী ও সিলেট ব্রাঞ্চ (Rajshahi / Sylhet)", status: "out_of_stock", label: "স্টক শেষ" },
+    { name: "আইডিবি ভবন শাখা (IDB Bhaban, Agargaon)", status: "in_stock", label: t.themeElectronics.inStockPlain },
+    { name: "মাল্টিপ্ল্যান সেন্টার (Multiplan, Elephant Rd)", status: "in_stock", label: t.themeElectronics.inStockPlain },
+    { name: "উত্তরা শাখা (Uttara Sector 3, Dhaka)", status: "limited", label: t.themeElectronics.limitedStock },
+    { name: "যমুনা ফিউচার পার্ক (Level 4, JFP)", status: "in_stock", label: t.themeElectronics.inStockPlain },
+    { name: "চট্টগ্রাম জিইসি শোরুম (GEC Circle, Ctg)", status: "in_stock", label: t.themeElectronics.inStockPlain },
+    { name: "রাজশাহী ও সিলেট ব্রাঞ্চ (Rajshahi / Sylhet)", status: "out_of_stock", label: t.themeElectronics.outOfStock },
   ];
 
   return (
@@ -698,9 +713,9 @@ export function ElectronicsBranchStock({
       <div className="flex items-center justify-between border-b border-slate-100 pb-2">
         <div className="flex items-center gap-2 font-bold text-slate-900">
           <span className="text-base text-indigo-600">🏬</span>
-          <span>শোরুম ও ব্রাঞ্চ স্টক প্রাপ্যতা (Showroom Stock)</span>
+          <span>{t.themeElectronics.showroomHeading}</span>
         </div>
-        <span className="text-[10px] text-slate-400 font-medium">লাইভ আপডেট</span>
+        <span className="text-[10px] text-slate-400 font-medium">{t.themeElectronics.liveUpdate}</span>
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2">
@@ -727,7 +742,7 @@ export function ElectronicsBranchStock({
       </div>
 
       <p className="text-[10px] text-slate-400">
-        💡 আপনি সরাসরি শোরুমে এসে দেখে কিনতে পারেন অথবা হোম ডেলিভারির জন্য অনলাইনে অর্ডার করতে পারেন।
+        {t.themeElectronics.showroomNote}
       </p>
     </div>
   );
@@ -739,10 +754,13 @@ export function ElectronicsBranchStock({
 export function ElectronicsAccessoriesCombo({
   orgSlug,
   mainProduct,
+  locale = "bn",
 }: {
   orgSlug: string;
   mainProduct: ShopProduct;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [chargerChecked, setChargerChecked] = useState(true);
   const [glassChecked, setGlassChecked] = useState(true);
   const [caseChecked, setCaseChecked] = useState(false);
@@ -790,12 +808,12 @@ export function ElectronicsAccessoriesCombo({
         <div className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm">⚡</span>
           <div>
-            <h3 className="text-sm font-black text-slate-900">অপরিহার্য চার্জার ও প্রোটেকশন কম্বো (Essentials Combo)</h3>
+            <h3 className="text-sm font-black text-slate-900">{t.themeElectronics.comboTitle}</h3>
             <p className="text-[11px] text-slate-500">বক্সে চার্জার নেই? এক ক্লিকে অরিজিনাল এক্সেসরিজ যুক্ত করে ৳৫০০ সেভ করুন</p>
           </div>
         </div>
         <span className="rounded-full bg-indigo-600 px-3 py-1 text-[10px] font-black text-white">
-          স্পেশাল কম্বো অফার
+          {t.themeElectronics.comboBadge}
         </span>
       </div>
 
@@ -871,20 +889,20 @@ export function ElectronicsAccessoriesCombo({
               {formatTechPrice(comboTotal.toString())}
             </span>
             <span className="text-xs font-bold text-emerald-700">
-              (বাঁচবে {formatTechPrice(savings.toString())})
+              {t.themeElectronics.comboSavePrefix}{formatTechPrice(savings.toString())}{t.themeElectronics.comboSaveSuffix}
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">মূল ডিভাইসের সাথে {itemsCount - 1}টি প্রটেকশন এক্সেসরিজ যুক্ত হবে</p>
+          <p className="text-[11px] text-slate-500">{t.themeElectronics.comboItemsPrefix}{fmtNumber(locale === "en" ? "en" : "bn", itemsCount - 1)}{t.themeElectronics.comboItemsSuffix}</p>
         </div>
 
         {added ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-emerald-800">✅ কম্বো ব্যাগে যোগ হয়েছে!</span>
+            <span className="text-xs font-bold text-emerald-800">{t.themeElectronics.comboAdded}</span>
             <Link
               href={`/shop/${orgSlug}/cart`}
               className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700"
             >
-              কার্ট দেখুন
+              {t.themeElectronics.viewCart}
             </Link>
           </div>
         ) : (
@@ -894,7 +912,7 @@ export function ElectronicsAccessoriesCombo({
             disabled={busy}
             className="rounded-xl bg-indigo-600 px-5 py-3 text-xs font-black text-white shadow-md shadow-indigo-600/20 hover:bg-indigo-700 transition disabled:opacity-50"
           >
-            {busy ? "যোগ হচ্ছে…" : "এক ক্লিকে কম্বো যোগ করুন"}
+            {busy ? t.themeElectronics.comboBusy : t.themeElectronics.comboAdd}
           </button>
         )}
       </div>
@@ -911,13 +929,16 @@ export function ElectronicsCompareModal({
   productA,
   productB,
   orgSlug,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productA: ShopProduct;
   productB?: ShopProduct | null;
   orgSlug: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   if (!open) return null;
 
   const sampleB: ShopProduct = productB || {
@@ -942,8 +963,8 @@ export function ElectronicsCompareModal({
         <div className="flex items-center gap-2.5">
           <span className="text-2xl">⚖️</span>
           <div>
-            <h3 className="text-base font-black text-slate-900">গ্যাজেট তুলনা (Side-by-Side Tech Comparison)</h3>
-            <p className="text-xs text-slate-500">দুটি ডিভাইসের স্পেসিফিকেশন ও মূল্য সরাসরি তুলনা করুন</p>
+            <h3 className="text-base font-black text-slate-900">{t.themeElectronics.compareTitle}</h3>
+            <p className="text-xs text-slate-500">{t.themeElectronics.compareSub}</p>
           </div>
         </div>
 
@@ -951,7 +972,7 @@ export function ElectronicsCompareModal({
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className="p-3 w-1/3 text-slate-500 font-bold">বৈশিষ্ট্য</th>
+                <th className="p-3 w-1/3 text-slate-500 font-bold">{t.themeElectronics.compareFeature}</th>
                 <th className="p-3 w-1/3 font-black text-slate-900">
                   <p className="line-clamp-2">{productA.name}</p>
                   <p className="mt-1 text-base font-black text-indigo-600 font-mono">
@@ -1007,8 +1028,8 @@ export function ElectronicsCompareModal({
             onClick={onClose}
             className="rounded-xl border border-slate-200 px-5 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
           >
-            বন্ধ করুন
-          </button>
+          {t.themeElectronics.close}
+        </button>
         </div>
       </div>
     </div>
@@ -1021,10 +1042,13 @@ export function ElectronicsCompareModal({
 export function ElectronicsWarrantyLookupModal({
   open,
   onClose,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<any>(null);
 
@@ -1059,9 +1083,9 @@ export function ElectronicsWarrantyLookupModal({
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-2xl text-indigo-600">
             🛡️
           </div>
-          <h3 className="mt-3 text-base font-black text-slate-900">অনলাইন ওয়ারেন্টি যাচাই পোর্টাল</h3>
+          <h3 className="mt-3 text-base font-black text-slate-900">{t.themeElectronics.warrantyPortalTitle}</h3>
           <p className="mt-1 text-xs text-slate-500">
-            আপনার ডিভাইসের সিরিয়াল নম্বর, IMEI অথবা ইনভয়েস নম্বর দিয়ে ওয়ারেন্টির মেয়াদ চেক করুন।
+            {t.themeElectronics.warrantyPortalSub}
           </p>
         </div>
 
@@ -1069,7 +1093,7 @@ export function ElectronicsWarrantyLookupModal({
           <input
             type="text"
             required
-            placeholder="IMEI / সিরিয়াল নম্বর লিখুন (যেমন: 8642910...)"
+            placeholder={t.themeElectronics.warrantyPlaceholder}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full rounded-xl border border-slate-200 p-2.5 text-xs font-mono uppercase focus:border-indigo-600 focus:outline-none"
@@ -1078,21 +1102,21 @@ export function ElectronicsWarrantyLookupModal({
             type="submit"
             className="w-full rounded-xl bg-slate-900 py-2.5 text-xs font-black text-white shadow hover:bg-indigo-600 transition"
           >
-            ওয়ারেন্টি স্ট্যাটাস চেক করুন
+            {t.themeElectronics.warrantyCheckButton}
           </button>
         </form>
 
         {result && (
           <div className="mt-4 space-y-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-xs">
             <div className="flex items-center justify-between border-b border-emerald-200/60 pb-2">
-              <span className="font-bold text-emerald-950">ডিভাইস স্ট্যাটাস:</span>
+              <span className="font-bold text-emerald-950">{t.themeElectronics.deviceStatus}</span>
               <span className="font-black text-emerald-700">✅ {result.status}</span>
             </div>
-            <p className="text-slate-700"><strong>মডেল:</strong> {result.deviceName}</p>
-            <p className="text-slate-700 font-mono"><strong>সিরিয়াল:</strong> {result.serialNo}</p>
-            <p className="text-slate-700"><strong>ক্রয়ের তারিখ:</strong> {result.purchaseDate}</p>
-            <p className="text-emerald-900 font-bold"><strong>অবশিষ্ট মেয়াদ:</strong> {result.warrantyDaysLeft} দিন</p>
-            <p className="text-[11px] text-slate-500 pt-1"><strong>সার্ভিস সেন্টার:</strong> {result.authorizedCenter}</p>
+            <p className="text-slate-700"><strong>{t.themeElectronics.modelLabel}</strong> {result.deviceName}</p>
+            <p className="text-slate-700 font-mono"><strong>{t.themeElectronics.serialLabel}</strong> {result.serialNo}</p>
+            <p className="text-slate-700"><strong>{t.themeElectronics.purchaseDateLabel}</strong> {result.purchaseDate}</p>
+            <p className="text-emerald-900 font-bold"><strong>{t.themeElectronics.daysLeftPrefix}</strong> {fmtNumber(locale === "en" ? "en" : "bn", result.warrantyDaysLeft)}{t.themeElectronics.daysSuffix}</p>
+            <p className="text-[11px] text-slate-500 pt-1"><strong>{t.themeElectronics.serviceCenterLabel}</strong> {result.authorizedCenter}</p>
           </div>
         )}
       </div>
@@ -1103,14 +1127,15 @@ export function ElectronicsWarrantyLookupModal({
 // ----------------------------------------------------
 // 11. Device Compatibility Checker
 // ----------------------------------------------------
-export function ElectronicsCompatibilityChecker() {
+export function ElectronicsCompatibilityChecker({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   const [device, setDevice] = useState("iphone15");
 
   return (
     <div className="space-y-2.5 rounded-2xl border border-slate-200/90 bg-slate-50/80 p-4 text-xs">
       <div className="flex items-center gap-2 font-bold text-slate-900">
         <span className="text-base text-indigo-600">🔌</span>
-        <span>ডিভাইস কম্প্যাটিবিলিটি চেকার (Device Compatibility):</span>
+        <span>{t.themeElectronics.compatHeading}</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -1129,7 +1154,7 @@ export function ElectronicsCompatibilityChecker() {
 
       <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-2.5 text-[11px] font-bold text-emerald-800 border border-emerald-100">
         <span>✅</span>
-        <span>১০০% ফুল কম্প্যাটিবল — ফাস্ট চার্জিং, হিটিং প্রটেকশন ও হাই-স্পিড ডেটা ট্রান্সফার নিশ্চিত।</span>
+        <span>{t.themeElectronics.compatOk}</span>
       </div>
     </div>
   );

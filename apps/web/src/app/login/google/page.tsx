@@ -3,6 +3,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { parseHandoffFromHash } from "@/lib/google-auth";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 interface ExchangeResponse { accessToken?: string; requiresTotp?: boolean; challengeToken?: string }
 
@@ -60,7 +63,7 @@ export default function GoogleLoginCallbackPage() {
       });
       localStorage.setItem("accessToken", data.accessToken);
       router.replace("/dashboard");
-    } catch (err) { setError(err instanceof Error ? err.message : "কোড যাচাই করা যায়নি"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t.auth.codeVerifyFailed); }
     finally { setLoading(false); }
   }
 
@@ -73,19 +76,20 @@ export default function GoogleLoginCallbackPage() {
         </div>
         {challengeToken ? (
           <form onSubmit={onVerifyCode} className="card space-y-4 p-6 sm:p-7">
-            <p className="text-sm text-slate-600">🔐 Google লগইন মিলেছে। এখন আপনার <b>Authenticator অ্যাপের ৬ সংখ্যার কোড</b> দিন — কোড যাচাই হলেই লগইন সম্পূর্ণ হবে।</p>
-            <label className="block text-sm font-medium text-slate-700">প্রমাণীকরণ কোড
+            <p className="text-sm text-slate-600">{t.googleLogin.introPrefix}<b>{t.googleLogin.introBold}</b>{t.googleLogin.introSuffix}</p>
+            <label className="block text-sm font-medium text-slate-700">{t.auth.totpCodeLabel}
               <input className="input mt-1.5 tracking-[0.4em]" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} required placeholder="123456" />
             </label>
             {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-200">{error}</p> : null}
             <button className="btn-primary w-full py-2.5 text-[15px]" disabled={loading || code.length !== 6}>
-              {loading ? "যাচাই হচ্ছে..." : "যাচাই করে লগইন করুন"}
+              {loading ? t.auth.verifying : t.auth.verifyAndLogin}
             </button>
           </form>
         ) : (
           <div className="card p-6 text-center sm:p-7">
-            <p className="text-[15px] font-medium text-slate-700">Google লগইন সম্পন্ন হচ্ছে…</p>
-            <p className="mt-1 text-sm text-slate-500">এক মুহূর্ত অপেক্ষা করুন, ড্যাশবোর্ডে নিয়ে যাওয়া হচ্ছে।</p>
+            <p className="text-[15px] font-medium text-slate-700">{t.googleLogin.completing}</p>
+            <p className="mt-1 text-sm text-slate-500">{t.googleLogin.completingHelp}</p>
+
           </div>
         )}
       </div>

@@ -1,5 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { fmtMoneyMinor } from "@repo/contracts";
 import {
   isStandaloneDisplay, offerLabel, visibleOffers, type PublicShopOffer,
 } from "@/lib/app-offers-nf14";
@@ -20,7 +22,8 @@ import {
  * a shared app-only code still redeems at checkout (the API
  * spec proves evaluation ignores the flag).
  */
-export function ShopOffers({ offers, accent }: { offers: PublicShopOffer[]; accent: string }) {
+export function ShopOffers({ offers, accent, locale = "bn" }: { offers: PublicShopOffer[]; accent: string; locale?: ShopLocale | string }) {
+  const t = shopT(locale);
   const [standalone, setStandalone] = useState(false);
   useEffect(() => {
     setStandalone(isStandaloneDisplay());
@@ -28,8 +31,8 @@ export function ShopOffers({ offers, accent }: { offers: PublicShopOffer[]; acce
   const visible = visibleOffers(offers, standalone);
   if (visible.length === 0) return null;
   return (
-    <section aria-label="চলমান অফার" className="space-y-3">
-      <h2 className="text-xl font-black text-slate-900">🎁 চলমান অফার</h2>
+    <section aria-label={t.shopWidgets.offersSectionLabel} className="space-y-3">
+      <h2 className="text-xl font-black text-slate-900">{t.shopWidgets.offersTitle}</h2>
       <div className="flex flex-wrap gap-2">
         {visible.map((o) => (
           <div
@@ -38,20 +41,20 @@ export function ShopOffers({ offers, accent }: { offers: PublicShopOffer[]; acce
             style={{ borderColor: accent }}
           >
             <span className="font-black" style={{ color: accent }}>{offerLabel(o)}</span>
-            <span className="text-slate-500">কোড:</span>
+            <span className="text-slate-500">{t.shopWidgets.offerCodeLabel}</span>
             <span className="rounded bg-slate-100 px-2 py-0.5 font-mono font-bold tracking-wide">{o.code}</span>
             {o.minOrderMinor ? (
               <span className="text-xs text-slate-500">
-                কমপক্ষে ৳{(Number(o.minOrderMinor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })} অর্ডারে
+                {t.shopWidgets.offerMinPrefix}{fmtMoneyMinor(locale === "en" ? "en" : "bn", Number(o.minOrderMinor))}{t.shopWidgets.offerMinSuffix}
               </span>
             ) : null}
             {o.appOnly ? (
-              <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700">শুধু অ্যাপে</span>
+              <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700">{t.shopWidgets.offerAppOnly}</span>
             ) : null}
           </div>
         ))}
       </div>
-      <p className="text-xs text-slate-400">চেকআউটে কোডটি বসালেই ছাড় প্রযোজ্য হবে।</p>
+      <p className="text-xs text-slate-400">{t.shopWidgets.offerNote}</p>
     </section>
   );
 }

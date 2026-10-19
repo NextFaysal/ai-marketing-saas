@@ -3,6 +3,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { formatMinorTaka } from "@/lib/storefront-money";
+import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 // AB5 (AX7) — public quote page. Reached ONLY via the
 // unguessable token in the staff-sent link (the API stores its
@@ -25,12 +29,12 @@ interface PublicQuote {
 }
 
 const STATUS_TEXT: Record<string, { title: string; body: string }> = {
-  accepted: { title: "ধন্যবাদ! ✅", body: "আপনি এই কোটটি গ্রহণ করেছেন। বিক্রেতা শীঘ্রই আপনার সঙ্গে যোগাযোগ করবেন।" },
-  declined: { title: "উত্তর পাওয়া গেছে", body: "আপনি এই কোটটি প্রত্যাখ্যান করেছেন। মত বদলালে বিক্রেতার সঙ্গে সরাসরি যোগাযোগ করুন।" },
-  expired: { title: "মেয়াদ শেষ", body: "এই কোটটির মেয়াদ শেষ হয়ে গেছে। নতুন কোটের জন্য বিক্রেতার সঙ্গে যোগাযোগ করুন।" },
-  converted: { title: "অর্ডার তৈরি হয়েছে ✅", body: "এই কোটটি থেকে অর্ডার তৈরি হয়ে গেছে। ধন্যবাদ!" },
-  cancelled: { title: "কোটটি বাতিল হয়েছে", body: "বিক্রেতা এই কোটটি বাতিল করেছেন। প্রয়োজনে তাদের সঙ্গে যোগাযোগ করুন।" },
-  draft: { title: "কোটটি এখনো পাঠানো হয়নি", body: "এই লিংকটি এখনো সক্রিয় নয়।" },
+  accepted: { title: t.quotePublic.acceptedTitle, body: t.quotePublic.acceptedBody },
+  declined: { title: t.quotePublic.declinedTitle, body: t.quotePublic.declinedBody },
+  expired: { title: t.quotePublic.expiredTitle, body: t.quotePublic.expiredBody },
+  converted: { title: t.quotePublic.convertedTitle, body: t.quotePublic.convertedBody },
+  cancelled: { title: t.quotePublic.cancelledTitle, body: t.quotePublic.cancelledBody },
+  draft: { title: t.quotePublic.draftTitle, body: t.quotePublic.draftBody },
 };
 
 export default function PublicQuotePage() {
@@ -52,7 +56,7 @@ export default function PublicQuotePage() {
   useEffect(() => { load(); }, [load]);
 
   async function respond(accept: boolean) {
-    if (!window.confirm(accept ? "আপনি কি এই কোটটি গ্রহণ করতে চান?" : "আপনি কি এই কোটটি প্রত্যাখ্যান করতে চান?")) return;
+    if (!window.confirm(accept ? t.quotePublic.confirmAccept : t.quotePublic.confirmDecline)) return;
     setBusy(true); setError("");
     try {
       const res = await fetch(`${API_URL}/public/quote/${encodeURIComponent(token)}/respond`, {
@@ -61,9 +65,9 @@ export default function PublicQuotePage() {
         body: JSON.stringify({ accept }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((body as { message?: string }).message ?? "উত্তর পাঠানো যায়নি");
+      if (!res.ok) throw new Error((body as { message?: string }).message ?? t.quotePublic.respondFailed);
       setQuote(body as PublicQuote);
-    } catch (e) { setError(e instanceof Error ? e.message : "উত্তর পাঠানো যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t.quotePublic.respondFailed); }
     finally { setBusy(false); }
   }
 
@@ -71,7 +75,7 @@ export default function PublicQuotePage() {
     return (
       <main className="mx-auto max-w-2xl px-4 py-16 text-center">
         <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-        <p className="mt-3 text-sm font-semibold text-slate-600">লোড হচ্ছে…</p>
+        <p className="mt-3 text-sm font-semibold text-slate-600">{t.quotePublic.loading}</p>
       </main>
     );
   }
@@ -81,14 +85,14 @@ export default function PublicQuotePage() {
       <main className="mx-auto max-w-2xl px-4 py-16">
         <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
           <p className="text-4xl">🔎</p>
-          <h1 className="mt-3 text-xl font-black text-slate-900">কোটটি পাওয়া যায়নি</h1>
-          <p className="mt-1 text-sm text-slate-500">লিংকটি সঠিক নয় অথবা মেয়াদ শেষ হয়ে গেছে। বিক্রেতার কাছ থেকে নতুন লিংক নিন।</p>
+          <h1 className="mt-3 text-xl font-black text-slate-900">{t.quotePublic.notFoundTitle}</h1>
+          <p className="mt-1 text-sm text-slate-500">{t.quotePublic.notFoundText}</p>
         </div>
       </main>
     );
   }
 
-  const shopName = quote.shop.brandName || quote.shop.name || "দোকান";
+  const shopName = quote.shop.brandName || quote.shop.name || t.quotePublic.shopFallback;
   const statusInfo = STATUS_TEXT[quote.status];
 
   return (
@@ -105,7 +109,7 @@ export default function PublicQuotePage() {
           )}
           <div>
             <p className="text-base font-black text-slate-900">{shopName}</p>
-            <p className="text-xs font-semibold text-indigo-700">🧾 মূল্য প্রস্তাব (কোট)</p>
+            <p className="text-xs font-semibold text-indigo-700">{t.quotePublic.quoteLabel}</p>
           </div>
         </div>
       </header>
@@ -113,9 +117,9 @@ export default function PublicQuotePage() {
       <main className="mx-auto max-w-2xl space-y-5 px-4 py-8">
         <section className="space-y-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h1 className="text-lg font-black text-slate-900">কোট {quote.number}</h1>
+            <h1 className="text-lg font-black text-slate-900">{t.quotePublic.quoteNumberPrefix}{quote.number}</h1>
             {quote.expiresAt ? (
-              <span className="text-xs text-slate-500">মেয়াদ: {new Date(quote.expiresAt).toLocaleDateString("bn-BD")}</span>
+              <span className="text-xs text-slate-500">{t.quotePublic.expiryPrefix}{fmtDate("bn", quote.expiresAt)}</span>
             ) : null}
           </div>
 
@@ -123,10 +127,10 @@ export default function PublicQuotePage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b text-xs text-slate-500">
-                  <th className="py-2 pr-2 font-semibold">পণ্য</th>
-                  <th className="py-2 pr-2 font-semibold">পরিমাণ</th>
-                  <th className="py-2 pr-2 font-semibold">একক দাম</th>
-                  <th className="py-2 font-semibold">মোট</th>
+                  <th className="py-2 pr-2 font-semibold">{t.quotePublic.productHeader}</th>
+                  <th className="py-2 pr-2 font-semibold">{t.quotePublic.qtyHeader}</th>
+                  <th className="py-2 pr-2 font-semibold">{t.quotePublic.unitPriceHeader}</th>
+                  <th className="py-2 font-semibold">{t.quotePublic.totalHeader}</th>
                 </tr>
               </thead>
               <tbody>
@@ -136,7 +140,7 @@ export default function PublicQuotePage() {
                       {l.name}{l.variantName ? ` — ${l.variantName}` : ""}
                       {l.sku ? <span className="block text-xs text-slate-400">SKU: {l.sku}</span> : null}
                     </td>
-                    <td className="py-2 pr-2">{l.qty}</td>
+                    <td className="py-2 pr-2">{fmtNumber("bn", l.qty)}</td>
                     <td className="py-2 pr-2">{formatMinorTaka(l.unitPriceMinor)}</td>
                     <td className="py-2 font-semibold">{formatMinorTaka(l.lineTotalMinor)}</td>
                   </tr>
@@ -146,8 +150,8 @@ export default function PublicQuotePage() {
           </div>
 
           <div className="space-y-1 border-t pt-3 text-sm">
-            <div className="flex justify-between"><span className="text-slate-500">ডেলিভারি চার্জ</span><span>{formatMinorTaka(quote.deliveryChargeMinor)}</span></div>
-            <div className="flex justify-between text-base font-black text-slate-900"><span>সর্বমোট</span><span>{formatMinorTaka(quote.totalMinor)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-500">{t.quotePublic.deliveryCharge}</span><span>{formatMinorTaka(quote.deliveryChargeMinor)}</span></div>
+            <div className="flex justify-between text-base font-black text-slate-900"><span>{t.quotePublic.grandTotal}</span><span>{formatMinorTaka(quote.totalMinor)}</span></div>
           </div>
 
           {quote.note ? (
@@ -159,16 +163,16 @@ export default function PublicQuotePage() {
 
         {quote.status === "sent" ? (
           <section className="space-y-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-sm font-bold text-slate-900">আপনার সিদ্ধান্ত জানান</h2>
-            <p className="text-sm text-slate-500">কোটটি গ্রহণ করলে বিক্রেতা আপনার জন্য অর্ডার তৈরি করতে পারবেন।</p>
+            <h2 className="text-sm font-bold text-slate-900">{t.quotePublic.decisionTitle}</h2>
+            <p className="text-sm text-slate-500">{t.quotePublic.decisionText}</p>
             <div className="flex flex-wrap gap-3">
               <button type="button" disabled={busy} onClick={() => respond(true)}
                 className="flex-1 rounded-2xl bg-emerald-600 py-3 text-sm font-extrabold text-white shadow hover:bg-emerald-700 disabled:opacity-50">
-                {busy ? "অপেক্ষা করুন…" : "✅ গ্রহণ করুন"}
+                {busy ? t.quotePublic.pleaseWait : t.quotePublic.accept}
               </button>
               <button type="button" disabled={busy} onClick={() => respond(false)}
                 className="flex-1 rounded-2xl border border-rose-200 bg-rose-50 py-3 text-sm font-extrabold text-rose-700 hover:bg-rose-100 disabled:opacity-50">
-                {busy ? "অপেক্ষা করুন…" : "প্রত্যাখ্যান করুন"}
+                {busy ? t.quotePublic.pleaseWait : t.quotePublic.decline}
               </button>
             </div>
           </section>
@@ -177,7 +181,8 @@ export default function PublicQuotePage() {
             <h2 className="text-lg font-black text-slate-900">{statusInfo.title}</h2>
             <p className="mt-1 text-sm text-slate-500">{statusInfo.body}</p>
             {quote.respondedAt ? (
-              <p className="mt-2 text-xs text-slate-400">উত্তর দেওয়া হয়েছে: {new Date(quote.respondedAt).toLocaleString("bn-BD")}</p>
+              <p className="mt-2 text-xs text-slate-400">{t.quotePublic.respondedPrefix}{fmtDateTime("bn", quote.respondedAt)}</p>
+
             ) : null}
           </section>
         ) : null}

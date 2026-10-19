@@ -2,6 +2,9 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 interface PublicForm {
   name: string; slug: string; headline?: string | null; description?: string | null;
@@ -33,9 +36,9 @@ export default function PublicJoinPage() {
     (async () => {
       try {
         const res = await fetch(`${API_URL}/public/messaging/forms/${organizationId}/${slug}`);
-        if (!res.ok) throw new Error("ফর্মটি পাওয়া যায়নি");
+        if (!res.ok) throw new Error(t.optinForm.notFound);
         setForm(await res.json());
-      } catch (e) { setError(e instanceof Error ? e.message : "ফর্মটি পাওয়া যায়নি"); }
+      } catch (e) { setError(e instanceof Error ? e.message : t.optinForm.notFound); }
     })();
   }, [organizationId, slug]);
 
@@ -47,9 +50,9 @@ export default function PublicJoinPage() {
         body: JSON.stringify({ name: name.trim() || undefined, email: email.trim() || undefined, phone: phone.trim() || undefined }),
       });
       const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.message ?? "সাবমিট করা যায়নি");
-      setDone(j?.message ?? "ধন্যবাদ!");
-    } catch (e) { setError(e instanceof Error ? e.message : "সাবমিট করা যায়নি"); }
+      if (!res.ok) throw new Error(j?.message ?? t.optinForm.submitFailed);
+      setDone(j?.message ?? t.optinForm.thanks);
+    } catch (e) { setError(e instanceof Error ? e.message : t.optinForm.submitFailed); }
     finally { setBusy(false); }
   }
 
@@ -58,7 +61,7 @@ export default function PublicJoinPage() {
 
   return (
     <main className="mx-auto max-w-xl space-y-5 p-6">
-      {!form && !error ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : null}
+      {!form && !error ? <p className="text-sm text-slate-500">{t.optinForm.loading}</p> : null}
       {error && !done ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
       {form && !done ? (
         <section className="space-y-4 rounded-2xl border bg-white p-5 shadow-sm">
@@ -67,24 +70,25 @@ export default function PublicJoinPage() {
             <h1 className="mt-1 text-2xl font-bold">{form.headline || form.name}</h1>
             {form.description ? <p className="mt-1 text-sm text-slate-600">{form.description}</p> : null}
           </header>
-          <label className="block text-sm">নাম
-            <input className="input mt-1 w-full" value={name} onChange={(e) => setName(e.target.value)} placeholder="আপনার নাম" />
+          <label className="block text-sm">{t.optinForm.nameLabel}
+            <input className="input mt-1 w-full" value={name} onChange={(e) => setName(e.target.value)} placeholder={t.optinForm.namePlaceholder} />
           </label>
           {needsEmail ? (
-            <label className="block text-sm">ইমেইল
+            <label className="block text-sm">{t.optinForm.emailLabel}
               <input className="input mt-1 w-full" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
             </label>
           ) : null}
           {needsPhone ? (
-            <label className="block text-sm">মোবাইল নম্বর
+            <label className="block text-sm">{t.optinForm.phoneLabel}
               <input className="input mt-1 w-full" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01XXXXXXXXX" />
             </label>
           ) : null}
-          <button className="btn-primary w-full" disabled={busy} onClick={submit}>{busy ? "কাজ চলছে..." : "সাবস্ক্রাইব করুন"}</button>
+          <button className="btn-primary w-full" disabled={busy} onClick={submit}>{busy ? t.optinForm.working : t.optinForm.subscribe}</button>
           <p className="text-xs text-slate-400">
             {form.doubleOptIn
-              ? "সাবস্ক্রাইব করতে নিশ্চিতকরণ লাগবে — ইমেইলের লিংক বা WhatsApp Keyword দিয়ে নিশ্চিত না করলে কোনো মার্কেটিং বার্তা যাবে না।"
-              : "যেকোনো সময় এক ক্লিকে আনসাবস্ক্রাইব করা যাবে।"}
+              ? t.optinForm.doubleOptInNote
+              : t.optinForm.singleOptInNote}
+
           </p>
         </section>
       ) : null}

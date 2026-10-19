@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { fmtDate } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 
@@ -88,7 +89,7 @@ export function ProductQuestions({
               <p className="text-sm font-bold text-slate-800">❓ {q.question}</p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 {q.customerName}
-                {q.createdAt ? ` · ${new Date(q.createdAt).toLocaleDateString("bn-BD")}` : ""}
+                {q.createdAt ? ` · ${fmtDate(locale === "en" ? "en" : "bn", q.createdAt)}` : ""}
               </p>
               {q.answer ? <p className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">💬 {q.answer}</p> : null}
             </article>

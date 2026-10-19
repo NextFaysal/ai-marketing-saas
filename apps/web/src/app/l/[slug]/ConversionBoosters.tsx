@@ -1,11 +1,16 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { fmtNumber } from "@repo/contracts";
+import { pubLocaleOf, pubT } from "@/lib/i18n/public";
 
 interface UrgencyStockBarProps {
   stockCount?: number | null;
+  locale?: string;
 }
 
-export function UrgencyStockBar({ stockCount = 6 }: UrgencyStockBarProps) {
+export function UrgencyStockBar({ stockCount = 6, locale }: UrgencyStockBarProps) {
+  const loc = pubLocaleOf(locale);
+  const t = pubT(loc);
   const [secondsLeft, setSecondsLeft] = useState(885); // ~14m 45s
 
   useEffect(() => {
@@ -30,15 +35,15 @@ export function UrgencyStockBar({ stockCount = 6 }: UrgencyStockBarProps) {
           </span>
           <div>
             <p className="text-xs font-black text-amber-950">
-              সীমিত সময়ের বিশেষ অফার চলছে!
+              {t.boosters.offerTitle}
             </p>
             <p className="text-[11px] font-semibold text-amber-800">
-              আর মাত্র <span className="font-bold underline text-rose-600">{remaining}টি স্টক</span> বাকি আছে
+              {t.boosters.stockPrefix}<span className="font-bold underline text-rose-600">{fmtNumber(loc, remaining)}{t.boosters.stockMid}</span>{t.boosters.stockSuffix}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-1.5 border border-amber-200 shadow-xs">
-          <span className="text-[11px] font-semibold text-slate-500">অফার শেষ হতে:</span>
+          <span className="text-[11px] font-semibold text-slate-500">{t.boosters.offerEndsLabel}</span>
           <span className="font-mono text-sm font-black text-rose-600 tracking-wider">
             {displayTime}
           </span>
@@ -59,6 +64,7 @@ interface BundleSelectorProps {
   quantity: number;
   onSelectQuantity: (q: number) => void;
   takaFn: (minor?: string | number | null) => string;
+  locale?: string;
 }
 
 export function BundleSelector({
@@ -66,40 +72,42 @@ export function BundleSelector({
   quantity,
   onSelectQuantity,
   takaFn,
+  locale,
 }: BundleSelectorProps) {
+  const t = pubT(locale);
   const baseNum = Number(unitMinor) || 0;
 
   const tiers = [
     {
       qty: 1,
-      title: "১টি কিনুন",
-      subtitle: "রেগুলার অফার",
+      title: t.boosters.tier1Title,
+      subtitle: t.boosters.tier1Subtitle,
       priceMinor: baseNum,
       badge: null,
       savings: null,
     },
     {
       qty: 2,
-      title: "২টি কিনুন (জনপ্রিয়)",
-      subtitle: "অতিরিক্ত ৳২০০ ডিসকাউন্ট",
+      title: t.boosters.tier2Title,
+      subtitle: `${t.boosters.tier2SubtitlePrefix}${takaFn(20000)}${t.boosters.tier2SubtitleSuffix}`,
       priceMinor: Math.max(0, baseNum * 2 - 20000),
-      badge: "🔥 সবচেয়ে জনপ্রিয়",
-      savings: "৳২০০ সাশ্রয়",
+      badge: t.boosters.tier2Badge,
+      savings: `${t.boosters.tier2SavingsPrefix}${takaFn(20000)}${t.boosters.tier2SavingsSuffix}`,
     },
     {
       qty: 3,
-      title: "৩টি কিনুন (সেরা সাশ্রয়ী)",
-      subtitle: "অতিরিক্ত ৳৪০০ ডিসকাউন্ট + ফ্রি গিফট",
+      title: t.boosters.tier3Title,
+      subtitle: `${t.boosters.tier3SubtitlePrefix}${takaFn(40000)}${t.boosters.tier3SubtitleSuffix}`,
       priceMinor: Math.max(0, baseNum * 3 - 40000),
-      badge: "🚀 মেগা অফার",
-      savings: "৳৪০০ সাশ্রয়",
+      badge: t.boosters.tier3Badge,
+      savings: `${t.boosters.tier3SavingsPrefix}${takaFn(40000)}${t.boosters.tier3SavingsSuffix}`,
     },
   ];
 
   return (
     <div className="space-y-2">
       <label className="block text-xs font-bold text-slate-800">
-        প্যাকেজ / বান্ডেল অফার বেছে নিন (বেশি নিলে বেশি ছাড়):
+        {t.boosters.bundleLabel}
       </label>
       <div className="grid gap-2.5 sm:grid-cols-3">
         {tiers.map((t) => {
@@ -161,6 +169,7 @@ interface StickyBuyBarProps {
   onScrollToOrder: () => void;
   visible: boolean;
   takaFn: (minor?: string | number | null) => string;
+  locale?: string;
 }
 
 export function StickyBuyBar({
@@ -171,7 +180,10 @@ export function StickyBuyBar({
   onScrollToOrder,
   visible,
   takaFn,
+  locale,
 }: StickyBuyBarProps) {
+  const loc = pubLocaleOf(locale);
+  const t = pubT(loc);
   if (!visible) return null;
 
   const totalApprox = Number(unitMinor) * quantity;
@@ -200,7 +212,7 @@ export function StickyBuyBar({
               </span>
               {quantity > 1 && (
                 <span className="text-[11px] font-semibold text-slate-500">
-                  ({quantity}টি)
+                  ({fmtNumber(loc, quantity)}{t.boosters.qtySuffix})
                 </span>
               )}
             </div>
@@ -212,14 +224,15 @@ export function StickyBuyBar({
           onClick={onScrollToOrder}
           className="shrink-0 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-3 text-xs sm:text-sm font-black text-white shadow-lg shadow-indigo-600/30 transition hover:from-indigo-700 hover:to-indigo-800 active:scale-95"
         >
-          🚀 অর্ডার করুন — ক্যাশ অন ডেলিভারি
+          {t.boosters.orderCodButton}
         </button>
       </div>
     </div>
   );
 }
 
-export function RecentBuyersToast() {
+export function RecentBuyersToast({ locale }: { locale?: string } = {}) {
+  const t = pubT(locale);
   const [current, setCurrent] = useState<{ name: string; location: string; timeAgo: string } | null>(null);
 
   const notifications = [
@@ -261,8 +274,9 @@ export function RecentBuyersToast() {
             {current.name} ({current.location})
           </p>
           <p className="text-[10px] text-slate-500">
-            {current.timeAgo} সফলভাবে অর্ডার করেছেন
+            {current.timeAgo}{t.boosters.orderedSuffix}
           </p>
+
         </div>
       </div>
     </div>

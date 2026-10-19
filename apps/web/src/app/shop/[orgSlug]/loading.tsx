@@ -1,4 +1,6 @@
 import React from "react";
+import { shopT } from "@/lib/shop-i18n";
+const t = shopT("bn");
 
 /**
  * ED5 (EB2) streaming shell for shop routes under /shop/[orgSlug].
@@ -8,8 +10,8 @@ import React from "react";
  */
 export default function ShopLoading() {
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6" aria-label="লোড হচ্ছে">
-      <span className="sr-only">লোড হচ্ছে…</span>
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6" aria-label={t.shopWidgets.loading}>
+      <span className="sr-only">{t.shopWidgets.loadingEllipsis}</span>
       <div className="skeleton h-10 w-full rounded-full" />
       <div className="skeleton h-44 w-full rounded-3xl sm:h-56" />
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
