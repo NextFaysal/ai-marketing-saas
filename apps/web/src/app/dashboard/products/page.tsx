@@ -7,10 +7,13 @@ import { formatMinor } from "@repo/contracts";
 import { EmptyState, FilterBar, PageHeader, ResponsiveTable } from "@repo/ui";
 import { useConfirm, useToast } from "@repo/ui/client";
 import { MediaImage } from "@/components/MediaImage";
-import { ProductTranslationsPanel } from "@/components/product-translations";
 import dynamic from "next/dynamic";
 import { type EcCategory, type EcTag } from "@/components/ec-product-dialogs";
 
+const ProductTranslationsPanel = dynamic(
+  () => import("@/components/product-translations").then((m) => m.ProductTranslationsPanel),
+  { ssr: false }
+);
 const EcChannelsDialog = dynamic(() => import("@/components/ec-product-dialogs").then((m) => m.EcChannelsDialog), { ssr: false });
 const EcGalleryDialog = dynamic(() => import("@/components/ec-product-dialogs").then((m) => m.EcGalleryDialog), { ssr: false });
 const EcBundleDialog = dynamic(() => import("@/components/ec-product-dialogs").then((m) => m.EcBundleDialog), { ssr: false });
