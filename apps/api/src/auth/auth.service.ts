@@ -372,6 +372,10 @@ export class AuthService {
         // GC21 (GB9): verification status surface. Additive —
         // existing consumers keep working untouched.
         emailVerifiedAt: true, phoneVerifiedAt: true, phone: true,
+        // ML1 (Multi-Language MB1): the caller's own dashboard
+        // language preference (bn | en | null = follow the org
+        // default). Additive — same discipline as above.
+        preferredLocale: true,
       },
     });
     if (!user) throw new UnauthorizedException("User not found");
@@ -384,8 +388,33 @@ export class AuthService {
       emailVerifiedAt: user.emailVerifiedAt ?? null,
       phoneVerifiedAt: user.phoneVerifiedAt ?? null,
       phone: user.phone ?? null,
+      preferredLocale: user.preferredLocale ?? null,
       verificationRequired: verificationRequiredFor(user, gate),
     };
+  }
+
+  /** ML1 (Multi-Language MB1): set or clear the caller's own
+   * dashboard language preference. undefined = the field was
+   * not sent at all — no change, the current value is returned.
+   * null = clear the preference (the org's dashboardLocale
+   * default applies again). Only "bn" / "en" may be set;
+   * anything else is refused rather than stored and silently
+   * ignored by every language switch downstream. */
+  async updateMyPreferences(userId: string, preferredLocale: string | null | undefined) {
+    if (preferredLocale === undefined) {
+      const user = await (this.prisma as any).user.findUnique({
+        where: { id: userId }, select: { preferredLocale: true },
+      });
+      if (!user) throw new NotFoundException("User not found");
+      return { preferredLocale: user.preferredLocale ?? null };
+    }
+    if (preferredLocale !== null && preferredLocale !== "bn" && preferredLocale !== "en") {
+      throw new BadRequestException('Preferred language must be "bn" or "en" — or null to clear the preference');
+    }
+    const updated = await (this.prisma as any).user.update({
+      where: { id: userId }, data: { preferredLocale },
+    });
+    return { preferredLocale: updated?.preferredLocale ?? preferredLocale };
   }
 
   // ---- GB6 (GC16): own sessions + login history ----

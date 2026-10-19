@@ -24,6 +24,7 @@ import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
 import { orgArchived, orgSuspended, type SwitcherOrg } from "@/lib/org-switcher";
 import OrgSwitcher from "./OrgSwitcher";
+import { LanguageSwitcher, LocaleProvider } from "@/lib/i18n/provider";
 
 interface NavGroup {
   id: string;
@@ -927,6 +928,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     : undefined;
 
   return (
+    <LocaleProvider>
     <ToastProvider>
       <ConfirmProvider>
         <PromptProvider>
@@ -1031,6 +1033,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {/* OU1: Organization switcher — active memberships,
                   honest full-reload switching, create + portfolio. */}
               <OrgSwitcher />
+              {/* ML3 (MB1): dashboard language switcher — sets the
+                  user's personal locale preference via LocaleProvider. */}
+              <LanguageSwitcher />
               <InstallButton />
               {/* ED17 (EB7): dark-mode toggle (সিস্টেম/লাইট/ডার্ক). */}
               <ThemeToggle />
@@ -1128,6 +1133,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>
+    </LocaleProvider>
   );
 }
 

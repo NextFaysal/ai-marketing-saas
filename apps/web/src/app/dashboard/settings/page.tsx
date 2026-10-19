@@ -19,6 +19,7 @@ import {
 import { BusinessKnowledgeSection } from "./knowledge-section";
 import { AiLearningSection } from "./ai-learning-section";
 import { AiControlCenterSection } from "./ai-control-section";
+import { LanguageSection } from "./language-section";
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
 
@@ -1083,6 +1084,7 @@ const HUB_NAV = [
   { id: "hub-ai-learning", icon: "🧠", label: "AI শিখন" },
   { id: "hub-ai-control", icon: "🎛️", label: "AI নিয়ন্ত্রণ" },
   { id: "hub-org-identity", icon: "🏢", label: "Organization তথ্য" },
+  { id: "hub-language", icon: "🌐", label: "ভাষা / Language" },
   { id: "hub-branding", icon: "🎨", label: "ব্র্যান্ডিং" },
   { id: "hub-org-verification", icon: "🏅", label: "প্রতিষ্ঠান যাচাইকরণ" },
   { id: "hub-verification", icon: "✅", label: "যাচাইকরণ (ইমেইল/ফোন)" },
@@ -2087,6 +2089,8 @@ export default function SettingsPage() {
           <AiLearningSection />
 
           <AiControlCenterSection />
+
+          <LanguageSection />
 
           <section id="hub-security" className="card scroll-mt-24 p-5 sm:p-6">
             <SectionHead icon="🔐" title="আমার অ্যাকাউন্টের নিরাপত্তা — দ্বি-স্তর যাচাই (2FA)" hint={`চালু করলে লগইনে পাসওয়ার্ডের পর ফোনের Authenticator অ্যাপের ৬ সংখ্যার কোড লাগবে। অবস্থা: ${status === null ? "লোড হচ্ছে…" : status.totpEnabled ? "চালু আছে" : `বন্ধ${status.enrolmentInProgress ? " (Enrol শুরু হয়েছে, নিশ্চিত করা বাকি)" : ""}`}`} />

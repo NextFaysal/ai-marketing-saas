@@ -5,7 +5,7 @@ import { AuditService } from "../audit/audit.service";
 import { StorageService } from "../storage/storage.service";
 import { StorageRegistryService } from "../storage/storage-registry.service";
 import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../storage/media-url";
-import { ApproveJoinRequestDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, RequestToJoinDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateOrgIdentityDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
+import { ApproveJoinRequestDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, RequestToJoinDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateOrgIdentityDto, UpdateOrgLocaleDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
 import { MediaStore } from "../inbox/media-store";
 import { PERMISSION_AREAS, PERMISSION_AREA_KEYS, PRESET_ROLE_PROFILES, effectiveAccess, findUnknownAreas, normalizeOverrides, presetProfile } from "../common/permission-catalog";
 import { NOTIFICATION_CATEGORIES, NOTIFICATION_CATEGORY_KEYS } from "../common/agent-notify";
@@ -1274,6 +1274,29 @@ export class OrganizationsService {
       metadata: { fields }, ipAddress: ip,
     });
     return { ...this.tenantOrgView(updated), creditMinor: BigInt(updated.creditMinor ?? 0).toString(), changedFields: fields };
+  }
+
+  /** ML1 (Multi-Language MB1): set the organization's dashboard
+   * default UI language (bn | en — the DTO's @IsIn is the
+   * allowlist). OWNER/ADMIN + ACTIVE via assertOrgAdmin, like
+   * the other admin surfaces. Members without their own
+   * User.preferredLocale follow this default; the storefront's
+   * StorefrontSetting.locale is a separate choice and is not
+   * touched here. Returns getOne(), so the tenant view carries
+   * dashboardLocale exactly as listMine/getOne already serve
+   * the full org row. */
+  async updateDashboardLocale(organizationId: string, actorId: string, dto: UpdateOrgLocaleDto, ip?: string) {
+    await this.assertOrgAdmin(organizationId, actorId);
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    await (this.prisma as any).organization.update({
+      where: { id: organizationId }, data: { dashboardLocale: dto.dashboardLocale },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.dashboard_locale_updated", entityType: "Organization", entityId: organizationId,
+      metadata: { dashboardLocale: dto.dashboardLocale }, ipAddress: ip,
+    });
+    return this.getOne(organizationId);
   }
 
   // ---------- ORG11 (Organization Next OB4): security policy ----------

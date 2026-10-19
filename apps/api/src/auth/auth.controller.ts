@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Optional, Param, Post, Query, Req, Res, ServiceUnavailableException } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Optional, Param, Patch, Post, Query, Req, Res, ServiceUnavailableException } from "@nestjs/common";
 import { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 import { GoogleSsoService } from "./google-sso.service";
@@ -64,6 +64,14 @@ export class AuthController {
   }
   @Get("me")
   me(@CurrentUser() user: AuthUser) { return this.auth.me(user.userId); }
+  // ML1 (Multi-Language MB1): the caller's own dashboard
+  // language preference. Authenticated (no @Public): body
+  // { preferredLocale: "bn" | "en" | null } — omitted field =
+  // no change, null = clear back to the org default.
+  @Patch("me/preferences")
+  updateMyPreferences(@CurrentUser() user: AuthUser, @Body() body: { preferredLocale?: string | null }) {
+    return this.auth.updateMyPreferences(user.userId, body?.preferredLocale);
+  }
   // GC21 (GB9): account verification. The emailed link lands on
   // the public /verify-email web page, which posts the token
   // here — public because the click may happen logged-out.

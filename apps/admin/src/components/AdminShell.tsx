@@ -10,6 +10,7 @@ import {
 import { useNavCounts } from "./useNavCounts";
 import { DialogHost, ToastHost, askReason } from "./ui";
 import AttentionBell from "./AttentionBell";
+import { AdminLocaleSwitcher } from "./AdminLocale";
 import CommandPalette from "./CommandPalette";
 
 // ADX2 (Admin UX DB1): Navigation v2 — 7 collapsible task groups
@@ -409,6 +410,8 @@ export default function AdminShell({ children, title }: { children: React.ReactN
                   <span className="text-xs text-slate-400">Ctrl K</span>
                 </button>
                 <AttentionBell counts={counts} />
+                {/* ML3 (MB1): admin language switcher (bn/en). */}
+                <AdminLocaleSwitcher />
                 <div className="hidden items-center gap-2.5 rounded-full border border-slate-800 bg-slate-900/70 py-1 pl-1 pr-3 md:flex" title={adminEmail}>
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[11px] font-bold">{initials}</span>
                   <span className="max-w-[180px] truncate text-xs text-slate-300">{adminEmail}</span>
