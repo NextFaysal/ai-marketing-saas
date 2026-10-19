@@ -41,6 +41,7 @@ const SURFACES = [
 ];
 const DICTIONARY_HOME = [
   /\/lib\/i18n\//,
+  /\/lib\/i18n\.ts$/, // the admin app's single-file dictionary home
   /\/lib\/shop-i18n\.ts$/,
   /\/translations\//, // NF5 content-translation modules hold localized content by design
   /\/lib\/translations\.ts$/,

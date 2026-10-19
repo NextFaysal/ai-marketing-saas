@@ -1,8 +1,8 @@
 # i18n Hardcoded-String Scan — Baseline (ML3, 2026-10-19)
 
-MB1 শেষে পরিমাপ করা baseline। টুল: `node scripts/i18n-scan.mjs` (root script: `pnpm i18n:scan`)।
+MB1 শেষে, committed tree-তে পরিমাপ করা baseline। টুল: `node scripts/i18n-scan.mjs` (root script: `pnpm i18n:scan`)।
 
-পদ্ধতি: dictionary home (lib/i18n/**, shop shim, NF5 translations) ও test/spec ফাইল বাদে সব .ts/.tsx ফাইলের string literal গণনা। বাংলা literal = U+0980–U+09FF আছে এমন literal। English-UI literal = heuristic (৩+ শব্দের বাক্য-আকৃতির literal; code-আকৃতির string বাদ) — এটি upper bound, প্রমাণ নয়। toLocaleString গণনা source-level (comment-সহ হতে পারে)।
+পদ্ধতি: dictionary home (web `lib/i18n/**`, admin `lib/i18n.ts`, shop shim, NF5 translations) ও test/spec ফাইল বাদে সব .ts/.tsx ফাইলের string literal গণনা। বাংলা literal = U+0980–U+09FF আছে এমন literal। English-UI literal = heuristic (৩+ শব্দের বাক্য-আকৃতির literal; code-আকৃতির string বাদ) — এটি upper bound, প্রমাণ নয়। toLocaleString গণনা source-level (comment-সহ হতে পারে)।
 
 ## web
 - ফাইল স্ক্যান: 442 · findings-সহ ফাইল: 357
@@ -22,8 +22,8 @@ MB1 শেষে পরিমাপ করা baseline। টুল: `node scrip
 - `/apps/web/src/lib/festival-playbook.ts` — bn 168, en 0, toLocaleString 1
 
 ## admin
-- ফাইল স্ক্যান: 36 · findings-সহ ফাইল: 32
-- বাংলা literals: 869 · English-UI literals (heuristic): 123 · direct toLocaleString calls: 27
+- ফাইল স্ক্যান: 35 · findings-সহ ফাইল: 31
+- বাংলা literals: 866 · English-UI literals (heuristic): 123 · direct toLocaleString calls: 27
 
 সবচেয়ে বেশি findings (top 10):
 
@@ -55,6 +55,6 @@ MB1 শেষে পরিমাপ করা baseline। টুল: `node scrip
 - `/apps/api/src/organizations/organizations.service.ts` — bn 87, en 25, toLocaleString 0
 - `/apps/api/src/inbox/intent.ts` — bn 100, en 0, toLocaleString 0
 
-## মোট: 1241 ফাইল · 18127 বাংলা literals · 2764 English-UI literals · 618 toLocaleString calls
+## মোট: 1240 ফাইল · 18124 বাংলা literals · 2764 English-UI literals · 618 toLocaleString calls
 
 গুরুত্ব: এটাই MB2–MB5-এর কাজের মাপ — প্রতিটি ব্যাচে নিজের surface-এর সংখ্যা কমবে; MB6-তে scanner gate (fail-on-new) চালু হলে শূন্যের দিকে যাওয়া বাধ্যতামূলক হবে। MB1-এ scanner report-only (exit code সবসময় 0) — enforcement এখনো চালু নয়।
