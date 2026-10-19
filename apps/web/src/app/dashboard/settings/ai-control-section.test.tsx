@@ -137,9 +137,10 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { AiControlCenterSection } from "./ai-control-section";
+import { LocaleProvider } from "@/lib/i18n/provider";
 
 async function renderSection() {
-  render(<AiControlCenterSection />);
+  render(<LocaleProvider><AiControlCenterSection /></LocaleProvider>);
   await screen.findByText("কাজের প্রস্তাব — আপনার সিদ্ধান্তের অপেক্ষায়");
 }
 

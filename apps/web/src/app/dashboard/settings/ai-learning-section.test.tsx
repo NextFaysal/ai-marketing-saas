@@ -87,10 +87,11 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { AiLearningSection } from "./ai-learning-section";
+import { LocaleProvider } from "@/lib/i18n/provider";
 
 async function renderSection() {
-  render(<AiLearningSection />);
-  await screen.findByText("জ্ঞানের আওতা: 88%");
+  render(<LocaleProvider><AiLearningSection /></LocaleProvider>);
+  await screen.findByText("জ্ঞানের আওতা: ৮৮%");
 }
 
 describe("AiLearningSection (SA-B6 P9)", () => {
@@ -100,7 +101,7 @@ describe("AiLearningSection (SA-B6 P9)", () => {
   it("renders the overview aggregates and source states honestly", async () => {
     await renderSection();
     expect(screen.getByText("AI শিখন")).toBeTruthy();
-    expect(screen.getByText(/মোট 7 বার/)).toBeTruthy();
+    expect(screen.getByText(/মোট ৭ বার/)).toBeTruthy();
     expect(screen.getByText(/এখনো চালানো হয়নি/)).toBeTruthy();
     expect(screen.getByText(/পরের ধাপে আসছে/)).toBeTruthy();
     expect(screen.getByText("ওয়ারেন্টি কত দিন?")).toBeTruthy();
