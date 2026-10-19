@@ -13,5 +13,5 @@
  */
 export * from "./dict";
 export * from "./lookup";
-// export * from "./shop"; // ML3 commit re-enables
+export * from "./shop";
 export * from "./provider";

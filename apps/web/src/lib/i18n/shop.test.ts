@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shopDicts, shopT } from "./shop-i18n";
+import { shopDicts, shopT } from "./shop";
 
 function flatten(value: unknown, prefix = ""): Map<string, string> {
   const out = new Map<string, string>();

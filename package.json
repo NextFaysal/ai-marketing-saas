@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.15.0",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
@@ -11,7 +13,10 @@
     "lint": "pnpm -r lint",
     "db:generate": "pnpm --filter @repo/db generate",
     "db:migrate": "pnpm --filter @repo/db migrate:dev",
-    "db:seed": "pnpm --filter @repo/db seed"
+    "db:seed": "pnpm --filter @repo/db seed",
+    "i18n:scan": "node scripts/i18n-scan.mjs"
   },
-  "devDependencies": { "typescript": "^5.7.2" }
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
 }
