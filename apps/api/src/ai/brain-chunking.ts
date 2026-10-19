@@ -41,5 +41,5 @@ export async function splitForEmbedding(text: string): Promise<string[]> {
   // a chunk start; a sentence never begins with its own
   // terminator, so strip exactly that artifact — the stored chunk
   // is what a match later quotes, and it must read cleanly.
-  return raw.map((c) => c.trim().replace(/^।\s*/, "").trim()).filter((c) => c.length > 0);
+  return raw.map((c: string) => c.trim().replace(/^।\s*/, "").trim()).filter((c: string) => c.length > 0);
 }
