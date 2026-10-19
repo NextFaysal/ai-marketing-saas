@@ -1,3 +1,7 @@
+import type { UiLocale } from "@repo/contracts";
+import { aiBn, aiEn } from "./i18n/ai";
+import { interpolate } from "./i18n/lookup";
+
 export type AspectRatio = "1:1" | "9:16" | "16:9" | "4:5";
 
 export type TemplateStyle =
@@ -169,26 +173,26 @@ export function generateDiscountBadge(
   const pct = calculateDiscountPercent(priceMinor, compareAtMinor);
   if (!pct || pct <= 0) return null;
   return {
-    text: locale === "en" ? `Flat ${pct}% off` : `ফ্ল্যাট ${pct}% ছাড়`,
+    text: interpolate((locale === "en" ? aiEn : aiBn).f3BadgeFlatOff, { pct }),
     percent: pct,
   };
 }
 
-export function formatBannerDimensions(ratio: AspectRatio, locale: "bn" | "en" = "bn"): {
+export function formatBannerDimensions(ratio: AspectRatio, locale: UiLocale = "bn"): {
   width: number;
   height: number;
   label: string;
 } {
-  const en = locale === "en";
+  const d = locale === "en" ? aiEn : aiBn;
   switch (ratio) {
     case "9:16":
-      return { width: 1080, height: 1920, label: en ? "Reels & stories (1080×1920)" : "রিলস ও স্টোরিজ (1080×1920)" };
+      return { width: 1080, height: 1920, label: d.f3DimReelsStories };
     case "16:9":
-      return { width: 1920, height: 1080, label: en ? "Landscape & thumbnail (1920×1080)" : "ল্যান্ডস্কেপ ও থাম্বনেইল (1920×1080)" };
+      return { width: 1920, height: 1080, label: d.f3DimLandscape };
     case "4:5":
-      return { width: 1080, height: 1350, label: en ? "Instagram & Facebook feed (1080×1350)" : "ইনস্টাগ্রাম ও ফেসবুক ফিড (1080×1350)" };
+      return { width: 1080, height: 1350, label: d.f3DimFeed };
     case "1:1":
     default:
-      return { width: 1080, height: 1080, label: en ? "Square & carousel (1080×1080)" : "স্কয়ার ও ক্যারোসেল (1080×1080)" };
+      return { width: 1080, height: 1080, label: d.f3DimSquare };
   }
 }

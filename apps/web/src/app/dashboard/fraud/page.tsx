@@ -427,7 +427,7 @@ export default function FraudShieldPage() {
           amountMinor: String(Math.round(Number(recordAmountTaka) * 100)),
           method: recordMethod,
           reference: recordTrxId.trim() || undefined,
-          note: "কুরিয়ার অগ্রিম ডেলিভারি চার্জ পরিশোধ",
+          note: t("misc.zzFrAdvanceNote"),
         }),
       });
       setShowRecordModal(false);
@@ -446,7 +446,7 @@ export default function FraudShieldPage() {
     try {
       await apiFetch(`/organizations/${orgId}/orders/${orderId}/hold`, {
         method: "POST",
-        body: JSON.stringify({ reason: "উচ্চ RTO ঝুঁকি — অগ্রিম ডেলিভারি চার্জ যাচাই সাপেক্ষ" }),
+        body: JSON.stringify({ reason: t("misc.zzFrHoldReason") }),
       });
       setNotice(t("misc.frHeld"));
       await loadAll();

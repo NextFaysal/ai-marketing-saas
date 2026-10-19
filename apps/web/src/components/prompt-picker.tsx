@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { STARTER_PROMPTS, filterPrompts, type PickerItem, type SavedPrompt } from "@/lib/ai-prompts";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * GV3 (G4) "/" prompt picker — shared by the Global Assistant panel
@@ -29,6 +30,8 @@ export function PromptPicker({
   onRenameSaved: (p: SavedPrompt) => void;
   onDeleteSaved: (p: SavedPrompt) => void;
 }) {
+  const { dict } = useLocale();
+  const S = dict.shared;
   const items = useMemo(() => filterPrompts(STARTER_PROMPTS, saved, query), [saved, query]);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -72,13 +75,13 @@ export function PromptPicker({
   }, [active]);
 
   return (
-    <div className="prompt-picker" role="listbox" aria-label="Prompt লাইব্রেরি">
+    <div className="prompt-picker" role="listbox" aria-label={S.zzPrpAria}>
       <p className="px-3 pb-1 pt-2.5 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">
-        Prompt লাইব্রেরি — ↑↓ বেছে Enter চাপুন
+        {S.zzPrpHeader}
       </p>
       <div ref={listRef} className="max-h-60 overflow-y-auto px-1.5 pb-1.5">
         {items.length === 0 ? (
-          <p className="px-2 py-3 text-sm text-slate-400">কোনো prompt মেলেনি</p>
+          <p className="px-2 py-3 text-sm text-slate-400">{S.zzPrpEmpty}</p>
         ) : items.map((item, i) => (
           <div
             key={`${item.kind}-${item.id}`}
@@ -96,19 +99,19 @@ export function PromptPicker({
               ) : null}
             </span>
             {item.kind === "starter" ? (
-              <span className="badge badge-slate shrink-0">Starter</span>
+              <span className="badge badge-slate shrink-0">{S.zzPrpStarter}</span>
             ) : (
               <span className="flex shrink-0 gap-1">
                 <button
                   type="button"
                   className="ai3-act-btn"
-                  title="নাম বদলান"
+                  title={S.zzPrpRename}
                   onClick={(e) => { e.stopPropagation(); if (item.saved) onRenameSaved(item.saved); }}
                 >✎</button>
                 <button
                   type="button"
                   className="ai3-act-btn ai3-act-btn-danger"
-                  title="মুছে ফেলুন"
+                  title={S.zzPrpDelete}
                   onClick={(e) => { e.stopPropagation(); if (item.saved) onDeleteSaved(item.saved); }}
                 >🗑</button>
               </span>

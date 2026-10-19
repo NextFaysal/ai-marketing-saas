@@ -456,8 +456,8 @@ export default function CompetitorsPage() {
           method: "POST",
           body: JSON.stringify({
             triggerType: rule.triggerType,
-            competitorName: active?.name || "দারাজ বাংলাদেশ",
-            productName: "প্রিমিয়াম গ্যাজেট কম্বো",
+            competitorName: active?.name || t("misc.zzCompSimCompetitorFallback"),
+            productName: t("misc.zzCompSimProductSample"),
             percentageChange: rule.conditions.priceDropThresholdPercent || 15,
           }),
         }

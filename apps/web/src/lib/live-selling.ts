@@ -1,4 +1,9 @@
 import { fmtMoney, type UiLocale } from "@repo/contracts";
+import { socialBn, socialEn } from "./i18n/social";
+import { interpolate } from "./i18n/lookup";
+
+/** social dictionary for the given UI locale (bn is the default). */
+const D = (locale?: string) => (locale === "en" ? socialEn : socialBn);
 
 /**
  * Social Live Selling & Comment-to-Order Engine
@@ -148,33 +153,34 @@ export function buildLiveWhatsAppOrderMessage(
     checkoutUrl: string;
     customerPhone?: string | null;
   },
-  storeName = "আমাদের শপ",
+  storeName = socialBn.zzLiveDefaultStore,
   locale: UiLocale = "bn"
 ): string {
   const unitPrice = (Number(params.rule.priceMinor) / 100).toFixed(0);
   const total = ((Number(params.rule.priceMinor) * params.quantity) / 100).toFixed(0);
+  // An untouched default store name follows the message locale;
+  // a caller-supplied name is always used verbatim.
+  const store = locale === "en" && storeName === socialBn.zzLiveDefaultStore ? socialEn.zzLiveDefaultStore : storeName;
 
   if (locale === "en") {
-    return `Hello! Thank you for commenting on the ${storeName} live 🎉
-Your requested product: *${params.rule.productName}*
-- Quantity: ${params.quantity}
-- Total price: ${fmtMoney(locale, Number(total))} (${params.quantity} × ${fmtMoney(locale, Number(unitPrice))})
-
-The live stock has been reserved for you for 15 minutes. To confirm your order with cash on delivery, click the link below and add your name and address:
-👉 ${params.checkoutUrl}
-
-If you have any question, just reply to this number. Thank you! 🙏`;
+    return interpolate(socialEn.zzLiveWhatsappMsg, {
+      store,
+      product: params.rule.productName,
+      qty: params.quantity,
+      total: fmtMoney(locale, Number(total)),
+      unit: fmtMoney(locale, Number(unitPrice)),
+      url: params.checkoutUrl,
+    });
   }
 
-  return `আসসালামু আলাইকুম! ${storeName}-এর লাইভে কমেন্ট করার জন্য ধন্যবাদ 🎉
-আপনার কাঙ্ক্ষিত পণ্য: *${params.rule.productName}*
-- পরিমাণ: ${params.quantity} টি
-- মোট মূল্য: ৳${total} (${params.quantity} × ৳${unitPrice})
-
-লাইভ স্টকটি আপনার জন্য ১৫ মিনিটের জন্য রিজার্ভ করা হয়েছে। ক্যাশ অন ডেলিভারিতে অর্ডার নিশ্চিত করতে নিচের লিংকে ক্লিক করে নাম ও ঠিকানা দিন:
-👉 ${params.checkoutUrl}
-
-কোন প্রশ্ন থাকলে এই নম্বরেই রিপ্লাই দিন। ধন্যবাদ! 🙏`;
+  return interpolate(socialBn.zzLiveWhatsappMsg, {
+    store,
+    product: params.rule.productName,
+    qty: params.quantity,
+    total,
+    unit: unitPrice,
+    url: params.checkoutUrl,
+  });
 }
 
 /**
@@ -183,7 +189,7 @@ If you have any question, just reply to this number. Thank you! 🙏`;
 export function parseLiveComment(
   commentText: string,
   rules: LiveKeywordRule[],
-  storeName = "আমাদের শপ",
+  storeName = socialBn.zzLiveDefaultStore,
   checkoutBaseUrl = "https://shop.amarbrand.com",
   locale: UiLocale = "bn"
 ): ParsedLiveOrder | null {
@@ -232,10 +238,15 @@ export function parseLiveComment(
     locale
   );
 
-  const messengerReplyMessage =
-    locale === "en"
-      ? `Thank you! Here is the link for your ordered ${matchedRule.productName} (${quantity} pcs - ${fmtMoney(locale, Number(totalPriceMinor) / 100)}): ${checkoutUrl}`
-      : `ধন্যবাদ! আপনার অর্ডারকৃত ${matchedRule.productName} (${quantity}টি - ৳${(Number(totalPriceMinor) / 100).toFixed(0)}) এর লিংক: ${checkoutUrl}`;
+  const messengerReplyMessage = interpolate(D(locale).zzLiveMessengerMsg, {
+    product: matchedRule.productName,
+    qty: quantity,
+    total:
+      locale === "en"
+        ? fmtMoney(locale, Number(totalPriceMinor) / 100)
+        : (Number(totalPriceMinor) / 100).toFixed(0),
+    url: checkoutUrl,
+  });
 
   return {
     id: `ord-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,

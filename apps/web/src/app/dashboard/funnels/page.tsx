@@ -707,22 +707,22 @@ export default function FunnelBuilderPage() {
               <div className="rounded-[26px] bg-white overflow-hidden max-h-[640px] overflow-y-auto scrollbar-thin text-slate-900 relative">
                 {/* Live Top Urgency Ticker */}
                 <div className="bg-slate-900 text-white text-[10px] text-center py-1.5 font-bold px-2">
-                  🚚 সারা বাংলাদেশে ক্যাশ অন ডেলিভারি | কোনো অগ্রিম টাকা লাগবে না
+                  {t("misc.zzFunnelCodTicker")}
                 </div>
 
                 {/* Urgency Stock Bar */}
                 <div className="p-3 bg-amber-50 border-b border-amber-200">
                   <div className="flex items-center justify-between text-[11px] font-bold text-amber-950">
                     <span className="flex items-center gap-1">
-                      <span className="animate-pulse">🔥</span> স্টক সীমিত!
+                      <span className="animate-pulse">🔥</span> {t("misc.zzFunnelStockLimited")}
                     </span>
-                    <span className="text-rose-600 font-mono">১৪:৪৫ মিনিট বাকি</span>
+                    <span className="text-rose-600 font-mono">{t("misc.zzFunnelTimeLeft")}</span>
                   </div>
                   <div className="mt-1.5 h-1.5 w-full bg-amber-200 rounded-full overflow-hidden">
                     <div className="h-full bg-gradient-to-r from-amber-500 to-rose-500 w-3/4 rounded-full" />
                   </div>
                   <p className="mt-1 text-[10px] text-amber-800 font-semibold text-center">
-                    আর মাত্র <span className="font-black text-rose-700">{draft.urgencyStock}টি</span> প্রোডাক্ট বাকি আছে
+                    {t("misc.zzFunnelStockLeft", { stock: fmtNumber(locale, draft.urgencyStock) })}
                   </p>
                 </div>
 
@@ -764,18 +764,18 @@ export default function FunnelBuilderPage() {
 
                 {/* Bundle Offer Simulator */}
                 <div className="p-3 bg-slate-50 border-b border-slate-100 space-y-2">
-                  <p className="text-[11px] font-black text-slate-700">📦 প্যাকেজ নির্বাচন করুন:</p>
+                  <p className="text-[11px] font-black text-slate-700">{t("misc.zzFunnelPackageTitle")}</p>
                   <div className="border-2 border-amber-500 rounded-xl bg-white p-2 text-xs flex justify-between items-center shadow-xs">
                     <div>
-                      <p className="font-bold text-slate-900">১টি কিনুন (রেগুলার অফার)</p>
-                      <p className="text-[10px] text-slate-500">ক্যাশ অন ডেলিভারি</p>
+                      <p className="font-bold text-slate-900">{t("misc.zzFunnelBundle1Title")}</p>
+                      <p className="text-[10px] text-slate-500">{t("misc.zzFunnelBundleCod")}</p>
                     </div>
                     <span className="font-black text-slate-900">{formatMinorTaka(draft.priceMinor)}</span>
                   </div>
                   <div className="border border-slate-200 rounded-xl bg-white p-2 text-xs flex justify-between items-center opacity-85">
                     <div>
-                      <p className="font-bold text-slate-900">২টি কিনুন (🔥 অতিরিক্ত ২০০ সাশ্রয়)</p>
-                      <p className="text-[10px] text-emerald-600 font-semibold">ফ্রি হোম ডেলিভারি</p>
+                      <p className="font-bold text-slate-900">{t("misc.zzFunnelBundle2Title")}</p>
+                      <p className="text-[10px] text-emerald-600 font-semibold">{t("misc.zzFunnelBundle2Sub")}</p>
                     </div>
                     <span className="font-black text-emerald-700">
                       {formatMinorTaka(draft.priceMinor * 2 - 20000)}
@@ -785,7 +785,7 @@ export default function FunnelBuilderPage() {
 
                 {/* Benefits List */}
                 <div className="p-3 space-y-2">
-                  <p className="text-[11px] font-black text-slate-700">💎 বিশেষ সুবিধাসমূহ:</p>
+                  <p className="text-[11px] font-black text-slate-700">{t("misc.zzFunnelBenefitsTitle")}</p>
                   <div className="grid grid-cols-1 gap-1.5">
                     {draft.benefits.slice(0, 4).map((b, i) => (
                       <div key={i} className="flex items-start gap-2 rounded-lg bg-slate-50 p-2 text-left">
@@ -815,24 +815,24 @@ export default function FunnelBuilderPage() {
                 {/* Simulated Order Form */}
                 <div className="p-3 space-y-2 bg-slate-50">
                   <p className="text-[11px] font-black text-slate-800 text-center">
-                    অর্ডার করতে আপনার তথ্য দিন
+                    {t("misc.zzFunnelOrderFormTitle")}
                   </p>
                   <input
                     type="text"
                     disabled
-                    placeholder="আপনার নাম লিখুন..."
+                    placeholder={t("misc.zzFunnelNamePlaceholder")}
                     className="w-full rounded-lg border border-slate-300 p-1.5 text-[11px] bg-white"
                   />
                   <input
                     type="text"
                     disabled
-                    placeholder="১১ ডিজিটের মোবাইল নম্বর..."
+                    placeholder={t("misc.zzFunnelPhonePlaceholder")}
                     className="w-full rounded-lg border border-slate-300 p-1.5 text-[11px] bg-white"
                   />
                   <input
                     type="text"
                     disabled
-                    placeholder="সম্পূর্ণ ডেলিভারি ঠিকানা..."
+                    placeholder={t("misc.zzFunnelAddressPlaceholder")}
                     className="w-full rounded-lg border border-slate-300 p-1.5 text-[11px] bg-white"
                   />
                 </div>

@@ -207,14 +207,14 @@ export function GlobalAssistant() {
     try {
       const updated = await apiFetch<Proposal>(`/organizations/${id}/ai/proposals/${pr.id}/${action}`, { method: "POST", body: JSON.stringify({}) });
       if (action === "approve" && updated.status === "failed") {
-        setPropNotice(t("shell.gaProposalFailedRecord", { error: updated.error ?? "platform error" }));
+        setPropNotice(t("shell.gaProposalFailedRecord", { error: updated.error ?? dict.shared.zzGasPlatformError }));
       } else if (action === "approve") {
         setPropNotice(D.gaProposalApproved);
       } else {
         setPropNotice(D.gaProposalRejected);
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed";
+      const msg = e instanceof Error ? e.message : dict.shared.zzGasFailed;
       setPropNotice(msg.toLowerCase().includes("forbidden")
         ? D.gaForbiddenRole
         : msg);
@@ -493,7 +493,7 @@ export function GlobalAssistant() {
           className="ga-fab"
           onClick={() => setOpen(true)}
           aria-label={D.gaFabAria}
-          title="AI Assistant — Ctrl/⌘+J"
+          title={dict.shared.zzGasFabTitle}
         >
           <span className="text-xl leading-none" aria-hidden="true">✦</span>
           <span className="hidden text-sm font-bold sm:inline">{D.gaFabLabel}</span>
@@ -508,19 +508,19 @@ export function GlobalAssistant() {
           <section
             className="ga-panel fade-rise"
             role="dialog"
-            aria-label="AI Assistant"
+            aria-label={dict.shared.zzGasDialogAria}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="ga-head">
               <span className="ai3-orb !h-10 !w-10 !rounded-2xl text-lg" aria-hidden="true">✦</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-bold leading-tight">{assistantName || "AI Assistant"}</p>
+                <p className="truncate text-[15px] font-bold leading-tight">{assistantName || dict.shared.zzGasName}</p>
                 <p className="truncate text-[11.5px] text-white/80">
                   {t("shell.gaNowLabel", { label: pageLabel })}
-                  {provider === "dev-template" ? " · ⚠ Dev Template Mode" : provider ? ` · LLM: ${provider}` : ""}
+                  {provider === "dev-template" ? dict.shared.zzGasDevTemplate : provider ? t("shared.zzGasLlmPrefix", { provider }) : ""}
                 </p>
-                <select className="ga-persona-select" value={personaSel} onChange={(e) => void changePersona(e.target.value)} aria-label="Persona">
+                <select className="ga-persona-select" value={personaSel} onChange={(e) => void changePersona(e.target.value)} aria-label={dict.shared.zzGasPersonaAria}>
                   {personasForLocale(locale).map((p) => <option key={p.id} value={p.id}>{p.icon} {p.label}</option>)}
                 </select>
               </div>

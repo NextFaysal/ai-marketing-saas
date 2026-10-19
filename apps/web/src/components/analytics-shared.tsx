@@ -2,7 +2,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 export interface Overview {
   range: { from: string; to: string };
@@ -23,18 +24,20 @@ export function last30(): { from: string; to: string } {
 }
 
 export function useOverview() {
+  const { dict, locale } = useLocale();
+  const S = dict.shared;
   const [range, setRange] = useState(last30());
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
+    if (!orgId) { setError(S.zzAnsNoOrg); setLoading(false); return; }
     setLoading(true);
     try {
       const res = await apiFetch<Overview>(`/organizations/${orgId}/analytics/overview?from=${range.from}&to=${range.to}`);
       setData(res); setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    } catch (e) { setError(e instanceof Error ? e.message : S.zzAnsFailed); }
     finally { setLoading(false); }
   }, [range]);
   useEffect(() => { load(); }, [load]);
@@ -42,15 +45,17 @@ export function useOverview() {
 }
 
 export function DailyBars({ data }: { data: Overview }) {
+  const { dict, t, locale } = useLocale();
+  const S = dict.shared;
   const max = Math.max(1, ...data.dailySeries.map((d) => Math.max(Number(BigInt(d.revenueMinor)), Number(BigInt(d.spendMinor)))));
   if (data.dailySeries.length === 0) return null;
   return (
     <div className="card p-5">
-      <div className="font-semibold">দৈনিক Revenue বনাম Ad Spend</div>
-      <div className="mt-1 text-xs text-slate-400">সবুজ: Revenue · লাল: Spend</div>
+      <div className="font-semibold">{S.zzAnsDailyTitle}</div>
+      <div className="mt-1 text-xs text-slate-400">{S.zzAnsLegend}</div>
       <div className="mt-4 flex h-36 items-end gap-1 overflow-x-auto">
         {data.dailySeries.map((d) => (
-          <div key={d.date} className="flex min-w-4 flex-1 flex-col items-center gap-1" title={`${d.date} · অর্ডার ${d.orders} · Revenue ${formatMinor(BigInt(d.revenueMinor))} · Spend ${formatMinor(BigInt(d.spendMinor))}`}>
+          <div key={d.date} className="flex min-w-4 flex-1 flex-col items-center gap-1" title={t("shared.zzAnsBarTitle", { date: d.date, orders: fmtNumber(locale, d.orders), revenue: fmtMoneyMinor(locale, BigInt(d.revenueMinor)), spend: fmtMoneyMinor(locale, BigInt(d.spendMinor)) })}>
             <div className="flex items-end gap-0.5">
               <div className="w-2 rounded-t bg-green-500" style={{ height: `${Math.max(2, (Number(BigInt(d.revenueMinor)) / max) * 120)}px` }} />
               <div className="w-2 rounded-t bg-red-400" style={{ height: `${Math.max(2, (Number(BigInt(d.spendMinor)) / max) * 120)}px` }} />

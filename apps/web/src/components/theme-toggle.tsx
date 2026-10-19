@@ -9,6 +9,25 @@ import {
   writeStoredThemePref,
   type ThemePref,
 } from "@/lib/theme";
+import { sharedBn, sharedEn } from "@/lib/i18n/shared";
+import { interpolate } from "@/lib/i18n/lookup";
+import { useLocale } from "@/lib/i18n/provider";
+
+/**
+ * MB2 F3-β: the toggle's labels live in the `shared` dictionary
+ * (zzTht* keys). lib/theme.test.tsx renders this component WITHOUT
+ * a LocaleProvider, so the locale resolves through the provider
+ * when one is mounted (dashboard) and falls back to bn otherwise —
+ * the bn fallback keeps that test's expectations byte-identical.
+ */
+const SD = (locale?: string): typeof sharedBn => (locale === "en" ? sharedEn : sharedBn);
+function useThtLocale(): "bn" | "en" {
+  try {
+    return useLocale().locale === "en" ? "en" : "bn";
+  } catch {
+    return "bn";
+  }
+}
 
 /**
  * ED17 (EB7) — dashboard dark-mode toggle (topbar).
@@ -27,13 +46,13 @@ const NEXT_PREF: Record<ThemePref, ThemePref> = {
   dark: "system",
 };
 
-const PREF_LABEL: Record<ThemePref, string> = {
-  system: "সিস্টেম",
-  light: "লাইট",
-  dark: "ডার্ক",
-};
-
 export function ThemeToggle() {
+  const sd = SD(useThtLocale());
+  const PREF_LABEL: Record<ThemePref, string> = {
+    system: sd.zzThtSystem,
+    light: sd.zzThtLight,
+    dark: sd.zzThtDark,
+  };
   const [pref, setPref] = useState<ThemePref>("system");
   const [dark, setDark] = useState(false);
 
@@ -62,7 +81,7 @@ export function ThemeToggle() {
   };
 
   const Icon = pref === "system" ? Monitor : dark ? Moon : Sun;
-  const label = `থিম: ${PREF_LABEL[pref]} — বদলাতে ক্লিক করুন`;
+  const label = interpolate(sd.zzThtLabel, { pref: PREF_LABEL[pref] });
 
   return (
     <button

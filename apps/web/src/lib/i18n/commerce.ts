@@ -2873,6 +2873,12 @@ export const commerceBn = {
   toConfirmPackagingCourierBooking: "পার্সেলটি প্যাকেজিং ও কুরিয়ারে বুকিং নিশ্চিত করার জন্য অনুগ্রহ করে ডেলিভারি চার্জ *৳{advanceAmount}* অগ্রিম প্রদান করুন:\n\n",
   afterCompletingThePaymentReply: "পেমেন্ট সম্পন্ন করার পর ট্রানজেকশন আইডি (TrxID) দিয়ে মেসেজটি রিপ্লাই দিন। বাকি *৳{dueAmount}* পার্সেল হাতে পাওয়ার পর প্রদান করবেন। ধন্যবাদ!",
   routingCheckNow: "Routing যাচাই করুন",
+  // ---- F3 commerce-breadcrumb (bc) ----
+  bcBlog: "ব্লগ",
+  bcPages: "পেজসমূহ",
+  bcSearch: "সার্চ সেটিংস",
+  bcDashboard: "ড্যাশবোর্ড",
+  bcCommerce: "কমার্স",
 };
 
 export const commerceEn: typeof commerceBn = {
@@ -5744,4 +5750,10 @@ export const commerceEn: typeof commerceBn = {
   toConfirmPackagingCourierBooking: "To confirm packaging & courier booking of the parcel, please pay the delivery charge *৳{advanceAmount}* in advance:\n\n",
   afterCompletingThePaymentReply: "After completing the payment, reply to the message with the transaction ID (TrxID). You will pay the remaining *৳{dueAmount}* after receiving the parcel. Thank you!",
   routingCheckNow: "Routing Check now",
+  // ---- F3 commerce-breadcrumb (bc) ----
+  bcBlog: "Blog",
+  bcPages: "Pages",
+  bcSearch: "Search settings",
+  bcDashboard: "Dashboard",
+  bcCommerce: "Commerce",
 };

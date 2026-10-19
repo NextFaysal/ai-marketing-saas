@@ -110,7 +110,7 @@ export default function SocialSellingPage() {
     if (e) e.preventDefault();
     if (!simComment.trim()) return;
 
-    const parsed = parseLiveComment(simComment, rules, "আমাদের শপ", undefined, locale);
+    const parsed = parseLiveComment(simComment, rules, t("misc.zzSocialShopFallback"), undefined, locale);
     setSimResult(parsed);
 
     if (parsed) {
@@ -459,7 +459,7 @@ export default function SocialSellingPage() {
                   rows={2}
                   value={simComment}
                   onChange={(e) => setSimComment(e.target.value)}
-                  placeholder="যেমন: 101 2 ta nibo 017xxxxxxxx size 42"
+                  placeholder={t("misc.zzSocialSimPlaceholder")}
                   className="mt-1 w-full rounded-lg border border-slate-200 p-2.5 text-xs font-mono"
                 />
               </div>

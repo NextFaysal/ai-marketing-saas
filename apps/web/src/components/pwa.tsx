@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * Milestone 60 — PWA plumbing.
@@ -53,6 +54,8 @@ export function SwRegister() {
 }
 
 export function InstallButton({ className }: { className?: string }) {
+  const { dict } = useLocale();
+  const S = dict.shared;
   const [available, setAvailable] = useState(false);
 
   useEffect(() => {
@@ -86,10 +89,10 @@ export function InstallButton({ className }: { className?: string }) {
 
   return (
     <span className={`relative inline-flex ${className ?? ""}`}>
-      <button onClick={install} className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-100" aria-label="অ্যাপ ইনস্টল করুন">
-        📲 অ্যাপ ইনস্টল করুন
+      <button onClick={install} className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-100" aria-label={S.zzPwaInstallAria}>
+        {S.zzPwaInstall}
       </button>
-      <button onClick={dismiss} aria-label="বন্ধ করুন"
+      <button onClick={dismiss} aria-label={S.zzPwaClose}
         className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-slate-500 text-[9px] font-bold text-white">✕</button>
     </span>
   );

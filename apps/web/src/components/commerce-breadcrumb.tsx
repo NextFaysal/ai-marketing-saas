@@ -7,18 +7,28 @@
 import { usePathname } from "next/navigation";
 import { Breadcrumb } from "@repo/ui";
 import { NAV_ITEMS, COMMERCE_NAV_ITEMS } from "@/lib/nav";
+import { useLocale } from "@/lib/i18n/provider";
 
 const LABEL_BY_HREF = new Map<string, string>(
   [...NAV_ITEMS, ...COMMERCE_NAV_ITEMS].map((i) => [i.href as string, i.label]),
 );
 
-const SUBPAGE_LABELS: Record<string, string> = {
-  blog: "ব্লগ",
-  pages: "পেজসমূহ",
-  search: "সার্চ সেটিংস",
-};
+// MB2 F3-β: nav items carry a `labelKey` into the shell dictionary;
+// the dashboard layout resolves it the same way (`labelOf`), with
+// the item's bn label as fallback. Keyed here by href so this map
+// stays the single source for the page crumb.
+const LABEL_KEY_BY_HREF = new Map<string, string>(
+  [...NAV_ITEMS, ...COMMERCE_NAV_ITEMS].map((i) => [i.href as string, i.labelKey]),
+);
 
 export function CommerceBreadcrumb() {
+  const { dict, t } = useLocale();
+  const S = dict.shared;
+  const SUBPAGE_LABELS: Record<string, string> = {
+    blog: S.zzCbcBlog,
+    pages: S.zzCbcPages,
+    search: S.zzCbcSearch,
+  };
   const pathname = usePathname();
   if (!pathname || pathname === "/dashboard/commerce") return null;
   // Longest nav href that prefixes the path is the page crumb.
@@ -29,11 +39,12 @@ export function CommerceBreadcrumb() {
     }
   }
   const items: { label: string; href?: string }[] = [
-    { label: "ড্যাশবোর্ড", href: "/dashboard" },
-    { label: "কমার্স", href: "/dashboard/commerce" },
+    { label: dict.shell.dashboard, href: "/dashboard" },
+    { label: S.zzCbcCommerce, href: "/dashboard/commerce" },
   ];
   if (pageHref) {
-    items.push({ label: LABEL_BY_HREF.get(pageHref) ?? pageHref });
+    const key = LABEL_KEY_BY_HREF.get(pageHref);
+    items.push({ label: (key ? t(`shell.${key}`) : "") || LABEL_BY_HREF.get(pageHref) || pageHref });
     const rest = pathname.slice(pageHref.length).split("/").filter(Boolean);
     for (const seg of rest) {
       items.push({ label: SUBPAGE_LABELS[seg] ?? seg });

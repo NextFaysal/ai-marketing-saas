@@ -4,6 +4,7 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
 import type { ReferralRewardSetting } from "@/lib/loyalty";
+import { useLocale } from "@/lib/i18n/provider";
 
 // AB1 (AX2) — referral REWARD settings card, shared by the
 // loyalty page (dashboard/commerce/loyalty) and the storefront
@@ -16,6 +17,8 @@ import type { ReferralRewardSetting } from "@/lib/loyalty";
 // taka and converts with the storefront-money helpers (×100).
 
 export function ReferralRewardSettingsCard() {
+  const { dict } = useLocale();
+  const S = dict.shared;
   const [enabled, setEnabled] = useState(false);
   const [rewardType, setRewardType] = useState<"points" | "coupon">("points");
   const [rewardPoints, setRewardPoints] = useState("");
@@ -49,19 +52,19 @@ export function ReferralRewardSettingsCard() {
     let rewardPointsValue: number | null = null;
     if (rewardPoints.trim()) {
       const n = Number(rewardPoints);
-      if (!Number.isInteger(n) || n < 1) { setError("পুরস্কারের পয়েন্ট পূর্ণ সংখ্যায় দিন (কমপক্ষে ১), অথবা খালি রাখুন।"); return; }
+      if (!Number.isInteger(n) || n < 1) { setError(S.zzLrsPointsError); return; }
       rewardPointsValue = n;
     }
     let couponPercentValue: number | null = null;
     if (couponPercent.trim()) {
       const n = Number(couponPercent);
-      if (!Number.isInteger(n) || n < 1 || n > 90) { setError("কুপনের ছাড় ১–৯০% এর মধ্যে পূর্ণ সংখ্যায় দিন, অথবা খালি রাখুন।"); return; }
+      if (!Number.isInteger(n) || n < 1 || n > 90) { setError(S.zzLrsCouponError); return; }
       couponPercentValue = n;
     }
     let rewardMinOrderMinor: string | null = null;
     if (minOrderTaka.trim()) {
       rewardMinOrderMinor = takaToMinorString(minOrderTaka);
-      if (rewardMinOrderMinor === null) { setError("সর্বনিম্ন অর্ডার মূল্য টাকায় সঠিক সংখ্যা দিন (যেমন: ৫০০), অথবা খালি রাখুন।"); return; }
+      if (rewardMinOrderMinor === null) { setError(S.zzLrsMinOrderError); return; }
     }
     setBusy(true); setError(""); setNotice("");
     try {
@@ -78,51 +81,48 @@ export function ReferralRewardSettingsCard() {
           }),
         },
       );
-      setNotice("রেফারেল পুরস্কারের সেটিংস সংরক্ষণ হয়েছে।");
+      setNotice(S.zzLrsSaved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : S.zzLrsSaveFailed); }
     finally { setBusy(false); }
   }
 
   return (
     <div className="card space-y-4 p-5">
       <div>
-        <div className="font-semibold">🎁 রেফারেল পুরস্কার</div>
+        <div className="font-semibold">{S.zzLrsTitle}</div>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          রেফারেল কোডে আসা বন্ধুর অর্ডার সম্পন্ন হলে যিনি রেফার করেছেন তিনি এই পুরস্কার পাবেন —
-          পয়েন্ট অথবা একটি কুপন। এটি ক্রেতার রেফারেল ছাড়ের থেকে আলাদা সেটিং।
+          {S.zzLrsIntro}
         </p>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          পয়েন্ট পুরস্কারের জন্য লয়্যালটি প্রোগ্রাম চালু থাকা জরুরি; কুপন পুরস্কার লয়্যালটি
-          ছাড়াই স্বাধীনভাবে কাজ করে। রেফার করা অর্ডারটি কুপন ব্যবহারের আগেই সম্পূর্ণ রিফান্ড
-          হয়ে গেলে পুরস্কার কুপনটি বাতিল হয়ে যাবে।
+          {S.zzLrsNote}
         </p>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
       <label className="flex items-center gap-2 text-sm font-semibold">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        রেফারেল পুরস্কার চালু করুন
+        {S.zzLrsEnable}
       </label>
       <div className="grid gap-3 md:grid-cols-2">
-        <label className="block text-sm">পুরস্কারের ধরন
+        <label className="block text-sm">{S.zzLrsRewardType}
           <select className="input mt-1" value={rewardType} onChange={(e) => setRewardType(e.target.value as "points" | "coupon")} disabled={!enabled}>
-            <option value="points">লয়্যালটি পয়েন্ট</option>
-            <option value="coupon">কুপন</option>
+            <option value="points">{S.zzLrsTypePoints}</option>
+            <option value="coupon">{S.zzLrsTypeCoupon}</option>
           </select>
         </label>
-        <label className="block text-sm">সর্বনিম্ন অর্ডার মূল্য (টাকা, খালি = নেই)
-          <input className="input mt-1" inputMode="decimal" value={minOrderTaka} onChange={(e) => setMinOrderTaka(e.target.value)} placeholder="যেমন: ৫০০" disabled={!enabled} />
+        <label className="block text-sm">{S.zzLrsFieldMinOrder}
+          <input className="input mt-1" inputMode="decimal" value={minOrderTaka} onChange={(e) => setMinOrderTaka(e.target.value)} placeholder={S.zzLrsPlaceholder500} disabled={!enabled} />
         </label>
-        <label className="block text-sm">পুরস্কারের পয়েন্ট (পয়েন্ট ধরনে)
-          <input className="input mt-1" type="number" min="1" value={rewardPoints} onChange={(e) => setRewardPoints(e.target.value)} placeholder="যেমন: ১০০" disabled={!enabled || rewardType !== "points"} />
+        <label className="block text-sm">{S.zzLrsFieldPoints}
+          <input className="input mt-1" type="number" min="1" value={rewardPoints} onChange={(e) => setRewardPoints(e.target.value)} placeholder={S.zzLrsPlaceholder100} disabled={!enabled || rewardType !== "points"} />
         </label>
-        <label className="block text-sm">কুপনের ছাড় (%) — ১–৯০ (কুপন ধরনে)
-          <input className="input mt-1" type="number" min="1" max="90" value={couponPercent} onChange={(e) => setCouponPercent(e.target.value)} placeholder="যেমন: ১০" disabled={!enabled || rewardType !== "coupon"} />
+        <label className="block text-sm">{S.zzLrsFieldCoupon}
+          <input className="input mt-1" type="number" min="1" max="90" value={couponPercent} onChange={(e) => setCouponPercent(e.target.value)} placeholder={S.zzLrsPlaceholder10} disabled={!enabled || rewardType !== "coupon"} />
         </label>
       </div>
       <button type="button" className="btn-primary" disabled={busy} onClick={() => void save()}>
-        {busy ? "সেভ হচ্ছে…" : "রেফারেল পুরস্কার সেভ করুন"}
+        {busy ? S.zzLrsSaving : S.zzLrsSaveBtn}
       </button>
     </div>
   );

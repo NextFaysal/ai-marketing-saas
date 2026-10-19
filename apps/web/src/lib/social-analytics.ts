@@ -17,6 +17,7 @@
  * social-post-insights / social-composer.
  */
 import { intlLocaleOf, normalizeUiLocale, type UiLocale } from "@repo/contracts";
+import { socialBn, socialEn } from "./i18n/social";
 
 
 // ---------------------------------------------------------------------------
@@ -98,8 +99,9 @@ export function formatBnNumber(value: number, maximumFractionDigits = 0, locale:
 }
 
 const MONTH_NAMES_BN = [
-  "জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
-  "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর",
+  socialBn.zzSocAnMonth01, socialBn.zzSocAnMonth02, socialBn.zzSocAnMonth03, socialBn.zzSocAnMonth04,
+  socialBn.zzSocAnMonth05, socialBn.zzSocAnMonth06, socialBn.zzSocAnMonth07, socialBn.zzSocAnMonth08,
+  socialBn.zzSocAnMonth09, socialBn.zzSocAnMonth10, socialBn.zzSocAnMonth11, socialBn.zzSocAnMonth12,
 ] as const;
 
 function parseDay(day: string): { y: number; m: number; d: number } | null {
@@ -161,17 +163,17 @@ export function timeseriesBars(series: SocialTimeseriesDay[] | null | undefined,
 // ---------------------------------------------------------------------------
 
 const CONTENT_TYPE_LABELS: Record<string, string> = {
-  text: "লেখা মাত্র",
-  photo: "ছবি",
-  carousel: "ক্যারোসেল",
-  video: "ভিডিও",
+  text: socialBn.zzSocAnTypeText,
+  photo: socialBn.zzSocAnTypePhoto,
+  carousel: socialBn.zzSocAnTypeCarousel,
+  video: socialBn.zzSocAnTypeVideo,
 };
 
 const CONTENT_TYPE_LABELS_EN: Record<string, string> = {
-  text: "Text only",
-  photo: "Photo",
-  carousel: "Carousel",
-  video: "Video",
+  text: socialEn.zzSocAnTypeText,
+  photo: socialEn.zzSocAnTypePhoto,
+  carousel: socialEn.zzSocAnTypeCarousel,
+  video: socialEn.zzSocAnTypeVideo,
 };
 
 /** Label for a content type; an unknown type falls back to its raw value. */

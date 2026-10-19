@@ -11,36 +11,45 @@
 export const DROPSHIP_PAYOUT_NOTE =
   "এই লেজারটি শুধুমাত্র একটি রেকর্ড — এর মাধ্যমে কোনো পেআউট সম্পন্ন হয় না। পেআউট OU11 আইনি গেটের (legal gate) পেছনে রয়েছে। (Records only — no payout is executed; payouts remain behind the OU11 legal gate.)";
 
-export const PARTNER_STOCK_LABEL = "পার্টনার স্টক";
+import type { UiLocale } from "@repo/contracts";
+import { billingBn, billingEn } from "./i18n/billing";
+import { interpolate } from "./i18n/lookup";
 
-export function agreementStatusLabel(v: string | null | undefined): string {
+const D = (locale?: string) => (locale === "en" ? billingEn : billingBn);
+
+export const PARTNER_STOCK_LABEL = billingBn.zzDropPartnerStock;
+
+export function agreementStatusLabel(v: string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
   switch (v) {
-    case "pending": return "অপেক্ষমাণ (Pending)";
-    case "accepted": return "সক্রিয় (Accepted)";
-    case "declined": return "প্রত্যাখ্যাত (Declined)";
-    case "revoked": return "বাতিল (Revoked)";
+    case "pending": return d.zzDropAgreePending;
+    case "accepted": return d.zzDropAgreeAccepted;
+    case "declined": return d.zzDropAgreeDeclined;
+    case "revoked": return d.zzDropAgreeRevoked;
     default: return v ?? "—";
   }
 }
 
-export function poStatusLabel(v: string | null | undefined): string {
+export function poStatusLabel(v: string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
   switch (v) {
-    case "draft": return "খসড়া (Draft)";
-    case "ordered": return "নিশ্চিত / অর্ডারকৃত (Ordered)";
-    case "partially_received": return "আংশিক পৌঁছেছে";
-    case "received": return "সম্পূর্ণ পৌঁছেছে";
-    case "cancelled": return "বাতিল";
+    case "draft": return d.zzDropPoDraft;
+    case "ordered": return d.zzDropPoOrdered;
+    case "partially_received": return d.zzDropPoPartial;
+    case "received": return d.zzDropPoReceived;
+    case "cancelled": return d.zzDropPoCancelled;
     default: return v ?? "—";
   }
 }
 
-export function orderStatusLabel(v: string | null | undefined): string {
+export function orderStatusLabel(v: string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
   switch (v) {
-    case "pending": return "অপেক্ষমাণ";
-    case "processing": return "প্রক্রিয়াধীন";
-    case "completed": return "সম্পন্ন";
-    case "delivered": return "ডেলিভারি হয়েছে";
-    case "cancelled": return "বাতিল";
+    case "pending": return d.zzDropOrderPending;
+    case "processing": return d.zzDropOrderProcessing;
+    case "completed": return d.zzDropOrderCompleted;
+    case "delivered": return d.zzDropOrderDelivered;
+    case "cancelled": return d.zzDropOrderCancelled;
     default: return v ?? "—";
   }
 }
@@ -48,9 +57,11 @@ export function orderStatusLabel(v: string | null | undefined): string {
 /** Partner stock display: a real count, "অসীম/ট্র্যাক হয়নি"
  * when the source product is untracked (null) — never a
  * fabricated number, and always labelled partner stock. */
-export function partnerStockLabel(stock: number | null | undefined): string {
-  if (stock == null) return `${PARTNER_STOCK_LABEL}: ট্র্যাক হয়নি`;
-  return `${PARTNER_STOCK_LABEL}: ${stock}টি`;
+export function partnerStockLabel(stock: number | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
+  const label = d.zzDropPartnerStock;
+  if (stock == null) return interpolate(d.zzDropPartnerUntracked, { label });
+  return interpolate(d.zzDropPartnerCount, { label, count: stock });
 }
 
 /** Seller price must be >= floor — the same rule the API

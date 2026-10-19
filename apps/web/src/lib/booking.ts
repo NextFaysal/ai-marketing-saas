@@ -3,7 +3,13 @@
 // builders) + the thin API wrappers the dashboard and public
 // pages share — same split as lib/live-commerce.ts: the pages
 // own fetching/state, everything testable lives here.
+import type { UiLocale } from "@repo/contracts";
 import { apiFetch, API_URL } from "./api";
+import { crmBn, crmEn } from "./i18n/crm";
+import { interpolate } from "./i18n/lookup";
+
+/** crm dictionary for the given UI locale (bn is the default). */
+const D = (locale?: string) => (locale === "en" ? crmEn : crmBn);
 
 // ---------- Types (mirror booking.service pub* shapes) ----------
 
@@ -80,42 +86,76 @@ export interface PublicStaffList {
 
 // ---------- Labels ----------
 
-export const BOOKING_STATUS_CHIP: Record<string, { label: string; cls: string }> = {
-  pending: { label: "অপেক্ষমাণ", cls: "bg-amber-100 text-amber-700" },
-  confirmed: { label: "নিশ্চিত", cls: "bg-emerald-100 text-emerald-700" },
-  cancelled: { label: "বাতিল", cls: "bg-rose-100 text-rose-700" },
-  completed: { label: "সম্পন্ন", cls: "bg-sky-100 text-sky-700" },
-  no_show: { label: "আসেননি", cls: "bg-slate-200 text-slate-600" },
+const STATUS_CLS: Record<string, string> = {
+  pending: "bg-amber-100 text-amber-700",
+  confirmed: "bg-emerald-100 text-emerald-700",
+  cancelled: "bg-rose-100 text-rose-700",
+  completed: "bg-sky-100 text-sky-700",
+  no_show: "bg-slate-200 text-slate-600",
 };
 
-export function bookingStatusChip(status: string): { label: string; cls: string } {
-  return BOOKING_STATUS_CHIP[status] ?? { label: status, cls: "bg-slate-100 text-slate-600" };
+const STATUS_KEY = {
+  pending: "zzBookStatusPending",
+  confirmed: "zzBookStatusConfirmed",
+  cancelled: "zzBookStatusCancelled",
+  completed: "zzBookStatusCompleted",
+  no_show: "zzBookStatusNoShow",
+} as const;
+
+/** Status chips for the given UI locale (bn default). */
+export function bookingStatusChips(locale: UiLocale = "bn"): Record<string, { label: string; cls: string }> {
+  const d = D(locale);
+  return Object.fromEntries(
+    Object.entries(STATUS_KEY).map(([k, key]) => [k, { label: d[key], cls: STATUS_CLS[k] }]),
+  );
 }
 
-export const DEPOSIT_STATE_LABELS: Record<string, string> = {
-  not_required: "ডিপোজিট প্রয়োজন নেই",
-  unpaid_manual: "ডিপোজিট বাকি (ম্যানুয়াল)",
-  paid_manual: "ডিপোজিট পরিশোধিত (ম্যানুয়াল)",
+export const BOOKING_STATUS_CHIP: Record<string, { label: string; cls: string }> = bookingStatusChips("bn");
+
+export function bookingStatusChip(status: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return bookingStatusChips(locale)[status] ?? { label: status, cls: "bg-slate-100 text-slate-600" };
+}
+
+const DEPOSIT_KEY = {
+  not_required: "zzBookDepositNotRequired",
+  unpaid_manual: "zzBookDepositUnpaid",
+  paid_manual: "zzBookDepositPaid",
+} as const;
+
+/** Deposit state labels for the given UI locale (bn default). */
+export function depositStateLabels(locale: UiLocale = "bn"): Record<string, string> {
+  const d = D(locale);
+  return Object.fromEntries(Object.entries(DEPOSIT_KEY).map(([k, key]) => [k, d[key]]));
+}
+
+export const DEPOSIT_STATE_LABELS: Record<string, string> = depositStateLabels("bn");
+
+export function depositStateLabel(state: string, locale: UiLocale = "bn"): string {
+  return depositStateLabels(locale)[state] ?? state;
+}
+
+const WEEKDAY_KEY: Record<number, keyof typeof crmBn> = {
+  6: "zzBookWeekdaySat",
+  0: "zzBookWeekdaySun",
+  1: "zzBookWeekdayMon",
+  2: "zzBookWeekdayTue",
+  3: "zzBookWeekdayWed",
+  4: "zzBookWeekdayThu",
+  5: "zzBookWeekdayFri",
 };
-
-export function depositStateLabel(state: string): string {
-  return DEPOSIT_STATE_LABELS[state] ?? state;
-}
 
 /** Weekday rows in DISPLAY order (Saturday first, the BD week),
- * each carrying its JS weekday number (0 = Sunday … 6 = Saturday). */
-export const WEEKDAY_ROWS: ReadonlyArray<{ weekday: number; label: string }> = [
-  { weekday: 6, label: "শনিবার" },
-  { weekday: 0, label: "রবিবার" },
-  { weekday: 1, label: "সোমবার" },
-  { weekday: 2, label: "মঙ্গলবার" },
-  { weekday: 3, label: "বুধবার" },
-  { weekday: 4, label: "বৃহস্পতিবার" },
-  { weekday: 5, label: "শুক্রবার" },
-];
+ * each carrying its JS weekday number (0 = Sunday … 6 = Saturday),
+ * labelled for the given UI locale (bn default). */
+export function weekdayRows(locale: UiLocale = "bn"): ReadonlyArray<{ weekday: number; label: string }> {
+  const d = D(locale);
+  return [6, 0, 1, 2, 3, 4, 5].map((weekday) => ({ weekday, label: d[WEEKDAY_KEY[weekday]] }));
+}
 
-export function weekdayLabel(weekday: number): string {
-  return WEEKDAY_ROWS.find((r) => r.weekday === weekday)?.label ?? `দিন ${weekday}`;
+export const WEEKDAY_ROWS: ReadonlyArray<{ weekday: number; label: string }> = weekdayRows("bn");
+
+export function weekdayLabel(weekday: number, locale: UiLocale = "bn"): string {
+  return weekdayRows(locale).find((r) => r.weekday === weekday)?.label ?? interpolate(D(locale).zzBookDayFallback, { n: weekday });
 }
 
 // ---------- Time helpers ----------
@@ -194,17 +234,18 @@ export function dayRangeUtcIso(date: string, timezone = "Asia/Dhaka"): { from: s
 
 /** Client mirror of the server rule so the editor can complain
  * before the round-trip: returns a Bengali error or null. */
-export function availabilityError(rows: AvailabilityRow[]): string | null {
+export function availabilityError(rows: AvailabilityRow[], locale: UiLocale = "bn"): string | null {
+  const d = D(locale);
   for (const r of rows) {
-    if (!Number.isInteger(r.weekday) || r.weekday < 0 || r.weekday > 6) return "সপ্তাহের দিন সঠিক নয়";
+    if (!Number.isInteger(r.weekday) || r.weekday < 0 || r.weekday > 6) return d.zzBookAvailBadWeekday;
     if (!(r.startMinute >= 0) || !(r.endMinute <= 1440) || r.startMinute >= r.endMinute) {
-      return "প্রতিটি সময়সীমায় শুরু < শেষ হতে হবে";
+      return d.zzBookAvailBadRange;
     }
   }
   const sorted = [...rows].sort((a, b) => a.weekday - b.weekday || a.startMinute - b.startMinute);
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i].weekday === sorted[i - 1].weekday && sorted[i].startMinute < sorted[i - 1].endMinute) {
-      return "একই দিনে দুটি সময়সীমা ওভারল্যাপ করতে পারবে না";
+      return d.zzBookAvailOverlap;
     }
   }
   return null;
@@ -250,12 +291,12 @@ export interface StaffBookingGroup {
 }
 
 /** Group a day's bookings by staff, each group time-ordered. */
-export function groupBookingsByStaff(bookings: ServiceBookingView[]): StaffBookingGroup[] {
+export function groupBookingsByStaff(bookings: ServiceBookingView[], locale: UiLocale = "bn"): StaffBookingGroup[] {
   const groups = new Map<string, StaffBookingGroup>();
   for (const b of [...bookings].sort((a, b) => a.startAt.localeCompare(b.startAt))) {
     const key = b.staffId;
     if (!groups.has(key)) {
-      groups.set(key, { staffId: key, staffName: b.staffName ?? "স্টাফ", bookings: [] });
+      groups.set(key, { staffId: key, staffName: b.staffName ?? D(locale).zzBookStaffFallback, bookings: [] });
     }
     groups.get(key)!.bookings.push(b);
   }
@@ -264,18 +305,19 @@ export function groupBookingsByStaff(bookings: ServiceBookingView[]): StaffBooki
 
 /** Which status action buttons a booking shows (mirrors the
  * server transition table — the server still has the last word). */
-export function bookingActions(status: string): Array<{ key: string; label: string }> {
+export function bookingActions(status: string, locale: UiLocale = "bn"): Array<{ key: string; label: string }> {
+  const d = D(locale);
   if (status === "pending") {
     return [
-      { key: "confirm", label: "নিশ্চিত করুন" },
-      { key: "cancel", label: "বাতিল" },
+      { key: "confirm", label: d.zzBookActionConfirm },
+      { key: "cancel", label: d.zzBookActionCancel },
     ];
   }
   if (status === "confirmed") {
     return [
-      { key: "complete", label: "সম্পন্ন" },
-      { key: "no-show", label: "আসেননি" },
-      { key: "cancel", label: "বাতিল" },
+      { key: "complete", label: d.zzBookActionComplete },
+      { key: "no-show", label: d.zzBookActionNoShow },
+      { key: "cancel", label: d.zzBookActionCancel },
     ];
   }
   return [];
@@ -371,7 +413,7 @@ async function publicFetch<T>(path: string, init: RequestInit = {}): Promise<T> 
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error((data as any)?.message ?? `অনুরোধ ব্যর্থ হয়েছে (${res.status})`);
+    throw new Error((data as any)?.message ?? interpolate(crmBn.zzBookRequestFailed, { status: res.status }));
   }
   return data as T;
 }

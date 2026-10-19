@@ -6,6 +6,7 @@ import { EmptyState } from "@repo/ui";
 import { MediaImage } from "@/components/media-image";
 import { fmtDate, fmtNumber, type UiLocale } from "@repo/contracts";
 import { useLocale } from "@/lib/i18n/provider";
+import { miscBn, miscEn } from "@/lib/i18n/misc";
 
 /**
  * RB5/RM7 — unified media library: every StoredFile the org owns
@@ -30,34 +31,24 @@ interface MediaItem {
   url: string | null;
 }
 
-const SURFACE_LABELS: Record<string, string> = {
-  product: "প্রোডাক্ট",
-  social: "সোশ্যাল",
-  branding: "ব্র্যান্ডিং",
-  creative: "ক্রিয়েটিভ",
-  inbox: "ইনবক্স",
-  review: "রিভিউ",
-  digital: "ডিজিটাল",
-  document: "ডকুমেন্ট",
-  library: "লাইব্রেরি",
-  other: "অন্যান্য",
-};
-const SURFACE_LABELS_EN: Record<string, string> = {
-  product: "Product",
-  social: "Social",
-  branding: "Branding",
-  creative: "Creative",
-  inbox: "Inbox",
-  review: "Review",
-  digital: "Digital",
-  document: "Document",
-  library: "Library",
-  other: "Other",
+const SURFACE_KEYS: Record<string, keyof typeof miscBn> = {
+  product: "f3MlSurfaceProduct",
+  social: "f3MlSurfaceSocial",
+  branding: "f3MlSurfaceBranding",
+  creative: "f3MlSurfaceCreative",
+  inbox: "f3MlSurfaceInbox",
+  review: "f3MlSurfaceReview",
+  digital: "f3MlSurfaceDigital",
+  document: "f3MlSurfaceDocument",
+  library: "f3MlSurfaceLibrary",
+  other: "f3MlSurfaceOther",
 };
 function surfaceLabel(surface: string, locale: UiLocale): string {
-  return (locale === "en" ? SURFACE_LABELS_EN[surface] : SURFACE_LABELS[surface]) ?? surface;
+  const key = SURFACE_KEYS[surface];
+  if (!key) return surface;
+  return (locale === "en" ? miscEn : miscBn)[key];
 }
-const SURFACES = ["", ...Object.keys(SURFACE_LABELS)];
+const SURFACES = ["", ...Object.keys(SURFACE_KEYS)];
 const KINDS = [
   { value: "", labelKey: "social.mlKindAll" },
   { value: "image", labelKey: "social.mlKindImage" },

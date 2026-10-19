@@ -12,7 +12,7 @@ import {
 } from "@/lib/automation-blueprints";
 import { useLocale } from "@/lib/i18n/provider";
 import { automationsBn, automationsEn } from "@/lib/i18n/automations";
-import { fmtNumber, fmtMoney, fmtMoneyMinor, fmtDate } from "@repo/contracts";
+import { fmtNumber, fmtMoney, fmtMoneyMinor, fmtDate, fmtDateTime, fmtTime } from "@repo/contracts";
 import type { UiLocale } from "@repo/contracts";
 
 const AD = (locale?: string) => (locale === "en" ? automationsEn : automationsBn);
@@ -163,6 +163,8 @@ const RULE_ACTION_KEY: Record<string, AutoKey> = {
   alert: "actionAlertOnly",
   scale_budget: "actionScaleBudget",
   pause_ad: "actionPauseAd",
+  pause_campaign: "f3ActionPauseCampaign",
+  activate_campaign: "f3ActionActivateCampaign",
 };
 function ruleActionLabelsFor(locale: string): typeof RULE_ACTION_LABELS {
   const out: typeof RULE_ACTION_LABELS = {};
@@ -175,30 +177,31 @@ function ruleActionLabelsFor(locale: string): typeof RULE_ACTION_LABELS {
 
 const RULE_ACTION_LABELS: Record<string, { label: string; badgeCls: string; icon: string }> = {
   pause_campaign: { label: "Campaign Pause", badgeCls: "bg-rose-50 text-rose-700 border-rose-200", icon: "⏸️" },
-  alert: { label: "শুধু Alert (নিরাপদ)", badgeCls: "bg-amber-50 text-amber-700 border-amber-200", icon: "🔔" },
+  alert: { label: "Alert only (safe)", badgeCls: "bg-amber-50 text-amber-700 border-amber-200", icon: "🔔" },
   activate_campaign: { label: "Campaign Active", badgeCls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: "▶️" },
-  scale_budget: { label: "Budget স্কেলিং (%)", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200", icon: "📈" },
-  pause_ad: { label: "বিজ্ঞাপন Pause (Ad-level)", badgeCls: "bg-purple-50 text-purple-700 border-purple-200", icon: "🛑" },
+  scale_budget: { label: "Budget scaling (%)", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200", icon: "📈" },
+  pause_ad: { label: "Pause ad (Ad-level)", badgeCls: "bg-purple-50 text-purple-700 border-purple-200", icon: "🛑" },
 };
 
 const METRIC_LABELS: Record<string, string> = {
-  platform_cpa: "Platform CPA (মুদ্রা এককে)",
-  platform_roas: "Platform ROAS (অনুপাত)",
-  spend_no_conversions: "Conversion ছাড়া Spend (মুদ্রা এককে)",
-  ad_frequency: "Ad Frequency (বিজ্ঞাপন-লেভেল)",
-  ad_ctr_percent: "Ad CTR % (বিজ্ঞাপন-লেভেল)",
-  month_spend: "চলতি মাসের মোট খরচ (মুদ্রা এককে)",
+  platform_cpa: "Platform CPA (currency unit)",
+  platform_roas: "Platform ROAS (ratio)",
+  spend_no_conversions: "Spend with no conversion (currency unit)",
+  ad_frequency: "Ad Frequency (ad level)",
+  ad_ctr_percent: "Ad CTR % (ad level)",
+  month_spend: "Total spend this month (currency unit)",
   frequency: "Campaign Frequency (Impressions/Reach)",
   ctr_percent: "Campaign CTR %",
-  cpm: "CPM (প্রতি হাজার ইমপ্রেশন খরচ)",
-  first_party_roas: "First-party ROAS (আমাদের Attribution)",
-  first_party_cpa: "First-party CPA (আমাদের Attribution)",
+  cpm: "CPM (cost per thousand impressions)",
+  first_party_roas: "First-party ROAS (our attribution)",
+  first_party_cpa: "First-party CPA (our attribution)",
 };
 
 const METRIC_KEY: Record<string, AutoKey> = {
   platform_cpa: "metricCpa", platform_roas: "metricRoas", spend_no_conversions: "metricSpendNoConv",
   ad_frequency: "metricFreq", ad_ctr_percent: "metricCtr", month_spend: "metricMonthSpend",
   cpm: "metricCpm", first_party_roas: "metricFpRoas", first_party_cpa: "metricFpCpa",
+  frequency: "f3MetricFrequency", ctr_percent: "f3MetricCtrPercent",
 };
 function metricLabelsFor(locale: string): Record<string, string> {
   const out: Record<string, string> = { ...METRIC_LABELS };
@@ -207,9 +210,9 @@ function metricLabelsFor(locale: string): Record<string, string> {
 }
 
 const HEALTH_BADGE: Record<string, { text: string; cls: string; dot: string }> = {
-  ok: { text: "সুস্থ", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
-  failing: { text: "ব্যর্থ হচ্ছে", cls: "bg-rose-50 text-rose-700 border-rose-200", dot: "bg-rose-500" },
-  never_run: { text: "এখনো চলেনি", cls: "bg-slate-50 text-slate-600 border-slate-200", dot: "bg-slate-400" },
+  ok: { text: "Healthy", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
+  failing: { text: "Failing", cls: "bg-rose-50 text-rose-700 border-rose-200", dot: "bg-rose-500" },
+  never_run: { text: "Never run", cls: "bg-slate-50 text-slate-600 border-slate-200", dot: "bg-slate-400" },
 };
 
 const HEALTH_KEY: Record<string, AutoKey> = { ok: "bandOk", failing: "bandFailing", never_run: "bandNeverRun" };
@@ -230,6 +233,11 @@ const JOB_TYPE_KEY: Record<string, AutoKey> = {
   dunning_reminders: "jobDunning", email_sync: "jobEmailSync", inbox_retention: "jobInboxRetention",
   inbox_autoreply_sweep: "jobInboxAutoReply", comment_autoreply_sweep: "jobCommentAutoReply", handover_timer_sweep: "jobHandoverTimer",
   courier_auto_sync: "jobCourierSync", review_request_sweep: "jobReviewRequest", order_chase_sweep: "jobOrderChase",
+  woo_products: "f3JobWooProducts", woo_orders: "f3JobWooOrders",
+  shopify_products: "f3JobShopifyProducts", shopify_orders: "f3JobShopifyOrders",
+  meta_insights: "f3JobMetaInsights", google_insights: "f3JobGoogleInsights", tiktok_insights: "f3JobTiktokInsights",
+  competitor_ads: "f3JobCompetitorAds", competitor_scan: "f3JobCompetitorScan", competitor_multi_sync: "f3JobCompetitorMulti",
+  daily_report: "f3JobDailyReport", audience_refresh: "f3JobAudienceRefresh", auto_renew: "f3JobAutoRenew",
 };
 function jobTypesFor(locale: string): typeof JOB_TYPES_BY_TARGET {
   const out: typeof JOB_TYPES_BY_TARGET = {};
@@ -260,30 +268,30 @@ const JOB_TYPES_BY_TARGET: Record<string, { value: string; label: string }[]> = 
     { value: "competitor_multi_sync", label: "Competitor Multi-Platform Sync (Meta/Google/TikTok/Bing)" },
   ],
   org: [
-    { value: "daily_briefing", label: "Daily AI Briefing (সকালের ব্রিফিং + Anomaly Alert)" },
+    { value: "daily_briefing", label: "Daily AI Briefing (morning briefing + anomaly alert)" },
     { value: "daily_report", label: "Daily AI Report" },
-    { value: "ad_spend_watchdog", label: "Ad Spend Watchdog (অস্বাভাবিক খরচের সতর্কতা)" },
-    { value: "weekly_ads_report", label: "Weekly Ads Report (ইমেইল)" },
-    { value: "meta_status_sync", label: "Meta Status Sync (সব Published Plan)" },
-    { value: "dayparting", label: "Dayparting (Ad Set সময়সূচি প্রয়োগ)" },
+    { value: "ad_spend_watchdog", label: "Ad Spend Watchdog (unusual spend alert)" },
+    { value: "weekly_ads_report", label: "Weekly Ads Report (email)" },
+    { value: "meta_status_sync", label: "Meta Status Sync (all published plans)" },
+    { value: "dayparting", label: "Dayparting (apply Ad Set schedules)" },
     { value: "audience_refresh", label: "Audience Membership Refresh" },
-    { value: "plan_schedule_sweep", label: "Plan Schedule Sweep (Plan-এর Pause/Resume Window কার্যকর — ৫ মিনিট অন্তর চালান)" },
-    { value: "inbox_assignment_sweep", label: "Inbox Assignment Sweep (অ্যাসাইনবিহীন চ্যাট পুনঃবণ্টন)" },
-    { value: "lead_followup_sweep", label: "Lead Follow-up Sweep (বকেয়া ও আজকের ফলো-আপ এলার্ট)" },
-    { value: "social_publish_due", label: "Social Post Auto-Publish (শিডিউল পোস্ট প্রকাশ)" },
-    { value: "subscription_sweep", label: "Subscription Sweep (মেয়াদ শেষ হলে Past Due)" },
-    { value: "billing_reminders", label: "Billing Reminder (মেয়াদ শেষের সতর্কতা)" },
+    { value: "plan_schedule_sweep", label: "Plan Schedule Sweep (enforce plan pause/resume windows — run every 5 minutes)" },
+    { value: "inbox_assignment_sweep", label: "Inbox Assignment Sweep (redistribute unassigned chats)" },
+    { value: "lead_followup_sweep", label: "Lead Follow-up Sweep (overdue & today's follow-up alerts)" },
+    { value: "social_publish_due", label: "Social Post Auto-Publish (publish scheduled posts)" },
+    { value: "subscription_sweep", label: "Subscription Sweep (Past Due when expired)" },
+    { value: "billing_reminders", label: "Billing Reminder (expiry warning)" },
     { value: "auto_renew", label: "Auto-Renew Charge (bKash Agreement)" },
-    { value: "audit_retention", label: "Audit Retention (পুরনো Audit Log পরিষ্কার)" },
-    { value: "dunning_reminders", label: "Dunning Reminder (Past Due হলে ইমেইল)" },
-    { value: "email_sync", label: "Email Sync (অপঠিত মেইল Inbox এ আনা)" },
-    { value: "inbox_retention", label: "Inbox Retention (মেয়াদ শেষে বন্ধ কথোপকথন মোছা — Settings এ দিন সেট করুন)" },
-    { value: "inbox_autoreply_sweep", label: "Inbox Auto-Reply Sweep (অপেক্ষমাণ AI উত্তর পাঠান — ১ মিনিট অন্তর চালান)" },
-    { value: "comment_autoreply_sweep", label: "Comment Auto-Reply Sweep (অপেক্ষমাণ AI কমেন্ট-উত্তর দিন — ১ মিনিট অন্তর চালান)" },
-    { value: "handover_timer_sweep", label: "Handover Timer Sweep (টাইমড অ্যাসাইনমেন্টের সময় শেষ হলে AI-এর কাছে ফেরত — ১ মিনিট অন্তর চালান)" },
-    { value: "courier_auto_sync", label: "Courier Auto-Sync (চালু শিপমেন্টের স্ট্যাটাস যাচাই + গ্রাহককে ট্র্যাকিং কার্ড — ৬০ মিনিট অন্তর চালান)" },
-    { value: "review_request_sweep", label: "Review Request Sweep (ডেলিভারির পর গ্রাহকের রিভিউ জিজ্ঞাসা — ৬০ মিনিট অন্তর চালান)" },
-    { value: "order_chase_sweep", label: "Order Chase Sweep (থেমে যাওয়া অর্ডার সেশনে আলতো অনুস্মারক — ৬০ মিনিট অন্তর চালান)" },
+    { value: "audit_retention", label: "Audit Retention (clean old audit logs)" },
+    { value: "dunning_reminders", label: "Dunning Reminder (email when Past Due)" },
+    { value: "email_sync", label: "Email Sync (bring unread mail into the Inbox)" },
+    { value: "inbox_retention", label: "Inbox Retention (delete closed conversations after the set period — set days in Settings)" },
+    { value: "inbox_autoreply_sweep", label: "Inbox Auto-Reply Sweep (send pending AI replies — run every 1 minute)" },
+    { value: "comment_autoreply_sweep", label: "Comment Auto-Reply Sweep (send pending AI comment replies — run every 1 minute)" },
+    { value: "handover_timer_sweep", label: "Handover Timer Sweep (return to AI when a timed assignment expires — run every 1 minute)" },
+    { value: "courier_auto_sync", label: "Courier Auto-Sync (check live shipment status + send tracking card to customer — run every 60 minutes)" },
+    { value: "review_request_sweep", label: "Review Request Sweep (ask customers for a review after delivery — run every 60 minutes)" },
+    { value: "order_chase_sweep", label: "Order Chase Sweep (gentle reminder for stalled order sessions — run every 60 minutes)" },
   ],
 };
 
@@ -1456,7 +1464,7 @@ export default function AutomationsPage() {
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold ${s.status === "pending" ? "bg-amber-100 text-amber-800" : s.status === "approved" ? "bg-emerald-100 text-emerald-800" : s.status === "rejected" ? "bg-rose-100 text-rose-800" : "bg-slate-200 text-slate-600"}`}>
                         {s.status === "pending" ? tr("automations.statusPending") : s.status === "approved" ? tr("automations.statusApproved") : s.status === "rejected" ? tr("automations.statusRejected") : tr("automations.statusExpired")}
                       </span>
-                      <span className="text-[11px] text-slate-400">{new Date(s.createdAt).toLocaleString("bn-BD")}</span>
+                      <span className="text-[11px] text-slate-400">{fmtDateTime(locale, s.createdAt)}</span>
                     </div>
                     <p className="mt-1 text-xs text-slate-600">{s.reason}</p>
                     {s.facts ? (
@@ -1506,7 +1514,7 @@ export default function AutomationsPage() {
                   value={ruleForm.metric}
                   onChange={(e) => setRuleForm({ ...ruleForm, metric: e.target.value })}
                 >
-                  {Object.entries(METRIC_LABELS).map(([k, v]) => (
+                  {Object.entries(METRIC_LABELS_L).map(([k, v]) => (
                     <option key={k} value={k}>
                       {v}
                     </option>
@@ -2185,13 +2193,13 @@ export default function AutomationsPage() {
                           {r.kind === "job" ? "🕒 Job" : "🛡️ Rule"}
                         </span>
                         <span className={`badge ${badgeCls} text-[10px]`}>{r.status}</span>
-                        <span className="text-xs text-slate-400">{formatRelativeTime(r.createdAt)}</span>
+                        <span className="text-xs text-slate-400">{formatRelativeTime(r.createdAt, locale)}</span>
                       </div>
                       {r.detail && <p className="text-xs text-slate-600 font-mono">{r.detail}</p>}
                     </div>
 
                     <div className="text-xs text-slate-400 font-mono">
-                      {new Date(r.createdAt).toLocaleTimeString()}
+                      {fmtTime(locale, r.createdAt)}
                     </div>
                   </div>
                 );
@@ -2283,7 +2291,7 @@ export default function AutomationsPage() {
 
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-mono text-slate-400">
-                        {new Date(log.createdAt).toLocaleString("bn-BD")}
+                        {fmtDateTime(locale, log.createdAt)}
                       </span>
                       {log.campaignPlanId && log.action === "AUTO_PAUSED" && (
                         <button
@@ -2432,11 +2440,11 @@ export default function AutomationsPage() {
                           <div className="text-[10px] text-slate-400">{tr("automations.cycleDays", { count: fmtNumber(locale, item.replenishmentDays) })}</div>
                         </td>
                         <td className="py-3 px-4 text-slate-500">
-                          {new Date(item.deliveredAt).toLocaleDateString("bn-BD")}
+                          {fmtDate(locale, item.deliveredAt)}
                         </td>
                         <td className="py-3 px-4">
                           <span className={`font-bold ${isDue ? "text-amber-800" : "text-slate-700"}`}>
-                            {new Date(item.predictedDate).toLocaleDateString("bn-BD")}
+                            {fmtDate(locale, item.predictedDate)}
                           </span>
                           <div className="text-[10px]">
                             {item.daysUntilDue > 0 ? (

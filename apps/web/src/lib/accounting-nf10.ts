@@ -9,45 +9,57 @@
 
 export const ACCOUNTING_DISCLAIMER = "এটি একটি হিসাব-সহায়ক টুল — অডিট করা বা বিধিবদ্ধ হিসাব নয়।";
 
+import type { UiLocale } from "@repo/contracts";
+import { billingBn, billingEn } from "./i18n/billing";
+
+const D = (locale?: string) => (locale === "en" ? billingEn : billingBn);
+
 export type AccountType = "asset" | "liability" | "equity" | "income" | "expense";
 
-export const ACCOUNT_TYPES: { value: AccountType; label: string }[] = [
-  { value: "asset", label: "সম্পদ (Asset)" },
-  { value: "liability", label: "দায় (Liability)" },
-  { value: "equity", label: "মালিকানা (Equity)" },
-  { value: "income", label: "আয় (Income)" },
-  { value: "expense", label: "খরচ (Expense)" },
-];
+const ACCOUNT_TYPE_KEY: Record<string, keyof typeof billingBn> = {
+  asset: "zzAcctTypeAsset", liability: "zzAcctTypeLiability", equity: "zzAcctTypeEquity",
+  income: "zzAcctTypeIncome", expense: "zzAcctTypeExpense",
+};
 
-export function accountTypeLabel(v: string | null | undefined): string {
-  return ACCOUNT_TYPES.find((t) => t.value === v)?.label ?? v ?? "—";
+export function accountTypes(locale: UiLocale = "bn"): { value: AccountType; label: string }[] {
+  const d = D(locale);
+  return (Object.keys(ACCOUNT_TYPE_KEY) as AccountType[]).map((value) => ({ value, label: d[ACCOUNT_TYPE_KEY[value]] }));
 }
 
-export function sourceTypeLabel(v: string | null | undefined): string {
+export const ACCOUNT_TYPES: { value: AccountType; label: string }[] = accountTypes("bn");
+
+export function accountTypeLabel(v: string | null | undefined, locale: UiLocale = "bn"): string {
+  return accountTypes(locale).find((t) => t.value === v)?.label ?? v ?? "—";
+}
+
+export function sourceTypeLabel(v: string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
   switch (v) {
-    case "order": return "অর্ডার (বিক্রি)";
-    case "payment": return "যাচাইকৃত পেমেন্ট";
-    case "expense": return "খরচ";
-    case "courier_charge": return "কুরিয়ার চার্জ";
-    case "manual": return "ম্যানুয়াল এন্ট্রি";
+    case "order": return d.zzAcctSourceOrder;
+    case "payment": return d.zzAcctSourcePayment;
+    case "expense": return d.zzAcctSourceExpense;
+    case "courier_charge": return d.zzAcctSourceCourier;
+    case "manual": return d.zzAcctSourceManual;
     default: return v ?? "—";
   }
 }
 
-export function matchStateLabel(v: string | null | undefined): string {
+export function matchStateLabel(v: string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
   switch (v) {
-    case "unmatched": return "মেলেনি";
-    case "suggested": return "প্রস্তাবিত মিল";
-    case "matched": return "মিল নিশ্চিত";
-    case "rejected": return "বাতিল করা";
+    case "unmatched": return d.zzAcctMatchUnmatched;
+    case "suggested": return d.zzAcctMatchSuggested;
+    case "matched": return d.zzAcctMatchMatched;
+    case "rejected": return d.zzAcctMatchRejected;
     default: return v ?? "—";
   }
 }
 
-export function directionLabel(v: string | null | undefined): string {
+export function directionLabel(v: string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
   switch (v) {
-    case "credit": return "জমা (Credit)";
-    case "debit": return "খরচ/তোলা (Debit)";
+    case "credit": return d.zzAcctDirCredit;
+    case "debit": return d.zzAcctDirDebit;
     default: return v ?? "—";
   }
 }

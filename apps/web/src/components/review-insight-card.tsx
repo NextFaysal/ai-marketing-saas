@@ -6,6 +6,8 @@ import {
   insightNeedsRegeneration, sentimentPercents, themeLabels,
   type ReviewInsightPayload,
 } from "@/lib/ab7";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
 
 // AB7 (AX15) — per-product AI review summary, on the staff
 // reviews page. Consumes:
@@ -21,6 +23,8 @@ import {
 interface ProductOpt { id: string; name: string }
 
 export function ReviewInsightCard() {
+  const { dict, t, locale } = useLocale();
+  const S = dict.shared;
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [productId, setProductId] = useState("");
   const [payload, setPayload] = useState<ReviewInsightPayload | null>(null);
@@ -46,9 +50,9 @@ export function ReviewInsightCard() {
         `/organizations/${orgId}/products/${encodeURIComponent(pid)}/review-insight`,
       );
       setPayload(out);
-    } catch (e) { setError(e instanceof Error ? e.message : "AI সারসংক্ষেপ লোড ব্যর্থ"); setPayload(null); }
+    } catch (e) { setError(e instanceof Error ? e.message : S.zzRicLoadFailed); setPayload(null); }
     finally { setLoading(false); }
-  }, []);
+  }, [S]);
 
   useEffect(() => { if (productId) void load(productId); }, [productId, load]);
 
@@ -64,7 +68,7 @@ export function ReviewInsightCard() {
     } catch (e) {
       // Server message verbatim — the LLM-not-configured message
       // must reach the staff member exactly as the API sent it.
-      setError(e instanceof Error ? e.message : "সারসংক্ষেপ তৈরি ব্যর্থ");
+      setError(e instanceof Error ? e.message : S.zzRicGenerateFailed);
     } finally { setGenerating(false); }
   }
 
@@ -78,15 +82,14 @@ export function ReviewInsightCard() {
     <div className="card space-y-4 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="font-semibold">🤖 AI সারসংক্ষেপ <span className="ml-1 rounded bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">AI দিয়ে তৈরি</span></div>
+          <div className="font-semibold">{S.zzRicTitle} <span className="ml-1 rounded bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">{S.zzRicAiBadge}</span></div>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">
-            একটি পণ্য বেছে নিন — সেই পণ্যের আসল রিভিউগুলো পড়ে AI একটি সারসংক্ষেপ, ভাব-বিশ্লেষণ (sentiment)
-            ও মূল থিমগুলো তৈরি করবে। এটি AI দিয়ে তৈরি সারসংক্ষেপ; আসল রিভিউগুলো নিচের তালিকাতেই আছে।
+            {S.zzRicIntro}
           </p>
         </div>
-        <label className="block text-sm">পণ্য
+        <label className="block text-sm">{S.zzRicProductLabel}
           <select className="input mt-1" value={productId} onChange={(e) => setProductId(e.target.value)}>
-            <option value="">— পণ্য বেছে নিন —</option>
+            <option value="">{S.zzRicSelectProduct}</option>
             {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </label>
@@ -95,17 +98,17 @@ export function ReviewInsightCard() {
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
       {!productId ? (
-        <p className="text-sm text-slate-500">সারসংক্ষেপ দেখতে উপরে একটি পণ্য বেছে নিন।</p>
+        <p className="text-sm text-slate-500">{S.zzRicPickProduct}</p>
       ) : loading ? (
-        <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+        <p className="text-sm text-slate-400">{S.zzRicLoading}</p>
       ) : !payload ? (
-        <p className="text-sm text-slate-500">এই পণ্যের সারসংক্ষেপের তথ্য লোড করা যায়নি।</p>
+        <p className="text-sm text-slate-500">{S.zzRicPayloadFailed}</p>
       ) : !insight ? (
         <div className="space-y-3">
           <p className="text-sm text-slate-600">
-            এই পণ্যের জন্য এখনো কোনো AI সারসংক্ষেপ তৈরি হয়নি। বর্তমানে রিভিউ আছে{" "}
-            <b>{payload.currentReviewCount}</b>টি।
-            {noReviews ? " রিভিউ না থাকলে সারসংক্ষেপ তৈরি করা যাবে না — আগে রিভিউ আসতে দিন।" : ""}
+            {S.zzRicNoInsightPrefix}
+            <b>{fmtNumber(locale, payload.currentReviewCount)}</b>{S.zzRicReviewCountSuffix}
+            {noReviews ? S.zzRicNoReviewsNote : ""}
           </p>
           <button
             type="button"
@@ -113,7 +116,7 @@ export function ReviewInsightCard() {
             disabled={generating || noReviews}
             onClick={() => void generate()}
           >
-            {generating ? "তৈরি হচ্ছে…" : "AI সারসংক্ষেপ তৈরি করুন"}
+            {generating ? S.zzRicGenerating : S.zzRicGenerate}
           </button>
         </div>
       ) : (
@@ -121,10 +124,10 @@ export function ReviewInsightCard() {
           {stale ? (
             <div className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3">
               <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
-                নতুন রিভিউ এসেছে — আবার তৈরি করুন
+                {S.zzRicStaleBadge}
               </span>
               <span className="text-xs text-amber-800">
-                এই সারসংক্ষেপের পর আরও {payload.reviewsSinceGeneration}টি রিভিউ এসেছে।
+                {t("shared.zzRicStaleText", { count: fmtNumber(locale, payload.reviewsSinceGeneration ?? 0) })}
               </span>
               <button
                 type="button"
@@ -132,7 +135,7 @@ export function ReviewInsightCard() {
                 disabled={generating}
                 onClick={() => void generate()}
               >
-                {generating ? "তৈরি হচ্ছে…" : "আবার তৈরি করুন"}
+                {generating ? S.zzRicGenerating : S.zzRicRegenerate}
               </button>
             </div>
           ) : null}
@@ -141,9 +144,9 @@ export function ReviewInsightCard() {
 
           <div>
             <div className="flex flex-wrap gap-3 text-xs font-semibold">
-              <span className="text-emerald-700">ইতিবাচক: {insight.sentimentJson.positive}টি ({shares.positive}%)</span>
-              <span className="text-slate-600">নিরপেক্ষ: {insight.sentimentJson.neutral}টি ({shares.neutral}%)</span>
-              <span className="text-rose-700">নেতিবাচক: {insight.sentimentJson.negative}টি ({shares.negative}%)</span>
+              <span className="text-emerald-700">{t("shared.zzRicSentimentPositive", { count: fmtNumber(locale, insight.sentimentJson.positive), pct: fmtNumber(locale, shares.positive) })}</span>
+              <span className="text-slate-600">{t("shared.zzRicSentimentNeutral", { count: fmtNumber(locale, insight.sentimentJson.neutral), pct: fmtNumber(locale, shares.neutral) })}</span>
+              <span className="text-rose-700">{t("shared.zzRicSentimentNegative", { count: fmtNumber(locale, insight.sentimentJson.negative), pct: fmtNumber(locale, shares.negative) })}</span>
             </div>
             <div className="mt-1.5 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
               <div className="h-full bg-emerald-500" style={{ width: `${shares.positive}%` }} />
@@ -154,7 +157,7 @@ export function ReviewInsightCard() {
 
           {themes.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold text-slate-500">মূল থিম:</span>
+              <span className="text-xs font-semibold text-slate-500">{S.zzRicThemesLabel}</span>
               {themes.map((t) => (
                 <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{t}</span>
               ))}
@@ -162,9 +165,9 @@ export function ReviewInsightCard() {
           ) : null}
 
           <p className="text-[11px] text-slate-400">
-            তৈরি হয়েছে: {new Date(insight.generatedAt).toLocaleString("bn-BD")} · তখন রিভিউ ছিল {insight.reviewCountAtGeneration}টি
-            {insight.modelLabel ? <> · মডেল: {insight.modelLabel}</> : null}
-            {" "}· এটি AI দিয়ে তৈরি সারসংক্ষেপ।
+            {t("shared.zzRicFooterMain", { date: fmtDateTime(locale, insight.generatedAt), count: fmtNumber(locale, insight.reviewCountAtGeneration) })}
+            {insight.modelLabel ? <>{t("shared.zzRicFooterModel", { model: insight.modelLabel })}</> : null}
+            {S.zzRicFooterSuffix}
           </p>
 
           {!stale ? (
@@ -174,7 +177,7 @@ export function ReviewInsightCard() {
               disabled={generating}
               onClick={() => void generate()}
             >
-              {generating ? "তৈরি হচ্ছে…" : "আবার তৈরি করুন"}
+              {generating ? S.zzRicGenerating : S.zzRicRegenerate}
             </button>
           ) : null}
         </div>

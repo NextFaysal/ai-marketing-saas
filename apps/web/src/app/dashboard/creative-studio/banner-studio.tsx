@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { fmtMoneyMinor } from "@repo/contracts";
+import { fmtMoneyMinor, fmtNumber } from "@repo/contracts";
 import { useLocale } from "@/lib/i18n/provider";
 import { useRouter } from "next/navigation";
 import {
@@ -66,14 +66,14 @@ export function BannerStudio({
   const [template, setTemplate] = useState<TemplateStyle>("eid_special");
   const [paletteId, setPaletteId] = useState<string>("eid_emerald_gold");
 
-  const [badgeText, setBadgeText] = useState("🌙 ঈদ মেগা ছাড়");
+  const [badgeText, setBadgeText] = useState(t("misc.zzBannerDefaultBadge"));
   const [headline, setHeadline] = useState("");
   const [subtext, setSubtext] = useState("");
   const [priceText, setPriceText] = useState("");
   const [comparePriceText, setComparePriceText] = useState("");
   const [brandText, setBrandText] = useState("NEXT COMMERCE");
-  const [ctaText, setCtaText] = useState("অর্ডার করতে ক্লিক করুন");
-  const [trustTag, setTrustTag] = useState("✓ ১০০% আসল পণ্য  ✓ দ্রুত ডেলিভারি  ✓ পার্সেল দেখে পেমেন্ট");
+  const [ctaText, setCtaText] = useState(t("misc.zzBannerDefaultCta"));
+  const [trustTag, setTrustTag] = useState(t("misc.zzBannerDefaultTrust"));
 
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -88,7 +88,7 @@ export function BannerStudio({
         const pStr = fmtMoneyMinor(locale, BigInt(activeProduct.priceMinor), { currency: activeProduct.currency ?? "BDT" });
         setPriceText(pStr);
       } catch {
-        setPriceText(activeProduct.priceMinor ? `${activeProduct.priceMinor} BDT` : "৳০");
+        setPriceText(activeProduct.priceMinor ? `${activeProduct.priceMinor} BDT` : fmtMoneyMinor(locale, BigInt(0), { currency: "BDT" }));
       }
 
       if (activeProduct.compareAtMinor) {
@@ -103,9 +103,9 @@ export function BannerStudio({
       }
 
       if (activeProduct.category) {
-        setSubtext(`${activeProduct.category} কালেকশন — সীমিত সময়ের এক্সক্লুসিভ অফার`);
+        setSubtext(t("misc.zzBannerSubtextWithCategory", { category: activeProduct.category }));
       } else {
-        setSubtext("সেরা কোয়ালিটি ও মানসম্মত অরিজিনাল কালেকশন");
+        setSubtext(t("misc.zzBannerSubtextFallback"));
       }
     }
   }, [activeProduct]);
@@ -300,7 +300,7 @@ export function BannerStudio({
 
         ctx.font = "bold 28px 'Hind Siliguri', Inter, sans-serif";
         ctx.fillStyle = selectedPalette.textMuted;
-        ctx.fillText(activeProduct?.name || "প্রোডাক্টের ছবি", prodCenterX, prodCenterY + 60);
+        ctx.fillText(activeProduct?.name || t("misc.zzBannerProductImageFallback"), prodCenterX, prodCenterY + 60);
       }
       ctx.restore();
 
@@ -335,7 +335,7 @@ export function BannerStudio({
           ctx.font = "bold 22px 'Hind Siliguri', Inter, sans-serif";
           ctx.fillStyle = "#ffffff";
           ctx.textAlign = "center";
-          ctx.fillText(`-${discPct}% ছাড়`, dBadgeX + dBadgeW / 2, dBadgeY + 31);
+          ctx.fillText(t("misc.zzBannerDiscountBadge", { pct: fmtNumber(locale, discPct) }), dBadgeX + dBadgeW / 2, dBadgeY + 31);
           ctx.restore();
         }
       }
@@ -848,7 +848,7 @@ export function BannerStudio({
                 <button
                   type="button"
                   onClick={() => {
-                    const caption = `${headline} — ${badgeText}!\n\n${subtext}\nমূল্য: ${priceText} ${comparePriceText ? `(পূর্বে ${comparePriceText})` : ""}\n\n${trustTag}\nঅর্ডার করতে ইনবক্স করুন অথবা লিঙ্কে ক্লিক করুন:`;
+                    const caption = t("misc.zzBannerCaption", { headline, badge: badgeText, subtext, price: priceText, was: comparePriceText ? t("misc.zzBannerCaptionWas", { price: comparePriceText }) : "", trust: trustTag });
                     navigator.clipboard?.writeText(caption);
                     router.push("/dashboard/social-posts");
                   }}
@@ -866,7 +866,7 @@ export function BannerStudio({
                     onDraftWithBanner(
                       activeProduct,
                       headline,
-                      `${headline} — ${badgeText}. ${subtext}. বর্তমান দাম: ${priceText}। ${trustTag}`
+                      t("misc.zzBannerPrimaryText", { headline, badge: badgeText, subtext, price: priceText, trust: trustTag })
                     )
                   }
                   disabled={!selectedAdAccountId || adAccounts.length === 0}
