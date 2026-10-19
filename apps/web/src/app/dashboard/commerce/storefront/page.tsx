@@ -5,11 +5,13 @@ import { BD_DISTRICTS, shopSubdomainHost } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
-import { ReferralRewardSettingsCard } from "@/components/loyalty-referral-settings";
 import { SHOP_SECTION_KEYS, normalizeSectionOrder, type ShopSectionKey } from "@/lib/shop-sections";
-import { PushPanel } from "@/components/push-panel";
-import { SocialProofSettingsCard } from "@/components/social-proof-settings";
+import dynamic from "next/dynamic";
 import { EmptyState } from "@repo/ui";
+
+const ReferralRewardSettingsCard = dynamic(() => import("@/components/loyalty-referral-settings").then((m) => m.ReferralRewardSettingsCard), { ssr: false });
+const PushPanel = dynamic(() => import("@/components/push-panel").then((m) => m.PushPanel), { ssr: false });
+const SocialProofSettingsCard = dynamic(() => import("@/components/social-proof-settings").then((m) => m.SocialProofSettingsCard), { ssr: false });
 import { useConfirm, useToast } from "@repo/ui/client";
 
 // EC8 staff storefront administration. Consumes
