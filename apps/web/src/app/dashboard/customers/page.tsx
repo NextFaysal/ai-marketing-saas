@@ -1630,7 +1630,7 @@ export default function CustomersPage() {
             <span>
               <span className="font-medium">{s.name}</span>
               <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{tr("crm.membersLine", { count: fmtNumber(locale, s.memberCount) })}</span>
-              <span className="block text-xs text-slate-500">{segmentCriteriaSummary(s.criteria)}</span>
+              <span className="block text-xs text-slate-500">{segmentCriteriaSummary(s.criteria, locale)}</span>
             </span>
             <span className="flex gap-2">
               <button className="btn-secondary btn-sm" onClick={() => setSegmentId(s.id)}>{tr("crm.viewInList")}</button>

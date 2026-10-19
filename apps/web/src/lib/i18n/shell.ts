@@ -358,19 +358,6 @@ export const shellBn = {
   homeAllCampaigns: "সব ক্যাম্পেইন →",
   homeSpendLabel: "খরচ",
   // ---- F3 theme-toggle (tt) + pwa (pw) + global-assistant (f3Ga) ----
-  ttSystem: "সিস্টেম",
-  ttLight: "লাইট",
-  ttDark: "ডার্ক",
-  ttLabel: "থিম: {pref} — বদলাতে ক্লিক করুন",
-  pwInstall: "📲 অ্যাপ ইনস্টল করুন",
-  pwInstallAria: "অ্যাপ ইনস্টল করুন",
-  pwCloseAria: "বন্ধ করুন",
-  f3GaFabTitle: "AI Assistant — Ctrl/⌘+J",
-  f3GaName: "AI Assistant",
-  f3GaDevSuffix: " · ⚠ Dev Template Mode",
-  f3GaLlmSuffix: " · LLM: {provider}",
-  f3GaPlatformError: "platform error",
-  f3GaPersonaAria: "Persona",
 };
 
 export const shellEn: typeof shellBn = {
@@ -711,18 +698,5 @@ export const shellEn: typeof shellBn = {
   homeAllCampaigns: "All campaigns →",
   homeSpendLabel: "Spend",
   // ---- F3 theme-toggle (tt) + pwa (pw) + global-assistant (f3Ga) ----
-  ttSystem: "System",
-  ttLight: "Light",
-  ttDark: "Dark",
-  ttLabel: "Theme: {pref} — click to change",
-  pwInstall: "📲 Install the app",
-  pwInstallAria: "Install the app",
-  pwCloseAria: "Close",
-  f3GaFabTitle: "AI Assistant — Ctrl/⌘+J",
-  f3GaName: "AI Assistant",
-  f3GaDevSuffix: " · ⚠ Dev template mode",
-  f3GaLlmSuffix: " · LLM: {provider}",
-  f3GaPlatformError: "Platform error",
-  f3GaPersonaAria: "Persona",
 
 };
