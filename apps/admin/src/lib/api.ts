@@ -1,6 +1,9 @@
 // Admin app API client. Same-origin /backend proxy (next.config
 // rewrites to the API), token stored under a SEPARATE key so admin
 // and tenant sessions never mix.
+import { fmtMoneyMinor, fmtNumber, type UiLocale } from "@repo/contracts";
+import { getAdminDict, resolveAdminLocale } from "./i18n";
+
 export const API_URL = "/backend";
 
 export function getAdminToken(): string | null {
@@ -17,7 +20,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init.headers ?? {}) },
-  }).catch(() => { throw new Error("নেটওয়ার্কে সমস্যা হচ্ছে। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।"); });
+  }).catch(() => { throw new Error(getAdminDict(resolveAdminLocale()).common.networkError); });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as any).message ?? `Request failed: ${res.status}`);
@@ -25,8 +28,18 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
-export function formatMinorStr(minor: string | number): string {
+/** Bare two-decimal minor→major string (NO currency symbol — callers
+ *  prefix ৳ themselves), now locale-aware. Built on contracts
+ *  fmtMoneyMinor (bigint-exact split, locale digits + grouping, symbol
+ *  off); fmtMoneyMinor omits the fraction for whole amounts, so the
+ *  trailing ".00" the old contract guarantees is appended (with the
+ *  locale's own decimal separator and digits) in that case only. */
+export function formatMinorStr(minor: string | number, locale: UiLocale = "bn"): string {
   const v = typeof minor === "string" ? BigInt(minor) : BigInt(Math.round(minor));
-  const neg = v < 0n; const abs = neg ? -v : v;
-  return `${neg ? "-" : ""}${(abs / 100n).toLocaleString("en-US")}.${String(abs % 100n).padStart(2, "0")}`;
+  const base = fmtMoneyMinor(locale, v, { showSymbol: false });
+  if (v % 100n !== 0n) return base;
+  const probe = fmtNumber(locale, 1.5, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const sep = probe.replace(/[0-9০-৯]/g, "") || ".";
+  const zeros = fmtNumber(locale, 0, { minimumIntegerDigits: 2, useGrouping: false });
+  return `${base}${sep}${zeros}`;
 }

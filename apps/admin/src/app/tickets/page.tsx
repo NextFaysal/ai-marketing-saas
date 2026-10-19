@@ -5,6 +5,8 @@ import AdminShell from "@/components/AdminShell";
 import { EmptyState, ErrorState, PageHead, SavedViewsBar, useLastFilters } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
+import { fmtNumber } from "@repo/contracts";
+import { useAdminLocale } from "@/components/AdminLocale";
 import { subscribeAdminTicketStream } from "@/lib/support-stream";
 
 interface TicketAttachment {
@@ -89,29 +91,19 @@ interface SupportMetrics {
   };
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  open: "🟢 Open",
-  pending: "🟡 Pending",
-  in_progress: "🔵 In Progress",
-  resolved: "✅ Resolved",
-  closed: "⚪ Closed",
-};
-
-const CATEGORY_LABEL: Record<string, string> = {
-  general: "💬 General",
-  billing: "💳 Billing",
-  technical: "⚙️ Technical",
-  campaigns: "📢 Campaigns",
-  integration: "🔌 Integration",
-  account: "👤 Account",
-  feature: "✨ Feature",
-  other: "📁 Other",
-};
-
 const FILTERS = ["", "open", "pending", "in_progress", "resolved", "closed"] as const;
 const CATEGORY_FILTERS = ["", "general", "billing", "technical", "campaigns", "integration", "account", "feature", "other"] as const;
 
 export default function TicketsPage() {
+  const { dict, locale, t: tr } = useAdminLocale();
+  const T = dict.tickets;
+  const STATUS_LABEL: Record<string, string> = {
+    open: T.statusOpen, pending: T.statusPending, in_progress: T.statusInProgress, resolved: T.statusResolved, closed: T.statusClosed,
+  };
+  const CATEGORY_LABEL: Record<string, string> = {
+    general: T.catGeneral, billing: T.catBilling, technical: T.catTechnical, campaigns: T.catCampaigns,
+    integration: T.catIntegration, account: T.catAccount, feature: T.catFeature, other: T.catOther,
+  };
   const [activeTab, setActiveTab] = useState<"queue" | "analytics">("queue");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState<Ticket | null>(null);
@@ -168,13 +160,13 @@ export default function TicketsPage() {
       });
       const updated = await apiFetch<CannedResponse[]>("/admin/tickets/canned/all");
       setCannedList(updated ?? []);
-      setNote(`ক্যানড রেসপন্স "${formattedShortcut}" সফলভাবে সেভ হয়েছে`);
+      setNote(tr("tickets.cannedSaved", { shortcut: formattedShortcut }));
       setShowCannedModal(false);
       setNewShortcut("");
       setNewTitle("");
       setNewBody("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ক্যানড রেসপন্স সেভ করা যায়নি");
+      setError(err instanceof Error ? err.message : T.cannedSaveFailed);
     } finally {
       setCannedBusy(false);
     }
@@ -191,7 +183,7 @@ export default function TicketsPage() {
       setTickets(await apiFetch<Ticket[]>(url));
       setLoadError("");
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Ticket তালিকা লোড ব্যর্থ হয়েছে");
+      setLoadError(e instanceof Error ? e.message : T.listLoadFailed);
     } finally {
       setLoading(false);
     }
@@ -226,7 +218,7 @@ export default function TicketsPage() {
       setThreadSummary(null);
       setSelected(await apiFetch<Ticket>(`/admin/tickets/${id}`));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ticket খোলা যায়নি");
+      setError(e instanceof Error ? e.message : T.openFailed);
     }
   };
 
@@ -293,7 +285,7 @@ export default function TicketsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) {
-      setError("ফাইলের সাইজ সর্বোচ্চ ৫MB হতে পারে");
+      setError(T.fileTooBig);
       return;
     }
     setUploadingFile(true);
@@ -313,7 +305,7 @@ export default function TicketsPage() {
       setUploadingFile(false);
     };
     reader.onerror = () => {
-      setError("ফাইল রিড করা যায়নি");
+      setError(T.fileReadFailed);
       setUploadingFile(false);
     };
     reader.readAsDataURL(file);
@@ -334,7 +326,7 @@ export default function TicketsPage() {
           method: "POST",
           body: JSON.stringify({ body: reply, attachments }),
         });
-        setNote("🔒 ইন্টারনাল হুইস্পার নোট সংরক্ষিত হয়েছে (টিম সদস্যদের জন্য)");
+        setNote(T.whisperSaved);
       } else {
         const res = await apiFetch<{ emailSent: number; emailError: string | null }>(
           `/admin/tickets/${selected.id}/messages`,
@@ -345,8 +337,8 @@ export default function TicketsPage() {
         );
         setNote(
           res.emailError
-            ? `উত্তর সেভ হয়েছে, কিন্তু ইমেইল যায়নি: ${res.emailError}`
-            : `উত্তর পাঠানো হয়েছে · ${res.emailSent} জনকে ইমেইলে জানানো হয়েছে`,
+            ? tr("tickets.replyEmailFailed", { error: res.emailError })
+            : tr("tickets.replySent", { count: fmtNumber(locale, res.emailSent) }),
         );
       }
       setReply("");
@@ -354,7 +346,7 @@ export default function TicketsPage() {
       await open(selected.id);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পাঠানো যায়নি");
+      setError(e instanceof Error ? e.message : T.sendFailed);
     }
   };
 
@@ -368,7 +360,7 @@ export default function TicketsPage() {
       await open(selected.id);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "আপডেট হয়নি");
+      setError(e instanceof Error ? e.message : T.updateFailed);
     }
   };
 
@@ -386,7 +378,7 @@ export default function TicketsPage() {
         setComposerMode("public");
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "AI ড্রাফট তৈরি করা যায়নি");
+      setError(e instanceof Error ? e.message : T.aiDraftFailed);
     } finally {
       setAiLoading(false);
     }
@@ -410,19 +402,19 @@ export default function TicketsPage() {
     if (!slaIso) return null;
     const diff = new Date(slaIso).getTime() - Date.now();
     if (diff < 0) {
-      return <span className="rounded bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-400">⚠️ SLA Breached</span>;
+      return <span className="rounded bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-400">{T.slaBreached}</span>;
     }
     const hours = Math.round(diff / (1000 * 60 * 60));
     return (
       <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-300">
-        ⏳ SLA: ~{hours} ঘণ্টা বাকি
+        {tr("tickets.slaLeft", { hours: fmtNumber(locale, hours) })}
       </span>
     );
   };
 
   return (
-    <AdminShell title="Support Tickets (Enterprise Desk)">
-      <PageHead sub="Tenant Support Ticket inbox — তালিকা থেকে বেছে একই পেজে কথোপকথন ও উত্তর।" />
+    <AdminShell title={T.title}>
+      <PageHead sub={T.sub} />
       {error ? <p className="anote" style={{ borderColor: "#fecaca", color: "#991b1b" }}>{error}</p> : null}
       {note ? <p className="anote">{note}</p> : null}
 
@@ -436,7 +428,7 @@ export default function TicketsPage() {
               : "text-slate-400 hover:text-white hover:bg-slate-800/60"
           }`}
         >
-          🎫 টিকিট কিউ ({tickets.length})
+          {tr("tickets.queueTab", { count: fmtNumber(locale, tickets.length) })}
         </button>
         <button
           onClick={() => {
@@ -449,7 +441,7 @@ export default function TicketsPage() {
               : "text-slate-400 hover:text-white hover:bg-slate-800/60"
           }`}
         >
-          📊 পারফরম্যান্স ও অ্যানালিটিক্স
+          {T.analyticsTab}
         </button>
       </div>
       {activeTab === "analytics" ? (
@@ -467,47 +459,47 @@ export default function TicketsPage() {
               {/* Scorecards */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="acard">
-                  <span className="text-slate-400 block text-xs">⚡ গড় ফার্স্ট রেসপন্স (FRT)</span>
+                  <span className="text-slate-400 block text-xs">{T.frtLabel}</span>
                   <b className="text-xl text-indigo-400 block mt-1">
-                    {metrics.avgFirstResponseMinutes !== null ? `${metrics.avgFirstResponseMinutes} মিনিট` : "—"}
+                    {metrics.avgFirstResponseMinutes !== null ? tr("tickets.minutes", { count: fmtNumber(locale, metrics.avgFirstResponseMinutes) }) : "—"}
                   </b>
-                  <span className="text-[11px] text-slate-500">গ্রাহকের প্রথম বার্তার গতি</span>
+                  <span className="text-[11px] text-slate-500">{T.frtSub}</span>
                 </div>
 
                 <div className="acard">
-                  <span className="text-slate-400 block text-xs">⏱️ গড় রেজোলিউশন টাইম</span>
+                  <span className="text-slate-400 block text-xs">{T.resolutionLabel}</span>
                   <b className="text-xl text-emerald-400 block mt-1">
-                    {metrics.avgResolutionHours !== null ? `${metrics.avgResolutionHours} ঘণ্টা` : "—"}
+                    {metrics.avgResolutionHours !== null ? tr("tickets.hours", { count: fmtNumber(locale, metrics.avgResolutionHours) }) : "—"}
                   </b>
-                  <span className="text-[11px] text-slate-500">টিকেট সমাধান করার গতি</span>
+                  <span className="text-[11px] text-slate-500">{T.resolutionSub}</span>
                 </div>
 
                 <div className="acard">
-                  <span className="text-slate-400 block text-xs">⭐ কাস্টমার সন্তুষ্টি (CSAT)</span>
+                  <span className="text-slate-400 block text-xs">{T.csatLabel}</span>
                   <b className="text-xl text-amber-400 block mt-1">
-                    {metrics.csat.average !== null ? `${metrics.csat.average} / 5.0` : "—"}
+                    {metrics.csat.average !== null ? `${fmtNumber(locale, metrics.csat.average)} / ${fmtNumber(locale, 5)}` : "—"}
                   </b>
-                  <span className="text-[11px] text-slate-500">{metrics.csat.count} জন গ্রাহকের রেটিং</span>
+                  <span className="text-[11px] text-slate-500">{tr("tickets.csatSub", { count: fmtNumber(locale, metrics.csat.count) })}</span>
                 </div>
 
                 <div className="acard">
-                  <span className="text-slate-400 block text-xs">🎯 SLA কমপ্লায়েন্স রেট</span>
+                  <span className="text-slate-400 block text-xs">{T.slaRateLabel}</span>
                   <b
                     className={`text-xl block mt-1 ${
                       metrics.sla.complianceRate >= 90 ? "text-emerald-400" : "text-rose-400"
                     }`}
                   >
-                    {metrics.sla.complianceRate}%
+                    {fmtNumber(locale, metrics.sla.complianceRate)}%
                   </b>
                   <span className="text-[11px] text-slate-500">
-                    {metrics.sla.breached > 0 ? `${metrics.sla.breached}টি টিকিট ব্রিচ হয়েছে` : "কোনো ব্রিচ নেই"}
+                    {metrics.sla.breached > 0 ? tr("tickets.slaBreachedSub", { count: fmtNumber(locale, metrics.sla.breached) }) : T.slaNoBreach}
                   </span>
                 </div>
               </div>
               {/* Status & Category Distributions */}
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="acard">
-                  <h4 className="text-sm font-bold text-slate-200 mb-3">📁 ইস্যু ক্যাটাগরি ডিস্ট্রিবিউশন</h4>
+                  <h4 className="text-sm font-bold text-slate-200 mb-3">{T.categoryDist}</h4>
                   <div className="space-y-2.5">
                     {Object.entries(metrics.categoryCounts).map(([cat, count]) => {
                       const pct = metrics.total > 0 ? Math.round((count / metrics.total) * 100) : 0;
@@ -516,7 +508,7 @@ export default function TicketsPage() {
                           <div className="flex justify-between text-xs">
                             <span className="text-slate-300">{CATEGORY_LABEL[cat] ?? cat}</span>
                             <span className="text-slate-400">
-                              {count}টি ({pct}%)
+                              {tr("tickets.countPct", { count: fmtNumber(locale, count), pct: fmtNumber(locale, pct) })}
                             </span>
                           </div>
                           <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
@@ -532,24 +524,24 @@ export default function TicketsPage() {
                 </div>
 
                 <div className="acard">
-                  <h4 className="text-sm font-bold text-slate-200 mb-3">🚦 টিকিট স্ট্যাটাস ব্রেকডাউন</h4>
+                  <h4 className="text-sm font-bold text-slate-200 mb-3">{T.statusBreakdown}</h4>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/20 p-2.5">
-                      <span className="text-emerald-400 font-semibold block">🟢 খোলা টিকিট</span>
-                      <b className="text-lg text-emerald-300">{metrics.statusCounts.open ?? 0}</b>
+                      <span className="text-emerald-400 font-semibold block">{T.openTickets}</span>
+                      <b className="text-lg text-emerald-300">{fmtNumber(locale, metrics.statusCounts.open ?? 0)}</b>
                     </div>
                     <div className="rounded-xl border border-amber-500/20 bg-amber-950/20 p-2.5">
-                      <span className="text-amber-400 font-semibold block">🟡 অপেক্ষমাণ</span>
-                      <b className="text-lg text-amber-300">{metrics.statusCounts.pending ?? 0}</b>
+                      <span className="text-amber-400 font-semibold block">{T.pendingTickets}</span>
+                      <b className="text-lg text-amber-300">{fmtNumber(locale, metrics.statusCounts.pending ?? 0)}</b>
                     </div>
                     <div className="rounded-xl border border-blue-500/20 bg-blue-950/20 p-2.5">
-                      <span className="text-blue-400 font-semibold block">🔵 কাজ চলছে</span>
-                      <b className="text-lg text-blue-300">{metrics.statusCounts.in_progress ?? 0}</b>
+                      <span className="text-blue-400 font-semibold block">{T.inProgressTickets}</span>
+                      <b className="text-lg text-blue-300">{fmtNumber(locale, metrics.statusCounts.in_progress ?? 0)}</b>
                     </div>
                     <div className="rounded-xl border border-slate-700 bg-slate-800/30 p-2.5">
-                      <span className="text-slate-400 font-semibold block">✅ সমাধান / বন্ধ</span>
+                      <span className="text-slate-400 font-semibold block">{T.resolvedClosed}</span>
                       <b className="text-lg text-slate-200">
-                        {(metrics.statusCounts.resolved ?? 0) + (metrics.statusCounts.closed ?? 0)}
+                        {fmtNumber(locale, (metrics.statusCounts.resolved ?? 0) + (metrics.statusCounts.closed ?? 0))}
                       </b>
                     </div>
                   </div>
@@ -558,9 +550,9 @@ export default function TicketsPage() {
 
               {/* Recent Customer CSAT Feedback */}
               <div className="acard">
-                <h4 className="text-sm font-bold text-slate-200 mb-3">💬 সাম্প্রতিক কাস্টমার ফিডব্যাক ও রিভিউ</h4>
+                <h4 className="text-sm font-bold text-slate-200 mb-3">{T.recentFeedback}</h4>
                 {metrics.csat.recentFeedback.length === 0 ? (
-                  <p className="text-xs text-slate-500">এখনো কোনো লিখিত ফিডব্যাক জমা পড়েনি।</p>
+                  <p className="text-xs text-slate-500">{T.noFeedback}</p>
                 ) : (
                   <div className="space-y-2">
                     {metrics.csat.recentFeedback.map((f, i) => (
@@ -569,12 +561,12 @@ export default function TicketsPage() {
                           <span className="text-amber-400 font-bold">
                             {"★".repeat(f.rating)}
                             <span className="text-slate-600">{"★".repeat(5 - f.rating)}</span>
-                            <span className="ml-1 text-slate-300">({f.rating}/5)</span>
+                            <span className="ml-1 text-slate-300">({fmtNumber(locale, f.rating)}/{fmtNumber(locale, 5)})</span>
                           </span>
-                          <span className="text-slate-500 text-[11px]">{f.resolvedAt ? fmtDateTime(f.resolvedAt) : ""}</span>
+                          <span className="text-slate-500 text-[11px]">{f.resolvedAt ? fmtDateTime(locale, f.resolvedAt) : ""}</span>
                         </div>
                         <p className="text-slate-200 italic mb-1">“{f.feedback}”</p>
-                        <p className="text-slate-500 text-[11px]">টিকিট: {f.subject}</p>
+                        <p className="text-slate-500 text-[11px]">{tr("tickets.ticketLabel", { subject: f.subject })}</p>
                       </div>
                     ))}
                   </div>
@@ -582,7 +574,7 @@ export default function TicketsPage() {
               </div>
             </>
           ) : (
-            <p className="text-sm text-slate-400">মেট্রিক্স লোড করা যায়নি।</p>
+            <p className="text-sm text-slate-400">{T.metricsFailed}</p>
           )}
         </div>
       ) : (
@@ -599,12 +591,12 @@ export default function TicketsPage() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-400">🟢 খোলা টিকিট</span>
+                <span className="text-xs font-semibold text-emerald-400">{T.kpiOpen}</span>
                 <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-bold text-emerald-300">
-                  {tickets.filter((t) => t.status === "open").length}
+                  {fmtNumber(locale, tickets.filter((tk) => tk.status === "open").length)}
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">গ্রাহকের নতুন বার্তা</p>
+              <p className="mt-1 text-[11px] text-slate-400">{T.kpiOpenSub}</p>
             </button>
 
             <button
@@ -616,12 +608,12 @@ export default function TicketsPage() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-amber-400">🟡 অপেক্ষমাণ</span>
+                <span className="text-xs font-semibold text-amber-400">{T.kpiPending}</span>
                 <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-300">
-                  {tickets.filter((t) => t.status === "pending").length}
+                  {fmtNumber(locale, tickets.filter((tk) => tk.status === "pending").length)}
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">গ্রাহকের জবাবের অপেক্ষা</p>
+              <p className="mt-1 text-[11px] text-slate-400">{T.kpiPendingSub}</p>
             </button>
 
             <button
@@ -640,31 +632,31 @@ export default function TicketsPage() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-blue-400">🔵 কাজ চলছে</span>
+                <span className="text-xs font-semibold text-blue-400">{T.kpiInProgress}</span>
                 <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-xs font-bold text-blue-300">
-                  {tickets.filter((t) => t.status === "in_progress").length}
+                  {fmtNumber(locale, tickets.filter((tk) => tk.status === "in_progress").length)}
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">অ্যাডমিন টিম ইনভেস্টিগেশন</p>
+              <p className="mt-1 text-[11px] text-slate-400">{T.kpiInProgressSub}</p>
             </button>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-rose-400">🚨 জরুরি / SLA রিক্স</span>
+                <span className="text-xs font-semibold text-rose-400">{T.kpiUrgent}</span>
                 <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-bold text-rose-300">
-                  {
+                  {fmtNumber(locale,
                     tickets.filter(
-                      (t) =>
-                        t.priority === "urgent" ||
-                        (t.slaDueAt &&
-                          new Date(t.slaDueAt).getTime() < Date.now() &&
-                          t.status !== "resolved" &&
-                          t.status !== "closed"),
-                    ).length
-                  }
+                      (tk) =>
+                        tk.priority === "urgent" ||
+                        (tk.slaDueAt &&
+                          new Date(tk.slaDueAt).getTime() < Date.now() &&
+                          tk.status !== "resolved" &&
+                          tk.status !== "closed"),
+                    ).length,
+                  )}
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">অগ্রাধিকার ভিত্তিতে দেখা প্রয়োজন</p>
+              <p className="mt-1 text-[11px] text-slate-400">{T.kpiUrgentSub}</p>
             </div>
           </div>
 
@@ -682,7 +674,7 @@ export default function TicketsPage() {
                       : "border border-slate-800 bg-slate-900/70 text-slate-300 hover:bg-slate-800 hover:text-white"
                   }`}
                 >
-                  {f ? STATUS_LABEL[f] : "সব টিকিট"}
+                  {f ? STATUS_LABEL[f] : T.allTickets}
                 </button>
               ))}
             </div>
@@ -694,7 +686,7 @@ export default function TicketsPage() {
                 className="ainput text-xs"
                 style={{ width: "auto" }}
               >
-                <option value="">সব ক্যাটাগরি</option>
+                <option value="">{T.allCategories}</option>
                 {Object.entries(CATEGORY_LABEL).map(([cat, label]) => (
                   <option key={cat} value={cat}>
                     {label}
@@ -727,14 +719,14 @@ export default function TicketsPage() {
               ) : null}
               {!loading && loadError && tickets.length === 0 ? (
                 <div className="acard">
-                  <ErrorState message={`Ticket লোড হয়নি: ${loadError}`} onRetry={load} />
+                  <ErrorState message={tr("tickets.listLoadError", { message: loadError })} onRetry={load} />
                 </div>
               ) : null}
               {!loading && !loadError && shown.length === 0 ? (
                 <div className="acard">
                   <EmptyState
-                    title="এই ফিল্টারে কোনো Ticket নেই।"
-                    sub="অন্য status বা ক্যাটাগরি বেছে নিন, অথবা সব টিকিট দেখতে ফিল্টার রিসেট করুন।"
+                    title={T.emptyTitle}
+                    sub={T.emptySub}
                   />
                 </div>
               ) : null}
@@ -794,14 +786,14 @@ export default function TicketsPage() {
                         </span>
                         {t.csatRating ? (
                           <span className="rounded-lg bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-amber-300">
-                            ⭐ {t.csatRating}/5
+                            ⭐ {fmtNumber(locale, t.csatRating)}/{fmtNumber(locale, 5)}
                           </span>
                         ) : null}
                         <span className="rounded-lg bg-slate-800/60 px-1.5 py-0.5 text-[11px] text-slate-400">
-                          💬 {t.messageCount ?? 0}
+                          💬 {fmtNumber(locale, t.messageCount ?? 0)}
                         </span>
                       </div>
-                      <span className="text-[11px] text-slate-500">{fmtDateTime(t.lastMessageAt)}</span>
+                      <span className="text-[11px] text-slate-500">{fmtDateTime(locale, t.lastMessageAt)}</span>
                     </div>
 
                     {t.slaDueAt && t.status !== "resolved" && t.status !== "closed" ? (
@@ -820,7 +812,7 @@ export default function TicketsPage() {
               {!selected ? (
                 <div className="p-8 text-center text-slate-400">
                   <p className="text-3xl">🎫</p>
-                  <p className="mt-2 text-sm font-medium">বাম থেকে একটি Ticket বেছে নিন।</p>
+                  <p className="mt-2 text-sm font-medium">{T.pickTicketTitle}</p>
                 </div>
               ) : (
                 <>
@@ -828,7 +820,7 @@ export default function TicketsPage() {
                     className="abtn sticky top-0 z-10 mb-3 w-full sm:w-auto lg:hidden"
                     onClick={() => setSelected(null)}
                   >
-                    ← তালিকায় ফিরুন
+                    {T.backToList}
                   </button>
 
                   {/* Header */}
@@ -847,9 +839,7 @@ export default function TicketsPage() {
                         {getSlaBadge(selected.slaDueAt)}
                       </div>
                       <p className="mt-1 text-xs text-slate-400">
-                        টিকেট #{selected.id.slice(-6)} · ওয়ার্কস্পেস:{" "}
-                        <b className="text-slate-200">{selected.organizationName}</b> · গ্রাহক ইমেইল:{" "}
-                        <span className="text-indigo-300">{selected.creatorEmail ?? "—"}</span>
+                        {tr("tickets.ticketMeta", { id: selected.id.slice(-6), org: selected.organizationName, email: selected.creatorEmail ?? "—" })}
                       </p>
                     </div>
 
@@ -858,18 +848,18 @@ export default function TicketsPage() {
                         <button
                           onClick={() => update({ status: "resolved" })}
                           className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600/20 border border-emerald-500/40 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 transition shadow-sm"
-                          title="টিকিটটি সমাধান হয়েছে হিসেবে মার্ক করুন"
+                          title={T.markResolvedTitle}
                         >
-                          ✅ সমাধান চিহ্নিত করুন
+                          {T.markResolved}
                         </button>
                       ) : null}
 
                       <button
                         onClick={handleAiSummary}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500/40 bg-indigo-950/40 px-3 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-900/50 transition shadow-sm"
-                        title="AI দিয়ে পুরো টিকেটের সামারি তৈরি করুন"
+                        title={T.aiSummaryTitle}
                       >
-                        ⚡ AI Summary
+                        {T.aiSummary}
                       </button>
                     </div>
                   </div>
@@ -878,7 +868,7 @@ export default function TicketsPage() {
                   {threadSummary ? (
                     <div className="my-3 rounded-2xl border border-indigo-500/40 bg-gradient-to-r from-indigo-950/40 via-purple-950/20 to-slate-900/40 p-3.5 text-xs text-indigo-200 shadow-md">
                       <b className="block text-indigo-400 font-semibold mb-1 flex items-center gap-1.5">
-                        <span>🤖</span> AI থ্রেড সারাংশ (Thread Summary):
+                        <span>🤖</span> {T.aiSummaryHeading}
                       </b>
                       <p className="leading-relaxed">{threadSummary}</p>
                     </div>
@@ -888,23 +878,23 @@ export default function TicketsPage() {
                   {selected.customer360 ? (
                     <div className="my-3 grid grid-cols-2 gap-2.5 rounded-2xl border border-slate-800/80 bg-gradient-to-r from-slate-900/90 via-slate-900/50 to-indigo-950/20 p-3.5 text-xs sm:grid-cols-4">
                       <div className="space-y-0.5">
-                        <span className="text-slate-400 block text-[11px]">👥 মেম্বার সংখ্যা</span>
-                        <b className="text-slate-200 text-sm">{selected.customer360.membersCount} জন</b>
+                        <span className="text-slate-400 block text-[11px]">{T.membersCount}</span>
+                        <b className="text-slate-200 text-sm">{tr("tickets.membersValue", { count: fmtNumber(locale, selected.customer360.membersCount) })}</b>
                       </div>
                       <div className="space-y-0.5">
-                        <span className="text-slate-400 block text-[11px]">🔌 সক্রিয় চ্যানেল</span>
-                        <b className="text-indigo-300 text-sm">{selected.customer360.activeIntegrationsCount} টি কানেক্টেড</b>
+                        <span className="text-slate-400 block text-[11px]">{T.activeChannels}</span>
+                        <b className="text-indigo-300 text-sm">{tr("tickets.channelsValue", { count: fmtNumber(locale, selected.customer360.activeIntegrationsCount) })}</b>
                       </div>
                       <div className="space-y-0.5">
-                        <span className="text-slate-400 block text-[11px]">⭐ কাস্টমার সন্তুষ্টি</span>
+                        <span className="text-slate-400 block text-[11px]">{T.customerSatisfaction}</span>
                         <b className="text-amber-400 text-sm">
-                          {selected.csatRating ? `★ ${selected.csatRating}/5.0` : "রেটিং এখনো দেয়নি"}
+                          {selected.csatRating ? tr("tickets.csatValue", { rating: fmtNumber(locale, selected.csatRating) }) : T.noRatingYet}
                         </b>
                       </div>
                       <div className="space-y-0.5">
-                        <span className="text-slate-400 block text-[11px]">🖥️ ডায়াগনস্টিকস</span>
+                        <span className="text-slate-400 block text-[11px]">{T.diagnostics}</span>
                         <span className="text-slate-300 truncate block text-[11px]">
-                          {selected.customer360.diagnostics?.userAgent ? "ব্রাউজার ইনফো যুক্ত" : "নেই"}
+                          {selected.customer360.diagnostics?.userAgent ? T.diagnosticsPresent : T.diagnosticsNone}
                         </span>
                       </div>
                     </div>
@@ -913,7 +903,7 @@ export default function TicketsPage() {
                   {/* Ticket Controls Toolbar */}
                   <div className="my-3 flex flex-wrap items-center gap-2 border-b border-slate-800/80 pb-3">
                     <div className="flex items-center gap-1 text-xs text-slate-400">
-                      <span>স্ট্যাটাস:</span>
+                      <span>{T.statusLabelText}</span>
                       <select
                         value={selected.status}
                         onChange={(e) => update({ status: e.target.value })}
@@ -929,21 +919,21 @@ export default function TicketsPage() {
                     </div>
 
                     <div className="flex items-center gap-1 text-xs text-slate-400">
-                      <span>অগ্রাধিকার:</span>
+                      <span>{T.priorityLabel}</span>
                       <select
                         value={selected.priority}
                         onChange={(e) => update({ priority: e.target.value })}
                         className="ainput text-xs py-1"
                         style={{ width: "auto" }}
                       >
-                        <option value="normal">সাধারণ (Normal)</option>
-                        <option value="high">জরুরি (High)</option>
-                        <option value="urgent">🚨 অতি জরুরি (Urgent)</option>
+                        <option value="normal">{T.priorityNormal}</option>
+                        <option value="high">{T.priorityHigh}</option>
+                        <option value="urgent">{T.priorityUrgent}</option>
                       </select>
                     </div>
 
                     <div className="flex items-center gap-1 text-xs text-slate-400">
-                      <span>ক্যাটাগরি:</span>
+                      <span>{T.categoryLabel}</span>
                       <select
                         value={selected.category ?? "general"}
                         onChange={(e) => update({ category: e.target.value })}
@@ -959,14 +949,14 @@ export default function TicketsPage() {
                     </div>
 
                     <div className="flex items-center gap-1 text-xs text-slate-400 ml-auto">
-                      <span>দায়িত্বপ্রাপ্ত:</span>
+                      <span>{T.assigneeLabel}</span>
                       <select
                         value={selected.assignedToId ?? ""}
                         onChange={(e) => update({ assignedToId: e.target.value || null })}
                         className="ainput text-xs py-1"
                         style={{ width: "auto" }}
                       >
-                        <option value="">Assign: কেউ নয়</option>
+                        <option value="">{T.assignNone}</option>
                         {admins.map((a) => (
                           <option key={a.id} value={a.id}>
                             {a.email}
@@ -1001,21 +991,21 @@ export default function TicketsPage() {
                               {isInternal ? (
                                 <>
                                   <span>🔒</span>
-                                  <span>ইন্টারনাল টিম হুইস্পার (শুধুমাত্র অ্যাডমিন)</span>
+                                  <span>{T.internalWhisper}</span>
                                 </>
                               ) : isAdmin ? (
                                 <>
                                   <span>🛡️</span>
-                                  <span>প্ল্যাটফর্ম সাপোর্ট টিম</span>
+                                  <span>{T.supportTeam}</span>
                                 </>
                               ) : (
                                 <>
                                   <span>👤</span>
-                                  <span>গ্রাহক ({selected.organizationName || "Tenant"})</span>
+                                  <span>{tr("tickets.customerLabel", { org: selected.organizationName || T.tenantFallback })}</span>
                                 </>
                               )}
                             </span>
-                            <span className="text-slate-500 font-normal">{fmtDateTime(m.createdAt)}</span>
+                            <span className="text-slate-500 font-normal">{fmtDateTime(locale, m.createdAt)}</span>
                           </div>
                           <p className="whitespace-pre-wrap leading-relaxed text-slate-200">{m.body}</p>
 
@@ -1061,7 +1051,7 @@ export default function TicketsPage() {
                   {tenantTyping ? (
                     <div className="mt-2.5 flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-amber-400 bg-amber-500/10 rounded-xl border border-amber-500/20 max-w-max animate-pulse">
                       <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
-                      <span>গ্রাহক মেসেজ টাইপ করছেন...</span>
+                      <span>{T.typing}</span>
                     </div>
                   ) : null}
 
@@ -1084,7 +1074,7 @@ export default function TicketsPage() {
                               : "text-slate-400 hover:text-white hover:bg-slate-800/60"
                           }`}
                         >
-                          📢 পাবলিক রিপ্লাই (গ্রাহক দেখবে)
+                          {T.publicReplyMode}
                         </button>
                         <button
                           type="button"
@@ -1095,7 +1085,7 @@ export default function TicketsPage() {
                               : "text-slate-400 hover:text-white hover:bg-slate-800/60"
                           }`}
                         >
-                          🔒 ইন্টারনাল হুইস্পার নোট (টিম)
+                          {T.internalMode}
                         </button>
                       </div>
 
@@ -1112,7 +1102,7 @@ export default function TicketsPage() {
                             defaultValue=""
                           >
                             <option value="" disabled>
-                              ⚡ ক্যানড রেসপন্স
+                              {T.cannedSelect}
                             </option>
                             {cannedList.map((c) => (
                               <option key={c.id} value={c.shortcut}>
@@ -1125,10 +1115,10 @@ export default function TicketsPage() {
                         <button
                           type="button"
                           onClick={() => setShowCannedModal(true)}
-                          title="নতুন ক্যানড রেসপন্স সংরক্ষণ করুন"
+                          title={T.cannedAddTitle}
                           className="abtn text-xs py-1 px-2.5 border-slate-700 text-slate-300 hover:text-white"
                         >
-                          ＋ ক্যানড
+                          {T.cannedAdd}
                         </button>
 
                         <button
@@ -1137,7 +1127,7 @@ export default function TicketsPage() {
                           disabled={aiLoading}
                           className="abtn text-xs py-1 px-2.5 flex items-center gap-1 border-indigo-500/40 text-indigo-300 hover:text-white"
                         >
-                          {aiLoading ? "✨ ড্রাফট হচ্ছে..." : "✨ AI Draft Reply"}
+                          {aiLoading ? T.aiDrafting : T.aiDraft}
                         </button>
                       </div>
                     </div>
@@ -1145,7 +1135,7 @@ export default function TicketsPage() {
                     {composerMode === "internal" ? (
                       <div className="mb-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 text-[11px] text-amber-300 flex items-center gap-1.5">
                         <span>⚠️</span>
-                        <span>গোপনীয় হুইস্পার নোট — এটি শুধুমাত্র প্ল্যাটফর্ম অ্যাডমিন টিম দেখবে, গ্রাহক দেখবে না।</span>
+                        <span>{T.whisperWarning}</span>
                       </div>
                     ) : null}
 
@@ -1165,8 +1155,8 @@ export default function TicketsPage() {
                       className="ainput w-full resize-none text-sm font-sans"
                       placeholder={
                         composerMode === "internal"
-                          ? "টিম সদস্যদের জন্য গোপনীয় নোট লিখুন (গ্রাহক এটি দেখবে না)..."
-                          : "গ্রাহককে উত্তর লিখুন — গ্রাহক এখানেও দেখবে এবং ইমেইল নোটিফিকেশন পাবে..."
+                          ? T.internalPlaceholder
+                          : T.publicPlaceholder
                       }
                     />
 
@@ -1205,10 +1195,10 @@ export default function TicketsPage() {
                           disabled={uploadingFile}
                           className="abtn text-xs py-1.5 px-3 flex items-center gap-1.5"
                         >
-                          📎 {uploadingFile ? "আপলোড হচ্ছে..." : "ফাইল/স্ক্রিনশট"}
+                          📎 {uploadingFile ? T.uploading : T.attachFile}
                         </button>
                         <span className="hidden sm:inline text-[11px] text-slate-500">
-                          টিপ: Ctrl + Enter চেপে সরাসরি পাঠান
+                          {T.ctrlEnterTip}
                         </span>
                       </div>
 
@@ -1221,7 +1211,7 @@ export default function TicketsPage() {
                         onClick={sendReplyOrNote}
                         disabled={!reply.trim() && attachments.length === 0}
                       >
-                        {composerMode === "internal" ? "🔒 নোট সেভ করুন" : "উত্তর পাঠান (Send)"}
+                        {composerMode === "internal" ? T.saveNote : T.sendReply}
                       </button>
                     </div>
                   </div>
@@ -1237,7 +1227,7 @@ export default function TicketsPage() {
           <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>⚡</span> নতুন ক্যানড রেসপন্স যোগ করুন
+                <span>⚡</span> {T.cannedModalTitle}
               </h3>
               <button
                 type="button"
@@ -1252,7 +1242,7 @@ export default function TicketsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1">
-                    শর্টকাট (যেমন: /token-reset)
+                    {T.shortcutLabel}
                   </label>
                   <input
                     type="text"
@@ -1265,30 +1255,30 @@ export default function TicketsPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1">
-                    ক্যাটাগরি
+                    {T.categoryFormLabel}
                   </label>
                   <select
                     value={newCategory}
                     onChange={(e) => setNewCategory(e.target.value)}
                     className="ainput text-xs w-full"
                   >
-                    <option value="general">সাধারণ</option>
-                    <option value="billing">বিলিং ও পেমেন্ট</option>
-                    <option value="technical">টেকনিক্যাল সমস্যা</option>
-                    <option value="integration">ইন্টিগ্রেশন</option>
-                    <option value="campaigns">ক্যাম্পেইন</option>
+                    <option value="general">{T.cannedCatGeneral}</option>
+                    <option value="billing">{T.cannedCatBilling}</option>
+                    <option value="technical">{T.cannedCatTechnical}</option>
+                    <option value="integration">{T.cannedCatIntegration}</option>
+                    <option value="campaigns">{T.cannedCatCampaigns}</option>
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">
-                  শিরোনাম (Title)
+                  {T.cannedTitleLabel}
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="যেমন: Meta Token Reconnection Guide"
+                  placeholder={T.cannedTitlePlaceholder}
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   className="ainput text-xs w-full"
@@ -1297,12 +1287,12 @@ export default function TicketsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">
-                  রেসপন্স মেসেজ (বাংলা বা ইংরেজি)
+                  {T.cannedBodyLabel}
                 </label>
                 <textarea
                   required
                   rows={4}
-                  placeholder="গ্রাহকের জন্য স্ট্যান্ডার্ড উত্তর লিখুন..."
+                  placeholder={T.cannedBodyPlaceholder}
                   value={newBody}
                   onChange={(e) => setNewBody(e.target.value)}
                   className="ainput text-xs w-full font-mono"
@@ -1315,14 +1305,14 @@ export default function TicketsPage() {
                   onClick={() => setShowCannedModal(false)}
                   className="abtn text-xs"
                 >
-                  বাতিল
+                  {dict.common.cancel}
                 </button>
                 <button
                   type="submit"
                   disabled={cannedBusy || !newShortcut.trim() || !newTitle.trim() || !newBody.trim()}
                   className="abtn abtn-primary text-xs"
                 >
-                  {cannedBusy ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}
+                  {cannedBusy ? T.saving : T.saveAction}
                 </button>
               </div>
             </form>

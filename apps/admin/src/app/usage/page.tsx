@@ -3,18 +3,21 @@ import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 import { EmptyState, ErrorState, PageHead, SavedViewsBar, SortableTh, useLastFilters, type SortDir } from "@/components/ui";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { useAdminLocale } from "@/components/AdminLocale";
 
 interface Row { organizationId: string; name: string; status: string; aiCalls30d: number; aiTokens30d: number; deliveries30d: number; broadcastsTotal: number; workflowRuns30d: number; courierShipmentsTotal: number; orders30d: number; storageBytes: number; mediaAssets: number }
 
-function formatBytes(n: number): string {
+function formatBytes(n: number, locale: UiLocale): string {
   if (!n) return "0 B";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (n < 1024) return `${fmtNumber(locale, n)} B`;
+  if (n < 1024 * 1024) return `${fmtNumber(locale, n / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB`;
+  if (n < 1024 * 1024 * 1024) return `${fmtNumber(locale, n / (1024 * 1024), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
+  return `${fmtNumber(locale, n / (1024 * 1024 * 1024), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB`;
 }
 
 export default function UsagePage() {
+  const { dict, locale, t } = useAdminLocale();
   const [rows, setRows] = React.useState<Row[]>([]);
   // ADX12: loading + load-error states for the ranking table —
   // before, load-in-flight and load-failed both read as
@@ -24,9 +27,9 @@ export default function UsagePage() {
   const load = React.useCallback(async () => {
     setLoading(true); setLoadError("");
     try { setRows(await apiFetch<Row[]>("/admin/usage")); }
-    catch (e) { setLoadError(e instanceof Error ? e.message : "Usage লোড ব্যর্থ হয়েছে"); }
+    catch (e) { setLoadError(e instanceof Error ? e.message : dict.usage.loadFailedFallback); }
     finally { setLoading(false); }
-  }, []);
+  }, [dict]);
   React.useEffect(() => { load(); }, [load]);
   // ADX11: per-org ranking — sortable by every numeric column,
   // client-side over the loaded rows only (default = server order).
@@ -46,27 +49,27 @@ export default function UsagePage() {
   }, [rows, sortKey, sortDir]);
   const th = (label: string, key: string) => <SortableTh label={label} sortKey={key} current={sortKey} dir={sortDir} onSort={onSort} />;
   return (
-    <AdminShell title="📈 Usage & Cost (শেষ ৩০ দিন)">
-      <PageHead sub="Org অনুযায়ী ব্যবহারের Ranking — Header-এ ক্লিক করে সাজান।" />
-      <p className="mb-3 text-sm text-slate-400">Org অনুযায়ী ব্যবহারের Ranking — যেকোনো সংখ্যার Header-এ ক্লিক করে বেশি→কম / কম→বেশি সাজান (সাজানো এই পেজে লোড করা Row-র ওপরেই)।</p>
+    <AdminShell title={dict.usage.title}>
+      <PageHead sub={dict.usage.sub} />
+      <p className="mb-3 text-sm text-slate-400">{dict.usage.intro}</p>
       <div className="acard overflow-hidden p-0">
         <table className="atable atable-sticky atable-cards atable-v3">
-          <thead className="bg-slate-900"><tr><th className="ath">Organization</th>{th("AI কল", "aiCalls30d")}{th("AI টোকেন", "aiTokens30d")}{th("Message Delivery", "deliveries30d")}{th("Broadcast", "broadcastsTotal")}{th("Workflow Run", "workflowRuns30d")}{th("Courier", "courierShipmentsTotal")}{th("Order", "orders30d")}{th("Storage", "storageBytes")}</tr></thead>
+          <thead className="bg-slate-900"><tr><th className="ath">{dict.common.organization}</th>{th(dict.usage.colAiCalls, "aiCalls30d")}{th(dict.usage.colAiTokens, "aiTokens30d")}{th(dict.usage.colDeliveries, "deliveries30d")}{th(dict.usage.colBroadcast, "broadcastsTotal")}{th(dict.usage.colWorkflow, "workflowRuns30d")}{th(dict.usage.colCourier, "courierShipmentsTotal")}{th(dict.usage.colOrder, "orders30d")}{th(dict.usage.colStorage, "storageBytes")}</tr></thead>
           <tbody>{shown.map((r) => (
             <tr key={r.organizationId} className="border-t border-slate-800">
-              <td data-label="Organization" className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.name}</a>{r.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{r.status}</span> : null}</td>
-              <td data-label="AI কল" className="atd">{r.aiCalls30d}</td><td data-label="AI টোকেন" className="atd">{r.aiTokens30d.toLocaleString()}</td>
-              <td data-label="Message Delivery" className="atd">{r.deliveries30d}</td><td data-label="Broadcast" className="atd">{r.broadcastsTotal}</td>
-              <td data-label="Workflow Run" className="atd">{r.workflowRuns30d}</td><td data-label="Courier" className="atd">{r.courierShipmentsTotal}</td><td data-label="Order" className="atd">{r.orders30d}</td>
-              <td data-label="Storage" className="atd">{formatBytes(r.storageBytes ?? 0)}<span className="block text-xs text-slate-400">{r.mediaAssets ?? 0}টি ফাইল</span></td>
+              <td data-label={dict.common.organization} className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.name}</a>{r.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{r.status}</span> : null}</td>
+              <td data-label={dict.usage.colAiCalls} className="atd">{fmtNumber(locale, r.aiCalls30d)}</td><td data-label={dict.usage.colAiTokens} className="atd">{fmtNumber(locale, r.aiTokens30d)}</td>
+              <td data-label={dict.usage.colDeliveries} className="atd">{fmtNumber(locale, r.deliveries30d)}</td><td data-label={dict.usage.colBroadcast} className="atd">{fmtNumber(locale, r.broadcastsTotal)}</td>
+              <td data-label={dict.usage.colWorkflow} className="atd">{fmtNumber(locale, r.workflowRuns30d)}</td><td data-label={dict.usage.colCourier} className="atd">{fmtNumber(locale, r.courierShipmentsTotal)}</td><td data-label={dict.usage.colOrder} className="atd">{fmtNumber(locale, r.orders30d)}</td>
+              <td data-label={dict.usage.colStorage} className="atd">{formatBytes(r.storageBytes ?? 0, locale)}<span className="block text-xs text-slate-400">{t("usage.filesCount", { count: fmtNumber(locale, r.mediaAssets ?? 0) })}</span></td>
             </tr>
           ))}</tbody>
         </table>
         {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
-        {!loading && loadError ? <div className="p-4"><ErrorState message={`Usage লোড হয়নি: ${loadError}`} onRetry={load} /></div> : null}
-        {!loading && !loadError && rows.length === 0 ? <EmptyState title="কোনো Organization নেই।" sub="Organization তৈরি হলে তাদের ব্যবহার এখানে Ranking আকারে দেখা যাবে।" /> : null}
+        {!loading && loadError ? <div className="p-4"><ErrorState message={t("usage.loadError", { message: loadError })} onRetry={load} /></div> : null}
+        {!loading && !loadError && rows.length === 0 ? <EmptyState title={dict.usage.emptyTitle} sub={dict.usage.emptySub} /> : null}
       </div>
-      <p className="mt-3 text-xs text-slate-400">AI খরচ টাকায় এখানে দেখানো হয়নি — এখানে শুধু প্রকৃত ব্যবহার (কল ও টোকেন) দেখানো হচ্ছে। টাকার হিসাব Analytics পেজের AI Cost বোর্ডে, শুধু Operator-এর নিজের সেট করা Rate (৳ / 1M টোকেন) দিয়েই — Rate সেট না থাকলে সেখানেও কোনো টাকার হিসাব দেখানো হয় না, অন্য কোনো দাম ধরা হয় না।</p>
+      <p className="mt-3 text-xs text-slate-400">{dict.usage.moneyNote}</p>
       <AiFeatureSection />
     </AdminShell>
   );
@@ -79,6 +82,7 @@ interface AiRow { organizationId: string; orgName: string; feature: string; call
  * The org filter narrows the loaded rows client-side; if it is an
  * exact organizationId, the CSV export is scoped to that org too. */
 function AiFeatureSection() {
+  const { dict, locale, t } = useAdminLocale();
   const [days, setDays] = React.useState(30);
   const [rows, setRows] = React.useState<AiRow[]>([]);
   const [filter, setFilter] = React.useState("");
@@ -92,9 +96,9 @@ function AiFeatureSection() {
     try {
       const out = await apiFetch<{ days: number; rows: AiRow[] }>(`/admin/usage/ai-detail?days=${d}`);
       setRows(out?.rows ?? []);
-    } catch (e) { setRows([]); setLoadError(e instanceof Error ? e.message : "AI ব্যবহার লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setRows([]); setLoadError(e instanceof Error ? e.message : dict.usage.aiLoadFailedFallback); }
     finally { setLoading(false); }
-  }, []);
+  }, [dict]);
   React.useEffect(() => { load(days); }, [days, load]);
   // ADNX15: this section's filter state (day window + org text
   // filter) gains saved views and last-used persistence — the
@@ -134,39 +138,39 @@ function AiFeatureSection() {
   return (
     <div className="mt-6">
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <h2 className="text-base font-semibold">🤖 AI by Feature (Org × Feature)</h2>
+        <h2 className="text-base font-semibold">{dict.usage.aiTitle}</h2>
         <select className="ainput !w-auto px-2 py-1 text-sm" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-          <option value={7}>শেষ ৭ দিন</option>
-          <option value={30}>শেষ ৩০ দিন</option>
-          <option value={90}>শেষ ৯০ দিন</option>
+          <option value={7}>{dict.usage.last7}</option>
+          <option value={30}>{dict.usage.last30}</option>
+          <option value={90}>{dict.usage.last90}</option>
         </select>
-        <input className="ainput px-2 py-1 text-sm sm:!w-64" placeholder="Org নাম বা ID দিয়ে ফিল্টার" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={downloadCsv}>⬇ CSV Export</button>
-        {loading ? <span className="text-xs text-slate-400">লোড হচ্ছে…</span> : null}
+        <input className="ainput px-2 py-1 text-sm sm:!w-64" placeholder={dict.usage.filterPlaceholder} value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={downloadCsv}>{dict.usage.csvExport}</button>
+        {loading ? <span className="text-xs text-slate-400">{dict.common.loadingEllipsis}</span> : null}
       </div>
       <div className="mb-3 rounded-xl border border-slate-800">
         <SavedViewsBar page="usage-ai" current={{ days: String(days), filter }} onApply={applyAiFilters} />
       </div>
       <div className="acard overflow-hidden p-0">
         <table className="atable atable-cards atable-v3">
-          <thead className="bg-slate-900"><tr><th className="ath">Organization</th><th className="ath">Feature</th>{th("কল", "calls")}{th("Input টোকেন", "inputTokens")}{th("Output টোকেন", "outputTokens")}{th("মোট টোকেন", "totalTokens")}{th("Estimated কল", "estimatedCalls")}</tr></thead>
+          <thead className="bg-slate-900"><tr><th className="ath">{dict.common.organization}</th><th className="ath">{dict.usage.colFeature}</th>{th(dict.usage.colCalls, "calls")}{th(dict.usage.colInputTokens, "inputTokens")}{th(dict.usage.colOutputTokens, "outputTokens")}{th(dict.usage.colTotalTokens, "totalTokens")}{th(dict.usage.colEstimatedCalls, "estimatedCalls")}</tr></thead>
           <tbody>{shown.map((r) => (
             <tr key={`${r.organizationId}|${r.feature}`} className="border-t border-slate-800">
-              <td data-label="Organization" className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.orgName}</a></td>
-              <td data-label="Feature" className="atd">{r.feature}</td>
-              <td data-label="কল" className="atd">{r.calls.toLocaleString()}</td>
-              <td data-label="Input টোকেন" className="atd">{r.inputTokens.toLocaleString()}</td>
-              <td data-label="Output টোকেন" className="atd">{r.outputTokens.toLocaleString()}</td>
-              <td data-label="মোট টোকেন" className="atd">{r.totalTokens.toLocaleString()}</td>
-              <td data-label="Estimated কল" className="atd">{r.estimatedCalls > 0 ? <span className="abadge-amber">{r.estimatedCalls.toLocaleString()}</span> : 0}</td>
+              <td data-label={dict.common.organization} className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.orgName}</a></td>
+              <td data-label={dict.usage.colFeature} className="atd">{r.feature}</td>
+              <td data-label={dict.usage.colCalls} className="atd">{fmtNumber(locale, r.calls)}</td>
+              <td data-label={dict.usage.colInputTokens} className="atd">{fmtNumber(locale, r.inputTokens)}</td>
+              <td data-label={dict.usage.colOutputTokens} className="atd">{fmtNumber(locale, r.outputTokens)}</td>
+              <td data-label={dict.usage.colTotalTokens} className="atd">{fmtNumber(locale, r.totalTokens)}</td>
+              <td data-label={dict.usage.colEstimatedCalls} className="atd">{r.estimatedCalls > 0 ? <span className="abadge-amber">{fmtNumber(locale, r.estimatedCalls)}</span> : fmtNumber(locale, 0)}</td>
             </tr>
           ))}</tbody>
         </table>
         {loading && shown.length === 0 ? <div className="askel-table m-4" /> : null}
-        {!loading && loadError ? <div className="p-4"><ErrorState message={`AI ব্যবহার লোড হয়নি: ${loadError}`} onRetry={() => load(days)} /></div> : null}
-        {!loading && !loadError && shown.length === 0 ? <EmptyState title="এই সময়সীমায় কোনো AI ব্যবহারের রেকর্ড নেই।" /> : null}
+        {!loading && loadError ? <div className="p-4"><ErrorState message={t("usage.aiLoadError", { message: loadError })} onRetry={() => load(days)} /></div> : null}
+        {!loading && !loadError && shown.length === 0 ? <EmptyState title={dict.usage.aiEmptyTitle} /> : null}
       </div>
-      <p className="mt-3 text-xs text-slate-400">এখানে শুধু কল ও টোকেন — টাকার হিসাব Analytics পেজের AI Cost বোর্ডে (Operator-এর সেট করা Rate দিয়ে)। Estimated কল মানে ওই কলগুলোর টোকেন সংখ্যা Dev Adapter-এর আনুমানিক হিসাব — আসল Provider-এর মাপা সংখ্যা নয়, তাই আলাদা করে দেখানো হয়েছে।</p>
+      <p className="mt-3 text-xs text-slate-400">{dict.usage.aiNote}</p>
     </div>
   );
 }

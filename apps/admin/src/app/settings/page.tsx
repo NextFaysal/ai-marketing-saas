@@ -4,6 +4,8 @@ import AdminShell from "@/components/AdminShell";
 import { ErrorState, PageHead, askConfirm, askInput, toast } from "@/components/ui";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
+import { fmtNumber } from "@repo/contracts";
+import { useAdminLocale } from "@/components/AdminLocale";
 
 interface Settings {
   maintenanceMode: boolean; signupOpen: boolean; supportContact: string;
@@ -16,25 +18,16 @@ interface Settings {
   maxOrgsPerUser?: number | null;
 }
 interface Announcement { id: string; title: string; body: string; audience?: string; active: boolean; startsAt?: string | null; endsAt?: string | null; createdAt: string }
-const AUDIENCES: { value: string; label: string }[] = [
-  { value: "all", label: "সবাই" }, { value: "trialing", label: "ট্রায়ালে থাকা" }, { value: "past_due", label: "পেমেন্ট বকেয়া (Past Due)" },
-  { value: "plan_FREE", label: "FREE প্ল্যান" }, { value: "plan_STARTER", label: "STARTER প্ল্যান" }, { value: "plan_GROWTH", label: "GROWTH প্ল্যান" }, { value: "plan_AGENCY", label: "AGENCY প্ল্যান" },
+const AUDIENCE_KEYS: { value: string; labelKey?: string; plan?: string }[] = [
+  { value: "all", labelKey: "settings.audAll" }, { value: "trialing", labelKey: "settings.audTrialing" }, { value: "past_due", labelKey: "settings.audPastDue" },
+  { value: "plan_FREE", plan: "FREE" }, { value: "plan_STARTER", plan: "STARTER" }, { value: "plan_GROWTH", plan: "GROWTH" }, { value: "plan_AGENCY", plan: "AGENCY" },
 ];
 
 // ADX9: Config Hub sections. Settled §৭ decision: ONE page, in-page
 // sub-nav + hash deep-links, no new routes. Every block that exists
 // on this page maps to exactly one section (see the DB3 acceptance
 // doc for the full mapping table).
-const SETTING_SECTIONS: { id: string; icon: string; label: string; sub: string }[] = [
-  { id: "general", icon: "🧭", label: "সাধারণ", sub: "প্ল্যাটফর্ম অবস্থা · Plan দাম ও Limits · Kill Switch · Maintenance" },
-  { id: "ai", icon: "🤖", label: "AI ও মিডিয়া", sub: "LLM · Image Generation" },
-  { id: "apps", icon: "🔌", label: "অ্যাপ সংযোগ", sub: "Meta · TikTok · Google · Google SSO · LinkedIn" },
-  { id: "messaging", icon: "✉️", label: "বার্তা", sub: "SMTP · SMS" },
-  { id: "payment", icon: "💳", label: "পেমেন্ট", sub: "SSLCommerz · bKash · Wallet" },
-  { id: "flags", icon: "🚩", label: "Flags ও Plan Defaults", sub: "Plan Feature Defaults" },
-  { id: "announce", icon: "📣", label: "ঘোষণা", sub: "Announcements" },
-];
-const SECTION_IDS = SETTING_SECTIONS.map((s) => s.id);
+const SECTION_IDS = ["general", "ai", "apps", "messaging", "payment", "flags", "announce"];
 const BLOCK_SECTION: Record<string, string> = {
   "config-llm": "ai", "config-image": "ai",
   "config-meta": "apps", "config-tiktok": "apps", "config-google": "apps", "config-google-sso": "apps", "config-linkedin": "apps", "config-threads": "apps",
@@ -79,6 +72,8 @@ const AREA_BLOCK: Record<string, string> = {
 };
 
 function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { setMsg: (m: string) => void; section: string; highlightId: string | null; reportDirty: (key: string, dirty: boolean) => void }) {
+  const { dict, locale, t } = useAdminLocale();
+  const S = dict.settings;
   const [cfg, setCfg] = React.useState<PlatformConfigView | null>(null);
   const [busy, setBusy] = React.useState("");
   // ADX12: config-load failure state — before, the whole config
@@ -150,262 +145,262 @@ function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { 
       const blockId = AREA_BLOCK[area];
       if (blockId) { baselineRef.current.set(blockId, readBlock(blockId)); reportDirty(blockId, false); }
     }
-    catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "ব্যর্থ হয়েছে"}`); }
+    catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : dict.common.failed}`); }
     finally { setBusy(""); }
   }
   async function test(kind: "test-llm" | "test-email" | "test-sms" | "test-image", to?: string) {
     setBusy(kind);
     try {
       const out = await apiFetch<any>(`/admin/platform-config/${kind}`, { method: "POST", body: JSON.stringify(to ? { to } : {}) });
-      setMsg(`✅ Test সফল: ${kind === "test-llm" ? `${out.provider} / ${out.model} (${out.latencyMs}ms)` : kind === "test-image" ? `${out.provider} / ${out.model} — ${out.bytes} bytes (${out.latencyMs}ms)` : `Message ID: ${out.providerMessageId}`}`);
-    } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "Test ব্যর্থ"}`); }
+      setMsg(t("settings.testSuccess", { detail: kind === "test-llm" ? `${out.provider} / ${out.model} (${fmtNumber(locale, out.latencyMs)}ms)` : kind === "test-image" ? `${out.provider} / ${out.model} — ${fmtNumber(locale, out.bytes)} bytes (${fmtNumber(locale, out.latencyMs)}ms)` : `Message ID: ${out.providerMessageId}` }));
+    } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : S.testFailedFallback}`); }
     finally { setBusy(""); }
   }
   async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google" | "test-linkedin" | "test-threads" | "test-stripe") {
     setBusy(kind);
     try {
       const out = await apiFetch<any>(`/admin/platform-config/${kind}`, { method: "POST", body: "{}" });
-      setMsg(out.ok ? `✅ যাচাই সফল: ${out.detail} (${out.latencyMs}ms)` : `❌ যাচাই ব্যর্থ: ${out.detail}`);
-    } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "যাচাই ব্যর্থ"}`); }
+      setMsg(out.ok ? t("settings.verifySuccess", { detail: out.detail, ms: fmtNumber(locale, out.latencyMs) }) : `❌ ${t("settings.verifyFailed", { detail: out.detail })}`);
+    } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : S.verifyFailedFallback}`); }
     finally { setBusy(""); }
   }
   const val = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
-  const secretPh = (set: boolean) => (set ? "সেট করা আছে — বদলাতে নতুন মান দিন, খালি রাখলে আগেরটাই থাকবে" : "এখনো সেট করা হয়নি");
+  const secretPh = (set: boolean) => (set ? S.secretSetPlaceholder : S.secretNotSetPlaceholder);
   const hubHidden = !["ai", "apps", "messaging", "payment"].includes(section);
   if (!cfg) return (
     <div className={`mt-4 ${hubHidden ? "hidden" : ""}`}>
       {cfgFailed
-        ? <ErrorState message="Platform Config লোড হয়নি — আবার চেষ্টা করুন।" onRetry={loadCfg} />
+        ? <ErrorState message={S.configLoadError} onRetry={loadCfg} />
         : <div className="askel-table" />}
     </div>
   );
-  const srcBadge = (src: string) => src === "admin" ? <span className="abadge-green">Admin Console থেকে সেট</span> : src === "env" ? <span className="abadge-amber">Server Env থেকে আসছে</span> : <span className="abadge-red">সেট করা নেই</span>;
+  const srcBadge = (src: string) => src === "admin" ? <span className="abadge-green">{S.srcAdmin}</span> : src === "env" ? <span className="abadge-amber">{S.srcEnv}</span> : <span className="abadge-red">{S.srcNone}</span>;
   return (
     <div className={`mt-4 space-y-4 ${hubHidden ? "hidden" : ""}`}>
       <div>
-        <h2 className="text-lg font-semibold">🔌 Dynamic Platform Config (Milestone 33)</h2>
-        <p className="text-sm text-slate-400">এখানে সেট করলেই পুরো প্ল্যাটফর্মে কার্যকর — সার্ভার Restart লাগে না। Secret কখনো দেখানো হয় না; শুধু "সেট আছে কিনা" দেখা যায়। Tenant রা নিজেদের WooCommerce/Courier/Account নিজেরাই সেট করে — এগুলো শুধু প্ল্যাটফর্ম-পর্যায়ের সেটিং।</p>
+        <h2 className="text-lg font-semibold">{S.configTitle}</h2>
+        <p className="text-sm text-slate-400">{S.configNote}</p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
       <div className={`grid gap-4 lg:grid-cols-2 ${section === "ai" ? "" : "hidden"}`}>
         <div id="config-llm" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-llm" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🤖 AI / LLM</span>{srcBadge(cfg.llm.source)}</div>
-          <label className="block text-sm">Provider
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.llmTitle}</span>{srcBadge(cfg.llm.source)}</div>
+          <label className="block text-sm">{S.providerLabel}
             <select id="pc-llm-provider" className="ainput mt-1" defaultValue={cfg.llm.provider ?? ""}>
-              <option value="">— নেই (Dev Template) —</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option>
+              <option value="">{S.llmNoProvider}</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option>
             </select></label>
-          <label className="block text-sm">Model (ঐচ্ছিক)<input id="pc-llm-model" className="ainput mt-1" defaultValue={cfg.llm.model ?? ""} placeholder="যেমন gpt-4o-mini" /></label>
-          <label className="block text-sm">API Key<input id="pc-llm-key" type="password" className="ainput mt-1" placeholder={secretPh(cfg.llm.secretConfigured)} /></label>
+          <label className="block text-sm">{S.modelLabel}<input id="pc-llm-model" className="ainput mt-1" defaultValue={cfg.llm.model ?? ""} placeholder={S.modelPlaceholderLlm} /></label>
+          <label className="block text-sm">{S.apiKeyLabel}<input id="pc-llm-key" type="password" className="ainput mt-1" placeholder={secretPh(cfg.llm.secretConfigured)} /></label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("llm", { provider: val("pc-llm-provider"), model: val("pc-llm-model"), apiKey: val("pc-llm-key") || undefined }, "LLM সেটিং সেভ হয়েছে — এখন থেকে এই Provider-ই চলবে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-llm")}>{busy === "test-llm" ? "Test হচ্ছে…" : "🧪 আসল Test (ছোট্ট Completion)"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("llm", { clear: true }, "LLM Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>Admin সেটিং মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("llm", { provider: val("pc-llm-provider"), model: val("pc-llm-model"), apiKey: val("pc-llm-key") || undefined }, S.llmSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-llm")}>{busy === "test-llm" ? S.testing : S.llmTestButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("llm", { clear: true }, S.llmCleared)}>{S.clearAdminSetting}</button>
           </div>
-          <p className="text-xs text-slate-400">Test সফল মানে আসল Provider উত্তর দিয়েছে — Dev Template কখনো পাস হিসেবে গণনা হয় না।</p>
+          <p className="text-xs text-slate-400">{S.llmNote}</p>
         </div>
         <div id="config-image" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-image" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🖼️ AI Image Generation</span>{srcBadge(cfg.image.source)}</div>
-          <label className="block text-sm">Provider
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.imageTitle}</span>{srcBadge(cfg.image.source)}</div>
+          <label className="block text-sm">{S.providerLabel}
             <select id="pc-image-provider" className="ainput mt-1" defaultValue={cfg.image.provider ?? ""}>
-              <option value="">— নেই —</option><option value="gemini">Gemini</option>
+              <option value="">{S.imageNoProvider}</option><option value="gemini">Gemini</option>
             </select></label>
-          <label className="block text-sm">Model (ঐচ্ছিক)<input id="pc-image-model" className="ainput mt-1" defaultValue={cfg.image.model ?? ""} placeholder="gemini-2.5-flash-image" /></label>
-          <label className="block text-sm">API Key<input id="pc-image-key" type="password" className="ainput mt-1" placeholder={secretPh(cfg.image.secretConfigured)} /></label>
+          <label className="block text-sm">{S.modelLabel}<input id="pc-image-model" className="ainput mt-1" defaultValue={cfg.image.model ?? ""} placeholder="gemini-2.5-flash-image" /></label>
+          <label className="block text-sm">{S.apiKeyLabel}<input id="pc-image-key" type="password" className="ainput mt-1" placeholder={secretPh(cfg.image.secretConfigured)} /></label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("image", { provider: val("pc-image-provider"), model: val("pc-image-model"), apiKey: val("pc-image-key") || undefined }, "Image সেটিং সেভ হয়েছে — যাচাই পাস করেছে, এখন থেকে এই Provider-ই চলবে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-image")}>{busy === "test-image" ? "Test হচ্ছে…" : "🧪 আসল Test"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("image", { clear: true }, "Image Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>Admin সেটিং মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("image", { provider: val("pc-image-provider"), model: val("pc-image-model"), apiKey: val("pc-image-key") || undefined }, S.imageSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-image")}>{busy === "test-image" ? S.testing : S.imageTestButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("image", { clear: true }, S.imageCleared)}>{S.clearAdminSetting}</button>
           </div>
-          <p className="text-xs text-slate-400">সেভ করার সময় একটি আসল ছোট্ট ছবি তৈরি করে যাচাই করা হয় — যাচাই ব্যর্থ হলে সেটিং সেভ হয় না এবং Provider-এর Error হুবহু দেখানো হয়।</p>
+          <p className="text-xs text-slate-400">{S.imageNote}</p>
         </div>
       </div>
       <div className={`grid gap-4 lg:grid-cols-2 ${section === "apps" ? "" : "hidden"}`}>
         <div id="config-meta" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-meta" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">📘 Platform Meta App</span>{srcBadge(cfg.metaApp.source)}</div>
-          <label className="block text-sm">App ID<input id="pc-meta-appid" className="ainput mt-1" defaultValue={cfg.metaApp.appId ?? ""} /></label>
-          <label className="block text-sm">App Secret<input id="pc-meta-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.metaApp.appSecretConfigured)} /></label>
-          <label className="block text-sm">Ad Library Token<input id="pc-meta-adlib" type="password" className="ainput mt-1" placeholder={secretPh(cfg.metaApp.adLibraryTokenConfigured)} /></label>
-          <label className="block text-sm">Graph Version<input id="pc-meta-version" className="ainput mt-1" defaultValue={cfg.metaApp.graphVersion ?? "v21.0"} /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.metaTitle}</span>{srcBadge(cfg.metaApp.source)}</div>
+          <label className="block text-sm">{S.appIdLabel}<input id="pc-meta-appid" className="ainput mt-1" defaultValue={cfg.metaApp.appId ?? ""} /></label>
+          <label className="block text-sm">{S.appSecret}<input id="pc-meta-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.metaApp.appSecretConfigured)} /></label>
+          <label className="block text-sm">{S.adLibraryLabel}<input id="pc-meta-adlib" type="password" className="ainput mt-1" placeholder={secretPh(cfg.metaApp.adLibraryTokenConfigured)} /></label>
+          <label className="block text-sm">{S.graphVersionLabel}<input id="pc-meta-version" className="ainput mt-1" defaultValue={cfg.metaApp.graphVersion ?? "v21.0"} /></label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("meta", { appId: val("pc-meta-appid"), appSecret: val("pc-meta-secret") || undefined, adLibraryToken: val("pc-meta-adlib") || undefined, graphVersion: val("pc-meta-version") }, "Meta App সেটিং সেভ হয়েছে — Meta যাচাই পাস করেছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-meta")}>{busy === "test-meta" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("meta", { clear: true }, "Meta App Admin সেটিং মোছা হয়েছে।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("meta", { appId: val("pc-meta-appid"), appSecret: val("pc-meta-secret") || undefined, adLibraryToken: val("pc-meta-adlib") || undefined, graphVersion: val("pc-meta-version") }, S.metaSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-meta")}>{busy === "test-meta" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("meta", { clear: true }, S.metaCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">সেভ করার সময় Meta-র কাছ থেকে App Access Token নিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, Meta-র Error হুবহু দেখানো হয়। Tenant রা নিজের অ্যাপের Secret না দিলে Webhook যাচাইয়ে এই Platform Secret-ই ব্যবহৃত হয়। প্রতিটি Tenant এর Ad Account Token আলাদাই থাকে।</p>
+          <p className="text-xs text-slate-400">{S.metaNote}</p>
         </div>
         <div id="config-tiktok" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-tiktok" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🎵 TikTok App (Social Posts — SP8)</span>{srcBadge(cfg.tiktokApp.source)}</div>
-          <label className="block text-sm">Client Key<input id="pc-tt-key" className="ainput mt-1" defaultValue={cfg.tiktokApp.clientKey ?? ""} placeholder="TikTok Developer Portal-এর App Client Key" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-tt-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.tiktokApp.secretConfigured)} /></label>
-          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-tt-redirect" className="ainput mt-1" defaultValue={cfg.tiktokApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/tiktok/callback" /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.tiktokTitle}</span>{srcBadge(cfg.tiktokApp.source)}</div>
+          <label className="block text-sm">{S.clientKey}<input id="pc-tt-key" className="ainput mt-1" defaultValue={cfg.tiktokApp.clientKey ?? ""} placeholder={S.tiktokClientKeyPh} /></label>
+          <label className="block text-sm">{S.clientSecret}<input id="pc-tt-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.tiktokApp.secretConfigured)} /></label>
+          <label className="block text-sm">{S.redirectUriOptional}<input id="pc-tt-redirect" className="ainput mt-1" defaultValue={cfg.tiktokApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/tiktok/callback" /></label>
           <label className="flex items-center gap-2 text-sm">
             <input id="pc-tt-audited" type="checkbox" defaultChecked={cfg.tiktokApp.audited} />
-            App Audit সম্পন্ন (Direct Post চালু হবে — শুধু TikTok সত্যিই অনুমোদন দিলে টিক দিন)
+            {S.tiktokAudited}
           </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("tiktok", { clientKey: val("pc-tt-key"), clientSecret: val("pc-tt-secret") || undefined, redirectUri: val("pc-tt-redirect"), audited: (document.getElementById("pc-tt-audited") as HTMLInputElement)?.checked ?? false }, "TikTok App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-tiktok")}>{busy === "test-tiktok" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("tiktok", { clear: true }, "TikTok App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("tiktok", { clientKey: val("pc-tt-key"), clientSecret: val("pc-tt-secret") || undefined, redirectUri: val("pc-tt-redirect"), audited: (document.getElementById("pc-tt-audited") as HTMLInputElement)?.checked ?? false }, S.tiktokSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-tiktok")}>{busy === "test-tiktok" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("tiktok", { clear: true }, S.tiktokCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">যাচাই = Client credential পরীক্ষা (dummy code পাঠিয়ে TikTok-এর invalid_client বনাম code-error উত্তরের পার্থক্য দেখা হয়) — পূর্ণ প্রমাণ আসল User OAuth-এই হয়। এটি পুরো প্ল্যাটফর্মের ONE app — Tenant রা নিজেদের TikTok Creator অ্যাকাউন্ট OAuth দিয়ে যুক্ত করে। TikTok Developer Portal-এ Redirect URI ঠিক এটাই নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/tiktok/callback</code> (অথবা উপরে নিজে যা দিলেন)। Audit না হলে পোস্ট Creator-এর Inbox-এ যায় — কখনোই "Published" বলা হয় না।</p>
+          <p className="text-xs text-slate-400">{S.tiktokNoteA}<code>https://api.qosprey.com/social/oauth/tiktok/callback</code>{S.tiktokNoteB}</p>
         </div>
         <div id="config-google" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-google" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">▶️ Google App — YouTube (Social Posts — SP9)</span>{srcBadge(cfg.googleApp.source)}</div>
-          <label className="block text-sm">Client ID<input id="pc-gg-id" className="ainput mt-1" defaultValue={cfg.googleApp.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-gg-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleApp.secretConfigured)} /></label>
-          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-gg-redirect" className="ainput mt-1" defaultValue={cfg.googleApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/youtube/callback" /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.googleTitle}</span>{srcBadge(cfg.googleApp.source)}</div>
+          <label className="block text-sm">{S.clientId}<input id="pc-gg-id" className="ainput mt-1" defaultValue={cfg.googleApp.clientId ?? ""} placeholder={S.googleClientIdPh} /></label>
+          <label className="block text-sm">{S.clientSecret}<input id="pc-gg-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleApp.secretConfigured)} /></label>
+          <label className="block text-sm">{S.redirectUriOptional}<input id="pc-gg-redirect" className="ainput mt-1" defaultValue={cfg.googleApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/youtube/callback" /></label>
           <label className="flex items-center gap-2 text-sm">
             <input id="pc-gg-gbp-approved" type="checkbox" defaultChecked={cfg.googleApp.gbpApiAccessApproved ?? false} />
-            <span>📍 Google Business Profile API access অনুমোদিত (OU9) — Google এই প্রজেক্টকে GBP API access দেওয়ার পরই শুধু এটি টিক দিন</span>
+            <span>{S.gbpApproved}</span>
           </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google", { clientId: val("pc-gg-id"), clientSecret: val("pc-gg-secret") || undefined, redirectUri: val("pc-gg-redirect"), gbpApiAccessApproved: (document.getElementById("pc-gg-gbp-approved") as HTMLInputElement)?.checked ?? false }, "Google App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-google")}>{busy === "test-google" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("google", { clear: true }, "Google App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google", { clientId: val("pc-gg-id"), clientSecret: val("pc-gg-secret") || undefined, redirectUri: val("pc-gg-redirect"), gbpApiAccessApproved: (document.getElementById("pc-gg-gbp-approved") as HTMLInputElement)?.checked ?? false }, S.googleSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-google")}>{busy === "test-google" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("google", { clear: true }, S.googleCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">যাচাই = Client credential পরীক্ষা (dummy token পাঠিয়ে Google-এর invalid_client বনাম invalid_grant উত্তরের পার্থক্য দেখা হয়) — Redirect URI নিবন্ধন বা API চালু থাকা এটি প্রমাণ করে না। Google Cloud Console-এ OAuth Client (Web) বানিয়ে Authorized Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/youtube/callback</code> এবং YouTube Data API v3 চালু করুন। App যাচাই (verification) না হলে YouTube আপলোড Private-এ আটকে রাখে — UI-তে সেটা হুবহু লেখা থাকে, Public বলে দাবি করা হয় না।</p>
-          <p className="text-xs text-slate-400">CC20: একই Google App দিয়েই Connect Center-এর Google প্যাক (GA4 / Merchant Center / Business Profile) চলে — সেগুলোর জন্য এই অতিরিক্ত Redirect URI-গুলোও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-ga4/callback</code>, <code>https://api.qosprey.com/social/oauth/google-merchant/callback</code>, <code>https://api.qosprey.com/social/oauth/google-business/callback</code> — আর Google Cloud-এ Analytics Admin API, Merchant API ও Business Profile API চালু করুন।</p>
-          <p className="text-xs text-slate-400">OU9: Social Posts-এর Google Business Profile (Local Post) ফ্লোর জন্য এই অতিরিক্ত Redirect URI-টিও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-business-profile/callback</code>। GBP API access আলাদা করে Google-এর কাছে আবেদন করে অনুমোদন নিতে হয় (অনুমোদন ছাড়া প্রজেক্টের quota 0 থাকে, সব GBP কল ব্যর্থ হয়) — অনুমোদন পাওয়ার আগে উপরের টিকটি দেবেন না: টিক না থাকলে GBP পোস্ট প্রকাশ এই কারণ দেখিয়ে সরাসরি ব্যর্থ হয়, কিছুই Google-এ পাঠানো হয় না।</p>
+          <p className="text-xs text-slate-400">{S.googleNote1A}<code>https://api.qosprey.com/social/oauth/youtube/callback</code>{S.googleNote1B}</p>
+          <p className="text-xs text-slate-400">{S.googleNote2A}<code>https://api.qosprey.com/social/oauth/google-ga4/callback</code>{S.googleNote2B}<code>https://api.qosprey.com/social/oauth/google-merchant/callback</code>{S.googleNote2C}<code>https://api.qosprey.com/social/oauth/google-business/callback</code>{S.googleNote2D}</p>
+          <p className="text-xs text-slate-400">{S.googleNote3A}<code>https://api.qosprey.com/social/oauth/google-business-profile/callback</code>{S.googleNote3B}</p>
         </div>
         <div id="config-google-sso" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-google-sso" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🔑 Google SSO (স্টাফ লগইন)</span><span className="flex items-center gap-2">{cfg.googleOAuth?.source ? srcBadge(cfg.googleOAuth.source) : null}{(cfg.googleOAuth?.enabled ?? false) ? <span className="abadge-green">চালু আছে</span> : <span className="abadge-red">বন্ধ আছে</span>}</span></div>
-          <label className="block text-sm">Client ID<input id="pc-gso-id" className="ainput mt-1" defaultValue={cfg.googleOAuth?.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID (Web)" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-gso-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleOAuth?.secretConfigured ?? false)} /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.googleSsoTitle}</span><span className="flex items-center gap-2">{cfg.googleOAuth?.source ? srcBadge(cfg.googleOAuth.source) : null}{(cfg.googleOAuth?.enabled ?? false) ? <span className="abadge-green">{S.enabledBadge}</span> : <span className="abadge-red">{S.disabledBadge}</span>}</span></div>
+          <label className="block text-sm">{S.clientId}<input id="pc-gso-id" className="ainput mt-1" defaultValue={cfg.googleOAuth?.clientId ?? ""} placeholder={S.googleSsoClientIdPh} /></label>
+          <label className="block text-sm">{S.clientSecret}<input id="pc-gso-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleOAuth?.secretConfigured ?? false)} /></label>
           <label className="flex items-center gap-2 text-sm">
             <input id="pc-gso-enabled" type="checkbox" defaultChecked={cfg.googleOAuth?.enabled ?? false} />
-            Google SSO চালু (Login পেজে “Google দিয়ে লগইন করুন” বোতাম দেখাবে)
+            {S.googleSsoEnabled}
           </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google-oauth", { clientId: val("pc-gso-id"), clientSecret: val("pc-gso-secret") || undefined, enabled: (document.getElementById("pc-gso-enabled") as HTMLInputElement)?.checked ?? false }, "Google SSO সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google-oauth", { clientId: val("pc-gso-id"), clientSecret: val("pc-gso-secret") || undefined, enabled: (document.getElementById("pc-gso-enabled") as HTMLInputElement)?.checked ?? false }, S.googleSsoSaved)}>{S.saveSettings}</button>
           </div>
-          <p className="text-xs text-slate-500">এটি উপরের YouTube Google App থেকে আলাদা OAuth Client — শুধু লগইনের জন্য। Google Cloud Console-এ এই Client-এর Authorized Redirect URI হিসেবে ঠিক এটি নিবন্ধন করুন: <code>https://api.qosprey.com/auth/google/callback</code> (API_PUBLIC_URL বদলালে সেই অনুযায়ী <code>&lt;API_PUBLIC_URL&gt;/auth/google/callback</code>)। Google দিয়ে লগইন শুধু আগে থেকে থাকা অ্যাকাউন্টের যাচাইকৃত ইমেইলেই হয় — নতুন অ্যাকাউন্ট তৈরি হয় না; TOTP চালু থাকলে Google-এর পরেও কোড লাগবে।</p>
+          <p className="text-xs text-slate-500">{S.googleSsoNoteA}<code>https://api.qosprey.com/auth/google/callback</code>{S.googleSsoNoteB}<code>&lt;API_PUBLIC_URL&gt;/auth/google/callback</code>{S.googleSsoNoteC}</p>
         </div>
         <div id="config-google-sso" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-google-sso" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🔑 Google SSO (স্টাফ লগইন)</span><span className="flex items-center gap-2">{cfg.googleOAuth?.source ? srcBadge(cfg.googleOAuth.source) : null}{(cfg.googleOAuth?.enabled ?? false) ? <span className="abadge-green">চালু আছে</span> : <span className="abadge-red">বন্ধ আছে</span>}</span></div>
-          <label className="block text-sm">Client ID<input id="pc-gso-id" className="ainput mt-1" defaultValue={cfg.googleOAuth?.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID (Web)" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-gso-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleOAuth?.secretConfigured ?? false)} /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.googleSsoTitle}</span><span className="flex items-center gap-2">{cfg.googleOAuth?.source ? srcBadge(cfg.googleOAuth.source) : null}{(cfg.googleOAuth?.enabled ?? false) ? <span className="abadge-green">{S.enabledBadge}</span> : <span className="abadge-red">{S.disabledBadge}</span>}</span></div>
+          <label className="block text-sm">{S.clientId}<input id="pc-gso-id" className="ainput mt-1" defaultValue={cfg.googleOAuth?.clientId ?? ""} placeholder={S.googleSsoClientIdPh} /></label>
+          <label className="block text-sm">{S.clientSecret}<input id="pc-gso-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleOAuth?.secretConfigured ?? false)} /></label>
           <label className="flex items-center gap-2 text-sm">
             <input id="pc-gso-enabled" type="checkbox" defaultChecked={cfg.googleOAuth?.enabled ?? false} />
-            Google SSO চালু (Login পেজে “Google দিয়ে লগইন করুন” বোতাম দেখাবে)
+            {S.googleSsoEnabled}
           </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google-oauth", { clientId: val("pc-gso-id"), clientSecret: val("pc-gso-secret") || undefined, enabled: (document.getElementById("pc-gso-enabled") as HTMLInputElement)?.checked ?? false }, "Google SSO সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google-oauth", { clientId: val("pc-gso-id"), clientSecret: val("pc-gso-secret") || undefined, enabled: (document.getElementById("pc-gso-enabled") as HTMLInputElement)?.checked ?? false }, S.googleSsoSaved)}>{S.saveSettings}</button>
           </div>
-          <p className="text-xs text-slate-500">এটি উপরের YouTube Google App থেকে আলাদা OAuth Client — শুধু লগইনের জন্য। Google Cloud Console-এ এই Client-এর Authorized Redirect URI হিসেবে ঠিক এটি নিবন্ধন করুন: <code>https://api.qosprey.com/auth/google/callback</code> (API_PUBLIC_URL বদলালে সেই অনুযায়ী <code>&lt;API_PUBLIC_URL&gt;/auth/google/callback</code>)। Google দিয়ে লগইন শুধু আগে থেকে থাকা অ্যাকাউন্টের যাচাইকৃত ইমেইলেই হয় — নতুন অ্যাকাউন্ট তৈরি হয় না; TOTP চালু থাকলে Google-এর পরেও কোড লাগবে।</p>
+          <p className="text-xs text-slate-500">{S.googleSsoNoteA}<code>https://api.qosprey.com/auth/google/callback</code>{S.googleSsoNoteB}<code>&lt;API_PUBLIC_URL&gt;/auth/google/callback</code>{S.googleSsoNoteC}</p>
         </div>
         <div id="config-linkedin" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-linkedin" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">💼 LinkedIn App — Page Connect + পোস্টিং (Connect Center — CC20)</span>{srcBadge(cfg.linkedinApp.source)}</div>
-          <label className="block text-sm">Client ID<input id="pc-li-id" className="ainput mt-1" defaultValue={cfg.linkedinApp.clientId ?? ""} placeholder="LinkedIn Developer App Client ID" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-li-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.linkedinApp.secretConfigured)} /></label>
-          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-li-redirect" className="ainput mt-1" defaultValue={cfg.linkedinApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/linkedin/callback" /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.linkedinTitle}</span>{srcBadge(cfg.linkedinApp.source)}</div>
+          <label className="block text-sm">{S.clientId}<input id="pc-li-id" className="ainput mt-1" defaultValue={cfg.linkedinApp.clientId ?? ""} placeholder={S.linkedinClientIdPh} /></label>
+          <label className="block text-sm">{S.clientSecret}<input id="pc-li-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.linkedinApp.secretConfigured)} /></label>
+          <label className="block text-sm">{S.redirectUriOptional}<input id="pc-li-redirect" className="ainput mt-1" defaultValue={cfg.linkedinApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/linkedin/callback" /></label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("linkedin", { clientId: val("pc-li-id"), clientSecret: val("pc-li-secret") || undefined, redirectUri: val("pc-li-redirect") }, "LinkedIn App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-linkedin")}>{busy === "test-linkedin" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("linkedin", { clear: true }, "LinkedIn App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("linkedin", { clientId: val("pc-li-id"), clientSecret: val("pc-li-secret") || undefined, redirectUri: val("pc-li-redirect") }, S.linkedinSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-linkedin")}>{busy === "test-linkedin" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("linkedin", { clear: true }, S.linkedinCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">যাচাই = Client credential পরীক্ষা (dummy refresh token পাঠিয়ে LinkedIn-এর invalid_client বনাম token-error উত্তরের পার্থক্য দেখা হয়) — এটি Redirect URI নিবন্ধন বা Community Management API অনুমোদন প্রমাণ করে না। LinkedIn Developer Portal-এ App বানিয়ে Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/linkedin/callback</code> (অথবা উপরে নিজে যা দিলেন)। সৎ সীমা: Page-এ লাইভ পোস্টিংয়ের জন্য এই App-এ LinkedIn-এর <b>Community Management API</b> অনুমোদন লাগবে — অনুমোদন ছাড়া কানেক্ট চললেও পোস্ট LinkedIn প্রত্যাখ্যান করবে, এবং সেই আসল বার্তাটাই tenant দেখবে।</p>
+          <p className="text-xs text-slate-400">{S.linkedinNoteA}<code>https://api.qosprey.com/social/oauth/linkedin/callback</code>{S.linkedinNoteB}<b>Community Management API</b>{S.linkedinNoteC}</p>
         </div>
         <div id="config-threads" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-threads" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🧵 Threads App — Threads Connect + পোস্টিং (SN7)</span>{srcBadge(cfg.threadsApp.source)}</div>
-          <label className="block text-sm">Threads App ID<input id="pc-th-id" className="ainput mt-1" defaultValue={cfg.threadsApp.clientId ?? ""} placeholder="Threads App ID (Meta App-এর Threads use case থেকে)" /></label>
-          <label className="block text-sm">Threads App Secret<input id="pc-th-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.threadsApp.secretConfigured)} /></label>
-          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-th-redirect" className="ainput mt-1" defaultValue={cfg.threadsApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/threads/callback" /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.threadsTitle}</span>{srcBadge(cfg.threadsApp.source)}</div>
+          <label className="block text-sm">{S.threadsAppId}<input id="pc-th-id" className="ainput mt-1" defaultValue={cfg.threadsApp.clientId ?? ""} placeholder={S.threadsAppIdPh} /></label>
+          <label className="block text-sm">{S.threadsAppSecret}<input id="pc-th-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.threadsApp.secretConfigured)} /></label>
+          <label className="block text-sm">{S.redirectUriOptional}<input id="pc-th-redirect" className="ainput mt-1" defaultValue={cfg.threadsApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/threads/callback" /></label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("threads", { clientId: val("pc-th-id"), clientSecret: val("pc-th-secret") || undefined, redirectUri: val("pc-th-redirect") }, "Threads App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-threads")}>{busy === "test-threads" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("threads", { clear: true }, "Threads App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("threads", { clientId: val("pc-th-id"), clientSecret: val("pc-th-secret") || undefined, redirectUri: val("pc-th-redirect") }, S.threadsSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-threads")}>{busy === "test-threads" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("threads", { clear: true }, S.threadsCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy code পাঠিয়ে Threads-এর client-প্রত্যাখ্যান বনাম code-প্রত্যাখ্যান উত্তরের পার্থক্য দেখা হয়) — এটি Redirect URI নিবন্ধন বা App Review অনুমোদন প্রমাণ করে না। Meta for Developers-এ App-এ Threads use case যোগ করে Threads সেটিংসে Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/threads/callback</code> (অথবা উপরে নিজে যা দিলেন)। মনোযোগ: Threads App ID/Secret Facebook App-এর ID/Secret থেকে <b>আলাদা</b>। সৎ সীমা: প্রোডাকশন পোস্টিংয়ের জন্য এই App-এ Meta-র <b>App Review (Advanced Access — threads_content_publish)</b> লাগবে — অনুমোদন ছাড়া শুধু app-role থাকা Threads অ্যাকাউন্ট কানেক্ট হবে, আর প্রত্যাখ্যান এলে Meta-র আসল বার্তাটাই tenant দেখবে।</p>
+          <p className="text-xs text-slate-500">{S.threadsNoteA}<code>https://api.qosprey.com/social/oauth/threads/callback</code>{S.threadsNoteB}<b>{S.threadsNoteBold1}</b>{S.threadsNoteC}<b>{S.threadsNoteBold2}</b>{S.threadsNoteD}</p>
         </div>
       </div>
       <div className={`grid gap-4 lg:grid-cols-2 ${section === "messaging" ? "" : "hidden"}`}>
         <div id="config-smtp" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-smtp" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">✉️ Email (SMTP)</span>{srcBadge(cfg.smtp.source)}</div>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.smtpTitle}</span>{srcBadge(cfg.smtp.source)}</div>
           <div className="grid grid-cols-2 gap-2">
-            <label className="block text-sm">Host<input id="pc-smtp-host" className="ainput mt-1" defaultValue={cfg.smtp.host ?? ""} /></label>
-            <label className="block text-sm">Port<input id="pc-smtp-port" type="number" className="ainput mt-1" defaultValue={cfg.smtp.port} /></label>
+            <label className="block text-sm">{S.hostLabel}<input id="pc-smtp-host" className="ainput mt-1" defaultValue={cfg.smtp.host ?? ""} /></label>
+            <label className="block text-sm">{S.portLabel}<input id="pc-smtp-port" type="number" className="ainput mt-1" defaultValue={cfg.smtp.port} /></label>
           </div>
-          <label className="block text-sm">User<input id="pc-smtp-user" className="ainput mt-1" defaultValue={cfg.smtp.user ?? ""} /></label>
-          <label className="block text-sm">Password<input id="pc-smtp-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.smtp.secretConfigured)} /></label>
-          <label className="block text-sm">From<input id="pc-smtp-from" className="ainput mt-1" defaultValue={cfg.smtp.from ?? ""} placeholder="noreply@qosprey.com" /></label>
+          <label className="block text-sm">{S.userLabel}<input id="pc-smtp-user" className="ainput mt-1" defaultValue={cfg.smtp.user ?? ""} /></label>
+          <label className="block text-sm">{S.passwordLabel}<input id="pc-smtp-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.smtp.secretConfigured)} /></label>
+          <label className="block text-sm">{S.fromLabel}<input id="pc-smtp-from" className="ainput mt-1" defaultValue={cfg.smtp.from ?? ""} placeholder="noreply@qosprey.com" /></label>
           <div className="flex flex-wrap items-center gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("smtp", { host: val("pc-smtp-host"), port: Number(val("pc-smtp-port")) || 587, user: val("pc-smtp-user"), from: val("pc-smtp-from"), pass: val("pc-smtp-pass") || undefined }, "SMTP সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <input id="pc-email-test-to" className="ainput w-52" placeholder="Test পাঠানোর Email" />
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-email", val("pc-email-test-to"))}>🧪 Test Email</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("smtp", { clear: true }, "SMTP Admin সেটিং মোছা হয়েছে।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("smtp", { host: val("pc-smtp-host"), port: Number(val("pc-smtp-port")) || 587, user: val("pc-smtp-user"), from: val("pc-smtp-from"), pass: val("pc-smtp-pass") || undefined }, S.smtpSaved)}>{S.saveSettings}</button>
+            <input id="pc-email-test-to" className="ainput w-52" placeholder={S.testEmailToPlaceholder} />
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-email", val("pc-email-test-to"))}>{S.testEmailButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("smtp", { clear: true }, S.smtpCleared)}>{S.clearShort}</button>
           </div>
         </div>
         <div id="config-sms" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-sms" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">📱 SMS (SSL Wireless)</span>{srcBadge(cfg.sms.source)}</div>
-          <label className="block text-sm">Sender ID<input id="pc-sms-sender" className="ainput mt-1" defaultValue={cfg.sms.senderId ?? ""} /></label>
-          <label className="block text-sm">API Token<input id="pc-sms-token" type="password" className="ainput mt-1" placeholder={secretPh(cfg.sms.secretConfigured)} /></label>
-          <label className="block text-sm">API URL<input id="pc-sms-url" className="ainput mt-1" defaultValue={cfg.sms.apiUrl ?? "https://smsplus.sslwireless.com"} /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.smsTitle}</span>{srcBadge(cfg.sms.source)}</div>
+          <label className="block text-sm">{S.senderId}<input id="pc-sms-sender" className="ainput mt-1" defaultValue={cfg.sms.senderId ?? ""} /></label>
+          <label className="block text-sm">{S.apiToken}<input id="pc-sms-token" type="password" className="ainput mt-1" placeholder={secretPh(cfg.sms.secretConfigured)} /></label>
+          <label className="block text-sm">{S.apiUrl}<input id="pc-sms-url" className="ainput mt-1" defaultValue={cfg.sms.apiUrl ?? "https://smsplus.sslwireless.com"} /></label>
           <div className="flex flex-wrap items-center gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("sms", { senderId: val("pc-sms-sender"), apiUrl: val("pc-sms-url"), apiToken: val("pc-sms-token") || undefined }, "SMS সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("sms", { senderId: val("pc-sms-sender"), apiUrl: val("pc-sms-url"), apiToken: val("pc-sms-token") || undefined }, S.smsSaved)}>{S.saveSettings}</button>
             <input id="pc-sms-test-to" className="ainput w-44" placeholder="01XXXXXXXXX" />
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-sms", val("pc-sms-test-to"))}>🧪 Test SMS (আসল খরচ হবে)</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sms", { clear: true }, "SMS Admin সেটিং মোছা হয়েছে।")}>মুছুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-sms", val("pc-sms-test-to"))}>{S.testSmsButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sms", { clear: true }, S.smsCleared)}>{S.clearShort}</button>
           </div>
           <p className="text-xs text-slate-400">{cfg.note}</p>
         </div>
       </div>
       <div className={`grid gap-4 lg:grid-cols-2 ${section === "payment" ? "" : "hidden"}`}>
         <div id="config-sslcommerz" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-sslcommerz" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">💳 SSLCommerz (সাবস্ক্রিপশন পেমেন্ট)</span>{srcBadge(cfg.sslcommerz.source)}</div>
-          <label className="block text-sm">Store ID<input id="pc-ssl-store" className="ainput mt-1" defaultValue={cfg.sslcommerz.storeId ?? ""} placeholder="যেমন: qosprey_live / sandbox demo store" /></label>
-          <label className="block text-sm">Store Password<input id="pc-ssl-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.sslcommerz.secretConfigured)} /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.sslTitle}</span>{srcBadge(cfg.sslcommerz.source)}</div>
+          <label className="block text-sm">{S.storeId}<input id="pc-ssl-store" className="ainput mt-1" defaultValue={cfg.sslcommerz.storeId ?? ""} placeholder={S.sslStoreIdPh} /></label>
+          <label className="block text-sm">{S.storePassword}<input id="pc-ssl-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.sslcommerz.secretConfigured)} /></label>
           <label className="flex items-center gap-2 text-sm">
             <input id="pc-ssl-sandbox" type="checkbox" defaultChecked={cfg.sslcommerz.sandbox} />
-            Sandbox Mode (পরীক্ষামূলক — আসল টাকা কাটবে না)
+            {S.sandboxMode}
           </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("sslcommerz", { storeId: val("pc-ssl-store"), storePass: val("pc-ssl-pass") || undefined, sandbox: (document.getElementById("pc-ssl-sandbox") as HTMLInputElement)?.checked ?? true }, "SSLCommerz সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-sslcommerz")}>{busy === "test-sslcommerz" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sslcommerz", { clear: true }, "SSLCommerz Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("sslcommerz", { storeId: val("pc-ssl-store"), storePass: val("pc-ssl-pass") || undefined, sandbox: (document.getElementById("pc-ssl-sandbox") as HTMLInputElement)?.checked ?? true }, S.sslSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-sslcommerz")}>{busy === "test-sslcommerz" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sslcommerz", { clear: true }, S.sslCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">যাচাই = আসল session-init পরীক্ষা (একটি মেয়াদোত্তীর্ণ-হয়ে-যাওয়া session তৈরি হয়, কোনো টাকা কাটে না) — তাই সেভের সময় স্বয়ংক্রিয় যাচাই হয় না, এই বোতামেই যাচাই করুন। প্ল্যান সক্রিয় হয় শুধুমাত্র যাচাইকৃত IPN + Gateway Validation সফল হলে — Browser Success পেজ দিয়ে নয়। IPN URL হিসেবে Gateway প্যানেলে সেট করুন: <code>https://api.qosprey.com/public/payments/sslcommerz/ipn</code></p>
+          <p className="text-xs text-slate-400">{S.sslNoteA}<code>https://api.qosprey.com/public/payments/sslcommerz/ipn</code></p>
         </div>
         <div id="config-bkash" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-bkash" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">📱 bKash (Tokenized Checkout)</span>{srcBadge(cfg.bkash.source)}</div>
-          <label className="block text-sm">App Key<input id="pc-bk-key" className="ainput mt-1" defaultValue={cfg.bkash.appKey ?? ""} placeholder="bKash Merchant App Key" /></label>
-          <label className="block text-sm">Username<input id="pc-bk-user" className="ainput mt-1" defaultValue={cfg.bkash.username ?? ""} placeholder="Merchant Username" /></label>
-          <label className="block text-sm">App Secret<input id="pc-bk-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.bkash.secretConfigured)} /></label>
-          <label className="block text-sm">Password<input id="pc-bk-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.bkash.secretConfigured)} /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.bkashTitle}</span>{srcBadge(cfg.bkash.source)}</div>
+          <label className="block text-sm">{S.appKey}<input id="pc-bk-key" className="ainput mt-1" defaultValue={cfg.bkash.appKey ?? ""} placeholder={S.bkashAppKeyPh} /></label>
+          <label className="block text-sm">{S.username}<input id="pc-bk-user" className="ainput mt-1" defaultValue={cfg.bkash.username ?? ""} placeholder={S.bkashUsernamePh} /></label>
+          <label className="block text-sm">{S.appSecret}<input id="pc-bk-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.bkash.secretConfigured)} /></label>
+          <label className="block text-sm">{S.passwordLabel}<input id="pc-bk-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.bkash.secretConfigured)} /></label>
           <label className="flex items-center gap-2 text-sm">
             <input id="pc-bk-sandbox" type="checkbox" defaultChecked={cfg.bkash.sandbox} />
-            Sandbox Mode (পরীক্ষামূলক)
+            {S.sandboxShort}
           </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("bkash", { appKey: val("pc-bk-key"), username: val("pc-bk-user"), appSecret: val("pc-bk-secret") || undefined, password: val("pc-bk-pass") || undefined, sandbox: (document.getElementById("pc-bk-sandbox") as HTMLInputElement)?.checked ?? true }, "bKash সেটিং সেভ হয়েছে — Token Grant যাচাই পাস করেছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-bkash")}>{busy === "test-bkash" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("bkash", { clear: true }, "bKash Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("bkash", { appKey: val("pc-bk-key"), username: val("pc-bk-user"), appSecret: val("pc-bk-secret") || undefined, password: val("pc-bk-pass") || undefined, sandbox: (document.getElementById("pc-bk-sandbox") as HTMLInputElement)?.checked ?? true }, S.bkashSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-bkash")}>{busy === "test-bkash" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("bkash", { clear: true }, S.bkashCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">সেভ করার সময় আসল Token Grant দিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, bKash-এর Error হুবহু দেখানো হয় (প্রাপ্ত Token সংরক্ষণ করা হয় না)। Callback URL bKash প্যানেলে/চুক্তিতে লাগবে: <code>https://api.qosprey.com/public/payments/bkash/callback</code> — প্ল্যান সক্রিয় হয় শুধুমাত্র Server-to-Server Execute এ Completed নিশ্চিত হলে; Browser Redirect একা যথেষ্ট নয়।</p>
+          <p className="text-xs text-slate-400">{S.bkashNoteA}<code>https://api.qosprey.com/public/payments/bkash/callback</code>{S.bkashNoteB}</p>
         </div>
         <div id="config-stripe" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-stripe" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🌍 Stripe (সাবস্ক্রিপশন — আন্তর্জাতিক কার্ড)</span>{srcBadge(cfg.stripe?.source ?? "none")}</div>
-          {cfg.stripe?.mode ? <p className="text-xs font-semibold text-slate-500">বর্তমান key-এর mode: {cfg.stripe.mode === "test" ? "🧪 TEST — আসল টাকা কাটবে না" : "🟢 LIVE — আসল কার্ডে আসল টাকা কাটবে"}</p> : null}
-          <label className="block text-sm">Publishable Key (ঐচ্ছিক)<input id="pc-stripe-pk" className="ainput mt-1" defaultValue={cfg.stripe?.publishableKey ?? ""} placeholder="pk_test_… / pk_live_…" /></label>
-          <label className="block text-sm">Secret Key<input id="pc-stripe-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.stripe?.secretConfigured ?? false)} /></label>
-          <label className="block text-sm">Webhook Signing Secret (whsec_)<input id="pc-stripe-whsec" type="password" className="ainput mt-1" placeholder={secretPh(cfg.stripe?.webhookSecretConfigured ?? false)} /></label>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.stripeTitle}</span>{srcBadge(cfg.stripe?.source ?? "none")}</div>
+          {cfg.stripe?.mode ? <p className="text-xs font-semibold text-slate-500">{t("settings.stripeMode", { mode: cfg.stripe.mode === "test" ? S.stripeModeTest : S.stripeModeLive })}</p> : null}
+          <label className="block text-sm">{S.publishableKey}<input id="pc-stripe-pk" className="ainput mt-1" defaultValue={cfg.stripe?.publishableKey ?? ""} placeholder="pk_test_… / pk_live_…" /></label>
+          <label className="block text-sm">{S.secretKey}<input id="pc-stripe-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.stripe?.secretConfigured ?? false)} /></label>
+          <label className="block text-sm">{S.webhookSecret}<input id="pc-stripe-whsec" type="password" className="ainput mt-1" placeholder={secretPh(cfg.stripe?.webhookSecretConfigured ?? false)} /></label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("stripe", { publishableKey: val("pc-stripe-pk"), secretKey: val("pc-stripe-secret") || undefined, webhookSecret: val("pc-stripe-whsec") || undefined }, "Stripe সেটিং সেভ হয়েছে — Balance যাচাই পাস করেছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-stripe")}>{busy === "test-stripe" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("stripe", { clear: true }, "Stripe Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("stripe", { publishableKey: val("pc-stripe-pk"), secretKey: val("pc-stripe-secret") || undefined, webhookSecret: val("pc-stripe-whsec") || undefined }, S.stripeSaved)}>{S.saveSettings}</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-stripe")}>{busy === "test-stripe" ? S.verifying : S.verifyButton}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("stripe", { clear: true }, S.stripeCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">সেভ করার সময় আসল Balance কল দিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, Stripe-এর Error হুবহু দেখানো হয়। Secret Key ও Webhook Secret দুটোই লাগবে — webhook secret ছাড়া পেমেন্ট যাচাই অসম্ভব বলে checkout-ই চালু হবে না। Webhook endpoint হিসেবে Stripe Dashboard-এ যোগ করুন: <code>https://api.qosprey.com/public/payments/stripe/webhook</code> (event: checkout.session.completed)। প্ল্যান সক্রিয় হয় শুধুমাত্র signature-যাচাইকৃত webhook-এ payment_status paid + সঠিক amount মিললেই — Browser Return একা কখনোই যথেষ্ট নয়।</p>
+          <p className="text-xs text-slate-400">{S.stripeNoteA}<code>https://api.qosprey.com/public/payments/stripe/webhook</code>{S.stripeNoteB}</p>
         </div>
         <div id="config-wallet" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-wallet" ? "ring-2 ring-indigo-400" : "")}>
-          <div className="flex items-center justify-between"><span className="font-semibold">🏦 Wallet — প্ল্যাটফর্ম পেমেন্ট ফি (CC10)</span>{srcBadge(cfg.wallet.source)}</div>
-          <label className="block text-sm">ফি (basis points — 200 = 2%)<input id="pc-wallet-fee" type="number" min={0} max={10000} step={1} className="ainput mt-1" defaultValue={cfg.wallet.feeBps} /></label>
-          <label className="block text-sm">Four-eyes payout সীমা (minor unit — যেমন 50000 = ৳500; খালি = নিয়ম বন্ধ)<input id="pc-wallet-foureyes" type="number" min={0} step={1} className="ainput mt-1" defaultValue={cfg.wallet.payoutFourEyesThresholdMinor ?? ""} placeholder="খালি রাখলে four-eyes নিয়ম বন্ধ" /></label>
-          <p className="text-xs text-slate-400">সীমা সেট থাকলে, ওই পরিমাণ বা তার বেশি payout যে Admin approve করবেন, তিনি নিজে mark-paid করতে পারবেন না — অন্য একজন Admin লাগবে (CC23)।</p>
-          <p className="text-xs text-slate-400">💡 সেভ করার পর থেকে কার্যকর: নতুন ফি শুধু সেভ করার পরের যাচাইকৃত (verified) প্ল্যাটফর্ম পেমেন্টে কাটা হবে — আগের পেমেন্ট বা জমা হওয়া ব্যালেন্সে কোনো পরিবর্তন হবে না।</p>
+          <div className="flex items-center justify-between"><span className="font-semibold">{S.walletTitle}</span>{srcBadge(cfg.wallet.source)}</div>
+          <label className="block text-sm">{S.walletFee}<input id="pc-wallet-fee" type="number" min={0} max={10000} step={1} className="ainput mt-1" defaultValue={cfg.wallet.feeBps} /></label>
+          <label className="block text-sm">{S.walletFourEyes}<input id="pc-wallet-foureyes" type="number" min={0} step={1} className="ainput mt-1" defaultValue={cfg.wallet.payoutFourEyesThresholdMinor ?? ""} placeholder={S.walletFourEyesPlaceholder} /></label>
+          <p className="text-xs text-slate-400">{S.walletFourEyesNote}</p>
+          <p className="text-xs text-slate-400">{S.walletFeeNote}</p>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("wallet", { feeBps: Number(val("pc-wallet-fee")), payoutFourEyesThresholdMinor: val("pc-wallet-foureyes").trim() === "" ? null : Number(val("pc-wallet-foureyes")) }, "Wallet সেটিং সেভ হয়েছে — ফি এখন থেকে যাচাই হওয়া প্ল্যাটফর্ম পেমেন্টে এই হারেই কাটা হবে; four-eyes সীমা কার্যকর হবে এখন থেকে।")}>সেভ করুন</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("wallet", { clear: true }, "Wallet কনফিগ মোছা হয়েছে — ফি এখন 0 (কোনো ফি কাটা হবে না)।")}>মুছুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("wallet", { feeBps: Number(val("pc-wallet-fee")), payoutFourEyesThresholdMinor: val("pc-wallet-foureyes").trim() === "" ? null : Number(val("pc-wallet-foureyes")) }, S.walletSaved)}>{S.saveSettings}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("wallet", { clear: true }, S.walletCleared)}>{S.clearShort}</button>
           </div>
-          <p className="text-xs text-slate-400">এই ফি শুধু প্ল্যাটফর্ম গেটওয়ে (উপরের SSLCommerz/bKash — প্ল্যাটফর্মের অ্যাকাউন্ট) দিয়ে আসা Tenant পেমেন্টে কাটা হয়: যাচাইকৃত পেমেন্টের মুহূর্তে তখনকার হারেই হিসাব হয়, Tenant-এর Wallet-এ নিট অংশ জমা হয় (ledger-এ ফি আলাদা row)। সেট না থাকলে ফি 0 — কখনো অনুমান করা হয় না। Tenant-এর নিজের গেটওয়ের (CC9) টাকায় কোনো ফি নেই। Payout পরিচালনা: Wallet Payouts পেজে।</p>
+          <p className="text-xs text-slate-400">{S.walletNote}</p>
         </div>
       </div>
       </div>
@@ -414,6 +409,18 @@ function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { 
 }
 
 export default function SettingsPage() {
+  const { dict, locale, t } = useAdminLocale();
+  const S = dict.settings;
+  const SETTING_SECTIONS = [
+    { id: "general", icon: "🧭", label: S.secGeneral, sub: S.secGeneralSub },
+    { id: "ai", icon: "🤖", label: S.secAi, sub: S.secAiSub },
+    { id: "apps", icon: "🔌", label: S.secApps, sub: S.secAppsSub },
+    { id: "messaging", icon: "✉️", label: S.secMessaging, sub: S.secMessagingSub },
+    { id: "payment", icon: "💳", label: S.secPayment, sub: S.secPaymentSub },
+    { id: "flags", icon: "🚩", label: S.secFlags, sub: S.secFlagsSub },
+    { id: "announce", icon: "📣", label: S.secAnnounce, sub: S.secAnnounceSub },
+  ];
+  const AUDIENCES = AUDIENCE_KEYS.map((a) => ({ value: a.value, label: a.plan ? t("settings.audPlan", { plan: a.plan }) : t(a.labelKey as string) }));
   const [s, setS] = React.useState<Settings | null>(null);
   const [anns, setAnns] = React.useState<Announcement[]>([]);
   const [title, setTitle] = React.useState("");
@@ -544,31 +551,31 @@ export default function SettingsPage() {
       }
       toast(ok);
       return true;
-    } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ হয়েছে", "error"); return false; }
+    } catch (e) { toast(e instanceof Error ? e.message : dict.common.failed, "error"); return false; }
   }
-  if (!s) return <AdminShell title="⚙️ Settings & Flags">{loadFailed ? <ErrorState message="Settings লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <div className="askel-table" />}</AdminShell>;
+  if (!s) return <AdminShell title={S.title}>{loadFailed ? <ErrorState message={S.loadError} onRetry={load} /> : <div className="askel-table" />}</AdminShell>;
   return (
-    <AdminShell title="⚙️ Settings & Flags">
-      <PageHead sub="Platform Config, Plan, Flags ও ঘোষণা — বিভাগ বেছে নিয়ে সেটিং বদলান। সেভ না করা পরিবর্তন থাকলে বিভাগের নামে হলুদ চিহ্ন দেখা যাবে।" />
+    <AdminShell title={S.title}>
+      <PageHead sub={S.sub} />
       {/* ADNX13: mobile section navigation is a sticky chip rail —
           every section one tap away. The desktop aside below is
           unchanged apart from becoming lg-only and gaining the
           same dirty dot. */}
       <div className="sticky top-0 z-20 -mx-1 mb-3 overflow-x-auto bg-slate-950/90 px-1 py-2 backdrop-blur lg:hidden">
-        <div className="flex gap-1.5" role="navigation" aria-label="Settings বিভাগ">
+        <div className="flex gap-1.5" role="navigation" aria-label={S.sectionsAria}>
           {SETTING_SECTIONS.map((sec) => (
             <button key={sec.id} type="button" onClick={() => selectSection(sec.id)} aria-current={section === sec.id ? "true" : undefined}
               className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium ${section === sec.id ? "border-indigo-500 bg-indigo-600/85 text-white" : "border-slate-700 bg-slate-800/80 text-slate-200"}`}>
               <span aria-hidden="true">{sec.icon}</span>{sec.label}
-              {sectionDirty(sec.id) ? <span className="h-2 w-2 rounded-full bg-amber-400" title="সেভ না করা পরিবর্তন আছে" /> : null}
+              {sectionDirty(sec.id) ? <span className="h-2 w-2 rounded-full bg-amber-400" title={S.unsavedDot} /> : null}
             </button>
           ))}
         </div>
       </div>
       <div className="flex flex-col gap-4 lg:flex-row">
         <aside className="hidden shrink-0 self-start lg:block lg:sticky lg:top-4 lg:w-64">
-          <nav className="acard space-y-1 !p-3" aria-label="Settings বিভাগ">
-            <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Config Hub — বিভাগ</div>
+          <nav className="acard space-y-1 !p-3" aria-label={S.sectionsAria}>
+            <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{S.hubHeading}</div>
             {SETTING_SECTIONS.map((sec) => (
               <button key={sec.id} type="button" onClick={() => selectSection(sec.id)} className={`anav w-full ${section === sec.id ? "anav-active" : ""}`}>
                 <span className="text-base leading-none">{sec.icon}</span>
@@ -576,26 +583,26 @@ export default function SettingsPage() {
                   <span className="block truncate">{sec.label}</span>
                   <span className={`block truncate text-[11px] ${section === sec.id ? "text-indigo-200" : "text-slate-400"}`}>{sec.sub}</span>
                 </span>
-                {sectionDirty(sec.id) ? <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-amber-400" title="সেভ না করা পরিবর্তন আছে" /> : null}
+                {sectionDirty(sec.id) ? <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-amber-400" title={S.unsavedDot} /> : null}
               </button>
             ))}
           </nav>
-          <p className="mt-2 px-1 text-xs leading-relaxed text-slate-400">সরাসরি লিংকও চলে — যেমন <code>/settings#payment-bkash</code> দিলে page ওই block-এই খুলবে। সব বিভাগের Save/Test ফলাফল Toast-এ আসে।</p>
+          <p className="mt-2 px-1 text-xs leading-relaxed text-slate-400">{S.asideNoteA}<code>/settings#payment-bkash</code>{S.asideNoteB}</p>
         </aside>
         <div className="min-w-0 flex-1">
       <div className={section === "general" ? "space-y-4" : "hidden"}>
         <div className="acard space-y-4">
-          <div className="font-semibold">প্ল্যাটফর্ম অবস্থা</div>
-          <label className="flex items-center justify-between text-sm">Maintenance Mode (Tenant অ্যাপে নোটিশ যাবে)
-            <input type="checkbox" checked={s.maintenanceMode} onChange={(e) => save({ maintenanceMode: e.target.checked }, "Maintenance mode আপডেট হয়েছে।")} /></label>
-          <label className="flex items-center justify-between text-sm">নতুন Signup খোলা আছে
-            <input type="checkbox" checked={s.signupOpen} onChange={(e) => save({ signupOpen: e.target.checked }, "Signup সেটিং আপডেট হয়েছে।")} /></label>
-          <label className="block text-sm">Support যোগাযোগ (Tenant অ্যাপে দেখাবে)
+          <div className="font-semibold">{S.platformStatus}</div>
+          <label className="flex items-center justify-between text-sm">{S.maintenanceMode}
+            <input type="checkbox" checked={s.maintenanceMode} onChange={(e) => save({ maintenanceMode: e.target.checked }, S.maintenanceUpdated)} /></label>
+          <label className="flex items-center justify-between text-sm">{S.signupOpen}
+            <input type="checkbox" checked={s.signupOpen} onChange={(e) => save({ signupOpen: e.target.checked }, S.signupUpdated)} /></label>
+          <label className="block text-sm">{S.supportContact}
             <input className="ainput mt-1" value={s.supportContact} onChange={(e) => setS({ ...s, supportContact: e.target.value })} placeholder="support@qosprey.com" /></label>
-          <button className="abtn-secondary" onClick={() => save({ supportContact: s.supportContact }, "Support যোগাযোগ সেভ হয়েছে।")}>সেভ করুন</button>
+          <button className="abtn-secondary" onClick={() => save({ supportContact: s.supportContact }, S.supportSaved)}>{dict.common.save}</button>
           <div className="border-t border-slate-800 pt-3">
-            <label className="block text-sm">একজন ব্যবহারকারীর সর্বোচ্চ Organization (শুধু মালিক/OWNER হিসেবে)
-              <input className="ainput mt-1 w-44" inputMode="numeric" placeholder="খালি = কোনো সীমা নেই"
+            <label className="block text-sm">{S.maxOrgsLabel}
+              <input className="ainput mt-1 w-44" inputMode="numeric" placeholder={S.maxOrgsPlaceholder}
                 value={s.maxOrgsPerUser === null || s.maxOrgsPerUser === undefined ? "" : String(s.maxOrgsPerUser)}
                 onChange={(e) => {
                   const v = e.target.value.trim();
@@ -604,38 +611,37 @@ export default function SettingsPage() {
                   if (Number.isInteger(n) && n >= 1) setS({ ...s, maxOrgsPerUser: n });
                 }} /></label>
             <p className="mt-1 text-xs leading-relaxed text-slate-400">
-              সীমা বসালে একজন ব্যবহারকারী OWNER হিসেবে সর্বোচ্চ এতগুলো Organization রাখতে পারবে — সীমায় পৌঁছালে নতুন Organization
-              তৈরি আটকে যাবে। অন্যের Organization-এ আমন্ত্রিত সদস্য হওয়া এই গোনায় আসে না। ঘর খালি রাখলে কোনো সীমা নেই।
+              {S.maxOrgsNote}
             </p>
-            <button className="abtn-secondary mt-2" onClick={() => save({ maxOrgsPerUser: s.maxOrgsPerUser ?? null }, "Organization-সংখ্যার সীমা সেভ হয়েছে।")}>সীমা সেভ করুন</button>
+            <button className="abtn-secondary mt-2" onClick={() => save({ maxOrgsPerUser: s.maxOrgsPerUser ?? null }, S.maxOrgsSaved)}>{S.maxOrgsSave}</button>
           </div>
           <div className="border-t border-slate-800 pt-3">
-            <div className="mb-2 font-semibold">Plan এর দাম (প্রতি মাস, পয়সায় নয় — নিচে টাকায় দেখানো)</div>
+            <div className="mb-2 font-semibold">{S.planPricesTitle}</div>
             {Object.entries(s.planPrices).map(([tier, minor]) => (
               <div key={tier} className="mb-2 flex items-center gap-2 text-sm">
                 <span className="w-20">{tier}</span>
                 <input className="ainput" type="number" min={0} value={Math.round(minor / 100)} onChange={(e) => setS({ ...s, planPrices: { ...s.planPrices, [tier]: Number(e.target.value) * 100 } })} />
-                <span className="text-slate-400">টাকা (= {formatMinorStr(minor)})</span>
+                <span className="text-slate-400">{t("settings.takaSuffix", { amount: formatMinorStr(minor, locale) })}</span>
               </div>
             ))}
-            <button className="abtn-secondary" onClick={() => save({ planPrices: s.planPrices }, "Plan এর দাম আপডেট হয়েছে।")}>দাম সেভ করুন</button>
-            <p className="mt-1 text-xs text-slate-400">এগুলো Operator-নির্ধারিত দাম — Billing পেজে MRR হিসাব এখান থেকেই হয়।</p>
+            <button className="abtn-secondary" onClick={() => save({ planPrices: s.planPrices }, S.pricesSaved)}>{S.pricesSave}</button>
+            <p className="mt-1 text-xs text-slate-400">{S.pricesNote}</p>
           </div>
           <div className="border-t border-slate-800 pt-3">
-            <div className="mb-2 font-semibold">Plan এর দাম (বার্ষিক চক্র, টাকায়)</div>
+            <div className="mb-2 font-semibold">{S.planYearlyTitle}</div>
             {Object.entries(s.planYearlyPrices ?? {}).map(([tier, minor]) => (
               <div key={tier} className="mb-2 flex items-center gap-2 text-sm">
                 <span className="w-20">{tier}</span>
                 <input className="ainput" type="number" min={0} value={Math.round(minor / 100)} onChange={(e) => setS({ ...s, planYearlyPrices: { ...s.planYearlyPrices, [tier]: Number(e.target.value) * 100 } })} />
-                <span className="text-slate-400">টাকা/বছর (= {formatMinorStr(minor)})</span>
+                <span className="text-slate-400">{t("settings.takaPerYear", { amount: formatMinorStr(minor, locale) })}</span>
               </div>
             ))}
-            <button className="abtn-secondary" onClick={() => save({ planYearlyPrices: s.planYearlyPrices }, "বার্ষিক দাম আপডেট হয়েছে।")}>বার্ষিক দাম সেভ করুন</button>
-            <p className="mt-1 text-xs text-slate-400">ডিফল্ট = মাসিক × ১০ (২ মাস ফ্রি)। Billing পেজের বার্ষিক Toggle এ সাশ্রয় আসল দুই দাম থেকে হিসাব হয়।</p>
+            <button className="abtn-secondary" onClick={() => save({ planYearlyPrices: s.planYearlyPrices }, S.yearlySaved)}>{S.yearlySave}</button>
+            <p className="mt-1 text-xs text-slate-400">{S.yearlyNote}</p>
           </div>
           <div className="border-t border-slate-800 pt-3">
-            <div className="mb-2 font-semibold">Plan Limits</div>
-            <p className="mb-3 text-xs text-slate-400">প্রতি প্ল্যানে AI Daily, Broadcast Cap ও Seats — 0 দিলে সেই সুবিধা বন্ধ থাকবে। Org-ভিত্তিক Override থাকলে তা এই মানের চেয়ে অগ্রাধিকার পায়।</p>
+            <div className="mb-2 font-semibold">{S.planLimitsTitle}</div>
+            <p className="mb-3 text-xs text-slate-400">{S.planLimitsNote}</p>
             {(["FREE", "STARTER", "GROWTH", "AGENCY"] as const).map((tier) => {
               const limits = s.planLimits?.[tier] ?? { aiDaily: 0, broadcastCap: 0, seats: 0 };
               const fromSetting = !!(s.planLimitsStored && tier in s.planLimitsStored);
@@ -651,18 +657,18 @@ export default function SettingsPage() {
                 <div key={tier} className="mb-3 rounded-lg bg-slate-800/50 p-3">
                   <div className="mb-2 flex items-center gap-2 text-sm">
                     <span className="w-20 font-medium">{tier}</span>
-                    {fromSetting ? <span className="abadge-green">Setting</span> : <span className="abadge-amber">Default</span>}
+                    {fromSetting ? <span className="abadge-green">{S.settingBadge}</span> : <span className="abadge-amber">{S.defaultBadge}</span>}
                     {fromSetting ? (
                       <button className="abtn-secondary ml-auto !px-2 !py-0.5 text-xs" onClick={async () => {
-                        if (!(await askConfirm({ title: `${tier} প্ল্যানের সেভ করা Limits মুছে Code Default-এ ফেরাতে চান?`, description: "অন্য প্ল্যানের Limits বদলাবে না।", confirmLabel: "Default-এ ফেরান", danger: true }))) return;
-                        const reason = await askInput({ title: "Default-এ ফেরানোর কারণ (Audit-এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                        if (!(await askConfirm({ title: t("settings.clearLimitsTitle", { tier }), description: S.clearLimitsDesc, confirmLabel: S.clearLimitsConfirm, danger: true }))) return;
+                        const reason = await askInput({ title: S.clearLimitsReasonTitle, inputLabel: dict.common.reason, inputRequired: true, confirmLabel: dict.common.proceed });
                         if (!reason) return;
                         try {
                           const out = await apiFetch<{ cleared: boolean; note?: string }>(`/admin/settings/plan-limits/${tier}/clear`, { method: "POST", body: JSON.stringify({ reason }) });
-                          notify(out.cleared ? `✅ ${tier} — সেভ করা Limits মোছা হয়েছে, এখন থেকে Code Default কার্যকর।` : `⚠ ${tier}: ${out.note ?? "কোনো বদল হয়নি"}`);
+                          notify(out.cleared ? t("settings.limitsCleared", { tier }) : `⚠ ${t("settings.limitsNoChange", { tier, note: out.note ?? S.noChangeFallback })}`);
                           await load();
-                        } catch (e) { notify(`❌ ${e instanceof Error ? e.message : "Default-এ ফেরানো যায়নি"}`); }
-                      }}>Code Default-এ ফেরান</button>
+                        } catch (e) { notify(`❌ ${e instanceof Error ? e.message : S.clearLimitsFailed}`); }
+                      }}>{S.clearLimitsButton}</button>
                     ) : null}
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-sm">
@@ -677,118 +683,118 @@ export default function SettingsPage() {
                     </label>
                   </div>
                   <div className="mt-2 grid grid-cols-4 gap-2 text-sm">
-                    <label className="block">পণ্য সীমা (খালি = সীমা নেই)
+                    <label className="block">{S.productLimit}
                       <input className="ainput mt-1" type="number" min={0} step={1} value={limits.productLimit ?? ""} placeholder="∞" onChange={(e) => setResourceField("productLimit", e.target.value)} />
                     </label>
-                    <label className="block">অর্ডার/মাস (খালি = সীমা নেই)
+                    <label className="block">{S.orderLimit}
                       <input className="ainput mt-1" type="number" min={0} step={1} value={limits.orderLimit ?? ""} placeholder="∞" onChange={(e) => setResourceField("orderLimit", e.target.value)} />
                     </label>
-                    <label className="block">স্টোরেজ MB (খালি = সীমা নেই)
+                    <label className="block">{S.storageLimit}
                       <input className="ainput mt-1" type="number" min={0} step={1} value={limits.storageLimitMb ?? ""} placeholder="∞" onChange={(e) => setResourceField("storageLimitMb", e.target.value)} />
                     </label>
-                    <label className="block">API/দিন (খালি = সীমা নেই)
+                    <label className="block">{S.apiLimit}
                       <input className="ainput mt-1" type="number" min={0} step={1} value={limits.apiDailyLimit ?? ""} placeholder="∞" onChange={(e) => setResourceField("apiDailyLimit", e.target.value)} />
                     </label>
                   </div>
                 </div>
               );
             })}
-            <button className="abtn-secondary" onClick={() => save({ planLimits: s.planLimits }, "Plan Limits আপডেট হয়েছে।")}>Limits সেভ করুন</button>
-            <p className="mt-1 text-xs text-slate-400">সেভ করলে সব Tier স্পষ্টভাবে Setting হিসেবে সংরক্ষিত হবে — এরপর Badge-এ Setting দেখাবে। কোনো একটা Tier আবার Code Default-এ ফেরাতে চাইলে ওই Tier-এর "Code Default-এ ফেরান" বোতাম — শুধু ওই Tier-এর entry-ই মুছবে, বাকিগুলো যেমন ছিল তেমনই থাকবে (কারণ + Audit বাধ্যতামূলক)।</p>
+            <button className="abtn-secondary" onClick={() => save({ planLimits: s.planLimits }, S.limitsSaved)}>{S.limitsSave}</button>
+            <p className="mt-1 text-xs text-slate-400">{S.limitsSaveNote}</p>
           </div>
         </div>
           <div className="acard space-y-3">
-            <div className="font-semibold">🚨 Kill Switch (Incident Mode)</div>
-            <label className="flex items-center justify-between text-sm">সব Broadcast সাময়িক বন্ধ
-              <input type="checkbox" checked={s.killSwitches.broadcastsPaused} onChange={(e) => save({ killSwitches: { ...s.killSwitches, broadcastsPaused: e.target.checked } }, "Broadcast kill switch আপডেট হয়েছে।")} /></label>
-            <label className="block text-sm">যেসব Org এর AI বন্ধ (ID, কমা দিয়ে)
+            <div className="font-semibold">{S.killSwitchTitle}</div>
+            <label className="flex items-center justify-between text-sm">{S.broadcastsPaused}
+              <input type="checkbox" checked={s.killSwitches.broadcastsPaused} onChange={(e) => save({ killSwitches: { ...s.killSwitches, broadcastsPaused: e.target.checked } }, S.broadcastsUpdated)} /></label>
+            <label className="block text-sm">{S.aiDisabledOrgs}
               <input className="ainput mt-1" value={aiOrgIds} onChange={(e) => setAiOrgIds(e.target.value)} placeholder="org-id-1, org-id-2" /></label>
-            <button className="abtn-secondary" onClick={async () => { if (await save({ killSwitches: { broadcastsPaused: s.killSwitches.broadcastsPaused, aiDisabledOrgIds: aiOrgIds.split(",").map((x) => x.trim()).filter(Boolean) } }, "AI kill switch সেভ হয়েছে।")) { if (generalSnap.current) generalSnap.current.ai = aiOrgIds; } }}>সেভ করুন</button>
+            <button className="abtn-secondary" onClick={async () => { if (await save({ killSwitches: { broadcastsPaused: s.killSwitches.broadcastsPaused, aiDisabledOrgIds: aiOrgIds.split(",").map((x) => x.trim()).filter(Boolean) } }, S.aiKillSaved)) { if (generalSnap.current) generalSnap.current.ai = aiOrgIds; } }}>{dict.common.save}</button>
           </div>
           <div className="acard space-y-3">
-            <div className="font-semibold">⚡ Campaign Blueprints (CA26) — Platform Definitions</div>
-            <p className="text-xs text-slate-400">Blueprint এখন Database-এর Data — এখানকার বদল সব Org-এর Builder-এ সাথে সাথে দেখা যাবে। Org-রা শুধু Clone করে নিজের কপি বানাতে পারে; Platform মূল তারা বদলাতে পারে না। Key হলো পরিচয় — বদলানো যায় না (নতুন Key মানে নতুন Blueprint)।</p>
-            {blueprints.length === 0 ? <p className="text-sm text-slate-400">কোনো Platform Blueprint পাওয়া যায়নি।</p> : blueprints.map((bp) => (
+            <div className="font-semibold">{S.blueprintsTitle}</div>
+            <p className="text-xs text-slate-400">{S.blueprintsNote}</p>
+            {blueprints.length === 0 ? <p className="text-sm text-slate-400">{S.noBlueprints}</p> : blueprints.map((bp) => (
               <div key={bp.id} className="flex flex-wrap items-center gap-2 rounded border border-slate-800 p-2 text-sm">
                 <b>{bp.name}</b>
-                <span className="text-slate-400">{bp.key} · {bp.objective} · v{bp.version}{bp.advantagePlus ? " · Advantage+" : ""}</span>
+                <span className="text-slate-400">{bp.key} · {bp.objective} · v{fmtNumber(locale, bp.version)}{bp.advantagePlus ? " · Advantage+" : ""}</span>
                 <span className="ml-auto flex gap-1">
                   <button className="abtn-secondary" onClick={async () => {
-                    const name = await askInput({ title: "Blueprint-এর নাম", inputLabel: "নাম", initialValue: bp.name, inputRequired: true, confirmLabel: "সেভ করুন" });
+                    const name = await askInput({ title: S.blueprintNameTitle, inputLabel: S.nameLabel, initialValue: bp.name, inputRequired: true, confirmLabel: dict.common.save });
                     if (!name) return;
                     await apiFetch(`/admin/blueprints/${bp.id}`, { method: "PATCH", body: JSON.stringify({ name }) }).catch(() => null);
-                    toast("নাম সেভ হয়েছে।"); await loadBlueprints();
-                  }}>নাম</button>
+                    toast(S.nameSaved); await loadBlueprints();
+                  }}>{S.nameButton}</button>
                   <button className="abtn-secondary" onClick={async () => {
-                    const description = await askInput({ title: "Blueprint-এর বর্ণনা", inputLabel: "বর্ণনা", initialValue: bp.description ?? "", confirmLabel: "সেভ করুন" });
+                    const description = await askInput({ title: S.blueprintDescTitle, inputLabel: S.descLabel, initialValue: bp.description ?? "", confirmLabel: dict.common.save });
                     if (description === null) return;
                     await apiFetch(`/admin/blueprints/${bp.id}`, { method: "PATCH", body: JSON.stringify({ description }) }).catch(() => null);
-                    toast("বর্ণনা সেভ হয়েছে।"); await loadBlueprints();
-                  }}>বর্ণনা</button>
+                    toast(S.descSaved); await loadBlueprints();
+                  }}>{S.descButton}</button>
                   <button className="abtn-secondary" onClick={async () => {
-                    if (!(await askConfirm({ title: `"${bp.name}" মুছবেন?`, description: "Org-দের নিজের Clone গুলো থেকে যাবে, কিন্তু নতুন করে আর কেউ এই Blueprint পাবে না।", confirmLabel: "মুছুন", danger: true }))) return;
+                    if (!(await askConfirm({ title: t("settings.deleteBlueprintTitle", { name: bp.name }), description: S.deleteBlueprintDesc, confirmLabel: dict.common.delete, danger: true }))) return;
                     await apiFetch(`/admin/blueprints/${bp.id}`, { method: "DELETE" }).catch(() => null);
-                    toast("Blueprint মোছা হয়েছে।"); await loadBlueprints();
-                  }}>মুছুন</button>
+                    toast(S.blueprintDeleted); await loadBlueprints();
+                  }}>{dict.common.delete}</button>
                 </span>
               </div>
             ))}
             <button className="abtn-secondary" onClick={async () => {
-              const key = await askInput({ title: "নতুন Blueprint", inputLabel: "Key (ছোট হাতের, যেমন winter_sale)", inputRequired: true, confirmLabel: "পরের ধাপ" });
+              const key = await askInput({ title: S.newBlueprintTitle, inputLabel: S.blueprintKeyLabel, inputRequired: true, confirmLabel: S.nextStep });
               if (!key) return;
-              const name = await askInput({ title: "নতুন Blueprint", inputLabel: "নাম", inputRequired: true, confirmLabel: "পরের ধাপ" });
+              const name = await askInput({ title: S.newBlueprintTitle, inputLabel: S.nameLabel, inputRequired: true, confirmLabel: S.nextStep });
               if (!name) return;
-              const adSetRaw = await askInput({ title: "Ad Set JSON", inputLabel: "Ad Set সংজ্ঞা (JSON)", initialValue: JSON.stringify({ name: "BD Broad", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", countries: ["BD"], ageMin: 18, ageMax: 65 }), confirmLabel: "পরের ধাপ" });
+              const adSetRaw = await askInput({ title: S.adSetTitle, inputLabel: S.adSetLabel, initialValue: JSON.stringify({ name: "BD Broad", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", countries: ["BD"], ageMin: 18, ageMax: 65 }), confirmLabel: S.nextStep });
               if (!adSetRaw) return;
-              const adRaw = await askInput({ title: "Ad JSON", inputLabel: "Ad সংজ্ঞা (JSON)", initialValue: JSON.stringify({ name: "Ad", primaryText: "", headline: "", linkUrl: "https://example.com", callToAction: "SHOP_NOW" }), confirmLabel: "তৈরি করুন" });
+              const adRaw = await askInput({ title: S.adTitle, inputLabel: S.adLabel, initialValue: JSON.stringify({ name: "Ad", primaryText: "", headline: "", linkUrl: "https://example.com", callToAction: "SHOP_NOW" }), confirmLabel: S.createAction });
               if (!adRaw) return;
               let adSet: any; let ad: any;
-              try { adSet = JSON.parse(adSetRaw); ad = JSON.parse(adRaw); } catch { toast("JSON সঠিক নয় — Blueprint তৈরি হয়নি।"); return; }
+              try { adSet = JSON.parse(adSetRaw); ad = JSON.parse(adRaw); } catch { toast(S.jsonInvalid); return; }
               const out = await apiFetch<any>("/admin/blueprints", { method: "POST", body: JSON.stringify({ key, name, objective: "OUTCOME_SALES", adSet, ad }) }).catch(() => null);
-              if (out) { toast("Blueprint তৈরি হয়েছে।"); await loadBlueprints(); } else toast("তৈরি ব্যর্থ — Key টি আগেই আছে কিনা দেখুন।");
-            }}>➕ নতুন Blueprint</button>
+              if (out) { toast(S.blueprintCreated); await loadBlueprints(); } else toast(S.blueprintCreateFailed);
+            }}>{S.newBlueprint}</button>
           </div>
       </div>
       <div className={section === "announce" ? "" : "hidden"}>
           <div className="acard space-y-3">
-            <div className="font-semibold">📣 Announcement (Targeted — M41)</div>
+            <div className="font-semibold">{S.announceTitle}</div>
             <div>
-              <input className="ainput" placeholder="শিরোনাম" value={title} onChange={(e) => { setTitle(e.target.value); if (annErr.title) setAnnErr((x) => ({ ...x, title: undefined })); }} />
+              <input className="ainput" placeholder={S.announceTitlePlaceholder} value={title} onChange={(e) => { setTitle(e.target.value); if (annErr.title) setAnnErr((x) => ({ ...x, title: undefined })); }} />
               {annErr.title ? <p className="mt-1 text-xs text-red-300">{annErr.title}</p> : null}
             </div>
             <div>
-              <textarea className="ainput" rows={2} placeholder="বার্তা" value={body} onChange={(e) => { setBody(e.target.value); if (annErr.body) setAnnErr((x) => ({ ...x, body: undefined })); }} />
+              <textarea className="ainput" rows={2} placeholder={S.announceBodyPlaceholder} value={body} onChange={(e) => { setBody(e.target.value); if (annErr.body) setAnnErr((x) => ({ ...x, body: undefined })); }} />
               {annErr.body ? <p className="mt-1 text-xs text-red-300">{annErr.body}</p> : null}
             </div>
-            <label className="block text-sm">কারা দেখবে
+            <label className="block text-sm">{S.audienceLabel}
               <select className="ainput mt-1" value={audience} onChange={(e) => setAudience(e.target.value)}>
                 {AUDIENCES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
               </select></label>
             <div className="grid grid-cols-2 gap-2">
-              <label className="block text-sm">শুরুর সময় (ঐচ্ছিক)
+              <label className="block text-sm">{S.startsAt}
                 <input type="datetime-local" className="ainput mt-1" value={annStartsAt} onChange={(e) => setAnnStartsAt(e.target.value)} /></label>
-              <label className="block text-sm">শেষের সময় (ঐচ্ছিক)
+              <label className="block text-sm">{S.endsAt}
                 <input type="datetime-local" className="ainput mt-1" value={annEndsAt} onChange={(e) => setAnnEndsAt(e.target.value)} /></label>
             </div>
-            <p className="text-xs text-slate-400">Targeted Announcement মিলে যাওয়া Org দের কাছেই যাবে এবং সাধারণ ঘোষণার চেয়ে অগ্রাধিকার পাবে।</p>
+            <p className="text-xs text-slate-400">{S.announceNote}</p>
             <button className="abtn" onClick={async () => {
               const errs: { title?: string; body?: string } = {};
-              if (!title.trim()) errs.title = "শিরোনাম লিখুন।";
-              if (!body.trim()) errs.body = "বার্তা লিখুন।";
+              if (!title.trim()) errs.title = S.announceTitleRequired;
+              if (!body.trim()) errs.body = S.announceBodyRequired;
               setAnnErr(errs);
               if (errs.title || errs.body) return;
               try {
                 await apiFetch("/admin/announcements", { method: "POST", body: JSON.stringify({ title, body, audience, ...(annStartsAt ? { startsAt: new Date(annStartsAt).toISOString() } : {}), ...(annEndsAt ? { endsAt: new Date(annEndsAt).toISOString() } : {}) }) });
-                setTitle(""); setBody(""); setAnnStartsAt(""); setAnnEndsAt(""); toast("Announcement প্রকাশ হয়েছে।"); await load();
-              } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ হয়েছে", "error"); }
-            }}>প্রকাশ করুন</button>
+                setTitle(""); setBody(""); setAnnStartsAt(""); setAnnEndsAt(""); toast(S.announcePublished); await load();
+              } catch (e) { toast(e instanceof Error ? e.message : dict.common.failed, "error"); }
+            }}>{S.publish}</button>
             <ul className="space-y-2">
               {anns.map((a) => (
                 <li key={a.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
-                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-400">{fmtDateTime(a.createdAt)} · {a.active ? "সক্রিয়" : "নিষ্ক্রিয়"} · 👥 {AUDIENCES.find((x) => x.value === (a.audience ?? "all"))?.label ?? a.audience}{(a.startsAt || a.endsAt) ? <span className="block">🗓 {a.startsAt ? fmtDateTime(a.startsAt) : "—"} → {a.endsAt ? fmtDateTime(a.endsAt) : "—"}</span> : null}</span></span>
+                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-400">{fmtDateTime(locale, a.createdAt)} · {a.active ? S.activeState : S.inactiveState} · 👥 {AUDIENCES.find((x) => x.value === (a.audience ?? "all"))?.label ?? a.audience}{(a.startsAt || a.endsAt) ? <span className="block">🗓 {a.startsAt ? fmtDateTime(locale, a.startsAt) : "—"} → {a.endsAt ? fmtDateTime(locale, a.endsAt) : "—"}</span> : null}</span></span>
                   <span className="flex shrink-0 gap-1">
-                    <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) }); await load(); }}>{a.active ? "বন্ধ" : "চালু"}</button>
-                    <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}`, { method: "DELETE" }); await load(); }}>মুছুন</button>
+                    <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) }); await load(); }}>{a.active ? S.turnOff : S.turnOn}</button>
+                    <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}`, { method: "DELETE" }); await load(); }}>{dict.common.delete}</button>
                   </span>
                 </li>
               ))}
@@ -808,13 +814,13 @@ export default function SettingsPage() {
   );
 }
 
-const FLAG_LABELS: { key: string; label: string }[] = [
-  { key: "dayparting", label: "Dayparting (বিজ্ঞাপন)" },
-  { key: "portfolio", label: "Portfolio" },
-  { key: "creative_library", label: "Creative Library" },
-  { key: "order_bot", label: "Order Bot (Inbox)" },
-  { key: "offline_conversions", label: "Offline Conversions" },
-  { key: "agency_portfolio", label: "Agency Portfolio" },
+const FLAG_LABELS: { key: string; labelKey: string }[] = [
+  { key: "dayparting", labelKey: "settings.flagDayparting" },
+  { key: "portfolio", labelKey: "settings.flagPortfolio" },
+  { key: "creative_library", labelKey: "settings.flagCreativeLibrary" },
+  { key: "order_bot", labelKey: "settings.flagOrderBot" },
+  { key: "offline_conversions", labelKey: "settings.flagOfflineConversions" },
+  { key: "agency_portfolio", labelKey: "settings.flagAgencyPortfolio" },
 ];
 const FLAG_TIERS = ["FREE", "STARTER", "GROWTH", "AGENCY"] as const;
 type TriState = "" | "true" | "false";
@@ -824,6 +830,8 @@ type TriState = "" | "true" | "false";
  * ON/OFF store an explicit sparse entry. The dedicated endpoint
  * replaces the whole sparse map on save. */
 function PlanFlagDefaultsCard({ setMsg, reportDirty }: { setMsg: (m: string) => void; reportDirty: (key: string, dirty: boolean) => void }) {
+  const { dict, t } = useAdminLocale();
+  const S = dict.settings;
   const [cells, setCells] = React.useState<Record<string, Record<string, TriState>>>({});
   const [loaded, setLoaded] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -870,28 +878,26 @@ function PlanFlagDefaultsCard({ setMsg, reportDirty }: { setMsg: (m: string) => 
     try {
       const out = await apiFetch<{ planFlagDefaults?: Record<string, Record<string, boolean>> }>("/admin/settings/plan-flag-defaults", { method: "PATCH", body: JSON.stringify(sparse) });
       apply(out?.planFlagDefaults ?? sparse);
-      setMsg("Plan Feature Defaults সেভ হয়েছে।");
-    } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "ব্যর্থ হয়েছে"}`); }
+      setMsg(S.flagsSaved);
+    } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : dict.common.failed}`); }
     finally { setBusy(false); }
   }
 
-  if (failed) return <div className="acard mt-4"><ErrorState message="Plan Feature Defaults লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /></div>;
+  if (failed) return <div className="acard mt-4"><ErrorState message={S.flagsLoadError} onRetry={load} /></div>;
   if (!loaded) return <div className="acard mt-4"><div className="askel-table" /></div>;
   return (
     <div className="acard mt-4 space-y-3">
-      <div className="font-semibold">🚩 Plan Feature Defaults (AA7)</div>
+      <div className="font-semibold">{S.flagsTitle}</div>
       <p className="text-xs text-slate-400">
-        প্রতিটি Feature কোন Plan-এ Default হিসেবে চালু/বন্ধ থাকবে। <b>Default (ON)</b> মানে আলাদা করে কিছু সেট করা নেই — Feature চালুই থাকে।
-        Org-এর <b>Plan বদলালে তার Default-ও বদলে যায়</b>, কারণ Default সবসময় Org-এর বর্তমান Plan দেখে ঠিক হয়।
-        Org পেজ থেকে কোনো Org-এর জন্য আলাদা করে সেট করা Flag সবসময় এই Default-এর চেয়ে অগ্রাধিকার পায়।
+        {S.flagsNoteA}<b>{S.flagsNoteBold1}</b>{S.flagsNoteB}<b>{S.flagsNoteBold2}</b>{S.flagsNoteC}
       </p>
       <div className="overflow-x-auto">
         <table className="atable">
-          <thead className="bg-slate-900"><tr><th className="ath">Feature</th>{FLAG_TIERS.map((t) => <th key={t} className="ath">{t}</th>)}</tr></thead>
+          <thead className="bg-slate-900"><tr><th className="ath">{S.colFeature}</th>{FLAG_TIERS.map((t) => <th key={t} className="ath">{t}</th>)}</tr></thead>
           <tbody>
-            {FLAG_LABELS.map(({ key, label }) => (
+            {FLAG_LABELS.map(({ key, labelKey }) => (
               <tr key={key} className="border-t border-slate-800">
-                <td className="atd font-medium">{label}<span className="block text-xs text-slate-400">{key}</span></td>
+                <td className="atd font-medium">{t(labelKey)}<span className="block text-xs text-slate-400">{key}</span></td>
                 {FLAG_TIERS.map((tier) => (
                   <td key={tier} className="atd">
                     <select
@@ -910,7 +916,7 @@ function PlanFlagDefaultsCard({ setMsg, reportDirty }: { setMsg: (m: string) => 
           </tbody>
         </table>
       </div>
-      <button className="abtn-secondary" disabled={busy} onClick={save}>{busy ? "সেভ হচ্ছে…" : "Defaults সেভ করুন"}</button>
+      <button className="abtn-secondary" disabled={busy} onClick={save}>{busy ? S.flagsSaving : S.flagsSave}</button>
     </div>
   );
 }
@@ -918,6 +924,8 @@ function PlanFlagDefaultsCard({ setMsg, reportDirty }: { setMsg: (m: string) => 
 interface MaintenanceWindow { startsAt: string; endsAt: string; message?: string; hardLockout?: boolean }
 
 function MaintenanceAndSafety({ setMsg, reportDirty }: { setMsg: (m: string) => void; reportDirty: (key: string, dirty: boolean) => void }) {
+  const { dict, locale, t } = useAdminLocale();
+  const S = dict.settings;
   const [win, setWin] = React.useState<MaintenanceWindow | null>(null);
   const [start, setStart] = React.useState("");
   const [end, setEnd] = React.useState("");
@@ -965,7 +973,7 @@ function MaintenanceAndSafety({ setMsg, reportDirty }: { setMsg: (m: string) => 
 
   const patch = async (patchBody: Record<string, unknown>, ok: string) => {
     try { await apiFetch("/admin/settings", { method: "PATCH", body: JSON.stringify(patchBody) }); setMsg(ok); await load(); }
-    catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "ব্যর্থ হয়েছে"}`); }
+    catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : dict.common.failed}`); }
   };
 
   const active = win && new Date(win.startsAt).getTime() <= Date.now() && Date.now() <= new Date(win.endsAt).getTime();
@@ -973,46 +981,46 @@ function MaintenanceAndSafety({ setMsg, reportDirty }: { setMsg: (m: string) => 
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-2">
       <div className="acard space-y-3">
-        <div className="font-semibold">🛠 নির্ধারিত Maintenance Window {active ? <span className="abadge" style={{ background: "#fee2e2", color: "#991b1b" }}>এখন সক্রিয়</span> : null}</div>
-        <p className="text-xs text-slate-400">Window চলাকালে Tenant রা Banner দেখবে। Hard Lockout চালু থাকলে ওই সময়ে Tenant দের কোনো পরিবর্তন (POST/PUT/DELETE) সার্ভার থেকেই 503 দিয়ে ফিরিয়ে দেওয়া হবে — পড়া যাবে।</p>
-        <label className="block text-sm">শুরু <input type="datetime-local" className="ainput mt-1" value={start} onChange={(e) => setStart(e.target.value)} /></label>
-        <label className="block text-sm">শেষ <input type="datetime-local" className="ainput mt-1" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
-        <label className="block text-sm">বার্তা <input className="ainput mt-1" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="ডাটাবেস আপগ্রেড চলবে" /></label>
-        <label className="flex items-center justify-between text-sm">Hard Lockout (পরিবর্তন বন্ধ)
+        <div className="font-semibold">{S.maintenanceWindowTitle} {active ? <span className="abadge" style={{ background: "#fee2e2", color: "#991b1b" }}>{S.maintenanceActive}</span> : null}</div>
+        <p className="text-xs text-slate-400">{S.maintenanceNote}</p>
+        <label className="block text-sm">{S.startLabel} <input type="datetime-local" className="ainput mt-1" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+        <label className="block text-sm">{S.endLabel} <input type="datetime-local" className="ainput mt-1" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
+        <label className="block text-sm">{S.messageLabel} <input className="ainput mt-1" value={message} onChange={(e) => setMessage(e.target.value)} placeholder={S.messagePlaceholder} /></label>
+        <label className="flex items-center justify-between text-sm">{S.hardLockout}
           <input type="checkbox" checked={hard} onChange={(e) => setHard(e.target.checked)} /></label>
         <div className="flex gap-2">
           <button className="abtn" onClick={() => {
-            if (!start || !end) { setMsg("❌ শুরু ও শেষ সময় দিন।"); return; }
-            patch({ maintenanceWindow: { startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString(), message, hardLockout: hard } }, "Maintenance window সেভ হয়েছে।");
-          }}>Window সেভ করুন</button>
-          {win ? <button className="abtn-secondary" onClick={() => patch({ maintenanceWindow: null }, "Maintenance window মুছে ফেলা হয়েছে।")}>Window মুছুন</button> : null}
+            if (!start || !end) { setMsg(`❌ ${S.windowTimeRequired}`); return; }
+            patch({ maintenanceWindow: { startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString(), message, hardLockout: hard } }, S.windowSaved);
+          }}>{S.windowSave}</button>
+          {win ? <button className="abtn-secondary" onClick={() => patch({ maintenanceWindow: null }, S.windowDeleted)}>{S.windowDelete}</button> : null}
         </div>
         <div className="border-t border-slate-800 pt-3">
-          <div className="font-semibold">🗄 Audit Log Retention</div>
-          <p className="text-xs text-slate-400">Audit Retention Job এই মেয়াদের পুরনো Tenant Audit Row মুছবে — <b>Admin (admin.*) অ্যাকশন কখনোই মুছবে না</b>।</p>
+          <div className="font-semibold">{S.retentionTitle}</div>
+          <p className="text-xs text-slate-400">{S.retentionNoteA}<b>{S.retentionNoteBold}</b>{S.retentionNoteB}</p>
           <div className="mt-2 flex items-center gap-2 text-sm">
             <input type="number" min={30} max={3650} className="ainput" style={{ width: 110 }} value={retention} onChange={(e) => setRetention(Number(e.target.value))} />
-            <span>দিন</span>
-            <button className="abtn-secondary" onClick={() => patch({ auditRetentionDays: retention }, "Retention সেভ হয়েছে।")}>সেভ করুন</button>
+            <span>{S.daysSuffix}</span>
+            <button className="abtn-secondary" onClick={() => patch({ auditRetentionDays: retention }, S.retentionSaved)}>{dict.common.save}</button>
           </div>
         </div>
       </div>
       <div className="acard space-y-3">
-        <div className="font-semibold">🌐 Admin IP Allowlist (CIDR সমর্থিত)</div>
-        <p className="text-xs text-slate-400">প্রতি লাইনে একটি IP বা CIDR (যেমন 203.0.113.0/24)। খালি রাখলে কোনো নেটওয়ার্ক বাধা নেই। <b>সতর্কতা:</b> ভুল এন্ট্রি দিলে নিজেই Admin থেকে লকআউট হতে পারেন — সেক্ষেত্রে সার্ভারের env (ADMIN_IP_ALLOWLIST) বা CLI দিয়ে ঠিক করতে হবে। গার্ড ৩০ সেকেন্ড পর্যন্ত ক্যাশ করে।</p>
+        <div className="font-semibold">{S.ipAllowlistTitle}</div>
+        <p className="text-xs text-slate-400">{S.ipAllowlistNoteA}<b>{S.ipAllowlistWarn}</b>{S.ipAllowlistNoteB}</p>
         <textarea className="ainput" rows={5} value={entries} onChange={(e) => setEntries(e.target.value)} placeholder={"203.0.113.10\n198.51.100.0/24"} />
         <button className="abtn" onClick={async () => {
           // ADNX13 (with ADNX13's Security mandate): an allowlist
           // change is a dangerous action — it confirms through
           // the ONE modal pattern before the same PATCH as before.
-          if (!(await askConfirm({ title: "Admin IP Allowlist সেভ করবেন?", description: "ভুল এন্ট্রি দিলে নিজেই Admin থেকে লকআউট হতে পারেন — তালিকাটি আবার দেখে নিশ্চিত করুন।", confirmLabel: "Allowlist সেভ করুন", danger: true }))) return;
+          if (!(await askConfirm({ title: S.ipAllowlistConfirmTitle, description: S.ipAllowlistConfirmDesc, confirmLabel: S.ipAllowlistConfirm, danger: true }))) return;
           try {
             const list = entries.split("\n").map((x) => x.trim()).filter(Boolean);
             await apiFetch("/admin/security/ip-allowlist", { method: "PATCH", body: JSON.stringify({ entries: list }) });
-            setMsg("IP Allowlist সেভ হয়েছে।"); await load();
-          } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "ব্যর্থ হয়েছে"}`); }
-        }}>Allowlist সেভ করুন</button>
-        {envEntries.length ? <p className="text-xs text-slate-400">Env থেকে আসা এন্ট্রি (এখানে বদলানো যায় না): {envEntries.join(", ")}</p> : null}
+            setMsg(S.ipAllowlistSaved); await load();
+          } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : dict.common.failed}`); }
+        }}>{S.ipAllowlistSave}</button>
+        {envEntries.length ? <p className="text-xs text-slate-400">{t("settings.envEntriesNote", { entries: envEntries.join(", ") })}</p> : null}
       </div>
     </div>
   );

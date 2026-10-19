@@ -1,4 +1,5 @@
 import React from "react";
+import { getAdminDict } from "@/lib/i18n";
 
 /**
  * ADNX16 (NB5 screenshot QA find): until now an unknown admin URL
@@ -12,15 +13,18 @@ import React from "react";
  * exists with or without this file).
  */
 export default function NotFound() {
+  // Server component: no client locale context exists here, so the
+  // platform default (bn) dictionary is used directly (ML7).
+  const dict = getAdminDict("bn");
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <div className="acard w-full max-w-md text-center">
         <div className="text-4xl font-bold tracking-tight">404</div>
-        <div className="mt-2 font-semibold">পেজটি পাওয়া যায়নি</div>
+        <div className="mt-2 font-semibold">{dict.notFound.title}</div>
         <p className="mt-1.5 text-sm text-slate-400">
-          এই ঠিকানায় কোনো Admin পেজ নেই। ঠিকানাটি ভুল হতে পারে, অথবা পেজটি সরানো হয়েছে।
+          {dict.notFound.body}
         </p>
-        <a href="/" className="abtn mt-4 w-full">Command Center-এ ফিরুন</a>
+        <a href="/" className="abtn mt-4 w-full">{dict.notFound.back}</a>
       </div>
     </div>
   );

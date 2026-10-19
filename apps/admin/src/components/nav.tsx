@@ -4,8 +4,8 @@
 // command palette — there is no second nav list anywhere.
 import React from "react";
 
-export interface NavItemDef { label: string; href: string; icon: IconName; countKey?: NavCountKey }
-export interface NavGroupDef { title: string; icon: IconName; items: NavItemDef[] }
+export interface NavItemDef { id: string; labelKey: string; href: string; icon: IconName; countKey?: NavCountKey }
+export interface NavGroupDef { id: string; titleKey: string; icon: IconName; items: NavItemDef[] }
 
 export type NavCountKey = "pendingPayouts" | "openTickets" | "failedJobs24h" | "activeAlerts" | "overdueSubscriptions";
 /** ADX3: shape of GET /admin/nav-counts. Every field is optional —
@@ -21,54 +21,54 @@ export interface NavCounts {
 
 export const NAV_GROUPS: NavGroupDef[] = [
   {
-    title: "হোম", icon: "home",
-    items: [{ label: "Command Center", href: "/", icon: "home" }],
+    id: "home", titleKey: "nav.groups.home", icon: "home",
+    items: [{ id: "commandCenter", labelKey: "nav.items.commandCenter", href: "/", icon: "home" }],
   },
   {
-    title: "কাস্টমার", icon: "users",
+    id: "customers", titleKey: "nav.groups.customers", icon: "users",
     items: [
-      { label: "Organizations", href: "/orgs", icon: "building" },
-      { label: "Users", href: "/users", icon: "users" },
-      { label: "Search (সব খুঁজুন)", href: "/search", icon: "search" },
+      { id: "organizations", labelKey: "nav.items.organizations", href: "/orgs", icon: "building" },
+      { id: "users", labelKey: "nav.items.users", href: "/users", icon: "users" },
+      { id: "search", labelKey: "nav.items.search", href: "/search", icon: "search" },
     ],
   },
   {
-    title: "টাকা-পয়সা", icon: "wallet",
+    id: "money", titleKey: "nav.groups.money", icon: "wallet",
     items: [
-      { label: "SaaS Billing", href: "/billing", icon: "card", countKey: "overdueSubscriptions" },
-      { label: "Wallet Payouts", href: "/payouts", icon: "wallet", countKey: "pendingPayouts" },
-      { label: "Usage & Cost", href: "/usage", icon: "gauge" },
+      { id: "billing", labelKey: "nav.items.billing", href: "/billing", icon: "card", countKey: "overdueSubscriptions" },
+      { id: "payouts", labelKey: "nav.items.payouts", href: "/payouts", icon: "wallet", countKey: "pendingPayouts" },
+      { id: "usage", labelKey: "nav.items.usage", href: "/usage", icon: "gauge" },
     ],
   },
   {
-    title: "সাপোর্ট ও আস্থা", icon: "ticket",
+    id: "support", titleKey: "nav.groups.support", icon: "ticket",
     items: [
-      { label: "Support Tickets", href: "/tickets", icon: "ticket", countKey: "openTickets" },
-      { label: "Audit Trail", href: "/audit", icon: "list" },
-      { label: "Security", href: "/security", icon: "shield" },
+      { id: "tickets", labelKey: "nav.items.tickets", href: "/tickets", icon: "ticket", countKey: "openTickets" },
+      { id: "audit", labelKey: "nav.items.audit", href: "/audit", icon: "list" },
+      { id: "security", labelKey: "nav.items.security", href: "/security", icon: "shield" },
     ],
   },
   {
-    title: "প্ল্যাটফর্ম পরিচালনা", icon: "activity",
+    id: "operations", titleKey: "nav.groups.operations", icon: "activity",
     items: [
-      { label: "Platform Health", href: "/health", icon: "activity", countKey: "failedJobs24h" },
-      { label: "System & Reliability", href: "/system", icon: "server" },
-      { label: "Proactive Alerts", href: "/alerts", icon: "bell", countKey: "activeAlerts" },
-      { label: "Social & Ads Ops", href: "/social-ops", icon: "share" },
+      { id: "health", labelKey: "nav.items.health", href: "/health", icon: "activity", countKey: "failedJobs24h" },
+      { id: "system", labelKey: "nav.items.system", href: "/system", icon: "server" },
+      { id: "alerts", labelKey: "nav.items.alerts", href: "/alerts", icon: "bell", countKey: "activeAlerts" },
+      { id: "socialOps", labelKey: "nav.items.socialOps", href: "/social-ops", icon: "share" },
     ],
   },
   {
-    title: "গ্রোথ ও বিশ্লেষণ", icon: "trending",
+    id: "growth", titleKey: "nav.groups.growth", icon: "trending",
     items: [
-      { label: "Analytics", href: "/analytics", icon: "chart" },
-      { label: "Growth Ops", href: "/growth", icon: "trending" },
+      { id: "analytics", labelKey: "nav.items.analytics", href: "/analytics", icon: "chart" },
+      { id: "growth", labelKey: "nav.items.growth", href: "/growth", icon: "trending" },
     ],
   },
   {
-    title: "সেটিংস", icon: "sliders",
+    id: "settings", titleKey: "nav.groups.settings", icon: "sliders",
     items: [
-      { label: "Settings & Config", href: "/settings", icon: "sliders" },
-      { label: "Admins", href: "/admins", icon: "user-check" },
+      { id: "settings", labelKey: "nav.items.settings", href: "/settings", icon: "sliders" },
+      { id: "admins", labelKey: "nav.items.admins", href: "/admins", icon: "user-check" },
     ],
   },
 ];
@@ -85,8 +85,10 @@ export function navItemForPath(pathname: string): NavItemDef | null {
   return ALL_NAV_ITEMS.find((i) => isActivePath(pathname, i.href)) ?? null;
 }
 
-export function groupTitleForPath(pathname: string): string | null {
-  for (const g of NAV_GROUPS) if (g.items.some((i) => isActivePath(pathname, i.href))) return g.title;
+/** The nav group a pathname belongs to (its stable id keys the
+ *  sidebar's open-state; its titleKey localizes the heading). */
+export function groupForPath(pathname: string): NavGroupDef | null {
+  for (const g of NAV_GROUPS) if (g.items.some((i) => isActivePath(pathname, i.href))) return g;
   return null;
 }
 

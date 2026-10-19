@@ -5,6 +5,9 @@
 // these one by one (DB2: overview/users/orgs/billing/payouts;
 // DB3: the rest). Legacy v2 classes keep working everywhere.
 import React from "react";
+import { fmtNumber } from "@repo/contracts";
+import { getAdminDict, resolveAdminLocale } from "@/lib/i18n";
+import { useAdminLocale } from "./AdminLocale";
 
 // ---------------------------------------------------------------- PageHead
 export function PageHead({ title, sub, breadcrumb, children }: { title?: string; sub?: string; breadcrumb?: React.ReactNode; children?: React.ReactNode }) {
@@ -29,6 +32,7 @@ export function PageHead({ title, sub, breadcrumb, children }: { title?: string;
  * original always-visible bar — existing usages are unchanged.
  */
 export function FilterBar({ children, className = "", collapsible = false, activeCount = 0 }: { children: React.ReactNode; className?: string; collapsible?: boolean; activeCount?: number }) {
+  const { dict, locale } = useAdminLocale();
   const [open, setOpen] = React.useState(false);
   if (!collapsible) return <div className={`afilter ${className}`}>{children}</div>;
   return (
@@ -39,7 +43,7 @@ export function FilterBar({ children, className = "", collapsible = false, activ
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        🔎 ফিল্টার {activeCount > 0 ? <span className="abadge-count">{activeCount}</span> : null} {open ? "▲" : "▼"}
+        🔎 {dict.ui.filter} {activeCount > 0 ? <span className="abadge-count">{fmtNumber(locale, activeCount)}</span> : null} {open ? "▲" : "▼"}
       </button>
       <div className={`${open ? "flex" : "hidden"} flex-col gap-2 sm:contents`}>{children}</div>
     </div>
@@ -49,6 +53,7 @@ export function FilterBar({ children, className = "", collapsible = false, activ
 // ---------------------------------------------------------------- Tabs
 export interface TabDef { id: string; label: string; badge?: number }
 export function Tabs({ tabs, active, onChange }: { tabs: TabDef[]; active: string; onChange: (id: string) => void }) {
+  const { locale } = useAdminLocale();
   return (
     <div className="atabs" role="tablist">
       {tabs.map((t) => (
@@ -61,7 +66,7 @@ export function Tabs({ tabs, active, onChange }: { tabs: TabDef[]; active: strin
           onClick={() => onChange(t.id)}
         >
           {t.label}
-          {typeof t.badge === "number" && t.badge > 0 ? <span className="abadge-count">{t.badge}</span> : null}
+          {typeof t.badge === "number" && t.badge > 0 ? <span className="abadge-count">{fmtNumber(locale, t.badge)}</span> : null}
         </button>
       ))}
     </div>
@@ -75,6 +80,7 @@ export function Tabs({ tabs, active, onChange }: { tabs: TabDef[]; active: strin
 export function DetailDrawer({ open, title, sub, onClose, children, footer }: {
   open: boolean; title: string; sub?: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode;
 }) {
+  const { dict } = useAdminLocale();
   const closeRef = React.useRef<HTMLButtonElement>(null);
   React.useEffect(() => {
     if (!open) return;
@@ -99,7 +105,7 @@ export function DetailDrawer({ open, title, sub, onClose, children, footer }: {
             <div className="truncate font-semibold">{title}</div>
             {sub ? <div className="truncate text-xs text-slate-400">{sub}</div> : null}
           </div>
-          <button ref={closeRef} type="button" className="abtn-secondary !px-2.5" aria-label="বন্ধ করুন" onClick={onClose}>✕</button>
+          <button ref={closeRef} type="button" className="abtn-secondary !px-2.5" aria-label={dict.common.close} onClick={onClose}>✕</button>
         </div>
         <div className="adrawer-body">{children}</div>
         {footer ? <div className="adrawer-foot">{footer}</div> : null}
@@ -120,10 +126,11 @@ export function EmptyState({ title, sub, children }: { title: string; sub?: stri
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const { dict } = useAdminLocale();
   return (
     <div className="aerror" role="alert">
       <span>{message}</span>
-      {onRetry ? <button type="button" className="abtn-secondary ml-3 !px-2 !py-1 text-xs" onClick={onRetry}>আবার চেষ্টা করুন</button> : null}
+      {onRetry ? <button type="button" className="abtn-secondary ml-3 !px-2 !py-1 text-xs" onClick={onRetry}>{dict.common.retry}</button> : null}
     </div>
   );
 }
@@ -163,6 +170,7 @@ export function SavedViewsBar({ page, current, onApply }: {
   current: Record<string, string>;
   onApply: (state: Record<string, string>) => void;
 }) {
+  const { dict, t } = useAdminLocale();
   const [views, setViews] = React.useState<SavedView[]>([]);
   const [name, setName] = React.useState("");
   React.useEffect(() => { setViews(loadSavedViews(page)); }, [page]);
@@ -185,18 +193,18 @@ export function SavedViewsBar({ page, current, onApply }: {
   }
   return (
     <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
-      <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Saved View</span>
+      <span className="text-xs font-medium uppercase tracking-wide text-slate-400">{dict.ui.savedView}</span>
       {views.map((v) => (
         <span key={v.name} className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">
-          <button type="button" className="hover:text-white" title="এই View প্রয়োগ করুন" onClick={() => onApply(v.state)}>{v.name}</button>
-          <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label={`${v.name} মুছুন`} onClick={() => remove(v.name)}>✕</button>
+          <button type="button" className="hover:text-white" title={dict.ui.savedViewApplyTitle} onClick={() => onApply(v.state)}>{v.name}</button>
+          <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label={t("ui.savedViewDelete", { name: v.name })} onClick={() => remove(v.name)}>✕</button>
         </span>
       ))}
       <span className="inline-flex items-center gap-1.5">
-        <input className="ainput !w-36 !py-1 text-xs" placeholder="নতুন View-এর নাম" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
-        <button type="button" className="abtn-secondary !px-2 !py-1 text-xs" disabled={!name.trim()} onClick={save}>বর্তমান ফিল্টার সেভ করুন</button>
+        <input className="ainput !w-36 !py-1 text-xs" placeholder={dict.ui.savedViewNamePlaceholder} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
+        <button type="button" className="abtn-secondary !px-2 !py-1 text-xs" disabled={!name.trim()} onClick={save}>{dict.ui.savedViewSave}</button>
       </span>
-      {views.length === 0 ? <span className="text-[11px] text-slate-400">বর্তমান ফিল্টার অবস্থা নাম দিয়ে সেভ করে পরে এক চাপে ফেরত আনুন।</span> : null}
+      {views.length === 0 ? <span className="text-[11px] text-slate-400">{dict.ui.savedViewHint}</span> : null}
     </div>
   );
 }
@@ -298,7 +306,7 @@ export function SortableTh({ label, sortKey, current, dir, onSort, className = "
  * `inputRequired` — e.g. audit-logged actions — and the modal
  * itself blocks submission until the input is valid.
  */
-export function ConfirmModal({ open, title, description, inputLabel, inputPlaceholder, inputRequired = false, inputOptional = false, initialValue = "", confirmLabel = "নিশ্চিত করুন", cancelLabel = "বাতিল", danger = false, busy = false, onCancel, onConfirm }: {
+export function ConfirmModal({ open, title, description, inputLabel, inputPlaceholder, inputRequired = false, inputOptional = false, initialValue = "", confirmLabel, cancelLabel, danger = false, busy = false, onCancel, onConfirm }: {
   open: boolean;
   title: string;
   description?: string;
@@ -318,6 +326,9 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
   onCancel: () => void;
   onConfirm: (value: string) => void;
 }) {
+  const { dict } = useAdminLocale();
+  const confirmText = confirmLabel ?? dict.common.confirm;
+  const cancelText = cancelLabel ?? dict.common.cancel;
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -350,7 +361,7 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
   const showInput = Boolean(inputLabel);
   function submit() {
     const v = value.trim();
-    if (showInput && inputRequired && v.length < 3) { setError("কমপক্ষে ৩ অক্ষর লিখুন — এটি Audit-এ থাকবে।"); return; }
+    if (showInput && inputRequired && v.length < 3) { setError(dict.common.reasonMinError); return; }
     onConfirm(v);
   }
   return (
@@ -361,15 +372,15 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
           <div className="font-semibold">{title}</div>
           {description ? <p className="mt-1.5 text-sm text-slate-400">{description}</p> : null}
           {showInput ? (
-            <label className="mt-3 block text-sm">{inputLabel}{inputOptional ? <span className="text-slate-400"> (ঐচ্ছিক)</span> : null}
+            <label className="mt-3 block text-sm">{inputLabel}{inputOptional ? <span className="text-slate-400"> ({dict.common.optional})</span> : null}
               <input ref={inputRef} className="ainput mt-1" value={value} placeholder={inputPlaceholder} onChange={(e) => setValue(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
             </label>
           ) : null}
           {error ? <p className="mt-2 text-sm text-red-300">{error}</p> : null}
           <div className="mt-4 flex justify-end gap-2">
-            <button type="button" className="abtn-secondary" onClick={onCancel} disabled={busy}>{cancelLabel}</button>
-            <button ref={confirmRef} type="button" className={danger ? "abtn-danger" : "abtn"} onClick={submit} disabled={busy}>{busy ? "হচ্ছে…" : confirmLabel}</button>
+            <button type="button" className="abtn-secondary" onClick={onCancel} disabled={busy}>{cancelText}</button>
+            <button ref={confirmRef} type="button" className={danger ? "abtn-danger" : "abtn"} onClick={submit} disabled={busy}>{busy ? dict.common.busy : confirmText}</button>
           </div>
         </div>
       </div>
@@ -407,9 +418,10 @@ export function Chart({ variant = "bar", points, formatValue, seriesLabel, defau
    *  can render the fallback table directly). */
   defaultShowTable?: boolean;
 }) {
+  const { dict, locale, t } = useAdminLocale();
   const [active, setActive] = React.useState<number | null>(null);
   const [showTable, setShowTable] = React.useState(defaultShowTable);
-  if (points.length === 0) return <EmptyState title="চার্টের কোনো ডেটা নেই।" />;
+  if (points.length === 0) return <EmptyState title={dict.ui.chartEmpty} />;
   const W = 640, H = 240, PADX = 10, TOP = 18, BOTTOM = 30;
   const innerW = W - PADX * 2, innerH = H - TOP - BOTTOM;
   const max = Math.max(0, ...points.map((p) => p.value));
@@ -422,7 +434,7 @@ export function Chart({ variant = "bar", points, formatValue, seriesLabel, defau
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img"
-        aria-label={`${seriesLabel} চার্ট — মোট ${points.length}টি মান; একই সংখ্যা নিচের ডেটা টেবিলে আছে।`}
+        aria-label={t("ui.chartAria", { label: seriesLabel, count: fmtNumber(locale, points.length) })}
         onMouseLeave={() => setActive(null)}>
         <line x1={PADX} y1={TOP + innerH} x2={W - PADX} y2={TOP + innerH} stroke="#334155" strokeWidth="1" />
         {variant === "line" && points.length > 1 ? (
@@ -455,19 +467,19 @@ export function Chart({ variant = "bar", points, formatValue, seriesLabel, defau
       </svg>
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs" aria-live="polite">
         <span className="font-medium text-slate-200">{ap.label}: {formatValue(ap.value)}</span>
-        <span className="text-slate-400">বার/পয়েন্টে hover, tap বা focus করলে সেই মানটি এখানে দেখা যাবে।</span>
+        <span className="text-slate-400">{dict.ui.chartHint}</span>
         <button type="button" className="abtn-secondary ml-auto !px-2 !py-1 text-xs" aria-expanded={showTable} onClick={() => setShowTable((s) => !s)}>
-          {showTable ? "ডেটা টেবিল লুকান" : "ডেটা টেবিল দেখুন"}
+          {showTable ? dict.ui.chartHideTable : dict.ui.chartShowTable}
         </button>
       </div>
       {showTable ? (
         <div className="mt-2">
           <DataTable>
-            <thead><tr><th className="ath">{seriesLabel}</th><th className="ath">মান</th></tr></thead>
+            <thead><tr><th className="ath">{seriesLabel}</th><th className="ath">{dict.ui.chartValueHeader}</th></tr></thead>
             <tbody>{points.map((p) => (
               <tr key={p.label} className="border-t border-slate-800">
                 <td data-label={seriesLabel} className="atd">{p.label}</td>
-                <td data-label="মান" className="atd">{formatValue(p.value)}</td>
+                <td data-label={dict.ui.chartValueHeader} className="atd">{formatValue(p.value)}</td>
               </tr>
             ))}</tbody>
           </DataTable>
@@ -513,6 +525,7 @@ export function toast(message: string, kind: ToastKind = "success", action?: { l
 export function useToast() { return toast; }
 
 export function ToastHost() {
+  const { dict } = useAdminLocale();
   // ADNX17: initialise from the store's current snapshot so a host
   // mounted after a toast was pushed still shows it (the shell
   // mounts the host once, before any toast, so live behaviour is
@@ -532,7 +545,7 @@ export function ToastHost() {
           {t.actionLabel ? (
             <button type="button" className="atoast-action" onClick={() => { t.onAction?.(); dismissToast(t.id); }}>{t.actionLabel}</button>
           ) : null}
-          <button type="button" className="atoast-action" aria-label="বন্ধ করুন" onClick={() => dismissToast(t.id)}>✕</button>
+          <button type="button" className="atoast-action" aria-label={dict.common.close} onClick={() => dismissToast(t.id)}>✕</button>
         </div>
       ))}
     </div>
@@ -573,22 +586,23 @@ function openDialog(req: Omit<DialogRequest, "resolve">): Promise<string | boole
 }
 
 export function askConfirm(opts: { title: string; description?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean> {
-  return openDialog({ title: opts.title, description: opts.description, confirmLabel: opts.confirmLabel ?? "নিশ্চিত করুন", cancelLabel: opts.cancelLabel, danger: opts.danger })
+  return openDialog({ title: opts.title, description: opts.description, confirmLabel: opts.confirmLabel ?? getAdminDict(resolveAdminLocale()).common.confirm, cancelLabel: opts.cancelLabel, danger: opts.danger })
     .then((v) => v === true);
 }
 
 export function askInput(opts: { title: string; description?: string; inputLabel: string; inputPlaceholder?: string; inputRequired?: boolean; inputOptional?: boolean; initialValue?: string; confirmLabel?: string; danger?: boolean }): Promise<string | null> {
-  return openDialog({ ...opts, confirmLabel: opts.confirmLabel ?? "নিশ্চিত করুন" })
+  return openDialog({ ...opts, confirmLabel: opts.confirmLabel ?? getAdminDict(resolveAdminLocale()).common.confirm })
     .then((v) => (typeof v === "string" ? v : null));
 }
 
 export function askReason(action: string): Promise<string | null> {
+  const dict = getAdminDict(resolveAdminLocale());
   return askInput({
     title: action,
-    description: "এই কাজের কারণ লিখুন (Audit এ থাকবে):",
-    inputLabel: "কারণ",
+    description: dict.common.reasonAuditNote,
+    inputLabel: dict.common.reason,
     inputRequired: true,
-    confirmLabel: "এগিয়ে যান",
+    confirmLabel: dict.common.proceed,
   });
 }
 

@@ -4,6 +4,8 @@ import AdminShell from "@/components/AdminShell";
 import { DataTable, ErrorState, PageHead, Tabs, askInput, toast } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
+import { fmtNumber, type Locale } from "@repo/contracts";
+import { useAdminLocale } from "@/components/AdminLocale";
 
 interface SocialPostItem {
   id: string; organizationId: string; organizationName: string | null;
@@ -35,26 +37,28 @@ interface AdsBoard {
   }[];
 }
 
-function fmtDate(v: string | null | undefined): string {
+function fmtDate(v: string | null | undefined, locale: Locale): string {
   if (!v) return "—";
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? "—" : fmtDateTime(d);
+  return Number.isNaN(d.getTime()) ? "—" : fmtDateTime(locale, d);
 }
 function OrgLink({ id, name }: { id: string; name: string | null }) {
   return <a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${id}`}>{name ?? id}</a>;
 }
 function Chips({ data }: { data: Record<string, number> }) {
+  const { dict, locale } = useAdminLocale();
   const entries = Object.entries(data);
-  if (entries.length === 0) return <span className="text-sm text-slate-400">কিছু নেই</span>;
+  if (entries.length === 0) return <span className="text-sm text-slate-400">{dict.socialOps.nothing}</span>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {entries.map(([k, v]) => (
-        <span key={k} className="abadge-slate">{k}: {v.toLocaleString("bn-BD")}</span>
+        <span key={k} className="abadge-slate">{k}: {fmtNumber(locale, v)}</span>
       ))}
     </div>
   );
 }
 function PostRows({ items, emptyText, action }: { items: SocialPostItem[]; emptyText: string; action?: { label: string; run: (p: SocialPostItem) => void } }) {
+  const { locale } = useAdminLocale();
   if (items.length === 0) return <p className="text-sm text-emerald-300">{emptyText}</p>;
   return (
     <ul className="space-y-2 text-sm">
@@ -63,7 +67,7 @@ function PostRows({ items, emptyText, action }: { items: SocialPostItem[]; empty
           <div className="flex flex-wrap items-center gap-2">
             <OrgLink id={p.organizationId} name={p.organizationName} />
             <span className="text-slate-400">{p.accountName ?? p.socialAccountId}{p.platform ? ` · ${p.platform}` : ""}</span>
-            <span className="ml-auto text-xs text-slate-400">{fmtDate(p.updatedAt)}</span>
+            <span className="ml-auto text-xs text-slate-400">{fmtDate(p.updatedAt, locale)}</span>
           </div>
           {p.captionExcerpt ? <div className="mt-1 text-xs text-slate-300">{p.captionExcerpt}</div> : null}
           {p.error ? <div className="mt-1 text-xs text-red-300">{p.error}</div> : null}
@@ -77,6 +81,7 @@ function PostRows({ items, emptyText, action }: { items: SocialPostItem[]; empty
 }
 
 export default function SocialOpsPage() {
+  const { dict, locale, t } = useAdminLocale();
   const [social, setSocial] = React.useState<SocialBoard | null>(null);
   const [ads, setAds] = React.useState<AdsBoard | null>(null);
   // ADX12: loadDone separates "still loading" from "board load
@@ -99,33 +104,32 @@ export default function SocialOpsPage() {
   // service পথেই যায় (আলাদা Admin logic নয়), কারণ বাধ্যতামূলক
   // (Audit-এ থাকে), আর API/Provider-এর ফল বা ভুল হুবহু দেখানো হয়।
   async function opsAction(path: string, label: string) {
-    const reason = await askInput({ title: label, description: "কারণ (Audit-এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    const reason = await askInput({ title: label, description: dict.socialOps.reasonDesc, inputLabel: dict.common.reason, inputRequired: true, confirmLabel: dict.common.proceed });
     if (!reason) return;
     try {
       const out = await apiFetch<any>(path, { method: "POST", body: JSON.stringify({ reason }) });
-      const detail = out?.result?.error ?? out?.note ?? (out?.sweep ? `Sweep: recovered ${out.sweep.recovered}, published ${out.sweep.published}, failed ${out.sweep.failed} · Post এখন: ${out.postStatusAfter ?? "—"}` : "সম্পন্ন হয়েছে");
+      const detail = out?.result?.error ?? out?.note ?? (out?.sweep ? t("socialOps.sweepDetail", { recovered: fmtNumber(locale, out.sweep.recovered), published: fmtNumber(locale, out.sweep.published), failed: fmtNumber(locale, out.sweep.failed), status: out.postStatusAfter ?? "—" }) : dict.socialOps.doneFallback);
       // ADNX11: retry/action feedback rides toast (✅/❌ prefixes
       // dropped — the toast kind carries the outcome, NB2 rule).
       toast(`${label}: ${detail}`);
       await load();
     } catch (e) {
-      toast(`${label}: ${e instanceof Error ? e.message : "ব্যর্থ হয়েছে"}`, "error");
+      toast(`${label}: ${e instanceof Error ? e.message : dict.common.failed}`, "error");
     }
   }
 
   // ADX12: per-board pending slot (loading vs failed + retry).
   const pending = (label: string) => loadDone
-    ? <ErrorState message={`${label} লোড হয়নি — আবার চেষ্টা করুন।`} onRetry={load} />
-    : <div className="space-y-2" aria-label="লোড হচ্ছে"><div className="askel h-4 w-2/3" /><div className="askel h-4 w-1/2" /><div className="askel h-4 w-3/5" /></div>;
+    ? <ErrorState message={t("socialOps.boardLoadError", { label })} onRetry={load} />
+    : <div className="space-y-2" aria-label={dict.common.loading}><div className="askel h-4 w-2/3" /><div className="askel h-4 w-1/2" /><div className="askel h-4 w-3/5" /></div>;
   return (
-    <AdminShell title="📣 Social & Ads Ops">
-      <PageHead sub="Social ও Ad Account-এর সমস্যা এক জায়গায় — ব্যর্থ item আগে, Retry Row থেকেই।" />
+    <AdminShell title={dict.socialOps.title}>
+      <PageHead sub={dict.socialOps.sub} />
       <div className="sticky top-0 z-20 -mx-1 mb-4 bg-slate-950/90 px-1 py-2 backdrop-blur lg:hidden">
-        <Tabs tabs={[{ id: "social", label: "👥 Social Accounts" }, { id: "ads", label: "📢 Ad Accounts" }]} active={section} onChange={setSection} />
+        <Tabs tabs={[{ id: "social", label: dict.socialOps.tabSocial }, { id: "ads", label: dict.socialOps.tabAds }]} active={section} onChange={setSection} />
       </div>
       <p className="mb-4 rounded-lg bg-slate-800/60 p-3 text-xs text-slate-400">
-        Operator action (AB3): নিচের Retry/যাচাই বোতামগুলো Tenant পাশের নিজের service দিয়েই কাজ করে — ব্যর্থ হলে Provider-এর আসল ভুলটাই দেখাবে।
-        সীমা: কোনো Account <b>Disconnect/Reconnect Admin থেকে করা যায় না</b> — Reconnect-এ Tenant-এর নিজের OAuth লাগে, Tenant-কে তার অ্যাকাউন্টে গিয়ে আবার কানেক্ট করতে হবে।
+        {dict.socialOps.operatorNoteA}<b>{dict.socialOps.operatorNoteBold}</b>{dict.socialOps.operatorNoteB}
       </p>
       {/* ADX11: দুটি স্পষ্ট বিভাগ — Social Accounts আগে (Error
           Account ও ব্যর্থ Post-ই এই বিভাগের প্রথম বিষয়), তারপর
@@ -133,20 +137,20 @@ export default function SocialOpsPage() {
           শুধু গঠনটি স্পষ্ট করে। */}
       <div className={section === "social" ? "" : "hidden lg:block"}>
       <div className="mb-3 flex flex-wrap items-baseline gap-2">
-        <h2 className="text-base font-semibold">👥 Social Accounts</h2>
-        <span className="text-xs text-slate-400">Error অবস্থার Account ও ব্যর্থ Post আগে — Retry প্রতিটি Row থেকেই</span>
+        <h2 className="text-base font-semibold">{dict.socialOps.socialHeading}</h2>
+        <span className="text-xs text-slate-400">{dict.socialOps.socialHeadingSub}</span>
       </div>
       <div className="acard mb-4">
-        <div className="mb-2 font-semibold">📣 Social <span className="text-xs font-normal text-slate-400">(সব Tenant মিলিয়ে — শুধু Metadata, কোনো Token/Credential কখনো দেখানো হয় না)</span></div>
-        {!social ? pending("Social Board") : (
+        <div className="mb-2 font-semibold">{dict.socialOps.socialCardTitle} <span className="text-xs font-normal text-slate-400">{dict.socialOps.socialCardNote}</span></div>
+        {!social ? pending(dict.socialOps.socialBoard) : (
           <div className="space-y-3">
-            <div className="text-sm">Social Account মোট: <b>{social.accounts.total.toLocaleString("bn-BD")}</b></div>
+            <div className="text-sm">{dict.socialOps.socialTotal} <b>{fmtNumber(locale, social.accounts.total)}</b></div>
             <div className="space-y-1">
-              <div className="text-xs font-medium text-slate-400">Status অনুযায়ী</div>
+              <div className="text-xs font-medium text-slate-400">{dict.socialOps.byStatus}</div>
               <Chips data={social.accounts.byStatus} />
             </div>
             <div className="space-y-1">
-              <div className="text-xs font-medium text-slate-400">Platform অনুযায়ী</div>
+              <div className="text-xs font-medium text-slate-400">{dict.socialOps.byPlatform}</div>
               <Chips data={social.accounts.byPlatform} />
             </div>
           </div>
@@ -154,20 +158,20 @@ export default function SocialOpsPage() {
       </div>
 
       <div className="acard mb-4 overflow-hidden p-0">
-        <div className="border-b border-slate-800 p-4 font-semibold">Social Account — Error অবস্থায় ({social?.errorAccounts.length ?? "…"})</div>
-        {!social ? <div className="p-4">{pending("Social Board")}</div> : social.errorAccounts.length === 0 ? (
-          <p className="p-4 text-sm text-emerald-300">কোনো Social Account Error অবস্থায় নেই।</p>
+        <div className="border-b border-slate-800 p-4 font-semibold">{t("socialOps.errorAccountsTitle", { count: social ? fmtNumber(locale, social.errorAccounts.length) : "…" })}</div>
+        {!social ? <div className="p-4">{pending(dict.socialOps.socialBoard)}</div> : social.errorAccounts.length === 0 ? (
+          <p className="p-4 text-sm text-emerald-300">{dict.socialOps.noErrorAccounts}</p>
         ) : (
           <DataTable>
-            <thead><tr><th className="ath">Org</th><th className="ath">Account</th><th className="ath">Platform</th><th className="ath">Last Error</th><th className="ath">Updated</th><th className="ath">Action</th></tr></thead>
+            <thead><tr><th className="ath">{dict.socialOps.colOrg}</th><th className="ath">{dict.socialOps.colAccount}</th><th className="ath">{dict.socialOps.colPlatform}</th><th className="ath">{dict.socialOps.colLastError}</th><th className="ath">{dict.socialOps.colUpdated}</th><th className="ath">{dict.socialOps.colAction}</th></tr></thead>
             <tbody>{social.errorAccounts.map((a) => (
               <tr key={a.id} className="border-t border-slate-800">
-                <td data-label="Org" className="atd"><OrgLink id={a.organizationId} name={a.organizationName} /></td>
-                <td data-label="Account" className="atd">{a.name}{a.username ? <div className="text-xs text-slate-400">@{a.username}</div> : null}</td>
-                <td data-label="Platform" className="atd">{a.platform}</td>
-                <td data-label="Last Error" className="atd"><span className="text-red-300">{a.lastError ?? "—"}</span></td>
-                <td data-label="Updated" className="atd text-slate-400">{fmtDate(a.updatedAt)}</td>
-                <td data-label="Action" className="atd"><button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => opsAction(`/admin/system/social-board/accounts/${a.id}/recheck`, `${a.name} — স্বাস্থ্য আবার যাচাই`)}>স্বাস্থ্য আবার যাচাই</button></td>
+                <td data-label={dict.socialOps.colOrg} className="atd"><OrgLink id={a.organizationId} name={a.organizationName} /></td>
+                <td data-label={dict.socialOps.colAccount} className="atd">{a.name}{a.username ? <div className="text-xs text-slate-400">@{a.username}</div> : null}</td>
+                <td data-label={dict.socialOps.colPlatform} className="atd">{a.platform}</td>
+                <td data-label={dict.socialOps.colLastError} className="atd"><span className="text-red-300">{a.lastError ?? "—"}</span></td>
+                <td data-label={dict.socialOps.colUpdated} className="atd text-slate-400">{fmtDate(a.updatedAt, locale)}</td>
+                <td data-label={dict.socialOps.colAction} className="atd"><button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => opsAction(`/admin/system/social-board/accounts/${a.id}/recheck`, t("socialOps.recheckLabel", { name: a.name }))}>{dict.socialOps.recheck}</button></td>
               </tr>
             ))}</tbody>
           </DataTable>
@@ -176,26 +180,26 @@ export default function SocialOpsPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="acard">
-          <div className="mb-2 font-semibold">ব্যর্থ Post ({social?.posts.failed.length ?? "…"})</div>
-          {!social ? pending("Social Board") : (
-            <PostRows items={social.posts.failed} emptyText="কোনো ব্যর্থ Post নেই।" action={{ label: "আবার Publish চেষ্টা", run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/retry`, "ব্যর্থ Post আবার চেষ্টা") }} />
+          <div className="mb-2 font-semibold">{t("socialOps.failedPostsTitle", { count: social ? fmtNumber(locale, social.posts.failed.length) : "…" })}</div>
+          {!social ? pending(dict.socialOps.socialBoard) : (
+            <PostRows items={social.posts.failed} emptyText={dict.socialOps.noFailedPosts} action={{ label: dict.socialOps.retryPublish, run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/retry`, dict.socialOps.retryPublishLabel) }} />
           )}
         </div>
         <div className="acard">
-          <div className="mb-2 font-semibold">Creator-এর কাছে পাঠানো, ৪৮ ঘণ্টার বেশি অপেক্ষমাণ ({social?.posts.sentToCreatorStale.count ?? "…"})</div>
-          {!social ? pending("Social Board") : (
+          <div className="mb-2 font-semibold">{t("socialOps.staleTitle", { count: social ? fmtNumber(locale, social.posts.sentToCreatorStale.count) : "…" })}</div>
+          {!social ? pending(dict.socialOps.socialBoard) : (
             <>
-              <PostRows items={social.posts.sentToCreatorStale.items} emptyText="অপেক্ষমাণ কোনো Post নেই।" />
-              <p className="mt-2 text-xs text-slate-400">এই তালিকা শুধু দেখার জন্য — Postটি Creator-এর সাড়ার অপেক্ষায়, retry করার কোনো পথ নেই।</p>
+              <PostRows items={social.posts.sentToCreatorStale.items} emptyText={dict.socialOps.noStalePosts} />
+              <p className="mt-2 text-xs text-slate-400">{dict.socialOps.staleNote}</p>
             </>
           )}
         </div>
         <div className="acard">
-          <div className="mb-2 font-semibold">Publishing-এ আটকে আছে (&gt;১৫ মিনিট) ({social?.posts.stuckPublishing.count ?? "…"})</div>
-          {!social ? pending("Social Board") : (
+          <div className="mb-2 font-semibold">{t("socialOps.stuckTitle", { count: social ? fmtNumber(locale, social.posts.stuckPublishing.count) : "…" })}</div>
+          {!social ? pending(dict.socialOps.socialBoard) : (
             <>
-              <PostRows items={social.posts.stuckPublishing.items} emptyText="আটকে থাকা কোনো Post নেই।" action={{ label: "Publish sweep চালান", run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/recover-stuck`, "আটকে থাকা Post recovery") }} />
-              <p className="mt-2 text-xs text-slate-400">Sweep-টি ওই Org-এর — stale claim recovery-সহ Org-এর সব due Post প্রসেস হয়, শুধু এই Postটি নয় (৫ মিনিটের automation job যে পথে চলে, হুবহু সেই পথ)।</p>
+              <PostRows items={social.posts.stuckPublishing.items} emptyText={dict.socialOps.noStuckPosts} action={{ label: dict.socialOps.runSweep, run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/recover-stuck`, dict.socialOps.recoverLabel) }} />
+              <p className="mt-2 text-xs text-slate-400">{dict.socialOps.stuckNote}</p>
             </>
           )}
         </div>
@@ -204,20 +208,20 @@ export default function SocialOpsPage() {
       </div>
       <div className={section === "ads" ? "" : "hidden lg:block"}>
       <div className="mb-3 mt-6 flex flex-wrap items-baseline gap-2">
-        <h2 className="text-base font-semibold">📢 Ad Accounts</h2>
-        <span className="text-xs text-slate-400">মনোযোগ দরকার এমন Account আগে — Sync Retry Row থেকেই</span>
+        <h2 className="text-base font-semibold">{dict.socialOps.adsHeading}</h2>
+        <span className="text-xs text-slate-400">{dict.socialOps.adsHeadingSub}</span>
       </div>
       <div className="acard">
-        <div className="mb-2 font-semibold">📢 বিজ্ঞাপন অ্যাকাউন্ট <span className="text-xs font-normal text-slate-400">(সব Tenant মিলিয়ে)</span></div>
-        {!ads ? pending("Ads Board") : (
+        <div className="mb-2 font-semibold">{dict.socialOps.adsCardTitle} <span className="text-xs font-normal text-slate-400">{dict.socialOps.adsCardNote}</span></div>
+        {!ads ? pending(dict.socialOps.adsBoard) : (
           <div className="space-y-3">
-            <div className="text-sm">Ad Account মোট: <b>{ads.total.toLocaleString("bn-BD")}</b> · Sync Disabled: <b>{ads.syncDisabledCount.toLocaleString("bn-BD")}</b></div>
+            <div className="text-sm">{dict.socialOps.adsTotal} <b>{fmtNumber(locale, ads.total)}</b> · {dict.socialOps.syncDisabled} <b>{fmtNumber(locale, ads.syncDisabledCount)}</b></div>
             <div className="space-y-1">
-              <div className="text-xs font-medium text-slate-400">Connection Health অনুযায়ী</div>
+              <div className="text-xs font-medium text-slate-400">{dict.socialOps.byHealth}</div>
               <Chips data={ads.byHealth} />
             </div>
             <div className="space-y-1">
-              <div className="text-xs font-medium text-slate-400">Platform Status অনুযায়ী</div>
+              <div className="text-xs font-medium text-slate-400">{dict.socialOps.byPlatformStatus}</div>
               <Chips data={ads.platformBuckets} />
             </div>
           </div>
@@ -225,22 +229,22 @@ export default function SocialOpsPage() {
       </div>
 
       <div className="acard mt-4 overflow-hidden p-0">
-        <div className="border-b border-slate-800 p-4 font-semibold">বিজ্ঞাপন অ্যাকাউন্ট — মনোযোগ দরকার ({ads?.broken.length ?? "…"}) <span className="text-xs font-normal text-slate-400">Error আগে, তারপর Platform Disabled/Restricted</span></div>
-        {!ads ? <div className="p-4">{pending("Ads Board")}</div> : ads.broken.length === 0 ? (
-          <p className="p-4 text-sm text-emerald-300">কোনো Ad Account-এ সমস্যা নেই।</p>
+        <div className="border-b border-slate-800 p-4 font-semibold">{t("socialOps.brokenTitle", { count: ads ? fmtNumber(locale, ads.broken.length) : "…" })} <span className="text-xs font-normal text-slate-400">{dict.socialOps.brokenNote}</span></div>
+        {!ads ? <div className="p-4">{pending(dict.socialOps.adsBoard)}</div> : ads.broken.length === 0 ? (
+          <p className="p-4 text-sm text-emerald-300">{dict.socialOps.noBrokenAds}</p>
         ) : (
           <DataTable>
-            <thead><tr><th className="ath">Org</th><th className="ath">Account</th><th className="ath">Platform</th><th className="ath">Health</th><th className="ath">Platform Status</th><th className="ath">Last Error</th><th className="ath">Last Sync</th><th className="ath">Action</th></tr></thead>
+            <thead><tr><th className="ath">{dict.socialOps.colOrg}</th><th className="ath">{dict.socialOps.colAccount}</th><th className="ath">{dict.socialOps.colPlatform}</th><th className="ath">{dict.socialOps.colHealth}</th><th className="ath">{dict.socialOps.colPlatformStatus}</th><th className="ath">{dict.socialOps.colLastError}</th><th className="ath">{dict.socialOps.colLastSync}</th><th className="ath">{dict.socialOps.colAction}</th></tr></thead>
             <tbody>{ads.broken.map((a) => (
               <tr key={a.id} className="border-t border-slate-800">
-                <td data-label="Org" className="atd"><OrgLink id={a.organizationId} name={a.organizationName} /></td>
-                <td data-label="Account" className="atd">{a.displayName}{a.label ? <div className="text-xs text-slate-400">{a.name}</div> : null}</td>
-                <td data-label="Platform" className="atd">{a.platform}</td>
-                <td data-label="Health" className="atd">{a.health === "error" ? <span className="abadge-red">error</span> : <span className="abadge-slate">{a.health}</span>}</td>
-                <td data-label="Platform Status" className="atd">{a.platformStatusBucket ? <span className="abadge-amber">{a.platformStatusBucket}</span> : "—"}</td>
-                <td data-label="Last Error" className="atd"><span className="text-red-300">{a.lastError ?? "—"}</span></td>
-                <td data-label="Last Sync" className="atd text-slate-400">{fmtDate(a.lastSyncAt)}</td>
-                <td data-label="Action" className="atd">{["meta", "google", "tiktok"].includes(a.platform) ? <button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => opsAction(`/admin/system/ads-board/accounts/${a.id}/retry-sync`, `${a.displayName} — Sync আবার চেষ্টা`)}>Sync আবার চেষ্টা</button> : <span className="text-xs text-slate-400">এই Platform-এর sync পথ নেই</span>}</td>
+                <td data-label={dict.socialOps.colOrg} className="atd"><OrgLink id={a.organizationId} name={a.organizationName} /></td>
+                <td data-label={dict.socialOps.colAccount} className="atd">{a.displayName}{a.label ? <div className="text-xs text-slate-400">{a.name}</div> : null}</td>
+                <td data-label={dict.socialOps.colPlatform} className="atd">{a.platform}</td>
+                <td data-label={dict.socialOps.colHealth} className="atd">{a.health === "error" ? <span className="abadge-red">error</span> : <span className="abadge-slate">{a.health}</span>}</td>
+                <td data-label={dict.socialOps.colPlatformStatus} className="atd">{a.platformStatusBucket ? <span className="abadge-amber">{a.platformStatusBucket}</span> : "—"}</td>
+                <td data-label={dict.socialOps.colLastError} className="atd"><span className="text-red-300">{a.lastError ?? "—"}</span></td>
+                <td data-label={dict.socialOps.colLastSync} className="atd text-slate-400">{fmtDate(a.lastSyncAt, locale)}</td>
+                <td data-label={dict.socialOps.colAction} className="atd">{["meta", "google", "tiktok"].includes(a.platform) ? <button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => opsAction(`/admin/system/ads-board/accounts/${a.id}/retry-sync`, t("socialOps.syncRetryLabel", { name: a.displayName }))}>{dict.socialOps.syncRetry}</button> : <span className="text-xs text-slate-400">{dict.socialOps.noSyncPath}</span>}</td>
               </tr>
             ))}</tbody>
           </DataTable>

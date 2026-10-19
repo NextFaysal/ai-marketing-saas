@@ -6,6 +6,9 @@ import Breadcrumb from "@/components/Breadcrumb";
 import { EmptyState, ErrorState, PageHead, Tabs, askConfirm, askInput, toast } from "@/components/ui";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { useAdminLocale } from "@/components/AdminLocale";
+import type { AdminDict } from "@/lib/i18n";
 
 interface OrgDetail {
   id: string; name: string; slug: string; status: string; country: string; currency: string; timezone: string; createdAt: string;
@@ -27,13 +30,13 @@ interface OrgDetail {
   tags?: string[];
 }
 
-function formatBytes(bytesStr?: string): string {
+function formatBytes(bytesStr: string | undefined, locale: UiLocale, dict: AdminDict): string {
   const n = Number(bytesStr ?? 0);
-  if (!Number.isFinite(n) || n <= 0) return "0 বাইট";
-  const units = ["বাইট", "KB", "MB", "GB", "TB"];
+  if (!Number.isFinite(n) || n <= 0) return dict.orgDetail.bytesZero;
+  const units = [dict.orgDetail.byteUnit, "KB", "MB", "GB", "TB"];
   let v = n; let i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toLocaleString("bn-BD", { maximumFractionDigits: 2 })} ${units[i]}`;
+  return `${fmtNumber(locale, v, { maximumFractionDigits: 2 })} ${units[i]}`;
 }
 
 /**
@@ -45,6 +48,7 @@ function formatBytes(bytesStr?: string): string {
  * see them anywhere.
  */
 function OrgTagsCard({ orgId, initial }: { orgId: string; initial: string[] }) {
+  const { dict, t: tr } = useAdminLocale();
   const [tags, setTags] = React.useState<string[]>(initial);
   const [draft, setDraft] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -52,9 +56,9 @@ function OrgTagsCard({ orgId, initial }: { orgId: string; initial: string[] }) {
   const add = () => {
     const t = draft.trim();
     if (!t) return;
-    if (t.length > 40) { toast("একটি Tag সর্বোচ্চ ৪০ অক্ষরের হতে পারে।", "error"); return; }
-    if (tags.includes(t)) { toast("এই Tag ইতিমধ্যে আছে।", "error"); return; }
-    if (tags.length >= 20) { toast("সর্বোচ্চ ২০টি Tag রাখা যায়।", "error"); return; }
+    if (t.length > 40) { toast(dict.orgDetail.tagTooLong, "error"); return; }
+    if (tags.includes(t)) { toast(dict.orgDetail.tagDuplicate, "error"); return; }
+    if (tags.length >= 20) { toast(dict.orgDetail.tagTooMany, "error"); return; }
     setTags([...tags, t]);
     setDraft("");
   };
@@ -63,34 +67,33 @@ function OrgTagsCard({ orgId, initial }: { orgId: string; initial: string[] }) {
     try {
       const out = await apiFetch<{ tags: string[] }>(`/admin/orgs/${orgId}/tags`, { method: "PATCH", body: JSON.stringify({ tags }) });
       setTags(out.tags);
-      toast("Tag সংরক্ষিত হয়েছে (Audit-এ রেকর্ড আছে)।");
-    } catch (e) { toast(e instanceof Error ? e.message : "Tag সেভ ব্যর্থ হয়েছে", "error"); }
+      toast(dict.orgDetail.tagsSaved);
+    } catch (e) { toast(e instanceof Error ? e.message : dict.orgDetail.tagsSaveFailed, "error"); }
     setBusy(false);
   };
   const dirty = JSON.stringify(tags) !== JSON.stringify(initial);
   return (
     <div className="acard space-y-3">
-      <div className="font-semibold">🏷 Tags (শুধু অ্যাডমিনদের জন্য)</div>
+      <div className="font-semibold">{dict.orgDetail.tagsTitle}</div>
       <p className="text-xs leading-relaxed text-slate-400">
-        প্ল্যাটফর্ম টিমের অভ্যন্তরীণ শ্রেণিবিন্যাস — Tenant কখনোই এগুলো দেখে না। Organization তালিকায় Tag দিয়ে ছাঁকা যায়।
-        সর্বোচ্চ ২০টি, প্রতিটি সর্বোচ্চ ৪০ অক্ষর; যেভাবে লিখবেন হুবহু সেভাবে থাকবে (বড়/ছোট হাতের হরফ বদলায় না)।
+        {dict.orgDetail.tagsNote}
       </p>
       <div className="flex flex-wrap gap-1.5">
         {tags.map((t) => (
           <span key={t} className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">
             🏷 {t}
-            <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label={`${t} Tag মুছুন`} onClick={() => setTags(tags.filter((x) => x !== t))}>✕</button>
+            <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label={tr("orgDetail.tagDeleteAria", { tag: t })} onClick={() => setTags(tags.filter((x) => x !== t))}>✕</button>
           </span>
         ))}
-        {tags.length === 0 ? <span className="text-xs text-slate-500">কোনো Tag নেই।</span> : null}
+        {tags.length === 0 ? <span className="text-xs text-slate-500">{dict.orgDetail.noTags}</span> : null}
       </div>
       <div className="flex gap-2">
-        <input className="ainput" placeholder="নতুন Tag লিখুন…" value={draft} maxLength={60}
+        <input className="ainput" placeholder={dict.orgDetail.tagPlaceholder} value={draft} maxLength={60}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
-        <button type="button" className="abtn-secondary" onClick={add}>যোগ</button>
+        <button type="button" className="abtn-secondary" onClick={add}>{dict.orgDetail.tagAdd}</button>
       </div>
-      <button type="button" className="abtn" disabled={busy || !dirty} onClick={save}>{busy ? "সেভ হচ্ছে…" : "Tag সেভ করুন"}</button>
+      <button type="button" className="abtn" disabled={busy || !dirty} onClick={save}>{busy ? dict.orgDetail.tagsSaving : dict.orgDetail.tagsSave}</button>
     </div>
   );
 }
@@ -101,14 +104,16 @@ function OrgTagsCard({ orgId, initial }: { orgId: string; initial: string[] }) {
  *  Billing ও Limit = subscription editor + limit override + flags,
  *  কার্যকলাপ = support view + view-as + 360 history,
  *  নোট = admin notes. */
-const TABS = [
-  { id: "summary", label: "সারসংক্ষেপ" },
-  { id: "billing", label: "Billing ও Limit" },
-  { id: "activity", label: "কার্যকলাপ" },
-  { id: "notes", label: "নোট" },
-];
+
 
 export default function OrgDetailPage() {
+  const { dict, locale, t } = useAdminLocale();
+  const TABS = [
+    { id: "summary", label: dict.orgDetail.tabSummary },
+    { id: "billing", label: dict.orgDetail.tabBilling },
+    { id: "activity", label: dict.orgDetail.tabActivity },
+    { id: "notes", label: dict.orgDetail.tabNotes },
+  ];
   const params = useParams();
   const id = String(params.id);
   const [data, setData] = React.useState<OrgDetail | null>(null);
@@ -144,11 +149,11 @@ export default function OrgDetailPage() {
     if (!r) return;
     try {
       await apiFetch(`/admin/orgs/${id}/status`, { method: "POST", body: JSON.stringify({ status, reason: r }) });
-      toast(`${label} সম্পন্ন হয়েছে।`);
+      toast(t("orgDetail.actionDone", { label }));
       await load();
-    } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ হয়েছে", "error"); }
+    } catch (e) { toast(e instanceof Error ? e.message : dict.common.failed, "error"); }
   }
-  if (!data) return <AdminShell title="🏢 Organization">{loadFailed ? <ErrorState message="Organization লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <div className="space-y-4" aria-hidden="true"><div className="askel-card" /><div className="askel-table" /></div>}</AdminShell>;
+  if (!data) return <AdminShell title={dict.orgDetail.titleFallback}>{loadFailed ? <ErrorState message={dict.orgDetail.loadError} onRetry={load} /> : <div className="space-y-4" aria-hidden="true"><div className="askel-card" /><div className="askel-table" /></div>}</AdminShell>;
   return (
     <AdminShell title={`🏢 ${data.name}`}>
       {/* ADNX8: ONE detail pattern — PageHead carries the
@@ -156,7 +161,7 @@ export default function OrgDetailPage() {
           ever shows the permanent-deletion certificate (long,
           persistent information a 6s toast cannot carry). */}
       <PageHead
-        breadcrumb={<Breadcrumb items={[{ label: "Organizations", href: "/orgs" }, { label: data.name?.trim() ? data.name : `${id.slice(0, 8)}…` }]} />}
+        breadcrumb={<Breadcrumb items={[{ label: t("nav.items.organizations"), href: "/orgs" }, { label: data.name?.trim() ? data.name : `${id.slice(0, 8)}…` }]} />}
         sub={`${data.slug} · ${data.country} · ${data.currency}`}
       >
         <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span>
@@ -169,9 +174,9 @@ export default function OrgDetailPage() {
           mobile (spacer at the page end keeps content clear). */}
       <div className="max-lg:fixed max-lg:inset-x-0 max-lg:bottom-[calc(64px+env(safe-area-inset-bottom))] max-lg:z-30 max-lg:border-t max-lg:border-slate-800 max-lg:bg-slate-950/95 max-lg:px-4 max-lg:py-2.5 lg:sticky lg:top-0 lg:z-20 lg:mb-4 lg:rounded-b-2xl lg:bg-slate-950/90 lg:py-2.5 lg:backdrop-blur">
         <div className="flex flex-wrap gap-2 lg:justify-end">
-          {data.status === "ACTIVE" ? <button className="abtn-secondary" onClick={() => setStatus("SUSPENDED", "Suspend Organization")}>⏸ Suspend (সদস্যদের লগইন বন্ধ)</button> : null}
-          {data.status !== "ACTIVE" ? <button className="abtn" onClick={() => setStatus("ACTIVE", "Reactivate Organization")}>✅ আবার সক্রিয় করুন</button> : null}
-          {data.status !== "DELETED" ? <button className="abtn-danger" onClick={() => setStatus("DELETED", "Soft-Delete Organization")}>🗑 Soft-Delete</button> : null}
+          {data.status === "ACTIVE" ? <button className="abtn-secondary" onClick={() => setStatus("SUSPENDED", dict.orgDetail.suspendAction)}>{dict.orgDetail.suspendButton}</button> : null}
+          {data.status !== "ACTIVE" ? <button className="abtn" onClick={() => setStatus("ACTIVE", dict.orgDetail.reactivateAction)}>{dict.orgDetail.reactivateButton}</button> : null}
+          {data.status !== "DELETED" ? <button className="abtn-danger" onClick={() => setStatus("DELETED", dict.orgDetail.deleteAction)}>{dict.orgDetail.deleteButton}</button> : null}
         </div>
       </div>
 
@@ -181,100 +186,100 @@ export default function OrgDetailPage() {
         <div className="atab-panel grid gap-4 lg:grid-cols-2">
           <div className="space-y-4">
           <div className="acard space-y-2 text-sm">
-            <div><span className="text-slate-400">Slug:</span> {data.slug} · <span className="text-slate-400">দেশ:</span> {data.country} · <span className="text-slate-400">মুদ্রা:</span> {data.currency}</div>
-            <div><span className="text-slate-400">অবস্থা:</span> <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span></div>
-            <div><span className="text-slate-400">Subscription:</span> {data.subscription ? `${data.subscription.plan} · ${data.subscription.status}${data.subscription.currentPeriodEnd ? ` · মেয়াদ শেষ ${fmtDateTime(data.subscription.currentPeriodEnd, "date")}` : ""}` : "কোনো Subscription রেকর্ড নেই"}</div>
+            <div><span className="text-slate-400">{dict.orgDetail.slugLabel}</span> {data.slug} · <span className="text-slate-400">{dict.orgDetail.countryLabel}</span> {data.country} · <span className="text-slate-400">{dict.orgDetail.currencyLabel}</span> {data.currency}</div>
+            <div><span className="text-slate-400">{dict.orgDetail.statusLabel}</span> <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span></div>
+            <div><span className="text-slate-400">{dict.orgDetail.subscriptionLabel}</span> {data.subscription ? `${data.subscription.plan} · ${data.subscription.status}${data.subscription.currentPeriodEnd ? t("orgDetail.periodEnd", { date: fmtDateTime(locale, data.subscription.currentPeriodEnd, "date") }) : ""}` : dict.orgDetail.noSubscription}</div>
             <div className="grid grid-cols-4 gap-2 pt-2 text-center">
-              {([[ "পণ্য", data.counts.products], ["অর্ডার", data.counts.orders], ["কথোপকথন", data.counts.conversations], ["ক্যাম্পেইন", data.counts.campaigns]] as const).map(([label, v]) => (
-                <div key={label} className="rounded-lg bg-slate-800 p-2"><div className="text-lg font-bold">{v}</div><div className="text-xs text-slate-400">{label}</div></div>
+              {([[dict.orgDetail.countProducts, data.counts.products], [dict.orgDetail.countOrders, data.counts.orders], [dict.orgDetail.countConversations, data.counts.conversations], [dict.orgDetail.countCampaigns, data.counts.campaigns]] as const).map(([label, v]) => (
+                <div key={label} className="rounded-lg bg-slate-800 p-2"><div className="text-lg font-bold">{fmtNumber(locale, v)}</div><div className="text-xs text-slate-400">{label}</div></div>
               ))}
             </div>
-            <div className="pt-2 font-medium">সদস্যবৃন্দ</div>
+            <div className="pt-2 font-medium">{dict.orgDetail.membersTitle}</div>
             {data.members.map((m) => <div key={m.id} className="rounded-lg bg-slate-800 px-3 py-2">{m.user?.name ?? "?"} <span className="text-slate-400">{m.user?.email}</span> — <b>{m.role}</b>{m.user?.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{m.user?.status}</span> : null}</div>)}
-            {data.members.length === 0 ? <EmptyState title="কোনো সদস্য নেই।" sub="এই Organization-এ এখনো কোনো সদস্য যোগ হয়নি।" /> : null}
-            <div className="pt-2 font-medium">Integrations (শুধু অবস্থা — গোপন তথ্য কখনো দেখানো হয় না)</div>
+            {data.members.length === 0 ? <EmptyState title={dict.orgDetail.noMembersTitle} sub={dict.orgDetail.noMembersSub} /> : null}
+            <div className="pt-2 font-medium">{dict.orgDetail.integrationsTitle}</div>
             {data.integrations.map((i) => <div key={i.id} className="rounded-lg bg-slate-800 px-3 py-2">{i.provider} — {i.status}</div>)}
-            {data.integrations.length === 0 ? <p className="text-slate-400">কোনো Integration নেই।</p> : null}
+            {data.integrations.length === 0 ? <p className="text-slate-400">{dict.orgDetail.noIntegrations}</p> : null}
           </div>
           <OrgTagsCard orgId={id} initial={data.tags ?? []} />
           </div>
           <div className="acard space-y-3">
-            <div className="font-semibold">অ্যাকশন (কারণসহ Audit হবে)</div>
-            <p className="text-xs text-slate-400">প্রধান অ্যাকশনগুলো (Suspend / Reactivate / Soft-Delete) এখন sticky header / মোবাইলে নিচের action bar-এ সবসময় দৃশ্যমান। Suspend করলে Tenant এর সব সদস্যের প্রবেশ বন্ধ থাকবে, কিন্তু কোনো ডেটা মুছবে না।</p>
+            <div className="font-semibold">{dict.orgDetail.actionsTitle}</div>
+            <p className="text-xs text-slate-400">{dict.orgDetail.actionsNote}</p>
             <div className="border-t border-red-900/50 pt-3">
-              <div className="font-semibold text-red-300">☠ Danger Zone — Data Export ও স্থায়ী Deletion</div>
+              <div className="font-semibold text-red-300">{dict.orgDetail.dangerTitle}</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button className="abtn-secondary" onClick={async () => {
                   try {
                     const res = await fetch(`${API_URL}/admin/orgs/${id}/export`, { headers: { Authorization: `Bearer ${getAdminToken()}` } });
-                    if (!res.ok) throw new Error("Export ব্যর্থ হয়েছে");
+                    if (!res.ok) throw new Error(dict.orgDetail.exportFailed);
                     const blob = await res.blob();
                     const a = document.createElement("a");
                     a.href = URL.createObjectURL(blob);
                     a.download = `org-export-${data.slug}.json`;
                     a.click();
                     URL.revokeObjectURL(a.href);
-                    toast("Export ডাউনলোড হয়েছে (Audit এ রেকর্ড আছে)। Credential কখনোই Export এ থাকে না।");
-                  } catch (e) { toast(e instanceof Error ? e.message : "Export ব্যর্থ", "error"); }
-                }}>⬇ সম্পূর্ণ Data Export (JSON)</button>
+                    toast(dict.orgDetail.exportDone);
+                  } catch (e) { toast(e instanceof Error ? e.message : dict.orgDetail.exportFailedShort, "error"); }
+                }}>{dict.orgDetail.exportButton}</button>
                 {data.status === "DELETED" ? (
                   <button className="abtn-danger" onClick={async () => {
-                    const typed = await askInput({ title: "স্থায়ীভাবে মুছুন", description: `স্থায়ীভাবে মুছতে Org এর নাম হুবহু লিখুন: "${data.name}" — এটি আর ফেরানো যাবে না। আগে Export নিয়ে রাখুন।`, inputLabel: "Org এর নাম", confirmLabel: "এগিয়ে যান", danger: true });
-                    if (typed !== data.name) { toast("নাম মেলেনি — স্থায়ী Deletion বাতিল।", "error"); return; }
-                    const reason = await askInput({ title: "স্থায়ী Deletion এর কারণ (Audit Certificate এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "স্থায়ীভাবে মুছুন", danger: true });
+                    const typed = await askInput({ title: dict.orgDetail.permanentDeleteTitle, description: t("orgDetail.permanentDeleteDesc", { name: data.name }), inputLabel: dict.orgDetail.orgNameLabel, confirmLabel: dict.common.proceed, danger: true });
+                    if (typed !== data.name) { toast(dict.orgDetail.nameMismatch, "error"); return; }
+                    const reason = await askInput({ title: dict.orgDetail.permanentReasonTitle, inputLabel: dict.common.reason, inputRequired: true, confirmLabel: dict.orgDetail.permanentConfirm, danger: true });
                     if (!reason) return;
                     try {
                       const out = await apiFetch<any>(`/admin/orgs/${id}/delete-permanent`, { method: "POST", body: JSON.stringify({ confirmName: typed, reason }) });
-                      setMsg(`স্থায়ীভাবে মোছা হয়েছে। Certificate: ${Object.entries(out.certificate).map(([k, v]) => `${k}:${v}`).join(", ")}`);
+                      setMsg(t("orgDetail.permanentDone", { certificate: Object.entries(out.certificate).map(([k, v]) => `${k}:${v}`).join(", ") }));
                       setTimeout(() => { window.location.href = "/orgs"; }, 3500);
-                    } catch (e) { toast(e instanceof Error ? e.message : "Deletion ব্যর্থ", "error"); }
-                  }}>☠ স্থায়ীভাবে মুছুন (শুধু SUPER)</button>
+                    } catch (e) { toast(e instanceof Error ? e.message : dict.orgDetail.deletionFailed, "error"); }
+                  }}>{dict.orgDetail.permanentDeleteButton}</button>
                 ) : null}
               </div>
-              <p className="mt-1 text-xs text-slate-400">স্থায়ী Deletion শুধু DELETED অবস্থার Org এর জন্য, নাম হুবহু লিখে নিশ্চিত করতে হয়। Deletion Certificate (কোন Table থেকে কত Row) Platform Audit Log এ থেকে যায়।</p>
+              <p className="mt-1 text-xs text-slate-400">{dict.orgDetail.dangerNote}</p>
             </div>
             <div className="border-t border-slate-800 pt-3">
-              <div className="mb-2 font-semibold">🏅 Merchant Verification (GC21)</div>
+              <div className="mb-2 font-semibold">{dict.orgDetail.verificationTitle}</div>
               <div className="space-y-1.5 text-sm">
-                <div><span className="text-slate-400">অবস্থা:</span>{" "}
-                  {data.verificationStatus === "verified" ? <span className="abadge-green">verified · যাচাইকৃত</span>
-                    : data.verificationStatus === "pending" ? <span className="abadge-amber">pending · রিভিউ বাকি</span>
-                    : data.verificationStatus === "rejected" ? <span className="abadge-amber">rejected · ফিরিয়ে দেওয়া</span>
+                <div><span className="text-slate-400">{dict.orgDetail.statusLabel}</span>{" "}
+                  {data.verificationStatus === "verified" ? <span className="abadge-green">{dict.orgDetail.verifiedBadge}</span>
+                    : data.verificationStatus === "pending" ? <span className="abadge-amber">{dict.orgDetail.pendingBadge}</span>
+                    : data.verificationStatus === "rejected" ? <span className="abadge-amber">{dict.orgDetail.rejectedBadge}</span>
                     : <span className="abadge-amber">{data.verificationStatus ?? "unverified"}</span>}
-                  {data.verificationSubmittedAt ? <span className="ml-2 text-xs text-slate-500">জমা: {fmtDateTime(data.verificationSubmittedAt)}</span> : null}
+                  {data.verificationSubmittedAt ? <span className="ml-2 text-xs text-slate-500">{t("orgDetail.submittedAt", { date: fmtDateTime(locale, data.verificationSubmittedAt) })}</span> : null}
                 </div>
-                <div><span className="text-slate-400">ট্রেড লাইসেন্স নম্বর:</span> {data.businessProfile?.tradeLicenseNo ?? "—"}</div>
-                <div><span className="text-slate-400">ব্যবসার ঠিকানা:</span> {data.businessProfile?.businessAddress ?? data.businessProfile?.address ?? "—"}</div>
-                <div><span className="text-slate-400">যোগাযোগ:</span> {data.businessProfile?.contactPhone ?? "—"} · {data.businessProfile?.contactEmail ?? "—"}</div>
-                {data.verificationNote ? <div><span className="text-slate-400">শেষ নোট (মার্চেন্ট দেখেন):</span> “{data.verificationNote}”</div> : null}
-                <div><span className="text-slate-400">স্টোরেজ ব্যবহার:</span> {formatBytes(data.storageBytes)} · {data.storageAssetCount ?? 0}টি ফাইল <span className="text-xs text-slate-500">({data.storageMeteredFrom ?? "মিডিয়া লাইব্রেরিতে রেকর্ডকৃত আপলোড থেকে হিসাব"})</span></div>
+                <div><span className="text-slate-400">{dict.orgDetail.tradeLicense}</span> {data.businessProfile?.tradeLicenseNo ?? "—"}</div>
+                <div><span className="text-slate-400">{dict.orgDetail.businessAddress}</span> {data.businessProfile?.businessAddress ?? data.businessProfile?.address ?? "—"}</div>
+                <div><span className="text-slate-400">{dict.orgDetail.contact}</span> {data.businessProfile?.contactPhone ?? "—"} · {data.businessProfile?.contactEmail ?? "—"}</div>
+                {data.verificationNote ? <div><span className="text-slate-400">{dict.orgDetail.lastNote}</span> “{data.verificationNote}”</div> : null}
+                <div><span className="text-slate-400">{dict.orgDetail.storageUsage}</span> {t("orgDetail.storageFiles", { size: formatBytes(data.storageBytes, locale, dict), count: fmtNumber(locale, data.storageAssetCount ?? 0) })} <span className="text-xs text-slate-500">({data.storageMeteredFrom ?? dict.orgDetail.storageMeteredFallback})</span></div>
               </div>
               {data.verificationStatus === "pending" ? (
                 <div className="mt-3 space-y-2">
-                  <input className="ainput w-full" placeholder="নোট — Reject করলে আবশ্যক, মার্চেন্ট এটি দেখতে পাবেন" value={verificationNote} onChange={(e) => setVerificationNote(e.target.value)} />
+                  <input className="ainput w-full" placeholder={dict.orgDetail.verificationNotePlaceholder} value={verificationNote} onChange={(e) => setVerificationNote(e.target.value)} />
                   <div className="flex flex-wrap gap-2">
                     <button className="abtn" onClick={async () => {
                       try {
                         await apiFetch(`/admin/organizations/${id}/verification`, { method: "POST", body: JSON.stringify({ decision: "approve", note: verificationNote.trim() || undefined }) });
-                        setMsg("প্রতিষ্ঠানটি যাচাইকৃত (verified) করা হয়েছে।");
+                        setMsg(dict.orgDetail.approvedMsg);
                         setVerificationNote("");
                         await load();
-                      } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
-                    }}>✅ Approve — যাচাইকৃত করুন</button>
+                      } catch (e) { setMsg(e instanceof Error ? e.message : dict.common.failed); }
+                    }}>{dict.orgDetail.approveButton}</button>
                     <button className="abtn-danger" onClick={async () => {
-                      if (!verificationNote.trim()) { setMsg("Reject করতে নোট লিখুন — মার্চেন্ট সেই কারণ দেখে ঠিক করে আবার জমা দেবেন।"); return; }
+                      if (!verificationNote.trim()) { setMsg(dict.orgDetail.rejectNeedsNote); return; }
                       try {
                         await apiFetch(`/admin/organizations/${id}/verification`, { method: "POST", body: JSON.stringify({ decision: "reject", note: verificationNote.trim() }) });
-                        setMsg("আবেদন Reject করা হয়েছে — নোটসহ মার্চেন্টের কাছে পৌঁছেছে।");
+                        setMsg(dict.orgDetail.rejectedMsg);
                         setVerificationNote("");
                         await load();
-                      } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
-                    }}>✗ Reject — ফিরিয়ে দিন</button>
+                      } catch (e) { setMsg(e instanceof Error ? e.message : dict.common.failed); }
+                    }}>{dict.orgDetail.rejectButton}</button>
                   </div>
-                  <p className="text-xs text-slate-500">সিদ্ধান্ত Admin Audit Log এ রেকর্ড হয়। শুধু pending আবেদনই রিভিউ করা যায়।</p>
+                  <p className="text-xs text-slate-500">{dict.orgDetail.verificationNote}</p>
                 </div>
               ) : (
-                <p className="mt-2 text-xs text-slate-500">রিভিউ করার মতো pending আবেদন নেই।</p>
+                <p className="mt-2 text-xs text-slate-500">{dict.orgDetail.noPendingVerification}</p>
               )}
             </div>
           </div>
@@ -284,47 +289,47 @@ export default function OrgDetailPage() {
       {tab === "billing" ? (
         <div className="atab-panel grid gap-4 lg:grid-cols-3">
           <div className="acard space-y-2 text-sm">
-            <div className="font-semibold">💳 Subscription বদলান</div>
+            <div className="font-semibold">{dict.orgDetail.subscriptionEditTitle}</div>
             <div className="flex flex-wrap items-end gap-2 rounded-lg bg-slate-800 p-3">
-              <label className="text-xs text-slate-400">Plan
+              <label className="text-xs text-slate-400">{dict.orgDetail.planLabel}
                 <select id="sub-plan" className="ainput mt-1 w-32" defaultValue={data.subscription?.plan ?? "FREE"}>{["FREE", "STARTER", "GROWTH", "AGENCY"].map((pl) => <option key={pl} value={pl}>{pl}</option>)}</select></label>
-              <label className="text-xs text-slate-400">Status
+              <label className="text-xs text-slate-400">{dict.orgDetail.statusLabel2}
                 <select id="sub-status" className="ainput mt-1 w-32" defaultValue={data.subscription?.status ?? "TRIALING"}>{["TRIALING", "ACTIVE", "PAST_DUE", "CANCELLED"].map((st) => <option key={st} value={st}>{st}</option>)}</select></label>
-              <label className="text-xs text-slate-400">মেয়াদ শেষ
+              <label className="text-xs text-slate-400">{dict.orgDetail.periodEndLabel}
                 <input id="sub-end" className="ainput mt-1 w-40" type="date" defaultValue={data.subscription?.currentPeriodEnd ? new Date(data.subscription.currentPeriodEnd).toISOString().slice(0, 10) : ""} /></label>
               <button className="abtn-secondary" onClick={async () => {
-                const reason = await askInput({ title: "Subscription বদলের কারণ (Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                const reason = await askInput({ title: dict.orgDetail.subscriptionReasonTitle, inputLabel: dict.common.reason, inputRequired: true, confirmLabel: dict.common.proceed });
                 if (!reason) return;
                 const plan = (document.getElementById("sub-plan") as HTMLSelectElement).value;
                 const status = (document.getElementById("sub-status") as HTMLSelectElement).value;
                 const end = (document.getElementById("sub-end") as HTMLInputElement).value;
                 try {
                   await apiFetch(`/admin/orgs/${id}/subscription`, { method: "PATCH", body: JSON.stringify({ plan, status, currentPeriodEnd: end || null, reason }) });
-                  toast("Subscription আপডেট হয়েছে। Plan বদলালে Limit সঙ্গে সঙ্গে কার্যকর হয়।");
+                  toast(dict.orgDetail.subscriptionSaved);
                   await load();
-                } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
-              }}>💳 Subscription সেভ</button>
+                } catch (e) { toast(e instanceof Error ? e.message : dict.common.failed, "error"); }
+              }}>{dict.orgDetail.subscriptionSaveButton}</button>
             </div>
           </div>
           <div className="acard space-y-3">
-            <div className="font-semibold">🎚 Limit Override (ফাঁকা = Plan এর সীমা)</div>
-            {([[ "aiDailyLimitOverride", "AI বার্তা / দিন"], ["broadcastCapOverride", "Broadcast প্রাপক / পাঠানো"], ["seatLimit", "Seat সংখ্যা"]] as const).map(([field, label]) => (
+            <div className="font-semibold">{dict.orgDetail.limitsTitle}</div>
+            {([[ "aiDailyLimitOverride", dict.orgDetail.limitAi], ["broadcastCapOverride", dict.orgDetail.limitBroadcast], ["seatLimit", dict.orgDetail.limitSeats]] as const).map(([field, label]) => (
               <label key={field} className="block text-sm">{label}
-                <input className="ainput mt-1" type="number" min={0} value={limits[field]} onChange={(e) => setLimits({ ...limits, [field]: e.target.value })} placeholder="Plan default" />
+                <input className="ainput mt-1" type="number" min={0} value={limits[field]} onChange={(e) => setLimits({ ...limits, [field]: e.target.value })} placeholder={dict.orgDetail.planDefaultPlaceholder} />
               </label>
             ))}
             <button className="abtn" onClick={async () => {
               const num = (v: string) => (v.trim() === "" ? null : Number(v));
               try {
                 await apiFetch(`/admin/orgs/${id}/limits`, { method: "PATCH", body: JSON.stringify({ aiDailyLimitOverride: num(limits.aiDailyLimitOverride), broadcastCapOverride: num(limits.broadcastCapOverride), seatLimit: num(limits.seatLimit) }) });
-                toast("Limit আপডেট হয়েছে (Audit এ সংরক্ষিত)।");
+                toast(dict.orgDetail.limitsSaved);
                 await load();
-              } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ হয়েছে", "error"); }
-            }}>Limit সেভ করুন</button>
-            <p className="text-xs text-slate-400">ক্রম: Override → Plan (FREE/PRO/AGENCY) → System default।</p>
+              } catch (e) { toast(e instanceof Error ? e.message : dict.common.failed, "error"); }
+            }}>{dict.orgDetail.limitsSave}</button>
+            <p className="text-xs text-slate-400">{dict.orgDetail.limitsNote}</p>
           </div>
           <div className="acard space-y-2">
-            <div className="font-semibold">🚩 Feature Flags</div>
+            <div className="font-semibold">{dict.orgDetail.flagsTitle}</div>
             {flags.knownFlags.map((key) => {
               const current = flags.flags.find((f) => f.key === key);
               return (
@@ -336,11 +341,11 @@ export default function OrgDetailPage() {
                 </label>
               );
             })}
-            {flags.knownFlags.length === 0 ? <EmptyState title="কোনো Feature Flag নেই।" sub="এই Org-এর জন্য কোনো Flag সংজ্ঞায়িত নেই।" /> : null}
-            <p className="text-xs text-slate-400">Flag বন্ধ থাকলে ওই Org এ সংশ্লিষ্ট Beta ফিচার দেখাবে না (Tenant অ্যাপ ফ্ল্যাগ পড়ে যেখানে প্রযোজ্য)।</p>
+            {flags.knownFlags.length === 0 ? <EmptyState title={dict.orgDetail.noFlagsTitle} sub={dict.orgDetail.noFlagsSub} /> : null}
+            <p className="text-xs text-slate-400">{dict.orgDetail.flagsNote}</p>
           </div>
           <div className="acard space-y-2">
-            <div className="font-semibold">🏷 White-label (AX24)</div>
+            <div className="font-semibold">{dict.orgDetail.whiteLabelTitle}</div>
             <label className="flex items-center justify-between gap-3 text-sm">White-label
               <input type="checkbox" checked={data.whiteLabel ?? false} onChange={async (e) => {
                 const next = e.target.checked;
@@ -348,12 +353,12 @@ export default function OrgDetailPage() {
                   // whiteLabel persists via the org-update PATCH this page already
                   // uses for limits (LimitsDto) — there is no PATCH /admin/orgs/:id route.
                   await apiFetch(`/admin/orgs/${id}/limits`, { method: "PATCH", body: JSON.stringify({ whiteLabel: next }) });
-                  setMsg(next ? "White-label চালু হয়েছে — এই প্রতিষ্ঠানের দোকান/ইমেইলে প্ল্যাটফর্মের চিহ্ন আর থাকবে না।" : "White-label বন্ধ করা হয়েছে।");
+                  setMsg(next ? dict.orgDetail.whiteLabelOn : dict.orgDetail.whiteLabelOff);
                   await load();
-                } catch (err) { setMsg(err instanceof Error ? err.message : "White-label আপডেট ব্যর্থ হয়েছে"); }
+                } catch (err) { setMsg(err instanceof Error ? err.message : dict.orgDetail.whiteLabelFailed); }
               }} />
             </label>
-            <p className="text-xs text-slate-500">White-label — চালু থাকলে এই প্রতিষ্ঠানের দোকান/ইমেইলে প্ল্যাটফর্মের কোনো চিহ্ন থাকবে না</p>
+            <p className="text-xs text-slate-500">{dict.orgDetail.whiteLabelNote}</p>
           </div>
         </div>
       ) : null}
@@ -361,30 +366,30 @@ export default function OrgDetailPage() {
       {tab === "activity" ? (
         <div className="atab-panel">
           <div className="acard space-y-2">
-            <div className="font-semibold">🕵 Support View (শুধু সারসংক্ষেপ)</div>
+            <div className="font-semibold">{dict.orgDetail.supportViewTitle}</div>
             {!support ? <div className="askel-line" aria-hidden="true" /> : (
               <>
-                <div className="text-sm text-slate-400">সাম্প্রতিক Order</div>
+                <div className="text-sm text-slate-400">{dict.orgDetail.recentOrders}</div>
                 {support.recentOrders.map((o) => <div key={o.id} className="rounded bg-slate-800 px-2 py-1.5 text-sm">#{o.externalNumber ?? o.id.slice(0, 8)} · {o.status} · {o.totalMinor}</div>)}
-                {support.recentOrders.length === 0 ? <EmptyState title="কোনো Order নেই।" sub="এই Organization-এর কোনো Order এখনো আসেনি।" /> : null}
-                <div className="pt-1 text-sm text-slate-400">সাম্প্রতিক কথোপকথন (বডি দেখতে কারণ লাগবে)</div>
+                {support.recentOrders.length === 0 ? <EmptyState title={dict.orgDetail.noOrdersTitle} sub={dict.orgDetail.noOrdersSub} /> : null}
+                <div className="pt-1 text-sm text-slate-400">{dict.orgDetail.recentConversations}</div>
                 {support.recentConversations.map((c) => (
                   <div key={c.id} className="flex items-center justify-between rounded bg-slate-800 px-2 py-1.5 text-sm">
-                    <span>{c.channel} · {c.contactName ?? "—"} · {c.messageCount} বার্তা</span>
+                    <span>{c.channel} · {c.contactName ?? "—"} · {t("orgDetail.messageCount", { count: fmtNumber(locale, c.messageCount) })}</span>
                     <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => {
-                      const reason = await askInput({ title: "বার্তার বডি দেখার কারণ (Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                      const reason = await askInput({ title: dict.orgDetail.viewMessagesReason, inputLabel: dict.common.reason, inputRequired: true, confirmLabel: dict.common.proceed });
                       if (!reason) return;
                       try {
                         const out: any = await apiFetch(`/admin/orgs/${id}/support-view/conversations/${c.id}/messages`, { method: "POST", body: JSON.stringify({ reason }) });
                         setConvMessages(out.messages);
-                      } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
-                    }}>দেখুন</button>
+                      } catch (e) { toast(e instanceof Error ? e.message : dict.common.failed, "error"); }
+                    }}>{dict.orgDetail.viewAction}</button>
                   </div>
                 ))}
-                {support.recentConversations.length === 0 ? <EmptyState title="কোনো কথোপকথন নেই।" sub="এই Organization-এর কোনো কথোপকথন এখনো আসেনি।" /> : null}
+                {support.recentConversations.length === 0 ? <EmptyState title={dict.orgDetail.noConversationsTitle} sub={dict.orgDetail.noConversationsSub} /> : null}
                 {convMessages.length > 0 ? (
                   <div className="max-h-56 space-y-1 overflow-auto rounded-lg border border-amber-500/30 bg-amber-500/5 p-2">
-                    <div className="text-xs text-amber-300">⚠ এই Content Access Audit Log এ রেকর্ড হয়েছে।</div>
+                    <div className="text-xs text-amber-300">{dict.orgDetail.contentAccessWarning}</div>
                     {convMessages.map((m, i) => <div key={i} className="text-sm"><span className="text-slate-400">{m.direction}:</span> {m.body ?? "—"}</div>)}
                   </div>
                 ) : null}
@@ -399,13 +404,13 @@ export default function OrgDetailPage() {
       {tab === "notes" ? (
         <div className="atab-panel">
           <div className="acard">
-            <div className="mb-2 font-medium">Admin নোট</div>
+            <div className="mb-2 font-medium">{dict.orgDetail.notesTitle}</div>
             <div className="flex gap-2">
-              <input className="ainput" placeholder="অভ্যন্তরীণ নোট লিখুন…" value={note} onChange={(e) => setNote(e.target.value)} />
-              <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; try { await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "organization", targetId: id, body: note }) }); setNote(""); toast("নোট যোগ হয়েছে।"); await load(); } catch (e) { toast(e instanceof Error ? e.message : "নোট যোগ ব্যর্থ হয়েছে", "error"); } }}>যোগ</button>
+              <input className="ainput" placeholder={dict.orgDetail.notePlaceholder} value={note} onChange={(e) => setNote(e.target.value)} />
+              <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; try { await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "organization", targetId: id, body: note }) }); setNote(""); toast(dict.orgDetail.noteAdded); await load(); } catch (e) { toast(e instanceof Error ? e.message : dict.orgDetail.noteAddFailed, "error"); } }}>{dict.orgDetail.noteAdd}</button>
             </div>
-            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-400">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
-            {notes.length === 0 ? <EmptyState title="কোনো নোট নেই।" sub="উপরে প্রথম অভ্যন্তরীণ নোট যোগ করুন।" /> : null}
+            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-400">· {fmtDateTime(locale, n.createdAt)}</span></li>)}</ul>
+            {notes.length === 0 ? <EmptyState title={dict.orgDetail.noNotesTitle} sub={dict.orgDetail.noNotesSub} /> : null}
           </div>
         </div>
       ) : null}
@@ -415,33 +420,35 @@ export default function OrgDetailPage() {
 }
 
 function ViewAsCard({ orgId }: { orgId: string }) {
+  const { dict, t } = useAdminLocale();
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
   const start = async (mode: "read" | "write") => {
-    const reason = await askInput({ title: `View-As (${mode === "write" ? "WRITE" : "Read-only"}) শুরুর কারণ — Audit এ থাকবে:`, inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    const reason = await askInput({ title: t("orgDetail.viewAsReason", { mode: mode === "write" ? dict.orgDetail.viewAsWriteMode : dict.orgDetail.viewAsReadMode }), inputLabel: dict.common.reason, inputRequired: true, confirmLabel: dict.common.proceed });
     if (!reason) return;
-    if (mode === "write" && !(await askConfirm({ title: "নিশ্চিত তো?", description: "Write মোডে Tenant ওয়ার্কস্পেসে পরিবর্তন করা যাবে।", confirmLabel: "Write View-As শুরু করুন", danger: true }))) return;
+    if (mode === "write" && !(await askConfirm({ title: dict.orgDetail.viewAsWriteConfirmTitle, description: dict.orgDetail.viewAsWriteConfirmDesc, confirmLabel: dict.orgDetail.viewAsWriteConfirm, danger: true }))) return;
     setBusy(true); setErr("");
     try {
       const out = await apiFetch<{ url: string; targetUser: { email: string; role: string } }>(`/admin/orgs/${orgId}/view-as`, { method: "POST", body: JSON.stringify({ mode, reason }) });
       window.open(out.url, "_blank", "noopener");
-    } catch (e) { setErr(e instanceof Error ? e.message : "View-As শুরু হয়নি"); }
+    } catch (e) { setErr(e instanceof Error ? e.message : dict.orgDetail.viewAsFailed); }
     setBusy(false);
   };
   return (
     <div className="acard mt-4">
-      <div className="mb-2 font-semibold">👁 View-As (Tenant ওয়ার্কস্পেস দেখুন)</div>
-      <p className="text-sm text-slate-400">৩০ মিনিটের সেশন, Org এর OWNER হিসেবে ঢুকবেন। Read-only ই ডিফল্ট; Write মোড শুধু SUPER Admin দের জন্য — দুটোই কারণসহ Audit হয়।</p>
+      <div className="mb-2 font-semibold">{dict.orgDetail.viewAsTitle}</div>
+      <p className="text-sm text-slate-400">{dict.orgDetail.viewAsNote}</p>
       {err ? <p className="mt-2 text-sm text-red-400">{err}</p> : null}
       <div className="mt-3 flex gap-2">
-        <button className="abtn abtn-primary" disabled={busy} onClick={() => start("read")}>👁 Read-only View-As</button>
-        <button className="abtn" disabled={busy} onClick={() => start("write")}>✏️ Write View-As (SUPER)</button>
+        <button className="abtn abtn-primary" disabled={busy} onClick={() => start("read")}>{dict.orgDetail.viewAsReadButton}</button>
+        <button className="abtn" disabled={busy} onClick={() => start("write")}>{dict.orgDetail.viewAsWriteButton}</button>
       </div>
     </div>
   );
 }
 
 function OrgHistory({ orgId }: { orgId: string }) {
+  const { dict, locale } = useAdminLocale();
   const [events, setEvents] = React.useState<{ at: string; kind: string; title: string; detail: string | null }[] | null>(null);
   React.useEffect(() => {
     apiFetch<{ events: { at: string; kind: string; title: string; detail: string | null }[] }>(`/admin/orgs/${orgId}/timeline360`)
@@ -451,16 +458,16 @@ function OrgHistory({ orgId }: { orgId: string }) {
   const icon = (kind: string) => (kind === "payment" ? "💳" : kind === "subscription" ? "📦" : kind === "order" ? "🛒" : kind === "conversation" ? "💬" : kind === "sync" ? "🔄" : kind === "ticket" ? "🎫" : "🧾");
   return (
     <div className="acard mt-4">
-      <div className="mb-3 font-semibold">📜 Org 360 ইতিহাস (Audit + পেমেন্ট + অর্ডার + কথোপকথন + Sync + Ticket)</div>
+      <div className="mb-3 font-semibold">{dict.orgDetail.historyTitle}</div>
       {events === null ? <div className="askel-line" aria-hidden="true" />
-        : events.length === 0 ? <EmptyState title="কোনো ইভেন্ট নেই।" sub="এই Org-এর ইতিহাসে এখনো কোনো ইভেন্ট রেকর্ড হয়নি।" /> : (
+        : events.length === 0 ? <EmptyState title={dict.orgDetail.noEventsTitle} sub={dict.orgDetail.noEventsSub} /> : (
           <ol className="relative border-l border-slate-800 pl-5">
             {events.slice(0, 30).map((e, i) => (
               <li key={i} className="relative pb-3.5 last:pb-0">
                 <span className="absolute -left-[25px] top-0 flex h-4 w-4 items-center justify-center text-[10px]">{icon(e.kind)}</span>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-sm">{e.title}{e.detail ? <span className="ml-1.5 text-slate-400">{e.detail}</span> : null}</span>
-                  <span className="text-xs text-slate-400">{fmtDateTime(e.at)}</span>
+                  <span className="text-xs text-slate-400">{fmtDateTime(locale, e.at)}</span>
                 </div>
               </li>
             ))}
