@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
+import compression from "compression";
 import { AppModule } from "./app.module";
 import { v1AliasMiddleware } from "./public-docs/v1-alias";
 import { createCorsOriginChecker, prismaVerifiedCustomDomainLookup } from "./common/cors-origins";
@@ -8,6 +9,8 @@ import { createCorsOriginChecker, prismaVerifiedCustomDomainLookup } from "./com
 async function bootstrap() {
   // rawBody is required to verify WooCommerce webhook HMAC signatures.
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  // Production Performance: Enable HTTP compression for all responses > 1KB
+  app.use(compression({ threshold: 1024 }));
   // Milestone 59: the white-label logo upload travels as base64 JSON
   // (<=1.5 MB of image bytes, ~2 MB encoded) — the 100 kb framework
   // default would reject it. 3 MB keeps the ceiling tight.

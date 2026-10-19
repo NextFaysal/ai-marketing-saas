@@ -1,6 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ["@repo/ui", "@repo/contracts"],
+  poweredByHeader: false,
+  compress: true,
+  experimental: {
+    optimizePackageImports: ["@repo/ui"],
+  },
+  compiler: {
+    removeConsole: process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,
+  },
+  images: {
+    formats: ["image/avif", "image/webp"],
+  },
   async rewrites() {
     // Same-origin API proxy: the browser only ever talks to the web
     // origin, and Next.js forwards /backend/* to the API server-side.

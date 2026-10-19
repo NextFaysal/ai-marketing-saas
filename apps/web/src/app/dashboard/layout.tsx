@@ -18,8 +18,13 @@ import {
   dashboardRoot,
   readStoredThemePref,
 } from "@/lib/theme";
-import { GlobalAssistant } from "@/components/global-assistant";
+import dynamic from "next/dynamic";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
+
+const GlobalAssistant = dynamic(
+  () => import("@/components/global-assistant").then((mod) => mod.GlobalAssistant),
+  { ssr: false }
+);
 import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
 import { orgArchived, orgSuspended, type SwitcherOrg } from "@/lib/org-switcher";

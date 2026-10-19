@@ -3,8 +3,17 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
+import dynamic from "next/dynamic";
 import { StepFields, DYNAMIC_VARIABLES } from "@/components/step-fields";
-import WorkflowCanvas from "@/components/workflow-canvas";
+
+const WorkflowCanvas = dynamic(() => import("@/components/workflow-canvas"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[520px] items-center justify-center bg-slate-50 text-xs text-slate-500">
+      Loading visual workflow editor...
+    </div>
+  ),
+});
 import {
   buildPayloadStep,
   parseConditionValue,

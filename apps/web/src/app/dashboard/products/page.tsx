@@ -8,10 +8,13 @@ import { EmptyState, FilterBar, PageHeader, ResponsiveTable } from "@repo/ui";
 import { useConfirm, useToast } from "@repo/ui/client";
 import { MediaImage } from "@/components/MediaImage";
 import { ProductTranslationsPanel } from "@/components/product-translations";
-import {
-  EcBundleDialog, EcCategoryManagerDialog, EcChannelsDialog, EcGalleryDialog,
-  type EcCategory, type EcTag,
-} from "@/components/ec-product-dialogs";
+import dynamic from "next/dynamic";
+import { type EcCategory, type EcTag } from "@/components/ec-product-dialogs";
+
+const EcChannelsDialog = dynamic(() => import("@/components/ec-product-dialogs").then((m) => m.EcChannelsDialog), { ssr: false });
+const EcGalleryDialog = dynamic(() => import("@/components/ec-product-dialogs").then((m) => m.EcGalleryDialog), { ssr: false });
+const EcBundleDialog = dynamic(() => import("@/components/ec-product-dialogs").then((m) => m.EcBundleDialog), { ssr: false });
+const EcCategoryManagerDialog = dynamic(() => import("@/components/ec-product-dialogs").then((m) => m.EcCategoryManagerDialog), { ssr: false });
 
 interface ProductDetailExtra {
   categoryId?: string | null;
