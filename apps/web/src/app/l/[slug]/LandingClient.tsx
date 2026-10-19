@@ -89,6 +89,8 @@ interface LandingPayload {
     deliveryPromiseText?: string | null;
     supportPhone?: string | null;
     returnPolicyText?: string | null;
+    // ML8: optional org locale when the payload supplies one.
+    locale?: string | null;
   };
   sections: LandingSection[];
   variant: LandingVariant | null;

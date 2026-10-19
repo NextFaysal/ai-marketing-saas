@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import type { ShopBundle } from "@/lib/storefront-server";
 import { fetchCart, patchBundleLine } from "@/lib/storefront-cart";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { fmtNumber } from "@repo/contracts";
 import { priceText } from "./ProductCard";
 import { MediaImage } from "@/components/MediaImage";
 

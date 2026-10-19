@@ -86,6 +86,7 @@ export function ElectronicsEmiCalculatorModal({
   locale?: ShopLocale | string;
 }) {
   const t = shopT(locale);
+  const [tenure, setTenure] = useState<3 | 6 | 9 | 12>(12);
   const [selectedBank, setSelectedBank] = useState("City Bank Amex");
 
   if (!open) return null;

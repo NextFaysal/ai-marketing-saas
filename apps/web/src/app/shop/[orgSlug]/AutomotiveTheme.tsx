@@ -11,10 +11,11 @@ import { FlashCountdown } from "./FlashCountdown";
 import { RecentlyViewedStrip } from "./RecentlyViewed";
 
 export function formatAutoPrice(minor: number | string | null | undefined, locale: string = "bn"): string {
-  if (minor == null) return fmtMoneyMinor(locale, 0);
+  const loc: "bn" | "en" = locale === "en" ? "en" : "bn";
+  if (minor == null) return fmtMoneyMinor(loc, 0);
   const num = typeof minor === "string" ? parseInt(minor, 10) : minor;
-  if (isNaN(num)) return fmtMoneyMinor(locale, 0);
-  return fmtMoneyMinor(locale, Math.round(num / 100) * 100);
+  if (isNaN(num)) return fmtMoneyMinor(loc, 0);
+  return fmtMoneyMinor(loc, Math.round(num / 100) * 100);
 }
 
 /** 4 Automotive & Bike Parts Trust Pillars */

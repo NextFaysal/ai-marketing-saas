@@ -323,7 +323,7 @@ function SuccessInner() {
               <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.checkout.referralApplied}{order.referral ? ` (${order.referral.code})` : ""}:</span><span className="font-bold text-emerald-700">− {money(order.referralDiscountMinor)}</span></div>
             ) : null}
             {(order.loyaltyPointsUsed ?? 0) > 0 ? (
-              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.successExtra.loyaltyDiscountPrefix}{fmtNumber(locale, order.loyaltyPointsUsed)}{t.successExtra.loyaltyDiscountSuffix}</span><span className="font-bold text-emerald-700">− {money(order.loyaltyDiscountMinor ?? "0")}</span></div>
+              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.successExtra.loyaltyDiscountPrefix}{fmtNumber(locale, order.loyaltyPointsUsed ?? 0)}{t.successExtra.loyaltyDiscountSuffix}</span><span className="font-bold text-emerald-700">− {money(order.loyaltyDiscountMinor ?? "0")}</span></div>
             ) : null}
             {order.giftCardDiscountMinor && BigInt(order.giftCardDiscountMinor) > 0n ? (
               <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.successExtra.giftCardDiscount}{order.giftCardCodeLast4 ? ` (••••${order.giftCardCodeLast4})` : ""}:</span><span className="font-bold text-emerald-700">− {money(order.giftCardDiscountMinor)}</span></div>

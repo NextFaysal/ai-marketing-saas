@@ -323,7 +323,7 @@ export function ShopPromotions({ orgSlug, locale = "bn" }: { orgSlug: string; lo
       )}
       <p className="text-sm">
         {t.promotions.discountLabel}<span className="font-semibold">{campaign.discountLabel}</span>{t.promotions.joinedMid}{" "}
-        <span className="font-semibold">{fmtNumber(locale === "en" ? "en" : "bn", gb.joinedCount)}</span> / {fmtNumber(locale === "en" ? "en" : "bn", campaign.requiredBuyers)}{t.promotions.joinedSuffix}
+        <span className="font-semibold">{fmtNumber(locale === "en" ? "en" : "bn", gb.joinedCount)}</span> / {campaign.requiredBuyers != null ? fmtNumber(locale === "en" ? "en" : "bn", campaign.requiredBuyers) : ""}{t.promotions.joinedSuffix}
       </p>
       <div className="h-2 w-full rounded bg-slate-200">
         <div
