@@ -18,7 +18,9 @@ import {
   buildGrantPayload, buildTierPayload, creditDeltaLabel, creditReasonLabel,
   type CustomerCreditView, type CustomerTierView, type TierView,
 } from "@/lib/membership";
-import RfmRetentionStudio from "./components/RfmRetentionStudio";
+import dynamic from "next/dynamic";
+
+const RfmRetentionStudio = dynamic(() => import("./components/RfmRetentionStudio"), { ssr: false });
 import {
   CUSTOMER_TYPE_OPTIONS, EMPTY_SEGMENT_DRAFT, buildCustomerListParams, buildSegmentPayload,
   normalizeTags, segmentCriteriaSummary, segmentCriteriaToDraft, validateNewTag, validateTags,
