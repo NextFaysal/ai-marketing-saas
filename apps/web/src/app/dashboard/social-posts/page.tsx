@@ -89,11 +89,13 @@ import {
   type OrgMemberOption, type SocialAccountHealthRow, type SocialFailureGroup,
   type SocialPostNote, type SocialPostVersion, type SocialTimelineEntry,
 } from "./components/shared";
+import dynamic from "next/dynamic";
 import { ComposerPanel } from "./components/ComposerPanel";
-import { LibraryPanel } from "./components/LibraryPanel";
-import { AnalyticsPanel } from "./components/AnalyticsPanel";
 import { PostsPanel } from "./components/PostsPanel";
-import { SettingsPanel } from "./components/SettingsPanel";
+
+const LibraryPanel = dynamic(() => import("./components/LibraryPanel").then((m) => m.LibraryPanel), { ssr: false });
+const AnalyticsPanel = dynamic(() => import("./components/AnalyticsPanel").then((m) => m.AnalyticsPanel), { ssr: false });
+const SettingsPanel = dynamic(() => import("./components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
 import {
   buildPostsPageQuery, healthPill, mergePostPage, summarizeBulkPostResults, summarizeCsvImport,
   type BulkPostsResponse, type CsvImportResponse,
