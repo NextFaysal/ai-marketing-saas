@@ -4,7 +4,7 @@ import AdminShell from "@/components/AdminShell";
 import { DataTable, ErrorState, PageHead, Tabs, askInput, toast } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
-import { fmtNumber, type Locale } from "@repo/contracts";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
 import { useAdminLocale } from "@/components/AdminLocale";
 
 interface SocialPostItem {
@@ -37,7 +37,7 @@ interface AdsBoard {
   }[];
 }
 
-function fmtDate(v: string | null | undefined, locale: Locale): string {
+function fmtDate(v: string | null | undefined, locale: UiLocale): string {
   if (!v) return "—";
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? "—" : fmtDateTime(locale, d);

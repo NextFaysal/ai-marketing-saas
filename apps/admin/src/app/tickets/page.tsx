@@ -839,7 +839,7 @@ export default function TicketsPage() {
                         {getSlaBadge(selected.slaDueAt)}
                       </div>
                       <p className="mt-1 text-xs text-slate-400">
-                        {tr("tickets.ticketMeta", { id: selected.id.slice(-6), org: selected.organizationName, email: selected.creatorEmail ?? "—" })}
+                        {tr("tickets.ticketMeta", { id: selected.id.slice(-6), org: selected.organizationName ?? "—", email: selected.creatorEmail ?? "—" })}
                       </p>
                     </div>
 

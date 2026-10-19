@@ -19,7 +19,7 @@ import {
 function flatten(dict: AdminDict, prefix = "", out: Record<string, string> = {}): Record<string, string> {
   for (const [key, value] of Object.entries(dict)) {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (value && typeof value === "object") flatten(value as AdminDict, path, out);
+    if (value && typeof value === "object") flatten(value as unknown as AdminDict, path, out);
     else out[path] = value as string;
   }
   return out;

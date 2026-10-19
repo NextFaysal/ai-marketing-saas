@@ -5,9 +5,9 @@ import AdminShell from "@/components/AdminShell";
 import { EmptyState, ErrorState, PageHead, Tabs, askInput, toast } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
-import { fmtNumber, type Locale } from "@repo/contracts";
-import { useAdminLocale, type AdminDict } from "@/components/AdminLocale";
-import { trAdmin } from "@/lib/i18n";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { useAdminLocale } from "@/components/AdminLocale";
+import { trAdmin, type AdminDict } from "@/lib/i18n";
 
 interface Version {
   appVersion: string; gitSha: string | null; nodeVersion: string; environment: string;
@@ -62,14 +62,14 @@ function ErrText({ text }: { text: string }) {
   );
 }
 
-function fmtBytes(n: number | null, locale: Locale): string {
+function fmtBytes(n: number | null, locale: UiLocale): string {
   if (n === null) return "—";
   if (n < 1024) return `${fmtNumber(locale, n)} B`;
   if (n < 1024 * 1024) return `${fmtNumber(locale, n / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB`;
   if (n < 1024 * 1024 * 1024) return `${fmtNumber(locale, n / 1048576, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
   return `${fmtNumber(locale, n / 1073741824, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GB`;
 }
-function fmtUptime(sec: number, dict: AdminDict, locale: Locale): string {
+function fmtUptime(sec: number, dict: AdminDict, locale: UiLocale): string {
   const d = Math.floor(sec / 86400); const h = Math.floor((sec % 86400) / 3600); const m = Math.floor((sec % 3600) / 60);
   const tpl = (path: string, params: Record<string, string>) => trAdmin(locale, path, params);
   return d > 0 ? tpl("system.uptimeDaysHours", { days: fmtNumber(locale, d), hours: fmtNumber(locale, h) }) : h > 0 ? tpl("system.uptimeHoursMinutes", { hours: fmtNumber(locale, h), minutes: fmtNumber(locale, m) }) : tpl("system.uptimeMinutes", { minutes: fmtNumber(locale, m) });
