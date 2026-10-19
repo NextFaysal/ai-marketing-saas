@@ -773,6 +773,8 @@ model Product {
   @@unique([organizationId, sku])
   @@index([organizationId, status])
   @@index([organizationId, category])
+  @@index([organizationId, updatedAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@index([brandId])
   // AB6 (AX11): GIN index backing the FTS shop search.
   @@index([searchVector], type: Gin)
@@ -2424,6 +2426,7 @@ model Customer {
   @@index([organizationId, email])
   @@index([organizationId, phone])
   @@index([organizationId, externalId])
+  @@index([organizationId, createdAt(sort: Desc)])
 }
 
 /// IN2: the reversible record of one customer merge. The pre-IN2
@@ -2842,6 +2845,8 @@ model Order {
   @@unique([organizationId, source, externalId])
   @@unique([organizationId, invoiceNumber])
   @@index([organizationId, status])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, customerId])
   @@index([organizationId, placedAt])
   @@index([organizationId, affiliatePartnerId])
   // EC34: POS "today's sales" strip queries org + source +

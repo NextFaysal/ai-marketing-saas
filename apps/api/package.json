@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/main.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "test": "jest --runInBand",
-    "lint": "tsc --noEmit -p tsconfig.json"
+    "lint": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@langchain/textsplitters": "1.0.2",
