@@ -25,18 +25,20 @@ import {
 import {
   type CodBoard, type OrderProfit,
 } from "@/lib/orders-on7";
+import dynamic from "next/dynamic";
 import { memberName, type MemberRow, type OrderAllocation } from "./on2-detail";
-import { DuplicatesModal } from "./components/DuplicatesModal";
 import { CodCallChips } from "./components/CodCallChips";
 import { SplitDialog } from "./components/SplitDialog";
 import { MergeDialog } from "./components/MergeDialog";
 import { FraudSettingsPanel } from "./components/FraudSettingsPanel";
 import { NotificationSettingsPanel } from "./components/NotificationSettingsPanel";
 import { OrderActionPanel } from "./components/OrderActionPanel";
-import { OrderAutomationPanel } from "./on8-automation";
-import { OrderAnalyticsPanel } from "./on9-analytics";
-import { OrderPrintPanel } from "./on10-print";
-import { OrderTeamPanel } from "./on12-team";
+
+const DuplicatesModal = dynamic(() => import("./components/DuplicatesModal").then((m) => m.DuplicatesModal), { ssr: false });
+const OrderAutomationPanel = dynamic(() => import("./on8-automation").then((m) => m.OrderAutomationPanel), { ssr: false });
+const OrderAnalyticsPanel = dynamic(() => import("./on9-analytics").then((m) => m.OrderAnalyticsPanel), { ssr: false });
+const OrderPrintPanel = dynamic(() => import("./on10-print").then((m) => m.OrderPrintPanel), { ssr: false });
+const OrderTeamPanel = dynamic(() => import("./on12-team").then((m) => m.OrderTeamPanel), { ssr: false });
 import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard, ResponsiveTable } from "@repo/ui";
 import { useConfirm, usePrompt, useToast } from "@repo/ui/client";
